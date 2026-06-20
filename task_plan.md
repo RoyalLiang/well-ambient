@@ -145,6 +145,16 @@ Complete
 - [x] Update task memory and commit intentional changes
 - **Status:** complete
 
+### Phase 17: AI Engine Tab, Permission Tree, And Policy Workbench Polish
+- [x] Split AI settings into independent AI engine and context fact tabs
+- [x] Replace native-looking AI context controls with button-backed choices and custom range/input styling
+- [x] Add a live `/api/permissions` catalog endpoint
+- [x] Replace the hard-coded visual permission matrix with a namespace-derived permission tree
+- [x] Rework policy authorization into templates, segmented controls, action chips, and a priority stepper
+- [x] Add focused permission-catalog handler coverage
+- [x] Run frontend build and targeted backend validation
+- **Status:** complete
+
 ## Key Questions
 1. Which current files contain the server handlers named in the plan?
 2. Does the current data model support linking demands to AI task groups?

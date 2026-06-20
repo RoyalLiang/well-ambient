@@ -1,53 +1,50 @@
 {
   "warm_memory": {
-    "goal": "Implement the strongest-brain AI Context Registry and policy-based RBAC rebuild from the reviewed plan.",
-    "classification": "coding.architecture; backend context-pack pipeline, policy authorization, frontend admin UI, documentation",
+    "goal": "Polish the Settings AI engine, permission tree, and policy authorization admin surfaces.",
+    "classification": "coding.complex; frontend admin UI refactor plus backend permission catalog endpoint",
     "phase": "complete",
     "constraints": [
-      "Treat AI context as system design/process/function facts for demand deconstruction, not a targeted module feature.",
-      "Keep old AI config text fields as backend fallback only so existing deployments do not lose context.",
+      "Use taste-skill/design-taste guidance for frontend UI changes and keep the admin console restrained, dense, and dark-system aligned.",
+      "Treat AI engine provider/model setup separately from AI context facts used by demand deconstruction.",
+      "Permission growth should come from seeded backend permissions, not a fixed frontend matrix.",
       "Do not touch or stage unrelated dirty files such as `well-ambient.db` or `internal/server/task_status.md`.",
       "Commit only intentional source/config/docs/task-memory changes."
     ],
     "decisions": [
-      "Added Context Registry models for documents, facts, chunks, packs, and pack items.",
-      "Demand deconstruction now builds and persists a context pack before prompt assembly, returns `context_pack_id`, and archives that pack id during import.",
-      "AI settings now exposes structured context facts and pack preview while removing the old visible four-textarea context center; legacy config fields remain fallback only.",
-      "Added policy authorization tables and evaluator with explicit deny override, policy allow grants, super_admin break-glass, legacy group permission compatibility, and decision audit logging.",
-      "Added policy management and authorization explanation UI under Settings."
+      "Split Settings AI into `AI 引擎配置` and `上下文事实` tabs via `AIConfig` view modes.",
+      "Restyled AI context fact editing with chip choice grids, custom range inputs, and dark-system registry/preview panels.",
+      "Added `GET /api/permissions` and a permission DTO so Settings can fetch the live catalog.",
+      "Replaced the wide permission matrix with a namespace-derived permission tree and per-group coverage toggles.",
+      "Rebuilt policy authorization creation as templates, segmented choices, action chips, state toggle, and priority stepper.",
+      "Added `Button.size` support because existing Settings/GitLab config call sites already use `size=\"small\"`."
     ],
     "findings": [
-      "Structured facts give demand deconstruction a compact, auditable context layer with scope, freshness, confidence, token count, and hash metadata.",
-      "Persisted context packs make estimate archives reproducible because the system can inspect which context facts were used for a run.",
-      "Policy RBAC can evolve without breaking existing users by placing allow/deny policies above the current group-permission matrix.",
-      "Full Go tests need loopback access because existing GitLab webhook tests use `httptest.NewServer`; sandboxed runs fail on local port binding."
+      "The old `permissionMeta` table was the main scalability risk: new permissions would not appear until frontend code changed.",
+      "The policy form's native selects/number/checkbox made the page feel like raw schema editing rather than guided authorization.",
+      "The AI context registry had many unstyled classes and raw selects/ranges; splitting the tab and adding component-like controls clarifies intent.",
+      "Full Go tests need loopback access because existing GitLab webhook tests use `httptest.NewServer`; sandboxed runs fail on local port binding.",
+      "`pnpm check` still has pre-existing TaskKanban/App errors outside this change; production build passes."
     ],
     "touched_files": [
-      "docs/strongest-brain-implementation-plan.md",
-      "internal/db/db.go",
-      "internal/db/user/init.go",
-      "internal/db/user/user.go",
-      "internal/server/ai_handlers.go",
-      "internal/server/authz/policy.go",
-      "internal/server/authz_handlers.go",
-      "internal/server/context_handlers.go",
-      "internal/server/context_handlers_test.go",
       "internal/server/policy_authorization_test.go",
       "internal/server/server.go",
-      "web/src/components/Deconstructor.svelte",
+      "internal/server/user_handlers.go",
       "web/src/components/SettingsPanel.svelte",
       "web/src/components/config/AIConfig.svelte",
+      "web/src/components/shared/Button.svelte",
       "task_plan.md",
       "findings.md",
       "progress.md",
       ".agents/state.json"
     ],
     "validation": [
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(Context|Authorization|WithPermission|Authorize|ImportTasksArchives|ParseDeconstruct)': passed.",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./...: passed with approved loopback access after sandbox port bind failed.",
-      "pnpm --dir web build: passed with existing unrelated Svelte accessibility warnings in untouched controls."
+      "pnpm build in web: passed with existing Svelte accessibility warnings.",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run TestHandleListPermissionsReturnsSeededCatalog: passed.",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server/authz ./internal/agenda ./internal/config ./internal/kanban ./internal/telemetry: passed.",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server and ./...: blocked by sandbox `listen tcp6 [::1]:0: bind: operation not permitted` from existing httptest server tests.",
+      "pnpm check in web: fails on pre-existing TaskKanban/App TypeScript errors; touched Settings/AI/Button files no longer add errors."
     ],
     "blockers": [],
-    "next": "Commit intentional source, docs, and task-memory changes; exclude unrelated `well-ambient.db` and `internal/server/task_status.md`."
+    "next": "Stage and commit only intentional source/task-memory changes, excluding unrelated `well-ambient.db` and `internal/server/task_status.md`."
   }
 }

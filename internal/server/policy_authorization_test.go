@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -54,6 +55,41 @@ func TestAuthorizationSeedsFineGrainedPermissionsAndMigratesModels(t *testing.T)
 	}
 	if err := db.DB.Create(&audit).Error; err != nil {
 		t.Fatalf("authorization_audit_logs model was not migrated: %v", err)
+	}
+}
+
+func TestHandleListPermissionsReturnsSeededCatalog(t *testing.T) {
+	setupServerTestDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/permissions", nil)
+	rr := httptest.NewRecorder()
+
+	(&Server{}).handleListPermissions(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var permissions []PermissionDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &permissions); err != nil {
+		t.Fatalf("decode permissions response: %v", err)
+	}
+
+	if len(permissions) == 0 {
+		t.Fatalf("permissions response should not be empty")
+	}
+
+	var found bool
+	for _, perm := range permissions {
+		if perm.Code == "policies:write" {
+			found = true
+			if perm.Name == "" || perm.Description == "" {
+				t.Fatalf("policies:write should include name and description: %+v", perm)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("permissions response missing policies:write: %+v", permissions)
 	}
 }
 

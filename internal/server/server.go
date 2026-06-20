@@ -70,6 +70,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/users/transfer-admin", s.withPermission("users:transfer_super_admin", s.handleTransferAdmin))
 
 	s.mux.HandleFunc("GET /api/groups", s.withPermission("users:read", s.handleGetGroups))
+	s.mux.HandleFunc("GET /api/permissions", s.withPermission("users:read", s.handleListPermissions))
 	s.mux.HandleFunc("POST /api/groups", s.withPermission("users:write", s.handleCreateGroup))
 	s.mux.HandleFunc("POST /api/groups/permissions", s.withPermission("users:write", s.handleSaveGroupPermissions))
 

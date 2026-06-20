@@ -37,6 +37,13 @@ type GroupDTO struct {
 	Permissions []string `json:"permissions"`
 }
 
+type PermissionDTO struct {
+	ID          uint   `json:"id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 // handleGetCurrentUser returns the authenticated user's profile without requiring admin permissions.
 func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -454,6 +461,33 @@ func (s *Server) handleGetGroups(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(groupDTOs)
+}
+
+// handleListPermissions returns the live permission catalog used by the admin UI.
+func (s *Server) handleListPermissions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var permissions []userdb.Permission
+	if err := db.DB.Order("code asc").Find(&permissions).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Query permissions failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	permissionDTOs := make([]PermissionDTO, 0, len(permissions))
+	for _, p := range permissions {
+		permissionDTOs = append(permissionDTOs, PermissionDTO{
+			ID:          p.ID,
+			Code:        p.Code,
+			Name:        p.Name,
+			Description: p.Description,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(permissionDTOs)
 }
 
 type CreateGroupRequest struct {

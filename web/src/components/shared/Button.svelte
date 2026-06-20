@@ -1,5 +1,6 @@
 <script lang="ts">
   export let variant: 'primary' | 'secondary' | 'danger' | 'ghost' = 'primary';
+  export let size: 'small' | 'medium' = 'medium';
   export let type: 'button' | 'submit' | 'reset' = 'button';
   export let disabled = false;
   export let loading = false;
@@ -8,6 +9,7 @@
 <button
   {type}
   class="btn btn-{variant}"
+  class:btn-small={size === 'small'}
   class:loading
   disabled={disabled || loading}
   on:click
@@ -45,6 +47,13 @@
 
   .btn:focus-visible {
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.4);
+  }
+
+  .btn-small {
+    gap: 6px;
+    padding: 7px 11px;
+    border-radius: 7px;
+    font-size: 0.76rem;
   }
 
   .btn-content {

@@ -36,7 +36,7 @@
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'offline';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'offline';
 
-  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
+  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'ai_context' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
 
   interface GlobalConfig {
     server: { host: string; port: number };
@@ -220,9 +220,22 @@
     risk_level: string;
     matched_policy?: AuthorizationPolicy;
   }
+  interface PermissionMeta {
+    code: string;
+    name: string;
+    desc: string;
+  }
+  interface PermissionTreeBranch {
+    key: string;
+    label: string;
+    summary: string;
+    order: number;
+    permissions: PermissionMeta[];
+  }
 
   let users: User[] = [];
   let groups: Group[] = [];
+  let permissionCatalog: PermissionMeta[] = [];
   let auditLogs: AuditLog[] = [];
   let authorizationPolicies: AuthorizationPolicy[] = [];
   let authorizationAuditLogs: AuthorizationAuditLog[] = [];
@@ -232,23 +245,112 @@
   let authorizationDecision: AuthorizationDecision | null = null;
   let authorizationExplainError = '';
 
-  // Atomic permissions metadata
-  const permissionMeta = [
-    { code: 'config:read', name: '查看集成配置', desc: '查看第三方系统配置密钥及连通状态' },
-    { code: 'config:write', name: '修改集成配置', desc: '修改 GitLab、飞书、Jira 以及 AI 配置参数' },
-    { code: 'users:read', name: '查看权限与日志', desc: '查看注册用户列表、用户组权限及安全审计痕迹' },
-    { code: 'users:write', name: '权限组及成员分配', desc: '创建组、调整权限组的权限集、为用户指定角色和 Scope' },
-    { code: 'users:transfer_super_admin', name: '转让超级管理员', desc: '将系统最高管理权转让给他人' },
-    { code: 'dashboard:read', name: '查看协同看板', desc: '有权查看主界面协同看板、AI 需求解构日志与全部任务看板' },
-    { code: 'demands:read', name: '查看需求看板', desc: '有权查看需求看板泳道及其排期卡片' },
-    { code: 'decision:read', name: '查看决策大屏', desc: '有权查看红区卡点诊断盘与决策会议大屏' },
-    { code: 'ai_context:read', name: '查看上下文事实', desc: '查看 AI 需求解构使用的结构化上下文事实' },
-    { code: 'ai_context:write', name: '管理上下文事实', desc: '新增、更新、停用 AI 上下文事实' },
-    { code: 'ai_context:preview', name: '预览上下文包', desc: '按需求文本预览上下文包选择结果' },
-    { code: 'policies:read', name: '查看授权策略', desc: '查看策略化 allow/deny 权限规则' },
-    { code: 'policies:write', name: '管理授权策略', desc: '新增或更新策略化权限规则' },
-    { code: 'authorization_audit:read', name: '授权决策审计', desc: '查看拒绝和高风险授权决策日志' }
+  const fallbackPermissionMeta: PermissionMeta[] = [
+    { code: 'ai_context:preview', name: '预览 AI 上下文包', desc: '按需求范围预览 AI 解构将使用的上下文包内容' },
+    { code: 'ai_context:read', name: '查看 AI 上下文注册表', desc: '查看用于 AI 需求解构的架构、流程、功能边界与估算规则上下文' },
+    { code: 'ai_context:write', name: '管理 AI 上下文注册表', desc: '新增、修改、停用 AI 上下文事实、文档与上下文包配置' },
+    { code: 'authorization_audit:read', name: '查看授权决策审计', desc: '查看拒绝或高风险授权决策的审计日志' },
+    { code: 'config:read', name: '查看系统集成配置', desc: '查看 GitLab、飞书、Jira 以及 AI 大模型等集成密钥及连接状态' },
+    { code: 'config:write', name: '修改及测试系统配置', desc: '修改并测试 GitLab、飞书、Jira 以及 AI 大模型等核心配置参数' },
+    { code: 'dashboard:read', name: '查看协同看板页面', desc: '查看主界面协同看板、AI 需求解构日志与全部任务看板' },
+    { code: 'decision:read', name: '查看决策大屏页面', desc: '查看红区卡点诊断盘与决策会议大屏' },
+    { code: 'demands:read', name: '查看需求看板页面', desc: '查看需求看板泳道及其排期卡片' },
+    { code: 'demands:write', name: '创建与指派需求', desc: '在需求看板中创建新需求并指派负责人' },
+    { code: 'kpi:read', name: '查看团队 KPI 看板', desc: '查看团队成员的 KPI 绩效统计、完成任务及 Bug 指标' },
+    { code: 'policies:read', name: '查看授权策略', desc: '查看策略化授权规则、作用范围与命中原因' },
+    { code: 'policies:write', name: '管理授权策略', desc: '新增、修改、启停 allow/deny 授权策略' },
+    { code: 'users:read', name: '查看成员及权限列表', desc: '查看所有注册用户、用户组以及审计日志' },
+    { code: 'users:transfer_super_admin', name: '转让超级管理员角色', desc: '转让超级管理员权限给其他用户，自身降级为系统管理员' },
+    { code: 'users:write', name: '管理成员组与权限分配', desc: '创建自定义组、修改权限集，并分配特定组与 Scope' }
   ];
+
+  const permissionCategoryMeta: Record<string, { label: string; summary: string; order: number }> = {
+    config: { label: '系统集成配置', summary: 'GitLab、飞书、Jira 与 AI 引擎的连接和测试权限。', order: 10 },
+    dashboard: { label: '协同工作台', summary: '主协同看板和任务总览的访问边界。', order: 20 },
+    demands: { label: '需求与交付', summary: '需求看板、创建指派和交付排期相关权限。', order: 30 },
+    decision: { label: '决策视图', summary: '红区卡点诊断盘与会议大屏访问权限。', order: 40 },
+    kpi: { label: '绩效分析', summary: '团队 KPI、报表预览和绩效指标权限。', order: 50 },
+    ai_context: { label: 'AI 上下文', summary: '结构化事实、上下文包预览与需求解构参考资料权限。', order: 60 },
+    users: { label: '成员与角色', summary: '成员、用户组、权限树和超级管理员交接权限。', order: 70 },
+    policies: { label: '策略化授权', summary: 'allow/deny 策略的查看、创建、启停与解释。', order: 80 },
+    authorization_audit: { label: '授权审计', summary: '拒绝、高风险授权决策和命中链路审计。', order: 90 }
+  };
+
+  const effectOptions = [
+    { value: 'deny', label: '拒绝', desc: '优先阻断高风险动作' },
+    { value: 'allow', label: '允许', desc: '临时放行明确动作' }
+  ];
+
+  const subjectTypeOptions = [
+    { value: 'group', label: '用户组' },
+    { value: 'user', label: '单个用户' },
+    { value: 'any', label: '所有主体' }
+  ];
+
+  const scopeOptions = [
+    { value: 'global', label: '全局' },
+    { value: 'repo', label: '仓库' }
+  ];
+
+  const resourceTypeOptions = [
+    { value: 'config', label: '配置' },
+    { value: 'user', label: '成员' },
+    { value: 'demand', label: '需求' },
+    { value: 'dashboard', label: '看板' },
+    { value: 'context', label: '上下文' },
+    { value: 'policy', label: '策略' },
+    { value: 'audit', label: '审计' }
+  ];
+
+  const policyQuickStarts = [
+    {
+      label: '冻结成员改配置',
+      effect: 'deny',
+      subject_type: 'group',
+      subject_id: 'member',
+      action: 'config:write',
+      resource_type: 'config',
+      resource_id: '',
+      scope: 'global',
+      scope_id: '',
+      priority: 200,
+      enabled: true,
+      reason: '限制普通成员修改系统级集成配置。'
+    },
+    {
+      label: '开放上下文预览',
+      effect: 'allow',
+      subject_type: 'group',
+      subject_id: 'member',
+      action: 'ai_context:preview',
+      resource_type: 'context',
+      resource_id: '',
+      scope: 'global',
+      scope_id: '',
+      priority: 120,
+      enabled: true,
+      reason: '允许成员在需求评估前预览上下文包。'
+    },
+    {
+      label: '限制策略写入',
+      effect: 'deny',
+      subject_type: 'group',
+      subject_id: 'admin',
+      action: 'policies:write',
+      resource_type: 'policy',
+      resource_id: '',
+      scope: 'global',
+      scope_id: '',
+      priority: 240,
+      enabled: true,
+      reason: '策略写入仅由超级管理员审批。'
+    }
+  ];
+
+  let permissionMeta: PermissionMeta[] = fallbackPermissionMeta;
+  $: permissionMeta = permissionCatalog.length ? permissionCatalog : fallbackPermissionMeta;
+  $: permissionTree = buildPermissionTree(permissionMeta);
+  $: policyActionOptions = permissionMeta.map(perm => ({ code: perm.code, name: perm.name }));
 
   let policyForm = {
     effect: 'deny',
@@ -416,9 +518,25 @@
     if (!currentUserPermissions.includes('users:read')) return;
     try {
       const res = await fetch('/api/groups');
-      if (res.ok) groups = await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        groups = Array.isArray(data) ? data.map(normalizeGroup) : [];
+      }
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  async function fetchPermissions() {
+    if (!currentUserPermissions.includes('users:read')) return;
+    try {
+      const res = await fetch('/api/permissions');
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      permissionCatalog = Array.isArray(data) ? data.map(normalizePermission).filter(perm => perm.code) : [];
+    } catch (e) {
+      console.error(e);
+      permissionCatalog = [];
     }
   }
 
@@ -512,6 +630,142 @@
   function policyScopeLabel(policy: Pick<AuthorizationPolicy, 'scope' | 'scope_id'>) {
     if (!policy.scope || policy.scope === 'global') return 'global';
     return `${policy.scope}:${policy.scope_id || '*'}`;
+  }
+
+  function normalizeGroup(raw: any): Group {
+    return {
+      id: raw?.id,
+      name: raw?.name || '',
+      displayName: raw?.displayName || raw?.display_name || raw?.name || '未命名用户组',
+      description: raw?.description || '',
+      permissions: Array.isArray(raw?.permissions) ? raw.permissions : []
+    };
+  }
+
+  function normalizePermission(raw: any): PermissionMeta {
+    return {
+      code: raw?.code || '',
+      name: raw?.name || raw?.code || '未命名权限',
+      desc: raw?.desc || raw?.description || ''
+    };
+  }
+
+  function permissionNamespace(code: string) {
+    const index = code.indexOf(':');
+    return index > 0 ? code.slice(0, index) : 'other';
+  }
+
+  function buildPermissionTree(permissions: PermissionMeta[]): PermissionTreeBranch[] {
+    const branches = new Map<string, PermissionTreeBranch>();
+    for (const perm of permissions) {
+      const key = permissionNamespace(perm.code);
+      const meta = permissionCategoryMeta[key] || {
+        label: key === 'other' ? '未分类权限' : `${key} 权限`,
+        summary: '系统自动归入新命名空间，后续可补充中文名称。',
+        order: 900
+      };
+      if (!branches.has(key)) {
+        branches.set(key, {
+          key,
+          label: meta.label,
+          summary: meta.summary,
+          order: meta.order,
+          permissions: []
+        });
+      }
+      branches.get(key)?.permissions.push(perm);
+    }
+
+    return Array.from(branches.values())
+      .map(branch => ({
+        ...branch,
+        permissions: [...branch.permissions].sort((a, b) => a.code.localeCompare(b.code))
+      }))
+      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+  }
+
+  function groupHasPermission(group: Group, code: string) {
+    return group.name === 'super_admin' || group.permissions.includes(code);
+  }
+
+  function groupPermissionCount(group: Group) {
+    if (group.name === 'super_admin') return permissionMeta.length;
+    return group.permissions.filter(code => permissionMeta.some(perm => perm.code === code)).length;
+  }
+
+  function groupPermissionRatio(group: Group) {
+    if (!permissionMeta.length) return '0%';
+    return `${Math.round((groupPermissionCount(group) / permissionMeta.length) * 100)}%`;
+  }
+
+  function applyPolicyQuickStart(template: typeof policyQuickStarts[number]) {
+    policyForm = {
+      effect: template.effect,
+      subject_type: template.subject_type,
+      subject_id: template.subject_id,
+      action: template.action,
+      resource_type: template.resource_type,
+      resource_id: template.resource_id,
+      scope: template.scope,
+      scope_id: template.scope_id,
+      priority: template.priority,
+      enabled: template.enabled,
+      reason: template.reason
+    };
+  }
+
+  function setPolicyField<K extends keyof typeof policyForm>(field: K, value: (typeof policyForm)[K]) {
+    policyForm = { ...policyForm, [field]: value };
+    if (field === 'subject_type' && value === 'any') {
+      policyForm = { ...policyForm, subject_id: '' };
+    }
+    if (field === 'scope' && value === 'global') {
+      policyForm = { ...policyForm, scope_id: '' };
+    }
+  }
+
+  function setExplainField<K extends keyof typeof explainForm>(field: K, value: (typeof explainForm)[K]) {
+    explainForm = { ...explainForm, [field]: value };
+    if (field === 'scope' && value === 'global') {
+      explainForm = { ...explainForm, scope_id: '' };
+    }
+  }
+
+  function stepPolicyPriority(delta: number) {
+    const next = Number(policyForm.priority) + delta;
+    policyForm = { ...policyForm, priority: Math.max(0, Math.min(999, next)) };
+  }
+
+  function resourceTypeForAction(action: string) {
+    const key = permissionNamespace(action);
+    const map: Record<string, string> = {
+      config: 'config',
+      users: 'user',
+      demands: 'demand',
+      dashboard: 'dashboard',
+      decision: 'dashboard',
+      kpi: 'dashboard',
+      ai_context: 'context',
+      policies: 'policy',
+      authorization_audit: 'audit'
+    };
+    return map[key] || key || 'global';
+  }
+
+  function selectPolicyAction(action: string) {
+    policyForm = {
+      ...policyForm,
+      action,
+      resource_type: resourceTypeForAction(action)
+    };
+  }
+
+  function selectExplainAction(action: string) {
+    explainForm = {
+      ...explainForm,
+      action,
+      resource_type: resourceTypeForAction(action)
+    };
   }
 
   function openAddMembership(username: string) {
@@ -685,6 +939,7 @@
     fetchStatus();
     fetchUsers();
     fetchGroups();
+    fetchPermissions();
     fetchAuditLogs();
     fetchAuthorizationPolicies();
     fetchAuthorizationAuditLogs();
@@ -692,7 +947,7 @@
     statusIntervalId = setInterval(fetchStatus, 5000);
 
     const handleFocus = (e: any) => {
-      if (e.detail && ['gitlab', 'feishu', 'jira', 'ai'].includes(e.detail)) {
+      if (e.detail && ['gitlab', 'feishu', 'jira', 'ai', 'ai_context'].includes(e.detail)) {
         switchSection(e.detail);
       }
     };
@@ -738,9 +993,17 @@
           <span>📝 Jira 服务关联</span>
           <span class="status-indicator indicator-{jiraStatus}"></span>
         </button>
+      </div>
+
+      <div class="nav-group">
+        <span class="group-title">AI 工作台</span>
         <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
-          <span>🧠 需求解构引擎</span>
+          <span>🧠 AI 引擎配置</span>
           <span class="status-indicator indicator-{aiStatus}"></span>
+        </button>
+        <button class="nav-item {activeSection === 'ai_context' ? 'active' : ''}" on:click={() => switchSection('ai_context')}>
+          <span>🗂️ 上下文事实</span>
+          <span class="status-indicator indicator-{currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning'}"></span>
         </button>
       </div>
 
@@ -751,7 +1014,7 @@
             👥 成员角色管理
           </button>
           <button class="nav-item {activeSection === 'matrix' ? 'active' : ''}" on:click={() => switchSection('matrix')}>
-            🔒 权限矩阵矩阵
+            🌲 权限树配置
           </button>
           <button class="nav-item {activeSection === 'policies' ? 'active' : ''}" on:click={() => switchSection('policies')}>
             🧭 策略化授权
@@ -780,7 +1043,11 @@
       </div>
     {:else if activeSection === 'ai'}
       <div class="section-card">
-        <AIConfig config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
+        <AIConfig view="engine" config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
+      </div>
+    {:else if activeSection === 'ai_context'}
+      <div class="section-card">
+        <AIConfig view="context" config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} />
       </div>
     {:else if activeSection === 'users'}
       <div class="section-card">
@@ -856,8 +1123,8 @@
       <div class="section-card">
         <div class="card-header flex-header">
           <div>
-            <h2>🔒 可视化权限矩阵配置</h2>
-            <p>管理系统中不同用户组对应的原子权限绑定关系。系统权限实时刷新。</p>
+            <h2>🌲 可视化权限树配置</h2>
+            <p>按权限命名空间自动归类，纵向展示每个原子权限与用户组覆盖关系。</p>
           </div>
           {#if currentUserPermissions.includes('users:write')}
             <Button variant="ghost" on:click={() => showCreateGroupModal = true}>
@@ -866,44 +1133,65 @@
           {/if}
         </div>
 
-        <div class="table-responsive">
-          <table class="matrix-table">
-            <thead>
-              <tr>
-                <th>用户组及描述</th>
-                {#each permissionMeta as perm}
-                  <th class="rotate-header" title={perm.desc}>{perm.name}</th>
-                {/each}
-              </tr>
-            </thead>
-            <tbody>
-              {#each groups as group}
-                <tr>
-                  <td>
-                    <div class="group-info-cell">
-                      <span class="group-title-label font-bold badge-{group.name}">{group.displayName}</span>
-                      <p class="group-desc-para">{group.description}</p>
+        <div class="permission-summary-strip">
+          {#each groups as group}
+            <div class="group-coverage-card">
+              <div>
+                <span class="group-title-label badge-{group.name}">{group.displayName}</span>
+                <p>{group.description || '暂无描述'}</p>
+              </div>
+              <strong class="font-mono">{groupPermissionCount(group)}/{permissionMeta.length}</strong>
+              <span class="coverage-bar" aria-hidden="true">
+                <i style:width={groupPermissionRatio(group)}></i>
+              </span>
+            </div>
+          {/each}
+        </div>
+
+        <div class="permission-tree">
+          {#each permissionTree as branch}
+            <section class="permission-branch">
+              <div class="branch-stem" aria-hidden="true"></div>
+              <div class="branch-content">
+                <div class="branch-header">
+                  <div>
+                    <span class="branch-key font-mono">{branch.key}</span>
+                    <h3>{branch.label}</h3>
+                    <p>{branch.summary}</p>
+                  </div>
+                  <span class="branch-count font-mono">{branch.permissions.length} permissions</span>
+                </div>
+
+                <div class="permission-nodes">
+                  {#each branch.permissions as perm}
+                    <div class="permission-node">
+                      <div class="permission-node-main">
+                        <span class="permission-code font-mono">{perm.code}</span>
+                        <strong>{perm.name}</strong>
+                        <p>{perm.desc || '暂无权限说明'}</p>
+                      </div>
+                      <div class="permission-group-toggles">
+                        {#each groups as group}
+                          <button
+                            type="button"
+                            class:enabled={groupHasPermission(group, perm.code)}
+                            class:locked={group.name === 'super_admin'}
+                            disabled={!currentUserPermissions.includes('users:write') || group.name === 'super_admin'}
+                            aria-pressed={groupHasPermission(group, perm.code)}
+                            title={group.name === 'super_admin' ? '超级管理员默认拥有全部权限' : `${group.displayName} ${groupHasPermission(group, perm.code) ? '已拥有' : '未拥有'} ${perm.code}`}
+                            on:click={() => togglePermissionInMatrix(group, perm.code)}
+                          >
+                            <span>{group.displayName}</span>
+                            <small>{groupHasPermission(group, perm.code) ? 'ON' : 'OFF'}</small>
+                          </button>
+                        {/each}
+                      </div>
                     </div>
-                  </td>
-                  {#each permissionMeta as perm}
-                    <td style="text-align: center;">
-                      {#if group.name === 'super_admin'}
-                        <input type="checkbox" checked disabled class="matrix-checkbox-disabled" />
-                      {:else}
-                        <input 
-                          type="checkbox" 
-                          checked={group.permissions.includes(perm.code)} 
-                          disabled={!currentUserPermissions.includes('users:write')} 
-                          on:change={() => togglePermissionInMatrix(group, perm.code)}
-                          class="matrix-checkbox" 
-                        />
-                      {/if}
-                    </td>
                   {/each}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
+                </div>
+              </div>
+            </section>
+          {/each}
         </div>
       </div>
     {:else if activeSection === 'policies'}
@@ -925,68 +1213,172 @@
           <div class="success-banner">{authorizationPolicySuccess}</div>
         {/if}
 
-        <div class="policy-workbench">
-          <section class="policy-panel">
+        <div class="policy-template-strip">
+          {#each policyQuickStarts as template}
+            <button type="button" on:click={() => applyPolicyQuickStart(template)}>
+              <span>{template.label}</span>
+              <small class="font-mono">{template.effect} · {template.action}</small>
+            </button>
+          {/each}
+        </div>
+
+        <div class="policy-workbench refined">
+          <section class="policy-panel policy-builder">
             <div class="policy-panel-header">
-              <span class="audit-kicker font-mono">Create Policy</span>
+              <span class="audit-kicker font-mono">Policy Builder</span>
               <h3>新增授权策略</h3>
             </div>
-            <div class="policy-form-grid">
-              <div class="field-item">
-                <label for="policy-effect">Effect</label>
-                <select id="policy-effect" bind:value={policyForm.effect} class="custom-select font-mono">
-                  <option value="deny">deny</option>
-                  <option value="allow">allow</option>
-                </select>
+
+            <div class="policy-builder-grid">
+              <div class="policy-choice-block">
+                <span class="field-label">授权效果</span>
+                <div class="choice-row">
+                  {#each effectOptions as option}
+                    <button
+                      type="button"
+                      class:active={policyForm.effect === option.value}
+                      class={`choice-card effect-${option.value}`}
+                      on:click={() => setPolicyField('effect', option.value)}
+                    >
+                      <strong>{option.label}</strong>
+                      <small>{option.desc}</small>
+                    </button>
+                  {/each}
+                </div>
               </div>
-              <div class="field-item">
-                <label for="policy-subject-type">Subject Type</label>
-                <select id="policy-subject-type" bind:value={policyForm.subject_type} class="custom-select font-mono">
-                  <option value="group">group</option>
-                  <option value="user">user</option>
-                  <option value="any">any</option>
-                </select>
+
+              <div class="policy-choice-block">
+                <span class="field-label">主体类型</span>
+                <div class="segmented-pills">
+                  {#each subjectTypeOptions as option}
+                    <button
+                      type="button"
+                      class:active={policyForm.subject_type === option.value}
+                      on:click={() => setPolicyField('subject_type', option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
-              <div class="field-item">
-                <label for="policy-subject-id">Subject ID</label>
-                <input id="policy-subject-id" bind:value={policyForm.subject_id} class="custom-input font-mono" placeholder="member / admin / user@example.com" />
-              </div>
-              <div class="field-item">
-                <label for="policy-action">Action</label>
+
+              {#if policyForm.subject_type !== 'any'}
+                <div class="policy-choice-block policy-wide">
+                  <label for="policy-subject-id">主体标识</label>
+                  {#if policyForm.subject_type === 'group'}
+                    <div class="suggestion-pills">
+                      {#each groups.filter(group => group.name !== 'super_admin') as group}
+                        <button
+                          type="button"
+                          class:active={policyForm.subject_id === group.name}
+                          on:click={() => setPolicyField('subject_id', group.name)}
+                        >
+                          {group.displayName}
+                        </button>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="suggestion-pills">
+                      {#each users.slice(0, 8) as user}
+                        <button
+                          type="button"
+                          class:active={policyForm.subject_id === user.username}
+                          on:click={() => setPolicyField('subject_id', user.username)}
+                        >
+                          {user.name || user.username}
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                  <input id="policy-subject-id" bind:value={policyForm.subject_id} class="custom-input font-mono" placeholder={policyForm.subject_type === 'group' ? 'member / admin' : 'user@example.com'} />
+                </div>
+              {/if}
+
+              <div class="policy-choice-block policy-wide">
+                <label for="policy-action">动作权限</label>
+                <div class="action-chip-grid">
+                  {#each policyActionOptions as option}
+                    <button
+                      type="button"
+                      class:active={policyForm.action === option.code}
+                      on:click={() => selectPolicyAction(option.code)}
+                    >
+                      <span>{option.name}</span>
+                      <small class="font-mono">{option.code}</small>
+                    </button>
+                  {/each}
+                </div>
                 <input id="policy-action" bind:value={policyForm.action} class="custom-input font-mono" placeholder="config:write" />
               </div>
-              <div class="field-item">
-                <label for="policy-resource-type">Resource Type</label>
-                <input id="policy-resource-type" bind:value={policyForm.resource_type} class="custom-input font-mono" placeholder="config / repo / demand" />
+
+              <div class="policy-choice-block">
+                <span class="field-label">资源类型</span>
+                <div class="segmented-pills wrap">
+                  {#each resourceTypeOptions as option}
+                    <button
+                      type="button"
+                      class:active={policyForm.resource_type === option.value}
+                      on:click={() => setPolicyField('resource_type', option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
-              <div class="field-item">
-                <label for="policy-resource-id">Resource ID</label>
+
+              <div class="policy-choice-block">
+                <label for="policy-resource-id">资源标识</label>
                 <input id="policy-resource-id" bind:value={policyForm.resource_id} class="custom-input font-mono" placeholder="可留空或填写具体资源" />
               </div>
-              <div class="field-item">
-                <label for="policy-scope">Scope</label>
-                <select id="policy-scope" bind:value={policyForm.scope} class="custom-select font-mono">
-                  <option value="global">global</option>
-                  <option value="repo">repo</option>
-                </select>
+
+              <div class="policy-choice-block">
+                <span class="field-label">作用域</span>
+                <div class="segmented-pills">
+                  {#each scopeOptions as option}
+                    <button
+                      type="button"
+                      class:active={policyForm.scope === option.value}
+                      on:click={() => setPolicyField('scope', option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
-              <div class="field-item">
+
+              <div class="policy-choice-block">
                 <label for="policy-scope-id">Scope ID</label>
-                <input id="policy-scope-id" bind:value={policyForm.scope_id} class="custom-input font-mono" placeholder="repo 名称，可留空" />
+                <input id="policy-scope-id" bind:value={policyForm.scope_id} disabled={policyForm.scope === 'global'} class="custom-input font-mono" placeholder="repo 名称，可留空" />
               </div>
-              <div class="field-item">
-                <label for="policy-priority">Priority</label>
-                <input id="policy-priority" type="number" bind:value={policyForm.priority} class="custom-input font-mono" />
+
+              <div class="policy-choice-block">
+                <span class="field-label">优先级</span>
+                <div class="priority-stepper">
+                  <button type="button" on:click={() => stepPolicyPriority(-10)}>-10</button>
+                  <strong class="font-mono">{policyForm.priority}</strong>
+                  <button type="button" on:click={() => stepPolicyPriority(10)}>+10</button>
+                </div>
               </div>
-              <label class="policy-toggle">
-                <input type="checkbox" bind:checked={policyForm.enabled} />
-                <span>启用策略</span>
-              </label>
-              <div class="field-item policy-wide">
-                <label for="policy-reason">Reason</label>
+
+              <div class="policy-choice-block">
+                <span class="field-label">状态</span>
+                <button
+                  type="button"
+                  class="toggle-pill"
+                  class:on={policyForm.enabled}
+                  on:click={() => setPolicyField('enabled', !policyForm.enabled)}
+                >
+                  <span>{policyForm.enabled ? '已启用' : '已停用'}</span>
+                  <i></i>
+                </button>
+              </div>
+
+              <div class="policy-choice-block policy-wide">
+                <label for="policy-reason">审计原因</label>
                 <input id="policy-reason" bind:value={policyForm.reason} class="custom-input" placeholder="写清为什么允许或拒绝，便于审计解释" />
               </div>
             </div>
+
             <div class="policy-actions">
               <Button variant="primary" loading={authorizationPolicySaving} on:click={saveAuthorizationPolicy}>
                 保存策略
@@ -1002,13 +1394,25 @@
             {#if authorizationExplainError}
               <div class="error-banner">{authorizationExplainError}</div>
             {/if}
-            <div class="policy-form-grid">
+            <div class="policy-form-grid explain-grid">
               <div class="field-item policy-wide">
                 <label for="explain-username">Username</label>
                 <input id="explain-username" bind:value={explainForm.username} class="custom-input font-mono" placeholder="user@example.com" />
               </div>
-              <div class="field-item">
+              <div class="field-item policy-wide">
                 <label for="explain-action">Action</label>
+                <div class="action-chip-grid compact">
+                  {#each policyActionOptions as option}
+                    <button
+                      type="button"
+                      class:active={explainForm.action === option.code}
+                      on:click={() => selectExplainAction(option.code)}
+                    >
+                      <span>{option.name}</span>
+                      <small class="font-mono">{option.code}</small>
+                    </button>
+                  {/each}
+                </div>
                 <input id="explain-action" bind:value={explainForm.action} class="custom-input font-mono" />
               </div>
               <div class="field-item">
@@ -1020,15 +1424,22 @@
                 <input id="explain-resource-id" bind:value={explainForm.resource_id} class="custom-input font-mono" />
               </div>
               <div class="field-item">
-                <label for="explain-scope">Scope</label>
-                <select id="explain-scope" bind:value={explainForm.scope} class="custom-select font-mono">
-                  <option value="global">global</option>
-                  <option value="repo">repo</option>
-                </select>
+                <span class="field-label">Scope</span>
+                <div class="segmented-pills">
+                  {#each scopeOptions as option}
+                    <button
+                      type="button"
+                      class:active={explainForm.scope === option.value}
+                      on:click={() => setExplainField('scope', option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
               <div class="field-item">
                 <label for="explain-scope-id">Scope ID</label>
-                <input id="explain-scope-id" bind:value={explainForm.scope_id} class="custom-input font-mono" />
+                <input id="explain-scope-id" bind:value={explainForm.scope_id} disabled={explainForm.scope === 'global'} class="custom-input font-mono" />
               </div>
             </div>
             <div class="policy-actions">
@@ -1164,7 +1575,7 @@
             <span class="audit-kicker font-mono">Versioned Config</span>
             <h3>配置版本审计与回滚</h3>
           </div>
-          <Button size="small" variant="ghost" on:click={fetchConfigVersions}>刷新记录</Button>
+          <Button size="small" variant="ghost" on:click={() => fetchConfigVersions()}>刷新记录</Button>
         </div>
 
         {#if configVersionError}
@@ -1473,6 +1884,49 @@
     align-items: start;
   }
 
+  .policy-template-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 14px 0 16px;
+  }
+
+  .policy-template-strip button {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.52);
+    background: rgba(2, 6, 23, 0.3);
+    color: #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  }
+
+  .policy-template-strip button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(56, 189, 248, 0.42);
+    background: rgba(8, 47, 73, 0.22);
+  }
+
+  .policy-template-strip span {
+    color: #f8fafc;
+    font-size: 0.86rem;
+    font-weight: 800;
+  }
+
+  .policy-template-strip small {
+    color: #64748b;
+    overflow-wrap: anywhere;
+  }
+
+  .policy-workbench.refined {
+    grid-template-columns: minmax(0, 1.28fr) minmax(320px, 0.72fr);
+  }
+
   .policy-panel {
     min-width: 0;
     border: 1px solid rgba(51, 65, 85, 0.48);
@@ -1493,29 +1947,236 @@
     font-size: 1rem;
   }
 
+  .policy-builder {
+    background:
+      linear-gradient(135deg, rgba(56, 189, 248, 0.08), transparent 36%),
+      rgba(15, 23, 42, 0.42);
+  }
+
+  .policy-builder-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .policy-choice-block {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .policy-choice-block label,
+  .field-label {
+    color: #94a3b8;
+    font-size: 0.78rem;
+    font-weight: 800;
+  }
+
+  .choice-row,
+  .segmented-pills,
+  .suggestion-pills,
+  .action-chip-grid {
+    display: flex;
+    gap: 8px;
+  }
+
+  .choice-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .choice-card,
+  .segmented-pills button,
+  .suggestion-pills button,
+  .action-chip-grid button,
+  .priority-stepper button,
+  .toggle-pill {
+    border: 1px solid rgba(51, 65, 85, 0.56);
+    background: rgba(2, 6, 23, 0.36);
+    color: #94a3b8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+  }
+
+  .choice-card {
+    min-height: 70px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    text-align: left;
+  }
+
+  .choice-card strong {
+    color: #e2e8f0;
+    font-size: 0.92rem;
+  }
+
+  .choice-card small {
+    color: #64748b;
+    line-height: 1.35;
+  }
+
+  .choice-card:hover,
+  .segmented-pills button:hover,
+  .suggestion-pills button:hover,
+  .action-chip-grid button:hover,
+  .priority-stepper button:hover,
+  .toggle-pill:hover {
+    transform: translateY(-1px);
+    color: #e2e8f0;
+    border-color: rgba(148, 163, 184, 0.52);
+  }
+
+  .choice-card.active.effect-deny {
+    border-color: rgba(248, 113, 113, 0.48);
+    background: rgba(127, 29, 29, 0.24);
+  }
+
+  .choice-card.active.effect-allow {
+    border-color: rgba(52, 211, 153, 0.48);
+    background: rgba(6, 78, 59, 0.22);
+  }
+
+  .segmented-pills {
+    flex-wrap: nowrap;
+    background: rgba(2, 6, 23, 0.38);
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    padding: 4px;
+    border-radius: 10px;
+  }
+
+  .segmented-pills.wrap,
+  .suggestion-pills,
+  .action-chip-grid {
+    flex-wrap: wrap;
+    background: transparent;
+    border: none;
+    padding: 0;
+  }
+
+  .segmented-pills button,
+  .suggestion-pills button {
+    min-height: 34px;
+    padding: 7px 10px;
+    flex: 1;
+    font-weight: 800;
+    font-size: 0.78rem;
+  }
+
+  .segmented-pills.wrap button,
+  .suggestion-pills button {
+    flex: none;
+  }
+
+  .segmented-pills button.active,
+  .suggestion-pills button.active {
+    color: #f8fafc;
+    border-color: rgba(56, 189, 248, 0.54);
+    background: rgba(8, 47, 73, 0.5);
+  }
+
+  .action-chip-grid {
+    max-height: 172px;
+    overflow: auto;
+    padding-right: 3px;
+  }
+
+  .action-chip-grid.compact {
+    max-height: 128px;
+  }
+
+  .action-chip-grid button {
+    min-width: 154px;
+    max-width: 220px;
+    min-height: 48px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-align: left;
+  }
+
+  .action-chip-grid button.active {
+    color: #f8fafc;
+    border-color: rgba(99, 102, 241, 0.56);
+    background: rgba(49, 46, 129, 0.36);
+  }
+
+  .action-chip-grid span {
+    font-size: 0.78rem;
+    font-weight: 800;
+  }
+
+  .action-chip-grid small {
+    color: #64748b;
+    overflow-wrap: anywhere;
+  }
+
+  .priority-stepper {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr) 54px;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .priority-stepper strong {
+    min-height: 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(51, 65, 85, 0.56);
+    background: rgba(2, 6, 23, 0.42);
+    border-radius: 8px;
+    color: #f8fafc;
+  }
+
+  .priority-stepper button {
+    font-weight: 900;
+    color: #cbd5e1;
+  }
+
+  .toggle-pill {
+    min-height: 38px;
+    padding: 4px 5px 4px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-weight: 800;
+  }
+
+  .toggle-pill i {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #475569;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  }
+
+  .toggle-pill.on {
+    color: #bbf7d0;
+    border-color: rgba(52, 211, 153, 0.38);
+    background: rgba(6, 78, 59, 0.24);
+  }
+
+  .toggle-pill.on i {
+    background: #34d399;
+  }
+
   .policy-form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
 
+  .explain-grid {
+    align-items: start;
+  }
+
   .policy-wide {
     grid-column: 1 / -1;
-  }
-
-  .policy-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: #cbd5e1;
-    font-size: 0.85rem;
-    align-self: center;
-  }
-
-  .policy-toggle input {
-    width: 16px;
-    height: 16px;
-    accent-color: #6366f1;
   }
 
   .policy-actions {
@@ -1977,19 +2638,10 @@
     gap: 8px;
   }
 
-  /* Matrix table custom styles */
-  .rotate-header {
-    text-align: center;
-    font-size: 0.75rem;
-    max-width: 110px;
-  }
-
-  .group-info-cell {
-    padding: 4px 0;
-  }
-
   .group-title-label {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
     font-size: 0.8rem;
     padding: 2px 6px;
     border-radius: 4px;
@@ -2002,45 +2654,211 @@
     color: #64748b;
   }
 
-  .matrix-checkbox, .matrix-checkbox-disabled {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border: 2px solid #475569;
-    border-radius: 4px;
-    background: #1e293b;
-    position: relative;
+  .permission-summary-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .group-coverage-card {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    background: rgba(2, 6, 23, 0.28);
+    border-radius: 8px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+  }
+
+  .group-coverage-card p {
+    margin: 3px 0 0 0;
+    color: #64748b;
+    font-size: 0.76rem;
+    line-height: 1.35;
+  }
+
+  .group-coverage-card strong {
+    color: #f8fafc;
+    font-size: 0.86rem;
+  }
+
+  .coverage-bar {
+    grid-column: 1 / -1;
+    height: 5px;
+    background: rgba(51, 65, 85, 0.56);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .coverage-bar i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #34d399);
+  }
+
+  .permission-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .permission-branch {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .branch-stem {
+    width: 2px;
+    justify-self: center;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.65), rgba(52, 211, 153, 0.12));
+  }
+
+  .branch-content {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    background: rgba(15, 23, 42, 0.38);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .branch-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.26);
+  }
+
+  .branch-key {
+    color: #38bdf8;
+    font-size: 0.68rem;
+    font-weight: 900;
+  }
+
+  .branch-header h3 {
+    margin: 4px 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .branch-header p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+
+  .branch-count {
+    flex: none;
+    color: #64748b;
+    font-size: 0.72rem;
+  }
+
+  .permission-nodes {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .permission-node {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.86fr) minmax(280px, 1.14fr);
+    gap: 14px;
+    padding: 14px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.34);
+  }
+
+  .permission-node:last-child {
+    border-bottom: none;
+  }
+
+  .permission-code {
+    color: #7dd3fc;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .permission-node-main strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.92rem;
+    margin-top: 4px;
+  }
+
+  .permission-node-main p {
+    margin: 5px 0 0 0;
+    color: #64748b;
+    font-size: 0.78rem;
+    line-height: 1.42;
+  }
+
+  .permission-group-toggles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    align-content: start;
+  }
+
+  .permission-group-toggles button {
+    min-width: 0;
+    min-height: 38px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(51, 65, 85, 0.58);
+    background: rgba(2, 6, 23, 0.32);
+    color: #64748b;
+    padding: 8px 9px;
     cursor: pointer;
-    outline: none;
-    transition: all 0.2s ease;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
   }
 
-  .matrix-checkbox:checked, .matrix-checkbox-disabled:checked {
-    background: #6366f1;
-    border-color: #6366f1;
+  .permission-group-toggles button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: rgba(56, 189, 248, 0.46);
+    color: #cbd5e1;
   }
 
-  .matrix-checkbox:checked::after, .matrix-checkbox-disabled:checked::after {
-    content: '';
-    position: absolute;
-    left: 4px;
-    top: 0px;
-    width: 5px;
-    height: 10px;
-    border: solid white;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
+  .permission-group-toggles button.enabled {
+    color: #bbf7d0;
+    border-color: rgba(52, 211, 153, 0.36);
+    background: rgba(6, 78, 59, 0.2);
   }
 
-  .matrix-checkbox:hover:not(:disabled) {
-    border-color: #6366f1;
-    box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
-  }
-
-  .matrix-checkbox-disabled {
-    opacity: 0.5;
+  .permission-group-toggles button.locked {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.3);
+    background: rgba(127, 29, 29, 0.18);
     cursor: not-allowed;
+  }
+
+  .permission-group-toggles button:disabled:not(.locked) {
+    opacity: 0.62;
+    cursor: not-allowed;
+  }
+
+  .permission-group-toggles span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+
+  .permission-group-toggles small {
+    flex: none;
+    color: currentColor;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.68rem;
+    font-weight: 900;
   }
 
   /* Audit Table Custom styles */
@@ -2273,5 +3091,85 @@
     background: rgba(16, 185, 129, 0.1);
     color: #34d399;
     border: 1px solid rgba(16, 185, 129, 0.2);
+  }
+
+  @media (max-width: 1100px) {
+    .settings-container {
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .settings-sidebar {
+      width: auto;
+      position: static;
+    }
+
+    .sidebar-nav {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .nav-group {
+      margin-bottom: 0;
+    }
+
+    .policy-workbench,
+    .policy-workbench.refined,
+    .policy-grid,
+    .version-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .permission-node {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .section-card,
+    .config-audit-panel {
+      padding: 16px;
+    }
+
+    .policy-template-strip,
+    .policy-builder-grid,
+    .policy-form-grid,
+    .permission-summary-strip,
+    .pack-summary {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .choice-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .permission-branch {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .branch-stem {
+      display: none;
+    }
+
+    .branch-header,
+    .config-audit-header,
+    .version-detail-header,
+    .flex-header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .permission-group-toggles {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .diff-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .diff-arrow {
+      text-align: left;
+    }
   }
 </style>

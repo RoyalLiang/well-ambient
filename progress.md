@@ -405,6 +405,43 @@
 | Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./...` | all Go packages pass | sandbox loopback bind failed, then passed with approved loopback access | pass |
 | Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings in untouched DemandKanban/TaskKanban/shared controls | pass |
 
+### Phase 17: AI Engine Tab, Permission Tree, and Policy Workbench Polish
+- **Status:** complete
+- Actions taken:
+  - Applied `design-taste-frontend`/taste-skill guidance as a restrained internal admin-console refactor.
+  - Split the AI settings surface into an independent `AI 引擎配置` tab and a separate `上下文事实` tab backed by the same `AIConfig` component view modes.
+  - Replaced native-looking AI context fact selects with button-backed choice grids and styled the number/range/text controls to match the dark product system.
+  - Added `GET /api/permissions` so the frontend can use the live seeded permission catalog rather than a stale hard-coded matrix.
+  - Rebuilt the visual permission matrix as a namespace-derived permission tree with per-group coverage toggles and responsive vertical layout.
+  - Reworked policy authorization from raw selects/checkbox/number inputs into quick-start templates, segmented subject/scope controls, permission action chips, a state toggle, and a priority stepper.
+  - Added `Button.size` support because existing config/settings call sites already used `size="small"`.
+  - Added focused backend coverage for the permission catalog handler.
+- Files modified:
+  - `internal/server/server.go`
+  - `internal/server/user_handlers.go`
+  - `internal/server/policy_authorization_test.go`
+  - `web/src/components/SettingsPanel.svelte`
+  - `web/src/components/config/AIConfig.svelte`
+  - `web/src/components/shared/Button.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Validation:
+  - `pnpm build` in `web` passed with existing Svelte accessibility warnings in unrelated/touched-old areas.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run TestHandleListPermissionsReturnsSeededCatalog` passed.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server/authz ./internal/agenda ./internal/config ./internal/kanban ./internal/telemetry` passed.
+  - Full `go test ./...` and `go test ./internal/server` remain blocked by sandbox loopback restrictions from existing `httptest.NewServer` tests.
+  - `pnpm check` still fails on pre-existing `TaskKanban.svelte` and `App.svelte` TypeScript errors; touched Settings/AI/Button files no longer add errors.
+
+## Latest Validation After Phase 17
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Frontend production build | `pnpm build` in `web` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+| Permission catalog handler test | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run TestHandleListPermissionsReturnsSeededCatalog` | `/api/permissions` handler returns seeded permissions | passed | pass |
+| Non-listener package tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server/authz ./internal/agenda ./internal/config ./internal/kanban ./internal/telemetry` | packages pass without local listener use | passed | pass |
+| Full server tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server` | server tests pass | blocked by sandbox loopback bind in existing `httptest.NewServer` tests | blocked |
+| Frontend type check | `pnpm check` in `web` | type check passes | failed on pre-existing `TaskKanban.svelte` and `App.svelte` errors outside touched Settings/AI/Button files | blocked |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

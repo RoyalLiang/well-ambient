@@ -38,6 +38,7 @@
   export let saveError = '';
   export let saveSuccess = false;
   export let lastUpdated = '';
+  export let view: 'engine' | 'context' | 'all' = 'all';
 
   type ContextFactID = number | string;
 
@@ -165,6 +166,8 @@
   let contextPreviewError = '';
   let contextPackPreview: ContextPackPreview | null = null;
 
+  $: showEnginePanel = view !== 'context';
+  $: showContextPanel = view !== 'engine';
   $: isConfigured = enabled || !!(baseURL || apiToken || modelName || activeContextFactCount);
   $: activeContextFactCount = contextFacts.filter(fact => fact.status === 'active').length;
   $: totalContextFactTokens = contextFacts.reduce((sum, fact) => sum + (Number(fact.token_count) || 0), 0);
@@ -354,6 +357,13 @@
 
   function labelFor(options: Array<{ value: string; label: string }>, value: string) {
     return options.find(option => option.value === value)?.label || value || '未定义';
+  }
+
+  function setContextFactField<K extends keyof ContextFactForm>(field: K, value: ContextFactForm[K]) {
+    contextFactForm = { ...contextFactForm, [field]: value };
+    if (field === 'scope' && value === 'global') {
+      contextFactForm = { ...contextFactForm, scope_id: '' };
+    }
   }
 
   function compactScope(fact: { scope: string; scope_id?: string }) {
@@ -552,7 +562,7 @@
 </script>
 
 <div class="wizard">
-  {#if saveSuccess}
+  {#if showEnginePanel && saveSuccess}
     <div class="success-screen">
       <div class="success-icon">
         <svg xmlns="http://www.w3.org/2000/svg" class="checkmark-svg" viewBox="0 0 52 52">
@@ -568,7 +578,7 @@
         </Button>
       </div>
     </div>
-  {:else if !editing && isConfigured}
+  {:else if showEnginePanel && !editing && isConfigured}
     <div class="config-overview">
       <div class="overview-header">
         <div>
@@ -614,7 +624,7 @@
         <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
     </div>
-  {:else}
+  {:else if showEnginePanel}
     <Steps {currentStep} {steps} />
 
     {#if currentStep === 1}
@@ -818,7 +828,7 @@
     {/if}
   {/if}
 
-  {#if !saveSuccess && (!editing || currentStep === 1)}
+  {#if showContextPanel && !saveSuccess && (!editing || currentStep === 1)}
     <div class="context-registry-panel">
       <div class="registry-header">
         <div>
@@ -899,30 +909,48 @@
 
           <div class="registry-form-grid">
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-type">事实类型</label>
-              <select id="context-fact-type" class="context-select" bind:value={contextFactForm.type}>
+              <span class="form-label-custom">事实类型</span>
+              <div class="context-choice-grid">
                 {#each contextFactTypes as option}
-                  <option value={option.value}>{option.label}</option>
+                  <button
+                    type="button"
+                    class:active={contextFactForm.type === option.value}
+                    on:click={() => setContextFactField('type', option.value)}
+                  >
+                    {option.label}
+                  </button>
                 {/each}
-              </select>
+              </div>
             </div>
 
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-status">状态</label>
-              <select id="context-fact-status" class="context-select" bind:value={contextFactForm.status}>
+              <span class="form-label-custom">状态</span>
+              <div class="context-choice-grid compact">
                 {#each contextFactStatuses as option}
-                  <option value={option.value}>{option.label}</option>
+                  <button
+                    type="button"
+                    class:active={contextFactForm.status === option.value}
+                    on:click={() => setContextFactField('status', option.value)}
+                  >
+                    {option.label}
+                  </button>
                 {/each}
-              </select>
+              </div>
             </div>
 
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-scope">Scope</label>
-              <select id="context-fact-scope" class="context-select" bind:value={contextFactForm.scope}>
+              <span class="form-label-custom">Scope</span>
+              <div class="context-choice-grid compact">
                 {#each contextFactScopes as option}
-                  <option value={option.value}>{option.label}</option>
+                  <button
+                    type="button"
+                    class:active={contextFactForm.scope === option.value}
+                    on:click={() => setContextFactField('scope', option.value)}
+                  >
+                    {option.label}
+                  </button>
                 {/each}
-              </select>
+              </div>
             </div>
 
             <div class="form-group-custom">
@@ -937,12 +965,18 @@
             </div>
 
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-source">来源</label>
-              <select id="context-fact-source" class="context-select" bind:value={contextFactForm.source}>
+              <span class="form-label-custom">来源</span>
+              <div class="context-choice-grid compact">
                 {#each contextFactSources as option}
-                  <option value={option.value}>{option.label}</option>
+                  <button
+                    type="button"
+                    class:active={contextFactForm.source === option.value}
+                    on:click={() => setContextFactField('source', option.value)}
+                  >
+                    {option.label}
+                  </button>
                 {/each}
-              </select>
+              </div>
             </div>
 
             <div class="form-group-custom">
@@ -1429,10 +1463,495 @@
     padding: 0 10px;
   }
 
+  .context-input[type='number'] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  .context-input[type='number']::-webkit-outer-spin-button,
+  .context-input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
   .context-textarea:focus,
   .context-input:focus {
     border-color: rgba(56, 189, 248, 0.72);
     box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
+  }
+
+  .context-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    gap: 7px;
+  }
+
+  .context-choice-grid.compact {
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  }
+
+  .context-choice-grid button {
+    min-height: 34px;
+    border: 1px solid rgba(51, 65, 85, 0.58);
+    background: rgba(2, 6, 23, 0.38);
+    color: #94a3b8;
+    border-radius: 8px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+  }
+
+  .context-choice-grid button:hover {
+    transform: translateY(-1px);
+    color: #cbd5e1;
+    border-color: rgba(56, 189, 248, 0.38);
+  }
+
+  .context-choice-grid button.active {
+    color: #f8fafc;
+    border-color: rgba(56, 189, 248, 0.54);
+    background: rgba(8, 47, 73, 0.5);
+    box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.12);
+  }
+
+  .context-registry-panel,
+  .pack-preview-panel {
+    margin-top: 18px;
+    border: 1px solid rgba(51, 65, 85, 0.52);
+    background:
+      linear-gradient(135deg, rgba(56, 189, 248, 0.06), transparent 34%),
+      rgba(15, 23, 42, 0.36);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  .registry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+  }
+
+  .registry-header.compact {
+    align-items: center;
+  }
+
+  .registry-header h4 {
+    margin: 4px 0 6px 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .registry-header p {
+    max-width: 720px;
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.48;
+  }
+
+  .registry-metrics {
+    flex: none;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .registry-metrics span,
+  .registry-section-title {
+    color: #94a3b8;
+    border: 1px solid rgba(51, 65, 85, 0.52);
+    background: rgba(2, 6, 23, 0.34);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .registry-error,
+  .inline-error,
+  .inline-success {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    line-height: 1.42;
+    margin-bottom: 12px;
+  }
+
+  .registry-error,
+  .inline-error {
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.24);
+    background: rgba(127, 29, 29, 0.16);
+  }
+
+  .inline-success {
+    color: #86efac;
+    border: 1px solid rgba(34, 197, 94, 0.24);
+    background: rgba(6, 78, 59, 0.16);
+  }
+
+  .registry-error {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .registry-error button,
+  .registry-toolbar button {
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: rgba(8, 47, 73, 0.28);
+    color: #7dd3fc;
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .registry-error button:hover,
+  .registry-toolbar button:hover:not(:disabled) {
+    background: rgba(8, 47, 73, 0.42);
+  }
+
+  .registry-toolbar button:disabled {
+    opacity: 0.58;
+    cursor: wait;
+  }
+
+  .registry-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.8fr) minmax(320px, 1.2fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .registry-list-column,
+  .registry-editor-column {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    background: rgba(2, 6, 23, 0.22);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .registry-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .registry-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    max-height: 560px;
+    overflow: auto;
+    padding-right: 3px;
+  }
+
+  .registry-fact-card {
+    width: 100%;
+    border: 1px solid rgba(51, 65, 85, 0.52);
+    background: rgba(15, 23, 42, 0.42);
+    color: #cbd5e1;
+    border-radius: 8px;
+    padding: 11px;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  }
+
+  .registry-fact-card:hover,
+  .registry-fact-card.active {
+    transform: translateY(-1px);
+    border-color: rgba(56, 189, 248, 0.46);
+    background: rgba(8, 47, 73, 0.22);
+  }
+
+  .registry-fact-card strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.88rem;
+    line-height: 1.35;
+    margin-top: 8px;
+  }
+
+  .registry-fact-card p {
+    margin: 6px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    line-height: 1.42;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .fact-card-top,
+  .pack-item-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .fact-type,
+  .fact-status,
+  .fact-meta {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    border-radius: 999px;
+    padding: 3px 7px;
+    font-size: 0.68rem;
+    font-weight: 900;
+  }
+
+  .fact-type {
+    color: #7dd3fc;
+    background: rgba(8, 47, 73, 0.34);
+    border: 1px solid rgba(56, 189, 248, 0.24);
+  }
+
+  .fact-status {
+    color: #cbd5e1;
+    background: rgba(51, 65, 85, 0.38);
+    border: 1px solid rgba(100, 116, 139, 0.22);
+  }
+
+  .fact-status.status-active {
+    color: #86efac;
+    background: rgba(6, 78, 59, 0.2);
+    border-color: rgba(34, 197, 94, 0.24);
+  }
+
+  .fact-status.status-draft {
+    color: #fde68a;
+    background: rgba(120, 53, 15, 0.18);
+    border-color: rgba(245, 158, 11, 0.22);
+  }
+
+  .fact-status.status-paused,
+  .fact-status.status-retired {
+    color: #94a3b8;
+  }
+
+  .fact-meta {
+    gap: 7px;
+    flex-wrap: wrap;
+    color: #64748b;
+    padding: 0;
+    margin-top: 9px;
+  }
+
+  .registry-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .registry-form-grid .wide,
+  .score-grid.wide {
+    grid-column: 1 / -1;
+  }
+
+  .score-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .score-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    background: rgba(2, 6, 23, 0.28);
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .score-grid span {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+
+  .score-grid b {
+    color: #e2e8f0;
+  }
+
+  .score-grid input[type='range'] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(56, 189, 248, 0.82), rgba(52, 211, 153, 0.78));
+    outline: none;
+  }
+
+  .score-grid input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #f8fafc;
+    border: 3px solid #0891b2;
+    box-shadow: 0 3px 10px rgba(2, 6, 23, 0.48);
+    cursor: pointer;
+  }
+
+  .score-grid input[type='range']::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #f8fafc;
+    border: 3px solid #0891b2;
+    box-shadow: 0 3px 10px rgba(2, 6, 23, 0.48);
+    cursor: pointer;
+  }
+
+  .registry-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(51, 65, 85, 0.38);
+  }
+
+  .registry-empty,
+  .registry-skeleton {
+    border: 1px dashed rgba(71, 85, 105, 0.54);
+    background: rgba(2, 6, 23, 0.22);
+    color: #64748b;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+
+  .registry-empty strong {
+    display: block;
+    color: #cbd5e1;
+    margin-bottom: 5px;
+  }
+
+  .registry-empty p {
+    margin: 0;
+  }
+
+  .registry-empty.compact {
+    padding: 12px;
+  }
+
+  .registry-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .registry-skeleton span {
+    height: 34px;
+    border-radius: 8px;
+    background: linear-gradient(90deg, rgba(30, 41, 59, 0.55), rgba(51, 65, 85, 0.38), rgba(30, 41, 59, 0.55));
+    background-size: 180% 100%;
+    animation: registryPulse 1.4s ease-in-out infinite;
+  }
+
+  .registry-skeleton.slim span {
+    height: 22px;
+  }
+
+  @keyframes registryPulse {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+
+  .pack-preview-panel {
+    background:
+      linear-gradient(135deg, rgba(52, 211, 153, 0.06), transparent 34%),
+      rgba(15, 23, 42, 0.34);
+  }
+
+  .preview-demand {
+    min-height: 86px;
+    margin-bottom: 12px;
+  }
+
+  .pack-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .pack-summary div {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    background: rgba(2, 6, 23, 0.28);
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .pack-summary span {
+    display: block;
+    color: #64748b;
+    font-size: 0.7rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+
+  .pack-summary strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+  }
+
+  .pack-text {
+    max-height: 180px;
+  }
+
+  .pack-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+  }
+
+  .pack-item {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    background: rgba(2, 6, 23, 0.24);
+    border-radius: 8px;
+    padding: 11px;
+  }
+
+  .pack-item strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.86rem;
+    margin-top: 8px;
+  }
+
+  .pack-item p {
+    margin: 6px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    line-height: 1.45;
   }
 
   .details-pre {
@@ -1614,12 +2133,33 @@
   }
 
   @media (max-width: 820px) {
+    .overview-grid,
+    .context-health-grid,
+    .registry-layout,
+    .registry-form-grid,
+    .score-grid,
+    .pack-summary {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .registry-header,
+    .overview-header,
+    .credential-collapsed {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
     .context-grid {
       grid-template-columns: minmax(0, 1fr);
     }
 
     .hours-field {
       max-width: none;
+    }
+
+    .context-choice-grid,
+    .context-choice-grid.compact {
+      grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
     }
   }
 </style>
