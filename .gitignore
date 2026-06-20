@@ -19,9 +19,9 @@ go.work
 go.work.sum
 
 # Go build output
-well-ambient
-server
-dist/
+/well-ambient
+/server
+/dist/
 
 # Node/Vite/Svelte dependencies & output
 node_modules/
@@ -49,6 +49,6 @@ config.yaml
 # OS metadata
 .DS_Store
 Thumbs.db
-server
-server_bin
-well-ambient-server
+/server
+/server_bin
+/well-ambient-server

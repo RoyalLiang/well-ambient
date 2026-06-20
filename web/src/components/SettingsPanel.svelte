@@ -61,8 +61,14 @@
       enabled: boolean;
       provider: string;
       base_url: string;
+      endpoint_type?: string;
       api_token: string;
       model: string;
+      project_architecture?: string;
+      delivery_workflow?: string;
+      implemented_features?: string;
+      estimation_guidelines?: string;
+      default_work_hours_per_day?: number;
     };
     jira: {
       enabled: boolean;
@@ -85,13 +91,33 @@
       bot: { enabled: false, chat_group: '' },
       bitable: { enabled: false, app_token: '', table_id: '', status_column: '', task_id_column: '' }
     },
-    ai: { enabled: false, provider: 'openai', base_url: '', api_token: '', model: '' },
+    ai: {
+      enabled: false,
+      provider: 'openai',
+      base_url: '',
+      endpoint_type: 'completions',
+      api_token: '',
+      model: '',
+      project_architecture: '',
+      delivery_workflow: '',
+      implemented_features: '',
+      estimation_guidelines: '',
+      default_work_hours_per_day: 8
+    },
     jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '' }
   };
 
   let saving = false;
   let saveError = '';
   let saveSuccess = false;
+  let saveSuccessKey: string | null = null;
+
+  function switchSection(section: typeof activeSection) {
+    activeSection = section;
+    saveError = '';
+    saveSuccess = false;
+    saveSuccessKey = null;
+  }
 
   // RBAC lists
   interface UserMembership {
@@ -187,6 +213,7 @@
     saving = true;
     saveError = '';
     saveSuccess = false;
+    saveSuccessKey = null;
 
     try {
       const res = await fetch('/api/config', {
@@ -199,6 +226,7 @@
       if (result.success) {
         globalConfig = newConfig;
         saveSuccess = true;
+        saveSuccessKey = key;
       } else {
         saveError = '保存配置失败: ' + result.message;
       }
@@ -207,6 +235,12 @@
     } finally {
       saving = false;
     }
+  }
+
+  function handleConfigClose() {
+    saveError = '';
+    saveSuccess = false;
+    saveSuccessKey = null;
   }
 
   // RBAC Requests
@@ -416,7 +450,7 @@
 
     const handleFocus = (e: any) => {
       if (e.detail && ['gitlab', 'feishu', 'jira', 'ai'].includes(e.detail)) {
-        activeSection = e.detail;
+        switchSection(e.detail);
       }
     };
     window.addEventListener('focus-settings-section', handleFocus);
@@ -439,19 +473,19 @@
     <nav class="sidebar-nav">
       <div class="nav-group">
         <span class="group-title">集成设置</span>
-        <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => activeSection = 'gitlab'}>
+        <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
           <span>🔌 GitLab 仓库</span>
           <span class="status-indicator indicator-{gitlabStatus}"></span>
         </button>
-        <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => activeSection = 'feishu'}>
+        <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => switchSection('feishu')}>
           <span>🤖 飞书消息同步</span>
           <span class="status-indicator indicator-{feishuStatus}"></span>
         </button>
-        <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => activeSection = 'jira'}>
+        <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => switchSection('jira')}>
           <span>📝 Jira 服务关联</span>
           <span class="status-indicator indicator-{jiraStatus}"></span>
         </button>
-        <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => activeSection = 'ai'}>
+        <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
           <span>🧠 需求解构引擎</span>
           <span class="status-indicator indicator-{aiStatus}"></span>
         </button>
@@ -460,13 +494,13 @@
       {#if currentUserPermissions.includes('users:read')}
         <div class="nav-group">
           <span class="group-title">安全与授权</span>
-          <button class="nav-item {activeSection === 'users' ? 'active' : ''}" on:click={() => activeSection = 'users'}>
+          <button class="nav-item {activeSection === 'users' ? 'active' : ''}" on:click={() => switchSection('users')}>
             👥 成员角色管理
           </button>
-          <button class="nav-item {activeSection === 'matrix' ? 'active' : ''}" on:click={() => activeSection = 'matrix'}>
+          <button class="nav-item {activeSection === 'matrix' ? 'active' : ''}" on:click={() => switchSection('matrix')}>
             🔒 权限矩阵矩阵
           </button>
-          <button class="nav-item {activeSection === 'audit' ? 'active' : ''}" on:click={() => activeSection = 'audit'}>
+          <button class="nav-item {activeSection === 'audit' ? 'active' : ''}" on:click={() => switchSection('audit')}>
             📋 审计安全日志
           </button>
         </div>
@@ -478,19 +512,19 @@
   <main class="settings-main">
     {#if activeSection === 'gitlab'}
       <div class="section-card">
-        <GitLabConfig config={globalConfig.gitlab} on:save={handleSaveConfig} {saveError} {saving} {saveSuccess} />
+        <GitLabConfig config={globalConfig.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
       </div>
     {:else if activeSection === 'feishu'}
       <div class="section-card">
-        <FeishuConfig config={globalConfig.feishu} on:save={handleSaveConfig} {saveError} {saving} {saveSuccess} />
+        <FeishuConfig config={globalConfig.feishu} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
       </div>
     {:else if activeSection === 'jira'}
       <div class="section-card">
-        <JiraConfig config={globalConfig.jira} on:save={handleSaveConfig} {saveError} {saving} {saveSuccess} />
+        <JiraConfig config={globalConfig.jira} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
       </div>
     {:else if activeSection === 'ai'}
       <div class="section-card">
-        <AIConfig config={globalConfig.ai} on:save={handleSaveConfig} {saveError} {saving} {saveSuccess} />
+        <AIConfig config={globalConfig.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
       </div>
     {:else if activeSection === 'users'}
       <div class="section-card">

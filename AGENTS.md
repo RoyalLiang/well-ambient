@@ -23,3 +23,9 @@ Keep active context to goal, phase, constraints, findings, touched files, valida
 Frontend UI rule:
 
 - Any change that touches frontend UI, visual design, interaction, layout, or user-facing styling must use `taste-skill` before editing. If `taste-skill` is unavailable in the current Codex skill list, explicitly record that fallback and use `frontend-design` as the temporary substitute.
+
+Git delivery rule:
+
+- If the project is in git mode and code/docs/config changes are made, stage only files intentionally touched for the current task and commit promptly before final delivery.
+- The commit message must clearly describe the change/fix/new feature/optimization content.
+- Never stage unrelated dirty files. If a commit cannot be created, record the blocker and report it in final delivery.

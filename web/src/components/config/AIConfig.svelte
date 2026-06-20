@@ -5,6 +5,7 @@
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
+  import AIContextCenter from './AIContextCenter.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -15,13 +16,23 @@
     endpoint_type?: string;
     api_token: string;
     model: string;
+    project_architecture?: string;
+    delivery_workflow?: string;
+    implemented_features?: string;
+    estimation_guidelines?: string;
+    default_work_hours_per_day?: number;
   } = {
     enabled: false,
     provider: 'openai',
     base_url: '',
     endpoint_type: 'completions',
     api_token: '',
-    model: ''
+    model: '',
+    project_architecture: '',
+    delivery_workflow: '',
+    implemented_features: '',
+    estimation_guidelines: '',
+    default_work_hours_per_day: 8
   };
 
   export let saving = false;
@@ -38,12 +49,22 @@
   let endpointType = config.endpoint_type || 'completions';
   let apiToken = config.api_token || '';
   let modelName = config.model || '';
+  let projectArchitecture = config.project_architecture || '';
+  let deliveryWorkflow = config.delivery_workflow || '';
+  let implementedFeatures = config.implemented_features || '';
+  let estimationGuidelines = config.estimation_guidelines || '';
+  let defaultWorkHoursPerDay = config.default_work_hours_per_day || 8;
 
   // Test states
   let testing = false;
   let testError = '';
   let testSuccess = '';
   let testDetails = '';
+
+  function normalizedWorkHours() {
+    const hours = Number(defaultWorkHoursPerDay);
+    return Number.isFinite(hours) && hours > 0 ? hours : 8;
+  }
 
   async function testConnection() {
     if (!baseURL || !apiToken) {
@@ -68,7 +89,12 @@
             base_url: baseURL,
             endpoint_type: endpointType,
             api_token: apiToken,
-            model: modelName
+            model: modelName,
+            project_architecture: projectArchitecture,
+            delivery_workflow: deliveryWorkflow,
+            implemented_features: implementedFeatures,
+            estimation_guidelines: estimationGuidelines,
+            default_work_hours_per_day: normalizedWorkHours()
           }
         })
       });
@@ -98,7 +124,12 @@
       base_url: baseURL,
       endpoint_type: endpointType,
       api_token: apiToken,
-      model: modelName
+      model: modelName,
+      project_architecture: projectArchitecture,
+      delivery_workflow: deliveryWorkflow,
+      implemented_features: implementedFeatures,
+      estimation_guidelines: estimationGuidelines,
+      default_work_hours_per_day: normalizedWorkHours()
     };
 
     dispatch('save', {
@@ -121,6 +152,10 @@
     if (currentStep > 1) {
       currentStep -= 1;
     }
+  }
+
+  function contextStatus(value: string) {
+    return value.trim() ? '已配置' : '未配置';
   }
 </script>
 
@@ -157,8 +192,8 @@
               id="ai-enabled"
               label="启用 AI 需求解构引擎"
               bind:checked={enabled}
-              helperText="开启后，自解构交互界面将不再使用 Mock 演示数据，而是通过此大模型 API 实时推理需求分配。"
             />
+            <span class="helper-text-custom">开启后，自解构交互界面将不再使用 Mock 演示数据，而是通过此大模型 API 实时推理需求分配。</span>
           </div>
 
           {#if enabled}
@@ -171,7 +206,7 @@
             />
 
             <div class="form-group-custom">
-              <label class="form-label-custom">端点类型 (Endpoint Type)</label>
+              <span class="form-label-custom">端点类型 (Endpoint Type)</span>
               <div class="segmented-control">
                 <button 
                   type="button" 
@@ -240,6 +275,82 @@
               </Button>
             </div>
           {/if}
+
+          <div class="context-config-panel">
+            <div class="context-header">
+              <div>
+                <span class="context-kicker">AI Project Context</span>
+                <h4>项目上下文与估算口径</h4>
+              </div>
+              <span class="context-chip">用于需求解构 Prompt</span>
+            </div>
+
+            <div class="context-grid">
+              <div class="form-group-custom context-field wide">
+                <label class="form-label-custom" for="ai-project-architecture">当前系统架构与模块边界</label>
+                <textarea
+                  id="ai-project-architecture"
+                  class="context-textarea"
+                  rows="4"
+                  placeholder="例如：Go 后端负责配置/API/任务归档，Svelte 前端负责看板、决策面板与需求解构，GitLab/Jira/飞书作为事实源..."
+                  bind:value={projectArchitecture}
+                ></textarea>
+                <span class="helper-text-custom">帮助 AI 判断新增需求是复用、改造还是新增模块，避免按从零开发估算。</span>
+              </div>
+
+              <div class="form-group-custom context-field wide">
+                <label class="form-label-custom" for="ai-delivery-workflow">研发流程与状态流转</label>
+                <textarea
+                  id="ai-delivery-workflow"
+                  class="context-textarea"
+                  rows="4"
+                  placeholder="例如：产品需求 -> AI 解构影子任务 -> 看板排期 -> GitLab 分支/MR -> Jira 状态同步 -> 决策面板介入..."
+                  bind:value={deliveryWorkflow}
+                ></textarea>
+                <span class="helper-text-custom">让 AI 估算跨仓、联调、评审、验收和状态回写的真实链路成本。</span>
+              </div>
+
+              <div class="form-group-custom context-field wide">
+                <label class="form-label-custom" for="ai-implemented-features">已实现能力与约束</label>
+                <textarea
+                  id="ai-implemented-features"
+                  class="context-textarea"
+                  rows="4"
+                  placeholder="例如：已具备需求解构、影子任务归档、GitLab/Jira 同步、日报/周报预览、红区诊断盘、人工干预面板..."
+                  bind:value={implementedFeatures}
+                ></textarea>
+                <span class="helper-text-custom">明确哪些能力已经存在，AI 只评估增量改造、集成和验证成本。</span>
+              </div>
+
+              <div class="form-group-custom context-field wide">
+                <label class="form-label-custom" for="ai-estimation-guidelines">工时估算口径</label>
+                <textarea
+                  id="ai-estimation-guidelines"
+                  class="context-textarea"
+                  rows="4"
+                  placeholder="例如：以小时为主；包含开发、联调、自测、回归和配置成本；不把已实现通用组件重复计入；高不确定性需显式写入风险。"
+                  bind:value={estimationGuidelines}
+                ></textarea>
+                <span class="helper-text-custom">统一整体难度、子任务小时数和估算依据的判断方式。</span>
+              </div>
+
+              <div class="form-group-custom context-field hours-field">
+                <label class="form-label-custom" for="ai-work-hours">每日折算小时</label>
+                <input
+                  id="ai-work-hours"
+                  class="context-input"
+                  type="number"
+                  min="1"
+                  max="24"
+                  step="0.5"
+                  bind:value={defaultWorkHoursPerDay}
+                />
+                <span class="helper-text-custom">用于归档和排期折算，默认 8 小时/天。</span>
+              </div>
+            </div>
+          </div>
+
+          <AIContextCenter />
         </div>
 
         <div class="actions">
@@ -282,6 +393,22 @@
             <div class="summary-row">
               <span class="summary-label">指定模型 (Model):</span>
               <span class="summary-value font-mono">{modelName || 'gpt-4o (默认)'}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">项目架构上下文:</span>
+              <span class="summary-value">{contextStatus(projectArchitecture)}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">研发流程上下文:</span>
+              <span class="summary-value">{contextStatus(deliveryWorkflow)}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">已实现能力上下文:</span>
+              <span class="summary-value">{contextStatus(implementedFeatures)}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">估算口径:</span>
+              <span class="summary-value">{contextStatus(estimationGuidelines)} · {defaultWorkHoursPerDay || 8} 小时/天</span>
             </div>
             <div class="summary-row">
               <span class="summary-label">API 凭证 Token:</span>
@@ -412,6 +539,96 @@
     margin-bottom: 12px;
   }
 
+  .context-config-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 14px;
+    background: rgba(15, 23, 42, 0.44);
+    border: 1px solid rgba(51, 65, 85, 0.55);
+    border-radius: 8px;
+    box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+  }
+
+  .context-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .context-header h4 {
+    margin: 3px 0 0 0;
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+
+  .context-kicker {
+    color: #38bdf8;
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .context-chip {
+    flex: none;
+    padding: 4px 8px;
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    border-radius: 4px;
+    background: rgba(8, 47, 73, 0.32);
+    color: #7dd3fc;
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+
+  .context-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .context-field.wide {
+    min-width: 0;
+  }
+
+  .hours-field {
+    max-width: 220px;
+  }
+
+  .context-textarea,
+  .context-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(2, 6, 23, 0.62);
+    border: 1px solid rgba(71, 85, 105, 0.62);
+    border-radius: 6px;
+    color: #e2e8f0;
+    font: inherit;
+    font-size: 0.82rem;
+    outline: none;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .context-textarea {
+    min-height: 92px;
+    padding: 10px 11px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+
+  .context-input {
+    height: 38px;
+    padding: 0 10px;
+  }
+
+  .context-textarea:focus,
+  .context-input:focus {
+    border-color: rgba(56, 189, 248, 0.72);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
+  }
+
   .details-pre {
     margin: 12px 0 0 0;
     padding: 12px;
@@ -440,6 +657,7 @@
   .summary-row {
     display: flex;
     justify-content: space-between;
+    gap: 16px;
     font-size: 0.85rem;
     border-bottom: 1px solid rgba(51, 65, 85, 0.3);
     padding-bottom: 8px;
@@ -451,13 +669,17 @@
   }
 
   .summary-label {
+    flex: none;
     color: #64748b;
     font-weight: 500;
   }
 
   .summary-value {
+    min-width: 0;
     color: #cbd5e1;
     font-weight: 600;
+    text-align: right;
+    overflow-wrap: anywhere;
   }
 
   .text-success {
@@ -583,5 +805,15 @@
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+
+  @media (max-width: 820px) {
+    .context-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .hours-field {
+      max-width: none;
+    }
   }
 </style>

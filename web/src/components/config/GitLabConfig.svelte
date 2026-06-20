@@ -43,6 +43,24 @@
   let loadProjectsError = '';
   let projectSearchQuery = '';
 
+  type WebhookProjectResult = {
+    project_id?: string;
+    name?: string;
+    path?: string;
+    status: string;
+    message: string;
+    hook_id?: number;
+  };
+
+  let webhookSyncLoading = false;
+  let webhookStatusLoading = false;
+  let webhookSyncError = '';
+  let webhookResults: WebhookProjectResult[] = [];
+  let webhookResultURL = '';
+
+  $: webhookReady = !!(baseURL && apiToken && secretToken && repoList.length > 0);
+  $: webhookSummary = summarizeWebhookResults(webhookResults);
+
   async function fetchGitLabProjects() {
     if (!baseURL || !apiToken) {
       loadProjectsError = '请确保已在第一步填写 GitLab URL 并配置了 API 访问令牌';
@@ -183,6 +201,70 @@
     }, 2000);
   }
 
+  function summarizeWebhookResults(results: WebhookProjectResult[]) {
+    return results.reduce((summary, item) => {
+      const key = item.status || 'unknown';
+      summary[key] = (summary[key] || 0) + 1;
+      return summary;
+    }, {} as Record<string, number>);
+  }
+
+  function webhookStatusLabel(status: string) {
+    const labels: Record<string, string> = {
+      ok: '正常',
+      created: '已创建',
+      updated: '已更新',
+      missing: '未安装',
+      drift: '配置漂移',
+      skipped: '已跳过',
+      error: '失败'
+    };
+    return labels[status] || status || '未知';
+  }
+
+  async function callWebhookAutomation(mode: 'status' | 'ensure') {
+    webhookSyncError = '';
+    if (!webhookReady) {
+      webhookSyncError = '请先保存 GitLab URL、API Token、Secret Token 与仓库清单后再执行 Webhook 自动配置。';
+      return;
+    }
+
+    if (mode === 'status') {
+      webhookStatusLoading = true;
+    } else {
+      webhookSyncLoading = true;
+    }
+
+    try {
+      const params = new URLSearchParams({ webhook_url: webhookURL });
+      const endpoint = mode === 'status'
+        ? `/api/gitlab/webhooks/status?${params.toString()}`
+        : '/api/gitlab/webhooks/ensure';
+      const res = await fetch(endpoint, {
+        method: mode === 'status' ? 'GET' : 'POST',
+        headers: mode === 'status' ? undefined : { 'Content-Type': 'application/json' },
+        body: mode === 'status' ? undefined : JSON.stringify({
+          webhook_url: webhookURL,
+          repos: repoList
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      webhookResults = data.results || [];
+      webhookResultURL = data.webhook_url || webhookURL;
+    } catch (e: any) {
+      webhookSyncError = e.message || 'Webhook 自动配置请求失败';
+    } finally {
+      webhookStatusLoading = false;
+      webhookSyncLoading = false;
+    }
+  }
+
   async function saveConfig() {
     const updatedGitLab = {
       base_url: baseURL,
@@ -227,6 +309,74 @@
       </div>
       <h4 class="success-title">GitLab Webhook 配置已成功应用！</h4>
       <p class="success-desc font-mono">Webhook 令牌与仓库监听清单已更新生效。</p>
+      <div class="webhook-automation-panel">
+        <div class="webhook-auto-header">
+          <div>
+            <h5>项目 Webhook 自动配置</h5>
+            <p>对已保存的仓库清单执行安装、更新或状态巡检。</p>
+          </div>
+          <div class="webhook-auto-actions">
+            <Button variant="secondary" loading={webhookStatusLoading} disabled={!webhookReady || webhookSyncLoading} on:click={() => callWebhookAutomation('status')}>
+              巡检状态
+            </Button>
+            <Button variant="primary" loading={webhookSyncLoading} disabled={!webhookReady || webhookStatusLoading} on:click={() => callWebhookAutomation('ensure')}>
+              安装/更新
+            </Button>
+          </div>
+        </div>
+
+        <div class="webhook-auto-meta font-mono">
+          <span>REPOS {repoList.length}</span>
+          <span>URL {webhookResultURL || webhookURL}</span>
+          {#if Object.keys(webhookSummary).length > 0}
+            <span>
+              {#each Object.entries(webhookSummary) as [status, count], index}
+                {index > 0 ? ' / ' : ''}{webhookStatusLabel(status)} {count}
+              {/each}
+            </span>
+          {/if}
+        </div>
+
+        {#if webhookSyncError}
+          <div class="webhook-auto-error font-mono">{webhookSyncError}</div>
+        {/if}
+
+        {#if webhookResults.length > 0}
+          <div class="webhook-result-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>仓库</th>
+                  <th>Project</th>
+                  <th>状态</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each webhookResults as item}
+                  <tr>
+                    <td>
+                      <span class="repo-name-cell">{item.name || item.path || item.project_id || '-'}</span>
+                      {#if item.path}
+                        <span class="repo-path-cell font-mono">{item.path}</span>
+                      {/if}
+                    </td>
+                    <td class="font-mono">{item.project_id || item.hook_id || '-'}</td>
+                    <td>
+                      <span class="webhook-status-pill {item.status}">{webhookStatusLabel(item.status)}</span>
+                    </td>
+                    <td>{item.message}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+
+        {#if !webhookReady}
+          <div class="webhook-auto-hint">需要保存 GitLab URL、API Token、Secret Token 与至少 1 个仓库后才能自动安装。</div>
+        {/if}
+      </div>
       <div class="success-actions">
         <Button variant="primary" on:click={() => dispatch('close')}>
           完成并关闭
@@ -571,6 +721,167 @@
     line-height: 1.4;
   }
 
+  .webhook-automation-panel {
+    width: 100%;
+    background: rgba(15, 23, 42, 0.48);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 14px;
+    margin: 18px 0;
+    box-sizing: border-box;
+    text-align: left;
+  }
+
+  .webhook-auto-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .webhook-auto-header h5 {
+    margin: 0 0 4px 0;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+  }
+
+  .webhook-auto-header p,
+  .webhook-auto-hint {
+    margin: 0;
+    color: #64748b;
+    font-size: 0.74rem;
+    line-height: 1.45;
+  }
+
+  .webhook-auto-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .webhook-auto-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .webhook-auto-meta span {
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.36);
+    border-radius: 6px;
+    padding: 5px 8px;
+    color: #94a3b8;
+    font-size: 0.68rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .webhook-auto-error {
+    margin-top: 10px;
+    border: 1px solid rgba(248, 113, 113, 0.24);
+    background: rgba(127, 29, 29, 0.14);
+    color: #fca5a5;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.7rem;
+    white-space: pre-wrap;
+  }
+
+  .webhook-result-table {
+    width: 100%;
+    overflow-x: auto;
+    margin-top: 12px;
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    border-radius: 8px;
+  }
+
+  .webhook-result-table table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 620px;
+    font-size: 0.75rem;
+  }
+
+  .webhook-result-table th,
+  .webhook-result-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.25);
+    vertical-align: top;
+  }
+
+  .webhook-result-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .webhook-result-table th {
+    color: #64748b;
+    background: rgba(2, 6, 23, 0.28);
+    font-weight: 700;
+  }
+
+  .webhook-result-table td {
+    color: #cbd5e1;
+  }
+
+  .repo-name-cell,
+  .repo-path-cell {
+    display: block;
+  }
+
+  .repo-name-cell {
+    color: #f1f5f9;
+    font-weight: 700;
+  }
+
+  .repo-path-cell {
+    color: #64748b;
+    font-size: 0.68rem;
+    margin-top: 2px;
+  }
+
+  .webhook-status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: #cbd5e1;
+    background: rgba(148, 163, 184, 0.1);
+    white-space: nowrap;
+  }
+
+  .webhook-status-pill.ok,
+  .webhook-status-pill.created,
+  .webhook-status-pill.updated {
+    color: #86efac;
+    border-color: rgba(34, 197, 94, 0.28);
+    background: rgba(22, 101, 52, 0.16);
+  }
+
+  .webhook-status-pill.drift,
+  .webhook-status-pill.missing {
+    color: #fbbf24;
+    border-color: rgba(245, 158, 11, 0.28);
+    background: rgba(120, 53, 15, 0.18);
+  }
+
+  .webhook-status-pill.error {
+    color: #fca5a5;
+    border-color: rgba(248, 113, 113, 0.26);
+    background: rgba(127, 29, 29, 0.16);
+  }
+
+  .webhook-auto-hint {
+    margin-top: 10px;
+  }
+
   .details-pre {
     background: rgba(15, 23, 42, 0.6);
     border: 1px solid rgba(51, 65, 85, 0.4);
@@ -583,6 +894,51 @@
     margin: 8px 0 0 0;
     white-space: pre-wrap;
     word-break: break-all;
+  }
+
+  .project-cards-container,
+  .summary-repos,
+  .table-container,
+  .webhook-result-table,
+  .details-pre {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(56, 189, 248, 0.42) rgba(15, 23, 42, 0.72);
+  }
+
+  .project-cards-container::-webkit-scrollbar,
+  .summary-repos::-webkit-scrollbar,
+  .table-container::-webkit-scrollbar,
+  .webhook-result-table::-webkit-scrollbar,
+  .details-pre::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .project-cards-container::-webkit-scrollbar-track,
+  .summary-repos::-webkit-scrollbar-track,
+  .table-container::-webkit-scrollbar-track,
+  .webhook-result-table::-webkit-scrollbar-track,
+  .details-pre::-webkit-scrollbar-track {
+    background: rgba(2, 6, 23, 0.42);
+    border-radius: 999px;
+  }
+
+  .project-cards-container::-webkit-scrollbar-thumb,
+  .summary-repos::-webkit-scrollbar-thumb,
+  .table-container::-webkit-scrollbar-thumb,
+  .webhook-result-table::-webkit-scrollbar-thumb,
+  .details-pre::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.54), rgba(99, 102, 241, 0.42));
+    border: 2px solid rgba(2, 6, 23, 0.42);
+    border-radius: 999px;
+  }
+
+  .project-cards-container::-webkit-scrollbar-thumb:hover,
+  .summary-repos::-webkit-scrollbar-thumb:hover,
+  .table-container::-webkit-scrollbar-thumb:hover,
+  .webhook-result-table::-webkit-scrollbar-thumb:hover,
+  .details-pre::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(125, 211, 252, 0.72), rgba(129, 140, 248, 0.58));
   }
 
   .token-row {
@@ -756,6 +1112,9 @@
   .summary-value {
     color: #cbd5e1;
     font-weight: 600;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: right;
   }
 
   .summary-repos {
@@ -774,10 +1133,21 @@
   .summary-repo-item {
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    gap: 10px;
     color: #94a3b8;
+    min-width: 0;
+  }
+
+  .summary-repo-item span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .badge {
+    flex: none;
     font-size: 0.65rem;
     background: #1e293b;
     color: #38bdf8;
