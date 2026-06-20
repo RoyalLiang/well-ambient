@@ -62,9 +62,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
 	s.mux.HandleFunc("POST /api/gitlab/webhooks/ensure", s.withPermission("config:write", s.handleEnsureGitLabWebhooks))
 	s.mux.HandleFunc("GET /api/gitlab/webhooks/status", s.withPermission("config:write", s.handleGetGitLabWebhookStatus))
-	s.mux.HandleFunc("GET /api/ai-context/profiles", s.withPermission("config:read", s.handleListAIContextProfiles))
-	s.mux.HandleFunc("POST /api/ai-context/import", s.withPermission("config:write", s.handleImportAIContext))
-	s.mux.HandleFunc("POST /api/ai-context/profiles/{id}/toggle", s.withPermission("config:write", s.handleToggleAIContextProfile))
 
 	// Protected User, Groups, and RBAC APIs
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleGetCurrentUser))

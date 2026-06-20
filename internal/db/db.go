@@ -65,27 +65,6 @@ type DeconstructArchive struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
-// AIContextProfile stores generated module context profiles that can be
-// selectively injected into AI deconstruction prompts.
-type AIContextProfile struct {
-	ID                   uint      `gorm:"primaryKey" json:"id"`
-	ModuleName           string    `gorm:"index;size:160" json:"module_name"`
-	SourceFilename       string    `json:"source_filename"`
-	SourceSheet          string    `json:"source_sheet"`
-	Summary              string    `gorm:"type:text" json:"summary"`
-	PromptSummary        string    `gorm:"type:text" json:"prompt_summary"`
-	FeatureCount         int       `json:"feature_count"`
-	ConfigurableCount    int       `json:"configurable_count"`
-	NonConfigurableCount int       `json:"non_configurable_count"`
-	StatusBreakdownJSON  string    `gorm:"type:text" json:"status_breakdown_json"`
-	TypeBreakdownJSON    string    `gorm:"type:text" json:"type_breakdown_json"`
-	FeatureSnapshotJSON  string    `gorm:"type:text" json:"feature_snapshot_json"`
-	Enabled              bool      `gorm:"index" json:"enabled"`
-	Version              int       `gorm:"index" json:"version"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-}
-
 // ConfigVersion stores a redacted, versioned snapshot of integration config
 // changes for audit, diff, rollback, and frontend synchronization.
 type ConfigVersion struct {
@@ -152,7 +131,6 @@ func InitDB(dbPath string) error {
 		&WebhookLog{},
 		&TaskTelemetry{},
 		&DeconstructArchive{},
-		&AIContextProfile{},
 		&ConfigVersion{},
 		&GitCommitLog{},
 		&Notification{},

@@ -5,7 +5,6 @@
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
-  import AIContextCenter from './AIContextCenter.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -423,7 +422,7 @@
                   placeholder="只写平台级共识能力，不粘贴完整能力清单。例如：已具备需求解构、影子任务归档、GitLab/Jira 同步、日报/周报预览、红区诊断盘..."
                   bind:value={implementedFeatures}
                 ></textarea>
-                <span class="helper-text-custom">细粒度功能是否已实现放在下方模块画像中维护，这里只保留估算需要的全局基线。</span>
+                <span class="helper-text-custom">用于补充现有设计、功能和流程，让需求解构优先理解系统全局基线。</span>
               </div>
 
               <div class="form-group-custom context-field wide">
@@ -454,7 +453,6 @@
             </div>
           </div>
 
-          <AIContextCenter />
         </div>
 
         <div class="actions">

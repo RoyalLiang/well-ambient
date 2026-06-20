@@ -335,6 +335,37 @@
 | Config package tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/config -run Test -count=1 -v` | config tests pass and YAML remains load-compatible | passed | pass |
 | Focused AI deconstruction tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasksArchivesEstimates' -count=1 -v` | parse/import estimate tests pass | passed | pass |
 
+### Phase 15: Remove Mis-scoped AI Context Center
+- **Status:** complete
+- Actions taken:
+  - Removed the `AIContextCenter` import/render from AI settings while keeping the generic project-context and estimation fields.
+  - Deleted the AI context profile upload/list/toggle backend, tests, and database model.
+  - Removed `/api/ai-context/*` route registration and stopped appending enabled module profiles to the deconstruction prompt.
+  - Cleared path-planning-specific context values from `config.example.yaml`.
+  - Deleted the path-planning AI context archive document because it represented the mis-scoped targeted module direction.
+  - Updated task memory to mark the module-image direction as superseded by a general system-context configuration model.
+- Files modified:
+  - `config.example.yaml`
+  - `internal/db/db.go`
+  - `internal/server/ai_handlers.go`
+  - `internal/server/server.go`
+  - `web/src/components/config/AIConfig.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Files deleted:
+  - `docs/ai-context/path-planning-module.md`
+  - `internal/server/ai_context_handlers.go`
+  - `internal/server/ai_context_handlers_test.go`
+  - `web/src/components/config/AIContextCenter.svelte`
+
+## Latest Validation After Phase 15
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | sandbox loopback bind failed, then passed with approved loopback access | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

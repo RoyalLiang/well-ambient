@@ -1,40 +1,46 @@
 {
   "warm_memory": {
-    "goal": "Configure AI prompt context for the uploaded path-planning module capability catalog and explain strongest-brain usage/design guidance.",
-    "classification": "coding.config; spreadsheet extraction, prompt context archive, config update, product strategy",
+    "goal": "Remove the mis-scoped AI context center module-image feature and reset AI context configuration to the original general system-design/workflow purpose.",
+    "classification": "coding.config; frontend admin UI cleanup, backend route/model removal, prompt behavior cleanup, product design recommendation",
     "phase": "complete",
     "constraints": [
-      "Treat `全局领航能力汇总.xlsx` first sheet as path-planning module context only, not global well-ambient capability context.",
-      "Keep runtime AI prompt fields compact and archive long domain catalogs separately.",
-      "Use hours-based estimation rules already configured in AI deconstruction.",
-      "Do not revert unrelated dirty worktree changes."
+      "Keep the generic AI project context fields because they match the intended design/function/process calibration purpose.",
+      "Remove path-planning-specific context/configuration and the targeted module profile upload/toggle chain.",
+      "Do not touch or stage unrelated dirty files such as `well-ambient.db` or uploaded spreadsheets.",
+      "Commit only intentional source/config/docs/task-memory changes."
     ],
     "decisions": [
-      "Created `docs/ai-context/path-planning-module.md` as the archived source-of-truth summary for the path-planning capability catalog.",
-      "Populated `config.example.yaml` AI context fields with a compact summary that points to the archive document.",
-      "Represented path-planning workflow as feature classification -> status/configurability check -> configuration or code tasks -> site adaptation -> validation.",
-      "Kept detailed feature inventory out of the prompt textarea except as a concise summary to avoid noisy LLM context."
+      "Deleted `AIContextCenter.svelte` and removed it from `AIConfig.svelte`.",
+      "Deleted `/api/ai-context/*` backend handlers/tests/routes and removed `AIContextProfile` from DB auto-migration.",
+      "Stopped injecting enabled module context profiles into AI deconstruction prompts.",
+      "Cleared path-planning-specific AI context fields in `config.example.yaml` and deleted `docs/ai-context/path-planning-module.md`.",
+      "The next strongest-brain rebuild should be a general Context Knowledge Layer with typed sections, scope, freshness, retrieval, audit, and prompt assembly, not a module-specific upload feature."
     ],
     "findings": [
-      "The workbook first sheet `功能列表` contains 39 path-planning module capabilities: 13 standard, 23 extension, 2 advanced exploration, 1 customization.",
-      "Status distribution: 20 durable, 7 initially validated, 3 development-complete, 3 in progress, 5 pending development, 1 unmarked.",
-      "Configurability distribution: 25 configurable, 12 non-configurable, 2 unclear.",
-      "Strongest-brain prompt configuration should separate page-level editing of compact summaries from archived/versioned module knowledge bases."
+      "The old AI context center behaved like a targeted module implementation registry: upload spreadsheet, create profile versions, enable/disable Prompt injection.",
+      "This conflicted with the intended role: configuring/augmenting system design, existing product capability, process, and estimation rules so the model understands current state during demand deconstruction.",
+      "Active code/config/docs no longer reference `AIContextCenter`, `/api/ai-context`, `AIContextProfile`, `loadEnabledAIContextPrompt`, or path-planning module context."
     ],
     "touched_files": [
       "config.example.yaml",
       "docs/ai-context/path-planning-module.md",
+      "internal/db/db.go",
+      "internal/server/ai_context_handlers.go",
+      "internal/server/ai_context_handlers_test.go",
+      "internal/server/ai_handlers.go",
+      "internal/server/server.go",
+      "web/src/components/config/AIConfig.svelte",
+      "web/src/components/config/AIContextCenter.svelte",
       "task_plan.md",
       "findings.md",
       "progress.md",
-      ".agents/state.json",
-      ".learnings/ERRORS.md"
+      ".agents/state.json"
     ],
     "validation": [
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/config -run Test -count=1 -v: pass.",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasksArchivesEstimates' -count=1 -v: pass."
+      "GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1: sandbox loopback bind blocked first run; passed with approved loopback access.",
+      "pnpm --dir web build: passed with existing unrelated Svelte accessibility warnings."
     ],
     "blockers": [],
-    "next": "Deliver concise final summary with configured files and strongest-brain guidance."
+    "next": "Deliver concise final summary and include strongest-brain rebuild recommendation."
   }
 }

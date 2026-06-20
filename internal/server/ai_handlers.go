@@ -116,9 +116,6 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 	exampleAssignee := fmt.Sprintf(`"%s"`, teamMembers[0])
 	workHoursPerDay := normalizeWorkHoursPerDay(s.config.AI.DefaultWorkHoursPerDay)
 	projectContext := formatAIProjectContext(s.config.AI)
-	if moduleContext := loadEnabledAIContextPrompt(8); moduleContext != "" {
-		projectContext = strings.TrimSpace(projectContext + "\n\n【已启用模块上下文画像】\n" + moduleContext)
-	}
 
 	// 3. Assemble Prompt
 	systemPrompt := fmt.Sprintf(`你是一个专业的软件需求自解构引擎（Deconstructor）。你负责将用户的产品需求/开发任务（一段自然语言描述）解构成多个独立的、可执行的具体开发任务（Task），并将其映射到系统的多仓库中。

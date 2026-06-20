@@ -125,6 +125,16 @@ Complete
 - [x] Summarize strongest-brain guidance for configuring and using module-specific prompt context
 - **Status:** complete
 
+### Phase 15: Remove Mis-scoped AI Context Center
+- [x] Remove the module-image AI context center UI from AI settings
+- [x] Delete `/api/ai-context/*` routes, handlers, tests, and database model
+- [x] Stop injecting enabled module context profiles into deconstruction prompts
+- [x] Clear path-planning-specific context from `config.example.yaml`
+- [x] Delete the path-planning AI context archive document
+- [x] Validate Go regression and frontend production build
+- [x] Commit only intentional source/config/docs/memory changes
+- **Status:** complete
+
 ## Key Questions
 1. Which current files contain the server handlers named in the plan?
 2. Does the current data model support linking demands to AI task groups?
