@@ -57,6 +57,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config", s.withPermission("config:read", s.handleGetConfig))
 	s.mux.HandleFunc("POST /api/config", s.withPermission("config:write", s.handleSaveConfig))
 	s.mux.HandleFunc("POST /api/config/test", s.withPermission("config:write", s.handleTestConnection))
+	s.mux.HandleFunc("GET /api/config/versions", s.withPermission("config:read", s.handleListConfigVersions))
+	s.mux.HandleFunc("POST /api/config/versions/{id}/rollback", s.withPermission("config:write", s.handleRollbackConfigVersion))
 	s.mux.HandleFunc("GET /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
 	s.mux.HandleFunc("POST /api/gitlab/webhooks/ensure", s.withPermission("config:write", s.handleEnsureGitLabWebhooks))
 	s.mux.HandleFunc("GET /api/gitlab/webhooks/status", s.withPermission("config:write", s.handleGetGitLabWebhookStatus))

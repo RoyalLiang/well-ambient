@@ -39,23 +39,28 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save to disk
-	if s.configPath != "" {
-		if err := config.SaveConfig(s.configPath, &newCfg); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
-			return
-		}
-		log.Printf("Configuration saved to %s", s.configPath)
-	} else {
-		log.Printf("Warning: configPath is empty, configuration not saved to disk")
+	previous := *s.config
+	if err := s.applyConfig(newCfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	// Hot reload configuration in memory
-	*s.config = newCfg
+	version, err := s.recordConfigVersion(previous, newCfg, r, "manual-save", 0)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Configuration saved but version archive failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	BroadcastConfigUpdated(configVersionDTO(version))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"success":true,"message":"Configuration saved and applied successfully"}`))
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Configuration saved and applied successfully",
+		"version": configVersionDTO(version),
+	}); err != nil {
+		log.Printf("Error encoding save config response: %v", err)
+	}
 }
 
 type ConnectionTestRequest struct {

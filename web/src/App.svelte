@@ -322,11 +322,13 @@
         } else {
           coreMembers = new Set();
         }
+        return config;
       }
     } catch (e) {
       console.error('Failed to load config for notifications:', e);
       coreMembers = new Set();
     }
+    return null;
   }
 
   function isCoreMember(name: string): boolean {
@@ -410,6 +412,19 @@
         console.error('SSE message parse error:', e);
       }
     };
+
+    eventSource.addEventListener('config-updated', async (event) => {
+      try {
+        const config = await loadConfig();
+        if (config) {
+          window.dispatchEvent(new CustomEvent('config-updated', {
+            detail: config
+          }));
+        }
+      } catch (e) {
+        console.error('SSE config update refresh error:', e);
+      }
+    });
 
     eventSource.onerror = (err) => {
       console.warn('SSE connection disrupted, automatic reconnection active.');

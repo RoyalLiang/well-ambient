@@ -86,6 +86,23 @@ type AIContextProfile struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+// ConfigVersion stores a redacted, versioned snapshot of integration config
+// changes for audit, diff, rollback, and frontend synchronization.
+type ConfigVersion struct {
+	ID                    uint      `gorm:"primaryKey" json:"id"`
+	Version               int       `gorm:"uniqueIndex" json:"version"`
+	ActorID               string    `gorm:"index;size:160" json:"actor_id"`
+	ActorName             string    `json:"actor_name"`
+	Source                string    `gorm:"size:64" json:"source"`
+	ConfigJSON            string    `gorm:"type:text" json:"config_json"`
+	RedactedConfigJSON    string    `gorm:"type:text" json:"redacted_config_json"`
+	ChangedSectionsJSON   string    `gorm:"type:text" json:"changed_sections_json"`
+	DiffJSON              string    `gorm:"type:text" json:"diff_json"`
+	PreviousVersionID     uint      `json:"previous_version_id"`
+	RollbackFromVersionID uint      `json:"rollback_from_version_id"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
 // GitCommitLog tracks detailed git activities for tasks (one task to many commits/repos)
 type GitCommitLog struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -136,6 +153,7 @@ func InitDB(dbPath string) error {
 		&TaskTelemetry{},
 		&DeconstructArchive{},
 		&AIContextProfile{},
+		&ConfigVersion{},
 		&GitCommitLog{},
 		&Notification{},
 		&UserNotificationState{},

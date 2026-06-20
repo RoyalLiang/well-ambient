@@ -31,6 +31,9 @@ func main() {
 	if err := db.InitDB("well-ambient.db"); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+	if err := server.BootstrapVersionedConfig(cfg); err != nil {
+		log.Fatalf("Failed to initialize versioned configuration: %v", err)
+	}
 
 	srv := server.NewServer(cfg, *configPath)
 	if err := srv.Start(); err != nil {

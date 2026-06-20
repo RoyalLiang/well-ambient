@@ -38,9 +38,12 @@
   export let saving = false;
   export let saveError = '';
   export let saveSuccess = false;
+  export let lastUpdated = '';
 
   let currentStep = 1;
   const steps = ['连接与凭证', '确认应用'];
+  let editing = false;
+  let showTokenEditor = !config.api_token;
 
   // Form states
   let enabled = config.enabled ?? false;
@@ -60,6 +63,41 @@
   let testError = '';
   let testSuccess = '';
   let testDetails = '';
+  $: isConfigured = enabled || !!(baseURL || apiToken || modelName || projectArchitecture || deliveryWorkflow || implementedFeatures || estimationGuidelines);
+  $: if (!editing && !saveSuccess) {
+    enabled = config.enabled ?? false;
+    provider = config.provider || 'openai';
+    baseURL = config.base_url || '';
+    endpointType = config.endpoint_type || 'completions';
+    apiToken = config.api_token || '';
+    modelName = config.model || '';
+    projectArchitecture = config.project_architecture || '';
+    deliveryWorkflow = config.delivery_workflow || '';
+    implementedFeatures = config.implemented_features || '';
+    estimationGuidelines = config.estimation_guidelines || '';
+    defaultWorkHoursPerDay = config.default_work_hours_per_day || 8;
+    showTokenEditor = !config.api_token;
+  }
+
+  function formatUpdated(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function openEditor() {
+    editing = true;
+    currentStep = 1;
+    testError = '';
+    testSuccess = '';
+    testDetails = '';
+  }
+
+  function finishClose() {
+    editing = false;
+    dispatch('close');
+  }
 
   function normalizedWorkHours() {
     const hours = Number(defaultWorkHoursPerDay);
@@ -171,9 +209,55 @@
       <h4 class="success-title">大模型引擎配置成功！</h4>
       <p class="success-desc font-mono">配置已成功保存。现在在“AI 需求解构引擎”页面提交开发需求将对接真实的 AI 大模型解析。</p>
       <div class="success-actions">
-        <Button variant="primary" on:click={() => dispatch('close')}>
+        <Button variant="primary" on:click={finishClose}>
           完成并关闭
         </Button>
+      </div>
+    </div>
+  {:else if !editing && isConfigured}
+    <div class="config-overview">
+      <div class="overview-header">
+        <div>
+          <span class="overview-kicker font-mono">AI Deconstructor</span>
+          <h4>AI 引擎配置状态摘要</h4>
+          <p>已配置后默认显示模型状态、上下文覆盖、健康检查和编辑入口。</p>
+        </div>
+        <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+      </div>
+
+      <div class="overview-grid">
+        <div class="overview-row">
+          <span>状态摘要</span>
+          <strong>{provider || 'openai'} · {modelName || '未指定模型'} · {endpointType}</strong>
+        </div>
+        <div class="overview-row">
+          <span>健康检查</span>
+          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>最近更新时间</span>
+          <strong>{formatUpdated(lastUpdated)}</strong>
+        </div>
+        <div class="overview-row">
+          <span>敏感项</span>
+          <strong>API Key {apiToken ? '已配置' : '未配置'} · {defaultWorkHoursPerDay || 8} 小时/天</strong>
+        </div>
+      </div>
+
+      <div class="context-health-grid">
+        <span>架构 {contextStatus(projectArchitecture)}</span>
+        <span>流程 {contextStatus(deliveryWorkflow)}</span>
+        <span>已实现能力 {contextStatus(implementedFeatures)}</span>
+        <span>估算口径 {contextStatus(estimationGuidelines)}</span>
+      </div>
+
+      {#if testDetails}
+        <pre class="details-pre font-mono">{testDetails}</pre>
+      {/if}
+
+      <div class="overview-actions">
+        <Button variant="secondary" loading={testing} on:click={testConnection}>健康检查</Button>
+        <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
     </div>
   {:else}
@@ -236,14 +320,24 @@
               helperText="请填写真实请求的 API 端点。若填入具体接口，我们将原样直接请求，不做强制拼接（例如：https://api.pixelapi.com/v1/chat/completions）。若只填域名，将根据端点类型自动拼接。"
             />
 
-            <TextInput
-              id="ai-api-token"
-              label="API 访问凭证 (API Key)"
-              placeholder="sk-..."
-              type="password"
-              bind:value={apiToken}
-              helperText="用于鉴权访问大模型 API 的安全密钥。此值将被加密或安全存储在后端。"
-            />
+            {#if showTokenEditor}
+              <TextInput
+                id="ai-api-token"
+                label="API 访问凭证 (API Key)"
+                placeholder="sk-..."
+                type="password"
+                bind:value={apiToken}
+                helperText="用于鉴权访问大模型 API 的安全密钥。此值将被加密或安全存储在后端。"
+              />
+            {:else}
+              <div class="credential-collapsed">
+                <div>
+                  <span>AI API Key</span>
+                  <strong>已配置，当前默认脱敏折叠</strong>
+                </div>
+                <button type="button" on:click={() => showTokenEditor = true}>编辑凭证/高级配置</button>
+              </div>
+            {/if}
 
             <TextInput
               id="ai-model"
@@ -537,6 +631,146 @@
     display: flex;
     margin-top: 4px;
     margin-bottom: 12px;
+  }
+
+  .config-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .overview-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    padding-bottom: 16px;
+  }
+
+  .overview-kicker {
+    color: #38bdf8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .overview-header h4 {
+    margin: 4px 0 6px 0;
+    color: #f8fafc;
+    font-size: 1.05rem;
+  }
+
+  .overview-header p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .status-pill {
+    flex: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+  }
+
+  .status-pill.online {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.22);
+  }
+
+  .status-pill.warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.22);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .overview-row,
+  .credential-collapsed,
+  .context-health-grid {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .overview-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .overview-row span,
+  .credential-collapsed span {
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .overview-row strong,
+  .credential-collapsed strong {
+    color: #e2e8f0;
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .context-health-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .overview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .credential-collapsed {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .credential-collapsed div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .credential-collapsed button {
+    flex: none;
+    background: transparent;
+    border: 1px solid rgba(99, 102, 241, 0.34);
+    color: #a5b4fc;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .credential-collapsed button:hover {
+    background: rgba(99, 102, 241, 0.12);
   }
 
   .context-config-panel {

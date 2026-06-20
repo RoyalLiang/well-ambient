@@ -82,6 +82,26 @@
     };
   }
 
+  interface ConfigDiffEntry {
+    path: string;
+    before: any;
+    after: any;
+  }
+
+  interface ConfigVersion {
+    id: number;
+    version: number;
+    actor_id: string;
+    actor_name: string;
+    source: string;
+    config: Record<string, any>;
+    changed_sections: string[];
+    diff: ConfigDiffEntry[];
+    previous_version_id: number;
+    rollback_from_version_id: number;
+    created_at: string;
+  }
+
   let globalConfig: GlobalConfig = {
     server: { host: '', port: 0 },
     gitlab: { base_url: '', secret_token: '', repos: [] },
@@ -111,6 +131,13 @@
   let saveError = '';
   let saveSuccess = false;
   let saveSuccessKey: string | null = null;
+  let configVersions: ConfigVersion[] = [];
+  let selectedConfigVersionID: number | null = null;
+  let configVersionError = '';
+  let rollbackLoadingID: number | null = null;
+
+  $: selectedConfigVersion = configVersions.find(v => v.id === selectedConfigVersionID) || configVersions[0] || null;
+  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'ai'].includes(activeSection);
 
   function switchSection(section: typeof activeSection) {
     activeSection = section;
@@ -203,6 +230,60 @@
     }
   }
 
+  async function fetchConfigVersions(selectLatest = false) {
+    if (!currentUserPermissions.includes('config:read')) return;
+    try {
+      const res = await fetch('/api/config/versions?limit=12');
+      if (!res.ok) throw new Error(await res.text());
+      configVersions = await res.json();
+      if ((selectLatest || !selectedConfigVersionID || !configVersions.some(v => v.id === selectedConfigVersionID)) && configVersions.length > 0) {
+        selectedConfigVersionID = configVersions[0].id;
+      }
+      configVersionError = '';
+    } catch (e: any) {
+      configVersionError = e.message || '配置版本记录加载失败';
+    }
+  }
+
+  function sectionLastUpdated(section: string) {
+    const version = configVersions.find(v => (v.changed_sections || []).includes(section) || v.source === 'bootstrap-file');
+    return version?.created_at || '';
+  }
+
+  function formatDateTime(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function formatDiffValue(value: any) {
+    if (value === undefined || value === null || value === '') return '空';
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+  }
+
+  async function rollbackConfigVersion(version: ConfigVersion) {
+    if (!version || rollbackLoadingID) return;
+    if (!confirm(`确定回滚到配置版本 v${version.version} 吗？当前配置会生成一条新的回滚版本记录。`)) return;
+
+    rollbackLoadingID = version.id;
+    configVersionError = '';
+    try {
+      const res = await fetch(`/api/config/versions/${version.id}/rollback`, {
+        method: 'POST'
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await fetchConfig();
+      await fetchConfigVersions(true);
+      window.dispatchEvent(new CustomEvent('config-updated', { detail: globalConfig }));
+    } catch (e: any) {
+      configVersionError = e.message || '配置回滚失败';
+    } finally {
+      rollbackLoadingID = null;
+    }
+  }
+
   async function handleSaveConfig(event: CustomEvent<{ key: string; data: any }>) {
     const { key, data } = event.detail;
     const newConfig = {
@@ -227,6 +308,8 @@
         globalConfig = newConfig;
         saveSuccess = true;
         saveSuccessKey = key;
+        await fetchConfigVersions(true);
+        window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
       } else {
         saveError = '保存配置失败: ' + result.message;
       }
@@ -441,6 +524,7 @@
 
   onMount(() => {
     fetchConfig();
+    fetchConfigVersions();
     fetchStatus();
     fetchUsers();
     fetchGroups();
@@ -453,9 +537,19 @@
         switchSection(e.detail);
       }
     };
+    const handleConfigUpdated = async (e: any) => {
+      if (e.detail && (e.detail.gitlab || e.detail.feishu || e.detail.jira || e.detail.ai)) {
+        globalConfig = e.detail;
+      } else {
+        await fetchConfig();
+      }
+      await fetchConfigVersions(true);
+    };
     window.addEventListener('focus-settings-section', handleFocus);
+    window.addEventListener('config-updated', handleConfigUpdated);
     return () => {
       window.removeEventListener('focus-settings-section', handleFocus);
+      window.removeEventListener('config-updated', handleConfigUpdated);
       if (statusIntervalId) {
         clearInterval(statusIntervalId);
       }
@@ -512,19 +606,19 @@
   <main class="settings-main">
     {#if activeSection === 'gitlab'}
       <div class="section-card">
-        <GitLabConfig config={globalConfig.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
+        <GitLabConfig config={globalConfig.gitlab} lastUpdated={sectionLastUpdated('gitlab')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
       </div>
     {:else if activeSection === 'feishu'}
       <div class="section-card">
-        <FeishuConfig config={globalConfig.feishu} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
+        <FeishuConfig config={globalConfig.feishu} lastUpdated={sectionLastUpdated('feishu')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
       </div>
     {:else if activeSection === 'jira'}
       <div class="section-card">
-        <JiraConfig config={globalConfig.jira} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
+        <JiraConfig config={globalConfig.jira} lastUpdated={sectionLastUpdated('jira')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
       </div>
     {:else if activeSection === 'ai'}
       <div class="section-card">
-        <AIConfig config={globalConfig.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
+        <AIConfig config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
       </div>
     {:else if activeSection === 'users'}
       <div class="section-card">
@@ -691,6 +785,79 @@
           </table>
         </div>
       </div>
+    {/if}
+
+    {#if isIntegrationSection}
+      <section class="config-audit-panel">
+        <div class="config-audit-header">
+          <div>
+            <span class="audit-kicker font-mono">Versioned Config</span>
+            <h3>配置版本审计与回滚</h3>
+          </div>
+          <Button size="small" variant="ghost" on:click={fetchConfigVersions}>刷新记录</Button>
+        </div>
+
+        {#if configVersionError}
+          <div class="config-version-error">{configVersionError}</div>
+        {/if}
+
+        {#if configVersions.length === 0}
+          <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
+        {:else}
+          <div class="version-layout">
+            <div class="version-list" role="list" aria-label="配置版本">
+              {#each configVersions as version}
+                <button
+                  type="button"
+                  class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
+                  on:click={() => selectedConfigVersionID = version.id}
+                >
+                  <span class="version-title">v{version.version}</span>
+                  <span class="version-meta">{formatDateTime(version.created_at)}</span>
+                  <span class="version-sections">{(version.changed_sections || []).join(' / ') || '无差异'}</span>
+                </button>
+              {/each}
+            </div>
+
+            {#if selectedConfigVersion}
+              <div class="version-detail">
+                <div class="version-detail-header">
+                  <div>
+                    <span class="version-title">版本 v{selectedConfigVersion.version}</span>
+                    <p>{selectedConfigVersion.actor_name || selectedConfigVersion.actor_id || 'system'} · {selectedConfigVersion.source || 'manual'}</p>
+                  </div>
+                  <Button
+                    size="small"
+                    variant="danger"
+                    loading={rollbackLoadingID === selectedConfigVersion.id}
+                    disabled={rollbackLoadingID !== null || selectedConfigVersion.id === configVersions[0]?.id}
+                    on:click={() => rollbackConfigVersion(selectedConfigVersion)}
+                  >
+                    回滚到此版本
+                  </Button>
+                </div>
+
+                {#if selectedConfigVersion.rollback_from_version_id}
+                  <div class="rollback-note">由 v{selectedConfigVersion.rollback_from_version_id} 回滚生成</div>
+                {/if}
+
+                <div class="diff-table">
+                  {#each (selectedConfigVersion.diff || []).slice(0, 8) as diff}
+                    <div class="diff-row">
+                      <span class="diff-path font-mono">{diff.path}</span>
+                      <span class="diff-value before font-mono">{formatDiffValue(diff.before)}</span>
+                      <span class="diff-arrow">→</span>
+                      <span class="diff-value after font-mono">{formatDiffValue(diff.after)}</span>
+                    </div>
+                  {:else}
+                    <div class="diff-empty">该版本为初始快照或无字段差异。</div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </section>
     {/if}
   </main>
 </div>
@@ -912,6 +1079,197 @@
     border-radius: 12px;
     padding: 24px;
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+  }
+
+  .config-audit-panel {
+    margin-top: 18px;
+    background: #0b1329;
+    border: 1px solid rgba(51, 65, 85, 0.45);
+    border-radius: 10px;
+    padding: 18px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  }
+
+  .config-audit-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+  }
+
+  .audit-kicker {
+    color: #38bdf8;
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .config-audit-header h3 {
+    margin: 4px 0 0 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .config-version-error,
+  .empty-version-state,
+  .rollback-note,
+  .diff-empty {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .config-version-error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    color: #fca5a5;
+    margin-bottom: 12px;
+  }
+
+  .empty-version-state,
+  .diff-empty {
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    color: #64748b;
+  }
+
+  .version-layout {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .version-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .version-list::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .version-list::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.55);
+    border-radius: 999px;
+  }
+
+  .version-list::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.65);
+    border-radius: 999px;
+  }
+
+  .version-item {
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    background: rgba(15, 23, 42, 0.56);
+    color: #cbd5e1;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .version-item:hover,
+  .version-item.active {
+    border-color: rgba(99, 102, 241, 0.58);
+    background: rgba(49, 46, 129, 0.28);
+  }
+
+  .version-title {
+    color: #f8fafc;
+    font-size: 0.9rem;
+    font-weight: 800;
+  }
+
+  .version-meta,
+  .version-sections {
+    color: #64748b;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+
+  .version-detail {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    background: rgba(15, 23, 42, 0.38);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .version-detail-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+
+  .version-detail-header p {
+    margin: 3px 0 0 0;
+    color: #64748b;
+    font-size: 0.76rem;
+  }
+
+  .rollback-note {
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    color: #fbbf24;
+    margin-bottom: 10px;
+  }
+
+  .diff-table {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .diff-row {
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr) 18px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.34);
+    padding-bottom: 8px;
+  }
+
+  .diff-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .diff-path {
+    color: #7dd3fc;
+    font-size: 0.72rem;
+    overflow-wrap: anywhere;
+  }
+
+  .diff-value {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    max-height: 80px;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .diff-value.after {
+    color: #cbd5e1;
+  }
+
+  .diff-arrow {
+    color: #64748b;
+    text-align: center;
   }
 
   .card-header {

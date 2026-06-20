@@ -17,9 +17,13 @@
   export let saving = false;
   export let saveError = '';
   export let saveSuccess = false;
+  export let lastUpdated = '';
 
   let currentStep = 1;
   const steps = ['连接地址', '项目仓库映射', '完成应用'];
+  let editing = false;
+  let showAPITokenEditor = !config.api_token;
+  let showSecretEditor = !config.secret_token;
 
   // Step 1 states
   let baseURL = config.base_url || '';
@@ -60,6 +64,35 @@
 
   $: webhookReady = !!(baseURL && apiToken && secretToken && repoList.length > 0);
   $: webhookSummary = summarizeWebhookResults(webhookResults);
+  $: isConfigured = !!(baseURL || apiToken || secretToken || repoList.length > 0);
+  $: if (!editing && !saveSuccess) {
+    baseURL = config.base_url || '';
+    apiToken = config.api_token || '';
+    secretToken = config.secret_token || '';
+    repoList = [...(config.repos || [])];
+    showAPITokenEditor = !config.api_token;
+    showSecretEditor = !config.secret_token;
+  }
+
+  function formatUpdated(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function openEditor() {
+    editing = true;
+    currentStep = 1;
+    testError = '';
+    testSuccess = '';
+    testDetails = '';
+  }
+
+  function finishClose() {
+    editing = false;
+    dispatch('close');
+  }
 
   async function fetchGitLabProjects() {
     if (!baseURL || !apiToken) {
@@ -378,9 +411,48 @@
         {/if}
       </div>
       <div class="success-actions">
-        <Button variant="primary" on:click={() => dispatch('close')}>
+        <Button variant="primary" on:click={finishClose}>
           完成并关闭
         </Button>
+      </div>
+    </div>
+  {:else if !editing && isConfigured}
+    <div class="config-overview">
+      <div class="overview-header">
+        <div>
+          <span class="overview-kicker font-mono">GitLab Integration</span>
+          <h4>GitLab 配置状态摘要</h4>
+          <p>已配置的实例会直接进入摘要与巡检入口，不再强制重走配置向导。</p>
+        </div>
+        <span class="status-pill {baseURL ? 'online' : 'warning'}">{baseURL ? '已配置' : '待补全'}</span>
+      </div>
+
+      <div class="overview-grid">
+        <div class="overview-row">
+          <span>状态摘要</span>
+          <strong>{baseURL ? '连接地址已配置' : '缺少连接地址'} · {repoList.length} 个项目</strong>
+        </div>
+        <div class="overview-row">
+          <span>健康检查</span>
+          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>最近更新时间</span>
+          <strong>{formatUpdated(lastUpdated)}</strong>
+        </div>
+        <div class="overview-row">
+          <span>敏感项</span>
+          <strong>API Token {apiToken ? '已配置' : '未配置'} · Secret Token {secretToken ? '已配置' : '未配置'}</strong>
+        </div>
+      </div>
+
+      {#if testDetails}
+        <pre class="details-pre font-mono">{testDetails}</pre>
+      {/if}
+
+      <div class="overview-actions">
+        <Button variant="secondary" loading={testingConnection} on:click={testConnection}>健康检查</Button>
+        <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
     </div>
   {:else}
@@ -403,14 +475,24 @@
         error={testError}
       />
 
-      <TextInput
-        id="gitlab-api-token"
-        label="GitLab API 访问令牌 (Personal Access Token)"
-        placeholder="输入用于自动拉取仓库列表的 Private Token"
-        type="password"
-        bind:value={apiToken}
-        helperText="可选。若需支持在下一步中自动拉取并勾选仓库项目，请输入具有 read_api 权限的 Personal Access Token。"
-      />
+      {#if showAPITokenEditor}
+        <TextInput
+          id="gitlab-api-token"
+          label="GitLab API 访问令牌 (Personal Access Token)"
+          placeholder="输入用于自动拉取仓库列表的 Private Token"
+          type="password"
+          bind:value={apiToken}
+          helperText="可选。若需支持在下一步中自动拉取并勾选仓库项目，请输入具有 read_api 权限的 Personal Access Token。"
+        />
+      {:else}
+        <div class="credential-collapsed">
+          <div>
+            <span>GitLab API Token</span>
+            <strong>已配置，当前默认脱敏折叠</strong>
+          </div>
+          <button type="button" on:click={() => showAPITokenEditor = true}>编辑凭证/高级配置</button>
+        </div>
+      {/if}
 
       <div class="webhook-display">
         <div class="webhook-label-row">
@@ -451,21 +533,31 @@
         <p>配置安全令牌 (Secret Token) 以防止非法请求，并添加需要被 well-ambient 追踪的项目仓库。</p>
       </div>
 
-      <div class="token-row">
-        <div class="token-input">
-          <TextInput
-            id="gitlab-secret"
-            label="Webhook 安全令牌 (Secret Token)"
-            placeholder="自定义或随机生成的安全令牌"
-            type="password"
-            bind:value={secretToken}
-            helperText="设置后，需同时填入 GitLab Webhook 设置中的 Secret Token 字段，用于签名校验。"
-          />
+      {#if showSecretEditor}
+        <div class="token-row">
+          <div class="token-input">
+            <TextInput
+              id="gitlab-secret"
+              label="Webhook 安全令牌 (Secret Token)"
+              placeholder="自定义或随机生成的安全令牌"
+              type="password"
+              bind:value={secretToken}
+              helperText="设置后，需同时填入 GitLab Webhook 设置中的 Secret Token 字段，用于签名校验。"
+            />
+          </div>
+          <button class="gen-btn" type="button" on:click={generateRandomToken}>
+            随机生成
+          </button>
         </div>
-        <button class="gen-btn" type="button" on:click={generateRandomToken}>
-          随机生成
-        </button>
-      </div>
+      {:else}
+        <div class="credential-collapsed">
+          <div>
+            <span>Webhook Secret Token</span>
+            <strong>已配置，当前默认脱敏折叠</strong>
+          </div>
+          <button type="button" on:click={() => showSecretEditor = true}>编辑凭证/高级配置</button>
+        </div>
+      {/if}
 
       <!-- Autoload GitLab Repositories -->
       {#if apiToken}
@@ -719,6 +811,136 @@
     font-size: 0.75rem;
     color: #64748b;
     line-height: 1.4;
+  }
+
+  .config-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .overview-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    padding-bottom: 16px;
+  }
+
+  .overview-kicker {
+    color: #38bdf8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .overview-header h4 {
+    margin: 4px 0 6px 0;
+    color: #f8fafc;
+    font-size: 1.05rem;
+  }
+
+  .overview-header p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .status-pill {
+    flex: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+  }
+
+  .status-pill.online {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.22);
+  }
+
+  .status-pill.warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.22);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .overview-row,
+  .credential-collapsed {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .overview-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .overview-row span,
+  .credential-collapsed span {
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .overview-row strong,
+  .credential-collapsed strong {
+    color: #e2e8f0;
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .overview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .credential-collapsed {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .credential-collapsed div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .credential-collapsed button {
+    flex: none;
+    background: transparent;
+    border: 1px solid rgba(99, 102, 241, 0.34);
+    color: #a5b4fc;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .credential-collapsed button:hover {
+    background: rgba(99, 102, 241, 0.12);
   }
 
   .webhook-automation-panel {

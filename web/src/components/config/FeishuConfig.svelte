@@ -35,9 +35,13 @@
   export let saving = false;
   export let saveError = '';
   export let saveSuccess = false;
+  export let lastUpdated = '';
 
   let currentStep = 1;
   const steps = ['应用凭证', '机器人设置', '多维表格', '保存应用'];
+  let editing = false;
+  let showAppSecretEditor = !config.app_secret;
+  let showBitableTokenEditor = !config.bitable?.app_token;
 
   // Step 1 states
   let appID = config.app_id || '';
@@ -61,6 +65,43 @@
   let bitableError = '';
   let bitableSuccess = '';
   let bitableDetails = '';
+  $: isConfigured = !!(appID || appSecret || botEnabled || bitableEnabled || chatGroup || appToken || tableID);
+  $: if (!editing && !saveSuccess) {
+    appID = config.app_id || '';
+    appSecret = config.app_secret || '';
+    botEnabled = config.bot?.enabled ?? false;
+    chatGroup = config.bot?.chat_group || '';
+    bitableEnabled = config.bitable?.enabled ?? false;
+    appToken = config.bitable?.app_token || '';
+    tableID = config.bitable?.table_id || '';
+    statusCol = config.bitable?.status_column || '任务状态';
+    taskIDCol = config.bitable?.task_id_column || '任务ID';
+    showAppSecretEditor = !config.app_secret;
+    showBitableTokenEditor = !config.bitable?.app_token;
+  }
+
+  function formatUpdated(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function openEditor() {
+    editing = true;
+    currentStep = 1;
+    credsError = '';
+    credsSuccess = '';
+    credsDetails = '';
+    bitableError = '';
+    bitableSuccess = '';
+    bitableDetails = '';
+  }
+
+  function finishClose() {
+    editing = false;
+    dispatch('close');
+  }
 
   async function testCredentials() {
     if (!appID || !appSecret) {
@@ -213,9 +254,51 @@
       <h4 class="success-title">飞书集成配置已成功应用！</h4>
       <p class="success-desc font-mono">机器人通知及多维表格同步功能配置已热重载生效。</p>
       <div class="success-actions">
-        <Button variant="primary" on:click={() => dispatch('close')}>
+        <Button variant="primary" on:click={finishClose}>
           完成并关闭
         </Button>
+      </div>
+    </div>
+  {:else if !editing && isConfigured}
+    <div class="config-overview">
+      <div class="overview-header">
+        <div>
+          <span class="overview-kicker font-mono">Feishu Integration</span>
+          <h4>飞书配置状态摘要</h4>
+          <p>已配置后只显示状态、巡检入口与编辑入口，凭证默认脱敏折叠。</p>
+        </div>
+        <span class="status-pill {appID ? 'online' : 'warning'}">{appID ? '已配置' : '待补全'}</span>
+      </div>
+
+      <div class="overview-grid">
+        <div class="overview-row">
+          <span>状态摘要</span>
+          <strong>机器人 {botEnabled ? '已启用' : '未启用'} · 多维表格 {bitableEnabled ? '已启用' : '未启用'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>健康检查</span>
+          <strong>{credsSuccess || credsError || bitableSuccess || bitableError || '尚未执行本次巡检'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>最近更新时间</span>
+          <strong>{formatUpdated(lastUpdated)}</strong>
+        </div>
+        <div class="overview-row">
+          <span>敏感项</span>
+          <strong>App Secret {appSecret ? '已配置' : '未配置'} · Bitable Token {appToken ? '已配置' : '未配置'}</strong>
+        </div>
+      </div>
+
+      {#if credsDetails || bitableDetails}
+        <pre class="details-pre font-mono">{credsDetails || bitableDetails}</pre>
+      {/if}
+
+      <div class="overview-actions">
+        <Button variant="secondary" loading={testingCreds} on:click={testCredentials}>健康检查</Button>
+        {#if bitableEnabled}
+          <Button variant="secondary" loading={testingBitable} on:click={testBitable}>Bitable 检查</Button>
+        {/if}
+        <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
     </div>
   {:else}
@@ -237,14 +320,24 @@
         error={credsError}
       />
 
-      <TextInput
-        id="feishu-secret"
-        label="Feishu App Secret"
-        placeholder="请输入应用的 App Secret"
-        type="password"
-        bind:value={appSecret}
-        required
-      />
+      {#if showAppSecretEditor}
+        <TextInput
+          id="feishu-secret"
+          label="Feishu App Secret"
+          placeholder="请输入应用的 App Secret"
+          type="password"
+          bind:value={appSecret}
+          required
+        />
+      {:else}
+        <div class="credential-collapsed">
+          <div>
+            <span>Feishu App Secret</span>
+            <strong>已配置，当前默认脱敏折叠</strong>
+          </div>
+          <button type="button" on:click={() => showAppSecretEditor = true}>编辑凭证/高级配置</button>
+        </div>
+      {/if}
 
       {#if credsSuccess}
         <Alert type="success" title="凭证校验通过" message={credsSuccess}>
@@ -323,14 +416,24 @@
 
       {#if bitableEnabled}
         <div class="form-sub-section">
-          <TextInput
-            id="bitable-token"
-            label="多维表格 App Token"
-            placeholder="例如: bascnYourBitableAppToken"
-            bind:value={appToken}
-            required={bitableEnabled}
-            helperText="多维表格的 App Token (URL 中 /base/ 后面的一串字符)。"
-          />
+          {#if showBitableTokenEditor}
+            <TextInput
+              id="bitable-token"
+              label="多维表格 App Token"
+              placeholder="例如: bascnYourBitableAppToken"
+              bind:value={appToken}
+              required={bitableEnabled}
+              helperText="多维表格的 App Token (URL 中 /base/ 后面的一串字符)。"
+            />
+          {:else}
+            <div class="credential-collapsed">
+              <div>
+                <span>多维表格 App Token</span>
+                <strong>已配置，当前默认脱敏折叠</strong>
+              </div>
+              <button type="button" on:click={() => showBitableTokenEditor = true}>编辑凭证/高级配置</button>
+            </div>
+          {/if}
 
           <TextInput
             id="bitable-tableid"
@@ -514,6 +617,136 @@
 
   .test-row {
     margin-bottom: 20px;
+  }
+
+  .config-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .overview-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    padding-bottom: 16px;
+  }
+
+  .overview-kicker {
+    color: #38bdf8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .overview-header h4 {
+    margin: 4px 0 6px 0;
+    color: #f8fafc;
+    font-size: 1.05rem;
+  }
+
+  .overview-header p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .status-pill {
+    flex: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+  }
+
+  .status-pill.online {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.22);
+  }
+
+  .status-pill.warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.22);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .overview-row,
+  .credential-collapsed {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .overview-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .overview-row span,
+  .credential-collapsed span {
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .overview-row strong,
+  .credential-collapsed strong {
+    color: #e2e8f0;
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .overview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .credential-collapsed {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .credential-collapsed div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .credential-collapsed button {
+    flex: none;
+    background: transparent;
+    border: 1px solid rgba(99, 102, 241, 0.34);
+    color: #a5b4fc;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .credential-collapsed button:hover {
+    background: rgba(99, 102, 241, 0.12);
   }
 
   .details-pre {

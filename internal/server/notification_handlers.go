@@ -51,8 +51,9 @@ func (e *EmailNotificationSender) SendDelayAlert(alert NotificationAlert) error 
 
 // Active SSE client channels
 var (
-	clientsMu sync.Mutex
-	clients   = make(map[chan struct{}]bool)
+	clientsMu     sync.Mutex
+	clients       = make(map[chan struct{}]bool)
+	configClients = make(map[chan ConfigVersionDTO]bool)
 )
 
 // BroadcastNotifications triggers an immediate refresh on all connected SSE clients
@@ -62,6 +63,18 @@ func BroadcastNotifications() {
 	for ch := range clients {
 		select {
 		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// BroadcastConfigUpdated notifies connected frontends that integration config changed.
+func BroadcastConfigUpdated(version ConfigVersionDTO) {
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	for ch := range configClients {
+		select {
+		case ch <- version:
 		default:
 		}
 	}
@@ -91,16 +104,20 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 	// Create notifier channel for this client.
 	// Buffer size of 1 is sufficient as a notification is just a trigger signal.
 	notifier := make(chan struct{}, 1)
+	configNotifier := make(chan ConfigVersionDTO, 1)
 
 	clientsMu.Lock()
 	clients[notifier] = true
+	configClients[configNotifier] = true
 	clientsMu.Unlock()
 
 	defer func() {
 		clientsMu.Lock()
 		delete(clients, notifier)
+		delete(configClients, configNotifier)
 		clientsMu.Unlock()
 		close(notifier)
+		close(configNotifier)
 	}()
 
 	// Send initial payload immediately
@@ -119,6 +136,10 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 			return
 		case <-notifier:
 			if !s.sendNotificationsEvent(w, r, flusher, userID) {
+				return
+			}
+		case version := <-configNotifier:
+			if !s.sendConfigUpdatedEvent(w, r, flusher, version) {
 				return
 			}
 		case <-ticker.C:
@@ -147,6 +168,27 @@ func (s *Server) sendNotificationsEvent(w http.ResponseWriter, r *http.Request, 
 	_, err = fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
 	if err != nil {
 		log.Printf("SSE: client disconnected (write failed): %v", err)
+		return false
+	}
+	flusher.Flush()
+	return true
+}
+
+func (s *Server) sendConfigUpdatedEvent(w http.ResponseWriter, r *http.Request, flusher http.Flusher, version ConfigVersionDTO) bool {
+	if r.Context().Err() != nil {
+		return false
+	}
+	dataBytes, err := json.Marshal(map[string]interface{}{
+		"type":    "config-updated",
+		"version": version,
+	})
+	if err != nil {
+		log.Printf("SSE: failed to serialize config-updated event: %v", err)
+		return true
+	}
+	_, err = fmt.Fprintf(w, "event: config-updated\ndata: %s\n\n", string(dataBytes))
+	if err != nil {
+		log.Printf("SSE: client disconnected during config-updated event: %v", err)
 		return false
 	}
 	flusher.Flush()

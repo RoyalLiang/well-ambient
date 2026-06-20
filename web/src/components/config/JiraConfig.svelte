@@ -31,9 +31,12 @@
   export let saving = false;
   export let saveError = '';
   export let saveSuccess = false;
+  export let lastUpdated = '';
 
   let currentStep = 1;
   const steps = ['连接与凭证', '确认应用'];
+  let editing = false;
+  let showTokenEditor = !config.api_token;
 
   // Form states
   let enabled = config.enabled ?? false;
@@ -50,6 +53,38 @@
   let testError = '';
   let testSuccess = '';
   let testDetails = '';
+  $: isConfigured = enabled || !!(baseURL || username || apiToken || syncProjects || syncUsers || syncStatuses || customJQL);
+  $: if (!editing && !saveSuccess) {
+    enabled = config.enabled ?? false;
+    baseURL = config.base_url || '';
+    username = config.username || '';
+    apiToken = config.api_token || '';
+    syncProjects = (config.sync_projects || []).join(', ');
+    syncUsers = (config.sync_users || []).join(', ');
+    syncStatuses = (config.sync_statuses || []).join(', ');
+    customJQL = config.custom_jql || '';
+    showTokenEditor = !config.api_token;
+  }
+
+  function formatUpdated(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function openEditor() {
+    editing = true;
+    currentStep = 1;
+    testError = '';
+    testSuccess = '';
+    testDetails = '';
+  }
+
+  function finishClose() {
+    editing = false;
+    dispatch('close');
+  }
 
   async function testConnection() {
     if (!baseURL || !apiToken) {
@@ -145,9 +180,55 @@
       <h4 class="success-title">Jira 配置已成功应用！</h4>
       <p class="success-desc font-mono">配置已成功写入配置文件并完成服务热重载。</p>
       <div class="success-actions">
-        <Button variant="primary" on:click={() => dispatch('close')}>
+        <Button variant="primary" on:click={finishClose}>
           完成并关闭
         </Button>
+      </div>
+    </div>
+  {:else if !editing && isConfigured}
+    <div class="config-overview">
+      <div class="overview-header">
+        <div>
+          <span class="overview-kicker font-mono">Jira Integration</span>
+          <h4>Jira 配置状态摘要</h4>
+          <p>已配置后默认显示同步范围、健康检查、更新时间与编辑入口。</p>
+        </div>
+        <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+      </div>
+
+      <div class="overview-grid">
+        <div class="overview-row">
+          <span>状态摘要</span>
+          <strong>{enabled ? 'Jira 同步已启用' : '当前未启用同步'} · {syncProjects || '所有项目'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>健康检查</span>
+          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>最近更新时间</span>
+          <strong>{formatUpdated(lastUpdated)}</strong>
+        </div>
+        <div class="overview-row">
+          <span>敏感项</span>
+          <strong>API Token {apiToken ? '已配置' : '未配置'} · 用户 {username || '(Token认证)'}</strong>
+        </div>
+      </div>
+
+      {#if customJQL}
+        <div class="jql-preview">
+          <span>自定义 JQL</span>
+          <code>{customJQL}</code>
+        </div>
+      {/if}
+
+      {#if testDetails}
+        <pre class="details-pre font-mono">{testDetails}</pre>
+      {/if}
+
+      <div class="overview-actions">
+        <Button variant="secondary" loading={testing} on:click={testConnection}>健康检查</Button>
+        <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
     </div>
   {:else}
@@ -185,15 +266,25 @@
             helperText="用于连接 API 的 Jira 账号邮箱。若使用个人访问令牌 (PAT) 进行自建 Jira 认证，请将此字段留空。"
           />
 
-          <TextInput
-            id="jira-token"
-            label="Jira API 令牌 / 个人访问令牌 (PAT)"
-            placeholder="请输入 API Token 或 PAT"
-            type="password"
-            bind:value={apiToken}
-            required={enabled}
-            helperText="对于 Jira Cloud，请填写 API 令牌与对应邮箱；对于自建 Jira 服务，请填写个人访问令牌 (PAT) 并将邮箱留空。"
-          />
+          {#if showTokenEditor}
+            <TextInput
+              id="jira-token"
+              label="Jira API 令牌 / 个人访问令牌 (PAT)"
+              placeholder="请输入 API Token 或 PAT"
+              type="password"
+              bind:value={apiToken}
+              required={enabled}
+              helperText="对于 Jira Cloud，请填写 API 令牌与对应邮箱；对于自建 Jira 服务，请填写个人访问令牌 (PAT) 并将邮箱留空。"
+            />
+          {:else}
+            <div class="credential-collapsed">
+              <div>
+                <span>Jira API Token / PAT</span>
+                <strong>已配置，当前默认脱敏折叠</strong>
+              </div>
+              <button type="button" on:click={() => showTokenEditor = true}>编辑凭证/高级配置</button>
+            </div>
+          {/if}
 
           <TextInput
             id="jira-sync-projects"
@@ -368,6 +459,147 @@
     margin-bottom: 20px;
   }
 
+  .config-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .overview-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
+    padding-bottom: 16px;
+  }
+
+  .overview-kicker {
+    color: #38bdf8;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .overview-header h4 {
+    margin: 4px 0 6px 0;
+    color: #f8fafc;
+    font-size: 1.05rem;
+  }
+
+  .overview-header p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+
+  .status-pill {
+    flex: none;
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+  }
+
+  .status-pill.online {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.22);
+  }
+
+  .status-pill.warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.22);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .overview-row,
+  .credential-collapsed,
+  .jql-preview {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.52);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .overview-row,
+  .jql-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .overview-row span,
+  .credential-collapsed span,
+  .jql-preview span {
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .overview-row strong,
+  .credential-collapsed strong {
+    color: #e2e8f0;
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .jql-preview code {
+    color: #fbbf24;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .overview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .credential-collapsed {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .credential-collapsed div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .credential-collapsed button {
+    flex: none;
+    background: transparent;
+    border: 1px solid rgba(99, 102, 241, 0.34);
+    color: #a5b4fc;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .credential-collapsed button:hover {
+    background: rgba(99, 102, 241, 0.12);
+  }
+
   .details-pre {
     background: rgba(15, 23, 42, 0.6);
     border: 1px solid rgba(51, 65, 85, 0.4);
@@ -396,9 +628,11 @@
   .summary-row {
     display: flex;
     justify-content: space-between;
+    gap: 16px;
     font-size: 0.85rem;
     border-bottom: 1px solid rgba(51, 65, 85, 0.3);
     padding-bottom: 8px;
+    min-width: 0;
   }
 
   .summary-row:last-of-type {
@@ -409,11 +643,17 @@
   .summary-label {
     color: #64748b;
     font-weight: 500;
+    flex: 0 0 auto;
   }
 
   .summary-value {
     color: #cbd5e1;
     font-weight: 600;
+    min-width: 0;
+    max-width: 100%;
+    text-align: right;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .text-success {
