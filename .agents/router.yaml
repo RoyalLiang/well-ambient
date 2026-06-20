@@ -1,0 +1,148 @@
+# Global AGENTS Router v4.0
+purpose: "Minimize active context through task recognition, progressive module loading, automatic compression, and durable long memory."
+
+canonical_entrypoints:
+  human_bootstrap: "./AGENTS.md"
+  cold_boot: "./.agents/boot.yaml"
+  machine_router: "./.agents/router.yaml"
+
+always_load:
+  - "./.agents/boot.yaml"
+  - "./.agents/core-lite.yaml"
+  - "./.agents/state-lite.json"
+  - "./.agents/route-presets.jsonl"
+
+fallbacks:
+  missing_state_lite_json: "Create a minimal state-lite record with goal, phase, next, and full_state pointer."
+  missing_state_json: "Create from ./.agents/examples/state.template.json only when full state is needed."
+  missing_optional_module: "Continue with nearest loaded rule set and note the missing module in state if it affects execution."
+
+classify:
+  intent:
+    chat: "Conversation, explanation, or single-point answer."
+    coding: "Read, edit, debug, refactor, test, or create project files."
+    review: "Audit, risk assessment, code review, security review, migration review."
+    research: "Explore code, compare sources, inspect docs, or fetch current information."
+    design: "Architecture, API shape, interaction model, tradeoff analysis, or implementation plan."
+  complexity:
+    simple: "Small chat, one command, one focused file read, or <= 2 tightly scoped file edits."
+    multi_step: "Multi-file work, unclear requirements, validation needed, research needed, or > 5 meaningful tool calls."
+  continuity:
+    single_turn: "Can be completed without durable context."
+    multi_turn: "Requires restoring or preserving current phase, findings, decisions, or blockers."
+  freshness:
+    stable: "Local or stable knowledge is enough."
+    latest_needed: "External/current facts, APIs, prices, laws, docs, schedules, or releases may have changed."
+  risk:
+    low: "No destructive behavior, production behavior, secrets, migrations, or broad refactors."
+    high: "Destructive actions, database/schema changes, auth/security, secrets, production behavior, or broad refactors."
+
+loading_matrix:
+  simple_chat:
+    when: "intent=chat and complexity=simple"
+    load:
+      - "./.agents/output/delivery.yaml"
+  simple_code:
+    when: "intent=coding and complexity=simple"
+    load:
+      - "./.agents/workflow/default.yaml"
+      - "./.agents/domains/coding.yaml"
+      - "./.agents/output/delivery.yaml"
+  complex_code:
+    when: "intent=coding and complexity=multi_step"
+    load:
+      - "./.agents/workflow/default.yaml"
+      - "./.agents/domains/coding.yaml"
+      - "./.agents/runtime/memory.yaml"
+      - "./.agents/output/delivery.yaml"
+  review:
+    when: "intent=review"
+    load:
+      - "./.agents/domains/review.yaml"
+      - "./.agents/output/delivery.yaml"
+  research:
+    when: "intent=research or freshness=latest_needed"
+    load:
+      - "./.agents/workflow/default.yaml"
+      - "./.agents/domains/research.yaml"
+      - "./.agents/runtime/tool-routing.yaml"
+      - "./.agents/output/delivery.yaml"
+  design:
+    when: "intent=design"
+    load:
+      - "./.agents/workflow/default.yaml"
+      - "./.agents/domains/design.yaml"
+      - "./.agents/output/delivery.yaml"
+  high_risk:
+    when: "risk=high"
+    add:
+      - "./.agents/domains/review.yaml"
+
+capability_tool_map:
+  search_files:
+    examples: ["rg", "grep_search", "IDE search"]
+    load: "./.agents/domains/research.yaml"
+  inspect_structure:
+    examples: ["rg --files", "find", "list_dir"]
+    load: "./.agents/domains/research.yaml"
+  read_file:
+    examples: ["sed", "nl", "view_file", "Read"]
+    load: "./.agents/domains/research.yaml"
+  edit_file:
+    examples: ["apply_patch", "Edit", "replace_file_content", "multi_replace_file_content"]
+    load: "./.agents/domains/coding.yaml"
+  run_command:
+    examples: ["shell", "task runner", "test runner"]
+    load: "./.agents/domains/review.yaml"
+  browse:
+    examples: ["browser", "web search", "docs MCP"]
+    load: "./.agents/runtime/tool-routing.yaml"
+  persist_memory:
+    examples: ["state.json", "memory/*.jsonl", "task_plan.md"]
+    load: "./.agents/runtime/memory.yaml"
+
+progressive_loading:
+  rule: "Load the smallest matching active set. Add modules only when a trigger fires. Unload mentally after the phase exits."
+  never_load_by_default:
+    - "All domains at once"
+    - "Appendix/reference files"
+    - "Long memory bodies"
+    - "Full source files when a symbol index is enough"
+
+compression:
+  module: "./.agents/runtime/memory.yaml"
+  triggers:
+    - "meaningful_tool_calls > 8"
+    - "touched_files > 5"
+    - "turns_on_task > 2"
+    - "before requesting user input on a multi-step task"
+    - "after discovering a durable project fact"
+    - "after validation results or blockers"
+    - "before final response for multi-step work"
+  target: "./.agents/state.json#warm_memory"
+  format: "telegraphic; preserve only goal, phase, files, decisions, findings, validation, blockers, next."
+
+context_budget:
+  active_context: "Only current goal, constraints, phase, key findings, touched files, validation status, and next action."
+  state_json: "Compact warm memory for current/recent task state."
+  long_memory: "JSONL records under ./.agents/memory/ for durable facts and lessons."
+  planning_files: "Use task_plan.md, findings.md, and progress.md for complex local work."
+
+module_exit:
+  research: "Exit after facts and sources are resolved."
+  design: "Exit after chosen path and tradeoffs are captured."
+  coding: "Exit after edits and validation finish."
+  review: "Exit after risks, regressions, and residual gaps are stated."
+  memory: "Exit after restore or compression completes."
+
+conflict_order:
+  - "Environment, permissions, and safety constraints"
+  - "./.agents/core.yaml"
+  - "./.agents/domains/*.yaml"
+  - "./.agents/workflow/*.yaml"
+  - "./.agents/runtime/*.yaml"
+  - "./.agents/output/*.yaml"
+
+finalization:
+  load: "./.agents/output/delivery.yaml"
+  require: "State changed files, validation performed, validation skipped, residual risks, and next action when useful."

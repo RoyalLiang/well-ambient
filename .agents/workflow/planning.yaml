@@ -1,0 +1,39 @@
+workflow_planning:
+  purpose: "Persistent file-based planning for complex or multi-turn work."
+  use_when:
+    - "task requires > 5 meaningful tool calls"
+    - "task spans multiple files or phases"
+    - "research/design findings must survive context loss"
+    - "user asks for a plan"
+    - "high-risk work needs explicit checkpoints"
+  files:
+    plan: "./task_plan.md"
+    findings: "./findings.md"
+    progress: "./progress.md"
+  phases:
+    1_plan:
+      action: "Create or update task_plan.md with goal, phases, decisions, and error table."
+    2_gather:
+      action: "Write durable discoveries to findings.md after every 2 meaningful read/search/browser operations."
+    3_execute:
+      action: "Track phase progress and touched files in progress.md."
+    4_verify:
+      action: "Run validation scaled to risk; full suite only when warranted."
+    5_compress:
+      action: "Mirror current checkpoint into ./.agents/state.json."
+    6_deliver:
+      action: "Summarize outcome without dumping the planning files."
+
+approval_gate:
+  require_explicit_user_approval_when:
+    - "risk=high"
+    - "destructive operation is proposed"
+    - "database/schema/data migration changes are proposed"
+    - "production behavior or credentials may be affected"
+    - "user explicitly requested plan approval before execution"
+  otherwise: "Proceed after stating the plan briefly when enough context exists."
+
+error_protocol:
+  first_failure: "Diagnose and apply a targeted fix."
+  second_failure: "Try a different tool or approach."
+  third_failure: "Record blocker and ask for guidance if no meaningful progress remains."

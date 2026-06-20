@@ -1,0 +1,65 @@
+# Agent Rule Registry v1.0
+purpose: "Machine-readable index for rule discovery, path validation, and progressive loading."
+
+required:
+  - path: "./AGENTS.md"
+    kind: "bootstrap"
+    always: false
+  - path: "./.agents/boot.yaml"
+    kind: "cold_boot"
+    always: true
+  - path: "./.agents/core-lite.yaml"
+    kind: "core_lite"
+    always: true
+  - path: "./.agents/state-lite.json"
+    kind: "state_lite"
+    always: true
+  - path: "./.agents/route-presets.jsonl"
+    kind: "route_presets"
+    always: true
+  - path: "./.agents/router.yaml"
+    kind: "router"
+    always: false
+  - path: "./.agents/core.yaml"
+    kind: "core"
+    always: false
+  - path: "./.agents/state.json"
+    kind: "state"
+    always: false
+
+modules:
+  cold_boot:
+    boot: "./.agents/boot.yaml"
+    core_lite: "./.agents/core-lite.yaml"
+    state_lite: "./.agents/state-lite.json"
+    route_presets: "./.agents/route-presets.jsonl"
+  workflows:
+    default: "./.agents/workflow/default.yaml"
+    planning: "./.agents/workflow/planning.yaml"
+  domains:
+    coding: "./.agents/domains/coding.yaml"
+    design: "./.agents/domains/design.yaml"
+    research: "./.agents/domains/research.yaml"
+    review: "./.agents/domains/review.yaml"
+  runtime:
+    memory: "./.agents/runtime/memory.yaml"
+    tool_routing: "./.agents/runtime/tool-routing.yaml"
+  output:
+    delivery: "./.agents/output/delivery.yaml"
+  examples:
+    state_template: "./.agents/examples/state.template.json"
+
+memory:
+  directory: "./.agents/memory"
+  lite_index: "./.agents/memory/lite-index.jsonl"
+  files:
+    project: "./.agents/memory/project.jsonl"
+    tasks: "./.agents/memory/tasks.jsonl"
+    lessons: "./.agents/memory/lessons.jsonl"
+
+validation:
+  path_check: "All paths in this registry must exist."
+  yaml_check: "YAML files should parse as YAML."
+  json_check: "JSON and JSONL files should parse as JSON records."
+  reference_check: "Router references should point to registry paths or explicitly optional files."
+  line_budget_check: "Cold boot files should stay under configured first-turn budgets."

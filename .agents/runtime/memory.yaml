@@ -1,0 +1,111 @@
+# Runtime Memory Rules v1.0
+purpose: "Preserve useful context outside the active model window through warm memory, long memory, and task-local planning files."
+
+memory_layers:
+  active_context:
+    role: "Volatile RAM."
+    keep: "Only what is needed for the next decision or action."
+    max_shape: "goal + constraints + current phase + key findings + touched files + validation + next action"
+  warm_memory:
+    role: "Current/recent task checkpoint."
+    file: "./.agents/state.json"
+    update_when:
+      - "automatic compression trigger fires"
+      - "phase changes"
+      - "before asking the user to wait or decide"
+      - "after validation results"
+      - "before final response for multi-step work"
+  long_memory:
+    role: "Durable cross-session facts and lessons."
+    directory: "./.agents/memory"
+    files:
+      project: "./.agents/memory/project.jsonl"
+      tasks: "./.agents/memory/tasks.jsonl"
+      lessons: "./.agents/memory/lessons.jsonl"
+    read_policy: "Read index/state first. Read long-memory records only when they are relevant to the current task."
+  task_memory:
+    role: "Large task working memory."
+    files:
+      - "./task_plan.md"
+      - "./findings.md"
+      - "./progress.md"
+    use_when:
+      - "task is multi-step"
+      - "research or design will exceed 5 meaningful tool calls"
+      - "work may span turns"
+
+compression_triggers:
+  counters:
+    meaningful_tool_calls: "> 8"
+    touched_files: "> 5"
+    turns_on_task: "> 2"
+  events:
+    - "phase transition"
+    - "new durable decision"
+    - "new blocker"
+    - "validation result"
+    - "context feels noisy"
+    - "before /clear or resume handoff"
+    - "before final response on complex tasks"
+
+compression_output:
+  destination: "./.agents/state.json#warm_memory"
+  style: "telegraphic but readable"
+  include:
+    - "goal"
+    - "classification"
+    - "current phase"
+    - "constraints"
+    - "decisions"
+    - "findings"
+    - "touched files"
+    - "validation"
+    - "blockers"
+    - "next action"
+  exclude:
+    - "raw transcript"
+    - "long command output"
+    - "full source file contents"
+    - "secrets or credentials"
+    - "obsolete plans"
+
+long_memory_schema:
+  required_fields:
+    - "schema_version"
+    - "id"
+    - "type"
+    - "scope"
+    - "status"
+    - "created_at"
+    - "summary"
+    - "tags"
+  optional_fields:
+    - "evidence"
+    - "decision"
+    - "action"
+    - "next"
+    - "expires_at"
+    - "supersedes"
+  id_format: "<type>-YYYYMMDD-XXX"
+  status_values:
+    - "active"
+    - "superseded"
+    - "resolved"
+    - "rejected"
+
+restore_protocol:
+  steps:
+    - "Read ./.agents/state.json."
+    - "If the task is a continuation, restore only active_task and warm_memory."
+    - "Read task_plan.md/findings.md/progress.md only when the task is complex or the state points to them."
+    - "Search ./.agents/memory/*.jsonl by scope/tag only when warm memory is insufficient."
+    - "Do not reload raw logs or unrelated memories."
+
+pruning_protocol:
+  stale_state: "If warm memory no longer matches the user's task, clear active_task fields and keep only durable lessons."
+  stale_long_memory: "Mark old JSONL records as superseded instead of deleting them unless explicitly asked."
+  duplicate_memory: "Merge into the clearest active record and mark duplicates as superseded."
+
+resume_prompt_shape:
+  minimum: "goal -> phase -> key decisions -> touched files -> validation -> blocker/next"
+  example: "[active] agent_rules:phase=validate files=AGENTS.md,.agents/* decisions=YAML-canonical,state-warm-memory validation=pending next=path consistency check"

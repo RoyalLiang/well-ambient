@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "updated_at": null,
+  "active_task": {
+    "goal": null,
+    "intent": null,
+    "complexity": null,
+    "continuity": null,
+    "freshness": null,
+    "risk": null,
+    "phase": null,
+    "loaded_modules": []
+  },
+  "warm_memory": {
+    "summary": null,
+    "constraints": [],
+    "decisions": [],
+    "findings": [],
+    "touched_files": [],
+    "validation": [],
+    "blockers": [],
+    "next_action": null
+  },
+  "compression": {
+    "meaningful_tool_calls": 0,
+    "turns_on_task": 0,
+    "last_compressed_at": null,
+    "last_trigger": null
+  },
+  "long_memory_index": {
+    "root": "./.agents/memory",
+    "files": [
+      "./.agents/memory/project.jsonl",
+      "./.agents/memory/tasks.jsonl",
+      "./.agents/memory/lessons.jsonl"
+    ]
+  }
+}

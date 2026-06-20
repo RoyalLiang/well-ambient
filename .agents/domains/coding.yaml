@@ -1,0 +1,28 @@
+domain_coding:
+  scope: "File edits, creation, refactoring, debugging, and local verification."
+  load_when:
+    - "intent=coding"
+    - "edit_file capability is needed"
+    - "tests, builds, or linters are needed after code changes"
+  rules:
+    targeted_read: "Verify exact local context before editing. Use line-numbered excerpts when line references matter."
+    edit_precision:
+      preferred: "Use structured patch/edit tools."
+      scope: "Keep changes limited to files and behavior required by the task."
+      preserve: "Do not rewrite unrelated formatting, metadata, or user changes."
+    imports: "Keep imports sorted according to project style and remove unused imports when touched."
+    project_patterns: "Prefer existing helpers, conventions, test tools, and architecture over new abstractions."
+    comments: "Add comments only where they clarify non-obvious behavior."
+    validation: "Run targeted checks after edits; broaden when the edited surface is shared or high risk."
+    dirty_tree: "If version control exists and unrelated user changes are present, work around them without reverting."
+
+compression_points:
+  after_large_read: "Summarize relevant facts instead of retaining full file content."
+  after_edit_batch: "Record touched files and behavioral intent in warm memory when multi-step."
+  after_validation: "Record command/check result and unresolved gaps."
+
+frontend_extra:
+  trigger: "frontend UI, visual refactor, dashboard, or Tailwind work"
+  required_skill: "taste-skill"
+  fallback_when_unavailable: "If taste-skill is not available in the current skill list, state the fallback and use frontend-design for the UI work."
+  load: "./FRONTEND_RULES.md if present"

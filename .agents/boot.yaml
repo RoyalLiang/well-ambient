@@ -1,0 +1,35 @@
+# Cold Boot Rules v1.0
+purpose: "Start with the smallest safe context, then upgrade only when needed."
+
+read_first:
+  - "./.agents/core-lite.yaml"
+  - "./.agents/state-lite.json"
+  - "./.agents/route-presets.jsonl"
+
+classify: ["intent", "complexity", "continuity", "freshness", "risk"]
+
+intents:
+  chat: "answer/explain"
+  coding: "read/edit/debug/test files"
+  review: "audit/risk/regression"
+  research: "explore docs/code/current facts"
+  design: "choose architecture/API/tradeoff"
+
+upgrade:
+  full_router: "classification unclear or presets insufficient"
+  full_core: "risk=high or safety/quality tradeoff matters"
+  state_full: "continuity=multi_turn or state-lite points to active task"
+  memory_runtime: "compress/restore/write durable context"
+  tool_routing: "external lookup, browser, or tool choice matters"
+  planning: "multi-file, >5 meaningful actions, or spans turns"
+
+compression_triggers:
+  - "meaningful_tool_calls > 6"
+  - "touched_files > 3"
+  - "phase changes"
+  - "durable decision/blocker/validation"
+  - "before final on multi-step work"
+
+active_context_budget:
+  keep: "goal, phase, constraints, findings, files, validation, next"
+  drop: "raw logs, full files, stale plans, unrelated modules"

@@ -1,0 +1,62 @@
+{
+  "warm_memory": {
+    "goal": "Check and repair /Users/eddie/Workspace/well-ambient according to the external implementation plan and follow-up fixes.",
+    "classification": "coding.complex + review; high risk because auth logging and task-link data updates were touched",
+    "phase": "complete",
+    "constraints": [
+      "Do not expose WellOS tokens/secrets in logs or final output.",
+      "Repository is currently largely untracked, so git diff/stat is not meaningful.",
+      "Keep changes scoped to implementation plan and validation blockers.",
+      "Frontend UI changes must require taste-skill; use frontend-design only as a recorded fallback when taste-skill is unavailable."
+    ],
+    "decisions": [
+      "Use find after rg --files missed ignored internal/server files.",
+      "Redact login debug payloads instead of logging raw token-bearing WellOS responses.",
+      "Reject unknown demand_id on task import to avoid silent unlinked imports.",
+      "Preserve task_group_id/due_date/creator/decision_logs during Git telemetry updates.",
+      "Persist and refresh user department through JWT claims and GET /api/me.",
+      "Reuse an existing demand task_group_id when importing AI-generated tasks for that demand."
+    ],
+    "findings": [
+      "DemandKanban and Deconstructor already had partial AI demand-link UI.",
+      "Telemetry webhook Save previously erased task_group_id, breaking deep AI linkage after Git events.",
+      "DemandKanban needed to filter archived demands/subtasks from active lanes.",
+      "TaskKanban had a Svelte 5 compile error from duplicate nested {@const} in Done lane.",
+      "taste-skill is not currently in the available skills list; frontend-design was used as fallback for this UI work.",
+      "Department display needed both backend extraction hardening and frontend profile refresh.",
+      "Deconstructor demand dropdown warnings were removed from the touched area by using button elements."
+    ],
+    "touched_files": [
+      "task_plan.md",
+      "findings.md",
+      "progress.md",
+      ".agents/state.json",
+      ".agents/domains/coding.yaml",
+      ".learnings/ERRORS.md",
+      "AGENTS.md",
+      "internal/server/notification_handlers.go",
+      "internal/server/ai_handlers.go",
+      "internal/server/jwt.go",
+      "internal/server/server.go",
+      "internal/server/user_handlers.go",
+      "internal/server/server_test.go",
+      "internal/telemetry/handler.go",
+      "internal/telemetry/handler_test.go",
+      "web/src/App.svelte",
+      "web/src/components/Deconstructor.svelte",
+      "web/src/components/DemandKanban.svelte",
+      "web/src/components/DecisionDashboard.svelte",
+      "web/src/components/TaskKanban.svelte",
+      "web/dist/*"
+    ],
+    "validation": [
+      "go test ./internal/server ./internal/telemetry -v -count=1: pass",
+      "go test ./... -count=1: pass",
+      "pnpm build in web: pass with existing Svelte a11y warnings",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1: pass",
+      "pnpm build in web after follow-up fixes: pass with remaining existing Svelte a11y warnings"
+    ],
+    "blockers": [],
+    "next": "Final response with concise summary, validation, and residual warning note."
+  }
+}

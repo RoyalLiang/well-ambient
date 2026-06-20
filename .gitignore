@@ -1,0 +1,54 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment if you want to force it)
+#/vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Go build output
+well-ambient
+server
+dist/
+
+# Node/Vite/Svelte dependencies & output
+node_modules/
+web/dist/
+web/node_modules/
+.eslintcache
+.stylelintcache
+
+# Local configuration files (ignore local configs with secrets)
+config.yaml
+.env
+.env.*
+!.env.example
+
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# OS metadata
+.DS_Store
+Thumbs.db
+server
+server_bin
+well-ambient-server

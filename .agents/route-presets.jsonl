@@ -1,0 +1,8 @@
+{"key":"chat.simple","when":"intent=chat complexity=simple","load":["core-lite","state-lite"],"deliver":"direct"}
+{"key":"coding.simple","when":"intent=coding complexity=simple risk=low","load":["core-lite","state-lite","domains/coding"],"verify":"targeted"}
+{"key":"coding.complex","when":"intent=coding complexity=multi_step","load":["core-lite","state-lite","workflow/default","domains/coding","runtime/memory"],"memory":"task_plan/findings/progress"}
+{"key":"review","when":"intent=review","load":["core-lite","state-lite","domains/review"],"deliver":"findings-first"}
+{"key":"research.latest","when":"intent=research or freshness=latest_needed","load":["core-lite","state-lite","domains/research","runtime/tool-routing"],"source":"primary/current"}
+{"key":"design","when":"intent=design","load":["core-lite","state-lite","domains/design"],"deliver":"recommendation+tradeoffs"}
+{"key":"risk.high","when":"risk=high","add":["core","domains/review"],"require":"approval/rollback/verification"}
+{"key":"continuation","when":"continuity=multi_turn","add":["state","runtime/memory"],"restore":"warm_memory_only"}

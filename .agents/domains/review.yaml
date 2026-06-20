@@ -1,0 +1,32 @@
+domain_review:
+  scope: "Security, risk, regression, migration, data, and high-risk behavior audit."
+  load_when:
+    - "intent=review"
+    - "risk=high"
+    - "run_command capability may affect production/data/security"
+    - "migration, auth, secrets, or destructive operations are involved"
+  rules:
+    regression: "Trace impact on callers, endpoints, jobs, schemas, and user workflows."
+    security: "Check input validation, auth boundaries, injection risk, hardcoded credentials, secret exposure, and unsafe logging."
+    migration: "Audit table/data changes, compatibility, rollback plan, and destructive operations."
+    production: "Treat deploy, billing, auth, credentials, and live data as high risk."
+    bounds: "Check exception handling, nullability, index bounds, empty states, and concurrency assumptions."
+    tests: "Identify missing tests that would catch the reviewed risk."
+    evidence: "Separate confirmed findings from hypotheses. Use file/line references when local files are inspected."
+
+risk_levels:
+  critical: "Likely data loss, credential exposure, auth bypass, production outage, or irreversible destructive action."
+  high: "Likely regression in important workflow, unsafe migration, or security boundary weakness."
+  medium: "Plausible bug or missing validation with limited blast radius."
+  low: "Maintainability, clarity, or edge-case issue."
+
+rollback_thinking:
+  require_when:
+    - "database/schema/data changes"
+    - "destructive file or command operations"
+    - "production behavior"
+    - "large refactor"
+  include:
+    - "what can be reverted"
+    - "what data/state may not be reversible"
+    - "how to verify rollback"

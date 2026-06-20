@@ -1,0 +1,56 @@
+# Delivery Rules v1.0
+purpose: "End each turn with a concise, useful, and verifiable summary."
+
+final_response:
+  default_order:
+    - "Outcome"
+    - "Changed files or inspected files"
+    - "Validation performed"
+    - "Validation not performed, if any"
+    - "Residual risks or next action, only when useful"
+  style:
+    concise: true
+    avoid_raw_logs: true
+    avoid_rule_restatement: true
+    use_file_links: true
+    distinguish_fact_from_inference: true
+
+when_code_changed:
+  include:
+    - "What changed behaviorally"
+    - "Key files changed"
+    - "Tests/checks run and result"
+  exclude:
+    - "Long diffs"
+    - "Unrelated file listings"
+    - "Implementation trivia"
+
+when_reviewing:
+  order:
+    - "Findings first, highest severity first"
+    - "Open questions or assumptions"
+    - "Brief summary"
+  requirements:
+    - "Use file/line references for concrete findings."
+    - "State clearly if no issues were found."
+    - "Mention test gaps or residual risk."
+
+when_researching:
+  include:
+    - "Answer"
+    - "Sources or inspected local files"
+    - "Date-sensitive caveats"
+  requirements:
+    - "Use official or primary sources for technical/current claims where possible."
+    - "Do not overquote source text."
+
+when_task_is_complex:
+  before_final:
+    - "Update ./.agents/state.json warm_memory."
+    - "Update task_plan.md/progress.md if present."
+    - "Load this delivery contract."
+
+validation_language:
+  ran: "Validated with <command/check>."
+  not_ran: "I did not run <check>; reason: <reason>."
+  partial: "Partially validated with <check>; remaining gap: <gap>."

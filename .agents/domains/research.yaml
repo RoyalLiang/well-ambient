@@ -1,0 +1,26 @@
+domain_research:
+  scope: "Local exploration, external/current lookup, dependency and documentation inspection."
+  load_when:
+    - "intent=research"
+    - "freshness=latest_needed"
+    - "project structure is unknown"
+    - "source comparison or docs verification is needed"
+  rules:
+    local_first: "If the answer is likely in the workspace, inspect local files before external lookup."
+    precise_search: "Use narrow patterns and path filters before broad searches."
+    structure_before_content: "Inspect file lists or symbols before reading large files."
+    freshness: "Browse or use official docs when facts may have changed."
+    sources: "Prefer primary sources for technical, legal, financial, medical, or current claims."
+    capture: "Write durable findings to findings.md or state when research affects decisions."
+    exit: "Stop carrying research rules after facts are resolved."
+
+token_budget:
+  avoid:
+    - "directory-wide full reads"
+    - "large copied excerpts"
+    - "multiple secondary sources when one primary source is enough"
+  prefer:
+    - "line references"
+    - "short summaries"
+    - "source links"
+    - "structured findings"

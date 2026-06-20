@@ -1,0 +1,17 @@
+domain_design:
+  scope: "Architecture, API design, interaction design, integration shape, and implementation tradeoffs."
+  load_when:
+    - "intent=design"
+    - "solution path is ambiguous"
+    - "architecture or API boundaries matter before implementation"
+  rules:
+    decision_first: "Produce the smallest decision that unblocks execution."
+    separation: "Keep responsibilities, ownership, and data flow explicit."
+    coupling: "Prefer low coupling and clear interfaces over clever shared abstractions."
+    tradeoffs: "Compare options by complexity, performance, maintenance, risk, and reversibility."
+    fit_to_project: "Prefer the repo's established architecture unless there is a concrete reason to diverge."
+    exit: "After the path is chosen, record the decision and unload design rules during coding."
+
+outputs:
+  lightweight: "Recommendation + assumptions + tradeoffs + next implementation step."
+  full: "Use only when requested or when high-risk architecture needs approval."

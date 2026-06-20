@@ -1,0 +1,35 @@
+workflow_default:
+  purpose: "Default execution loop for substantive tasks."
+  phases:
+    1_classify:
+      action: "Classify intent, complexity, continuity, freshness, and risk."
+      output: "Smallest active module set."
+    2_restore:
+      action: "Read ./.agents/state.json only when continuation or compression state matters."
+      output: "Current goal, phase, constraints, findings, and next action."
+    3_analyze:
+      action: "Verify requirements and inspect only the necessary local or external evidence."
+      output: "Decision-ready findings, not raw logs."
+    4_execute:
+      action: "Modify files or perform requested work with scoped changes."
+      output: "Touched files and behavioral change summary."
+    5_verify:
+      action: "Run the narrowest meaningful checks, broadening when risk or shared behavior requires it."
+      output: "Validation results and remaining gaps."
+    6_compress:
+      action: "If triggers fired, update ./.agents/state.json and task memory."
+      output: "Warm memory checkpoint."
+    7_deliver:
+      action: "Load ./.agents/output/delivery.yaml and answer concisely."
+      output: "Outcome, changed files, validation, residual risk."
+
+compression_hooks:
+  before_execute: "Compress if analysis produced durable decisions or a user decision point."
+  after_verify: "Compress validation status for multi-step or high-risk work."
+  before_deliver: "Compress when the task touched >5 files, used >8 meaningful tool calls, or may continue."
+
+validation_levels:
+  targeted: "Single focused check for narrow edits."
+  related: "Relevant unit/integration checks for shared behavior."
+  full: "Full test/build suite for high-risk or broad changes."
+  manual: "Browser, screenshot, or smoke verification when automated checks are unavailable."

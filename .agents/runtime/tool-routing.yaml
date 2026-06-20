@@ -1,0 +1,89 @@
+# Runtime Tool Routing Rules v1.0
+purpose: "Choose the lowest-cost tool path that can answer or execute the task with enough evidence."
+
+capabilities:
+  inspect_structure:
+    use_for:
+      - "discovering project layout"
+      - "checking which rule files exist"
+    preferred_tools:
+      - "rg --files"
+      - "find"
+      - "list_dir"
+    budget: "Prefer shallow listings before recursive inspection."
+  search_files:
+    use_for:
+      - "finding symbols, references, TODOs, config keys, or rule links"
+    preferred_tools:
+      - "rg"
+      - "grep_search"
+    budget: "Search precise patterns and include paths when possible."
+  read_file:
+    use_for:
+      - "verifying exact local content before decisions or edits"
+    preferred_tools:
+      - "sed"
+      - "nl"
+      - "view_file"
+      - "Read"
+    budget: "Read targeted excerpts. For files over 100 lines, inspect headings/symbols first unless full context is required."
+  edit_file:
+    use_for:
+      - "creating or modifying project files"
+    preferred_tools:
+      - "apply_patch"
+      - "structured Edit"
+      - "replace_file_content"
+    budget: "Use small, deterministic edits. Avoid rewriting unrelated content."
+  run_command:
+    use_for:
+      - "tests, linters, formatters, schema checks, local scripts"
+    preferred_tools:
+      - "shell"
+      - "task runner"
+    budget: "Run the narrowest verification that exercises the change, then broaden for shared/high-risk behavior."
+  browse:
+    use_for:
+      - "latest facts, external docs, browser verification, visual checks"
+    preferred_tools:
+      - "browser"
+      - "web search"
+      - "official docs MCP"
+    budget: "Use primary/official sources for technical facts. Browse when freshness may matter."
+  persist_memory:
+    use_for:
+      - "compressing state"
+      - "saving task findings"
+      - "recording durable lessons"
+    preferred_tools:
+      - "state.json"
+      - "memory JSONL"
+      - "planning files"
+    budget: "Write summaries, not transcripts."
+
+selection_rules:
+  - "Prefer local files over external lookup when the answer is in the repo."
+  - "Prefer primary docs over secondary summaries."
+  - "Prefer structured parsers or project tools over ad hoc text processing when available."
+  - "Prefer existing test scripts over invented verification."
+  - "Escalate from search -> targeted read -> broader read only when evidence is insufficient."
+
+freshness_policy:
+  latest_needed:
+    trigger_examples:
+      - "latest"
+      - "current"
+      - "today"
+      - "recent"
+      - "pricing"
+      - "law"
+      - "release"
+      - "API/model documentation"
+    action: "Use browse or official docs. Record source/date in findings when relevant."
+  stable:
+    action: "Use local context and known stable facts. Avoid external lookup unless uncertain."
+
+failure_policy:
+  first_failure: "Read the error, adjust the specific assumption, retry with a changed approach."
+  second_failure: "Try a different tool or narrower reproduction."
+  third_failure: "Record blocker and ask the user only if no meaningful progress remains."

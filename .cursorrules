@@ -1,0 +1,23 @@
+# well-ambient Project Rules
+
+These rules are strict guidelines for any AI agent or developer contributing to the `well-ambient` repository.
+
+## 📦 Package Management & Environment
+- **Frontend**: Package management MUST exclusively use `pnpm` (never `npm` or `yarn`).
+  - To install dependencies: `pnpm install`
+  - To add packages: `pnpm add <package>`
+  - Dev server: `pnpm run dev`
+  - Build: `pnpm run build`
+- **Backend**: Go (Golang) is the backend language. Minimize external dependencies.
+
+## 🎨 Frontend Design & Taste Rules
+- When modifying, adding, or refactoring any frontend views, files, or styles, you **MUST** read and apply the instructions in the `design-taste-frontend` skill.
+  - Path: `/Users/eddie/.gemini/config/skills/taste-skill/SKILL.md`
+  - Follow the "Design Read" and "The Three Dials" pattern.
+  - Avoid AI-slop aesthetics: no generic violet/indigo mesh gradients, no centered heroes unless specified, no placeholder assets.
+- **Styling**: Use Svelte scoped Vanilla CSS inside `<style>` blocks. Do NOT use Tailwind CSS unless explicitly requested by the user.
+- **Component-Based Thinking**: Break UI down into modular, reusable Svelte components in `web/src/components/`.
+
+## ⚙️ GitLab, Feishu, & Jira Integrations
+- Configs must remain template-based using `config.example.yaml`. Do not commit secret keys.
+- GitLab webhook telemetries are mapped using regex patterns parsing Branch and Commit message structures.

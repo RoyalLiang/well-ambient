@@ -1,0 +1,1 @@
+{"schema_version":"1.0","id":"project-20260608-001","type":"project_fact","scope":"agent_rules","status":"active","created_at":"2026-06-08T00:00:00+08:00","summary":"Project uses .agents YAML files as canonical agent rules and AGENTS.md as bootstrap entrypoint.","evidence":["./AGENTS.md","./.agents/router.yaml"],"tags":["agents","router","bootstrap"]}
