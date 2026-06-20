@@ -52,6 +52,7 @@ type DeconstructArchive struct {
 	ID                   uint      `gorm:"primaryKey" json:"id"`
 	DemandID             string    `gorm:"index;column:demand_id" json:"demand_id"`
 	TaskGroupID          string    `gorm:"index;column:task_group_id" json:"task_group_id"`
+	ContextPackID        uint      `gorm:"index;column:context_pack_id" json:"context_pack_id"`
 	InputText            string    `gorm:"type:text" json:"input_text"`
 	MappedReposJSON      string    `gorm:"type:text" json:"mapped_repos_json"`
 	TasksJSON            string    `gorm:"type:text" json:"tasks_json"`
@@ -63,6 +64,98 @@ type DeconstructArchive struct {
 	Confidence           float64   `json:"confidence"`
 	IsMock               bool      `json:"is_mock"`
 	CreatedAt            time.Time `json:"created_at"`
+}
+
+// ContextDocument stores source-level knowledge records for AI context.
+type ContextDocument struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Title       string    `json:"title"`
+	Type        string    `gorm:"index;size:64" json:"type"`
+	Scope       string    `gorm:"index;size:64" json:"scope"`
+	ScopeID     string    `gorm:"index;size:160" json:"scope_id"`
+	Source      string    `gorm:"index;size:64" json:"source"`
+	Owner       string    `json:"owner"`
+	Status      string    `gorm:"index;size:32" json:"status"`
+	Version     int       `json:"version"`
+	ContentHash string    `gorm:"index;size:64" json:"content_hash"`
+	Summary     string    `gorm:"type:text" json:"summary"`
+	Content     string    `gorm:"type:text" json:"content"`
+	TokenCount  int       `json:"token_count"`
+	Freshness   float64   `json:"freshness"`
+	Confidence  float64   `json:"confidence"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// ContextFact stores normalized, prompt-ready fact cards.
+type ContextFact struct {
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	ContextDocumentID uint      `gorm:"index;column:context_document_id" json:"context_document_id"`
+	Type              string    `gorm:"index;size:64" json:"type"`
+	Scope             string    `gorm:"index;size:64" json:"scope"`
+	ScopeID           string    `gorm:"index;size:160" json:"scope_id"`
+	Source            string    `gorm:"index;size:64" json:"source"`
+	Owner             string    `json:"owner"`
+	Status            string    `gorm:"index;size:32" json:"status"`
+	Version           int       `json:"version"`
+	ContentHash       string    `gorm:"index;size:64" json:"content_hash"`
+	Summary           string    `gorm:"type:text" json:"summary"`
+	Content           string    `gorm:"type:text" json:"content"`
+	TokenCount        int       `json:"token_count"`
+	Freshness         float64   `json:"freshness"`
+	Confidence        float64   `json:"confidence"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// ContextChunk stores compressed chunks that can later back fact selection.
+type ContextChunk struct {
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	ContextDocumentID uint      `gorm:"index;column:context_document_id" json:"context_document_id"`
+	ContextFactID     uint      `gorm:"index;column:context_fact_id" json:"context_fact_id"`
+	Type              string    `gorm:"index;size:64" json:"type"`
+	Scope             string    `gorm:"index;size:64" json:"scope"`
+	ScopeID           string    `gorm:"index;size:160" json:"scope_id"`
+	Source            string    `gorm:"index;size:64" json:"source"`
+	Status            string    `gorm:"index;size:32" json:"status"`
+	ContentHash       string    `gorm:"index;size:64" json:"content_hash"`
+	Summary           string    `gorm:"type:text" json:"summary"`
+	Content           string    `gorm:"type:text" json:"content"`
+	TokenCount        int       `json:"token_count"`
+	Freshness         float64   `json:"freshness"`
+	Confidence        float64   `json:"confidence"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// ContextPack records the exact context assembled for a preview or deconstruction run.
+type ContextPack struct {
+	ID                    uint      `gorm:"primaryKey" json:"id"`
+	Purpose               string    `gorm:"index;size:64" json:"purpose"`
+	DemandTextHash        string    `gorm:"index;size:64" json:"demand_text_hash"`
+	ScopeSignature        string    `gorm:"type:text" json:"scope_signature"`
+	Model                 string    `json:"model"`
+	PromptTemplateVersion string    `json:"prompt_template_version"`
+	WorkHoursPerDay       float64   `json:"work_hours_per_day"`
+	TokenBudget           int       `json:"token_budget"`
+	TokenCount            int       `json:"token_count"`
+	Summary               string    `gorm:"type:text" json:"summary"`
+	ContextHash           string    `gorm:"index;size:64" json:"context_hash"`
+	ItemCount             int       `json:"item_count"`
+	CreatedAt             time.Time `json:"created_at"`
+}
+
+// ContextPackItem records each fact/chunk included in a generated pack.
+type ContextPackItem struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	ContextPackID  uint      `gorm:"index;column:context_pack_id" json:"context_pack_id"`
+	ContextFactID  uint      `gorm:"index;column:context_fact_id" json:"context_fact_id"`
+	ContextChunkID uint      `gorm:"index;column:context_chunk_id" json:"context_chunk_id"`
+	Position       int       `json:"position"`
+	Score          float64   `json:"score"`
+	TokenCount     int       `json:"token_count"`
+	Summary        string    `gorm:"type:text" json:"summary"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ConfigVersion stores a redacted, versioned snapshot of integration config
@@ -131,6 +224,11 @@ func InitDB(dbPath string) error {
 		&WebhookLog{},
 		&TaskTelemetry{},
 		&DeconstructArchive{},
+		&ContextDocument{},
+		&ContextFact{},
+		&ContextChunk{},
+		&ContextPack{},
+		&ContextPackItem{},
 		&ConfigVersion{},
 		&GitCommitLog{},
 		&Notification{},
@@ -140,6 +238,8 @@ func InitDB(dbPath string) error {
 		&userdb.UserGroupMembership{},
 		&userdb.Permission{},
 		&userdb.GroupPermission{},
+		&userdb.AuthorizationPolicy{},
+		&userdb.AuthorizationAuditLog{},
 		&userdb.AuditLog{},
 	)
 	if err != nil {

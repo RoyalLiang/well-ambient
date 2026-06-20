@@ -21,6 +21,12 @@ func InitializeSeeds(db *gorm.DB) error {
 		{Code: "dashboard:read", Name: "查看协同看板页面", Description: "有权查看主界面协同看板、AI 需求解构日志与全部任务看板"},
 		{Code: "demands:read", Name: "查看需求看板页面", Description: "有权查看需求看板泳道及其排期卡片"},
 		{Code: "decision:read", Name: "查看决策大屏页面", Description: "有权查看红区卡点诊断盘与决策会议大屏"},
+		{Code: "ai_context:read", Name: "查看 AI 上下文注册表", Description: "有权查看用于 AI 需求解构的架构、流程、功能边界与估算规则上下文"},
+		{Code: "ai_context:write", Name: "管理 AI 上下文注册表", Description: "有权新增、修改、停用 AI 上下文事实、文档与上下文包配置"},
+		{Code: "ai_context:preview", Name: "预览 AI 上下文包", Description: "有权按需求范围预览 AI 解构将使用的上下文包内容"},
+		{Code: "policies:read", Name: "查看授权策略", Description: "有权查看策略化授权规则、作用范围与命中原因"},
+		{Code: "policies:write", Name: "管理授权策略", Description: "有权新增、修改、启停 allow/deny 授权策略"},
+		{Code: "authorization_audit:read", Name: "查看授权决策审计", Description: "有权查看拒绝或高风险授权决策的审计日志"},
 	}
 
 	log.Println("Seeding default permissions (incremental)...")
@@ -83,9 +89,22 @@ func InitializeSeeds(db *gorm.DB) error {
 		}
 	}
 
-	// Admin gets config:read, config:write, users:read, kpi:read
+	// Admin gets operational configuration, read-only security diagnostics, and AI context management.
 	adminID := groupMap["admin"]
-	adminPermCodes := []string{"config:read", "config:write", "users:read", "kpi:read", "dashboard:read", "demands:read", "decision:read"}
+	adminPermCodes := []string{
+		"config:read",
+		"config:write",
+		"users:read",
+		"kpi:read",
+		"dashboard:read",
+		"demands:read",
+		"decision:read",
+		"ai_context:read",
+		"ai_context:write",
+		"ai_context:preview",
+		"policies:read",
+		"authorization_audit:read",
+	}
 	for _, code := range adminPermCodes {
 		if pID, ok := permMap[code]; ok {
 			var count int64

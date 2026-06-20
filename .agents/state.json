@@ -1,46 +1,53 @@
 {
   "warm_memory": {
-    "goal": "Remove the mis-scoped AI context center module-image feature and reset AI context configuration to the original general system-design/workflow purpose.",
-    "classification": "coding.config; frontend admin UI cleanup, backend route/model removal, prompt behavior cleanup, product design recommendation",
+    "goal": "Implement the strongest-brain AI Context Registry and policy-based RBAC rebuild from the reviewed plan.",
+    "classification": "coding.architecture; backend context-pack pipeline, policy authorization, frontend admin UI, documentation",
     "phase": "complete",
     "constraints": [
-      "Keep the generic AI project context fields because they match the intended design/function/process calibration purpose.",
-      "Remove path-planning-specific context/configuration and the targeted module profile upload/toggle chain.",
-      "Do not touch or stage unrelated dirty files such as `well-ambient.db` or uploaded spreadsheets.",
+      "Treat AI context as system design/process/function facts for demand deconstruction, not a targeted module feature.",
+      "Keep old AI config text fields as backend fallback only so existing deployments do not lose context.",
+      "Do not touch or stage unrelated dirty files such as `well-ambient.db` or `internal/server/task_status.md`.",
       "Commit only intentional source/config/docs/task-memory changes."
     ],
     "decisions": [
-      "Deleted `AIContextCenter.svelte` and removed it from `AIConfig.svelte`.",
-      "Deleted `/api/ai-context/*` backend handlers/tests/routes and removed `AIContextProfile` from DB auto-migration.",
-      "Stopped injecting enabled module context profiles into AI deconstruction prompts.",
-      "Cleared path-planning-specific AI context fields in `config.example.yaml` and deleted `docs/ai-context/path-planning-module.md`.",
-      "The next strongest-brain rebuild should be a general Context Knowledge Layer with typed sections, scope, freshness, retrieval, audit, and prompt assembly, not a module-specific upload feature."
+      "Added Context Registry models for documents, facts, chunks, packs, and pack items.",
+      "Demand deconstruction now builds and persists a context pack before prompt assembly, returns `context_pack_id`, and archives that pack id during import.",
+      "AI settings now exposes structured context facts and pack preview while removing the old visible four-textarea context center; legacy config fields remain fallback only.",
+      "Added policy authorization tables and evaluator with explicit deny override, policy allow grants, super_admin break-glass, legacy group permission compatibility, and decision audit logging.",
+      "Added policy management and authorization explanation UI under Settings."
     ],
     "findings": [
-      "The old AI context center behaved like a targeted module implementation registry: upload spreadsheet, create profile versions, enable/disable Prompt injection.",
-      "This conflicted with the intended role: configuring/augmenting system design, existing product capability, process, and estimation rules so the model understands current state during demand deconstruction.",
-      "Active code/config/docs no longer reference `AIContextCenter`, `/api/ai-context`, `AIContextProfile`, `loadEnabledAIContextPrompt`, or path-planning module context."
+      "Structured facts give demand deconstruction a compact, auditable context layer with scope, freshness, confidence, token count, and hash metadata.",
+      "Persisted context packs make estimate archives reproducible because the system can inspect which context facts were used for a run.",
+      "Policy RBAC can evolve without breaking existing users by placing allow/deny policies above the current group-permission matrix.",
+      "Full Go tests need loopback access because existing GitLab webhook tests use `httptest.NewServer`; sandboxed runs fail on local port binding."
     ],
     "touched_files": [
-      "config.example.yaml",
-      "docs/ai-context/path-planning-module.md",
+      "docs/strongest-brain-implementation-plan.md",
       "internal/db/db.go",
-      "internal/server/ai_context_handlers.go",
-      "internal/server/ai_context_handlers_test.go",
+      "internal/db/user/init.go",
+      "internal/db/user/user.go",
       "internal/server/ai_handlers.go",
+      "internal/server/authz/policy.go",
+      "internal/server/authz_handlers.go",
+      "internal/server/context_handlers.go",
+      "internal/server/context_handlers_test.go",
+      "internal/server/policy_authorization_test.go",
       "internal/server/server.go",
+      "web/src/components/Deconstructor.svelte",
+      "web/src/components/SettingsPanel.svelte",
       "web/src/components/config/AIConfig.svelte",
-      "web/src/components/config/AIContextCenter.svelte",
       "task_plan.md",
       "findings.md",
       "progress.md",
       ".agents/state.json"
     ],
     "validation": [
-      "GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1: sandbox loopback bind blocked first run; passed with approved loopback access.",
-      "pnpm --dir web build: passed with existing unrelated Svelte accessibility warnings."
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(Context|Authorization|WithPermission|Authorize|ImportTasksArchives|ParseDeconstruct)': passed.",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./...: passed with approved loopback access after sandbox port bind failed.",
+      "pnpm --dir web build: passed with existing unrelated Svelte accessibility warnings in untouched controls."
     ],
     "blockers": [],
-    "next": "Deliver concise final summary and include strongest-brain rebuild recommendation."
+    "next": "Commit intentional source, docs, and task-memory changes; exclude unrelated `well-ambient.db` and `internal/server/task_status.md`."
   }
 }

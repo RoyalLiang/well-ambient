@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import Steps from '../shared/Steps.svelte';
   import TextInput from '../shared/TextInput.svelte';
   import Switch from '../shared/Switch.svelte';
@@ -39,6 +39,95 @@
   export let saveSuccess = false;
   export let lastUpdated = '';
 
+  type ContextFactID = number | string;
+
+  interface ContextFact {
+    id?: ContextFactID;
+    type: string;
+    scope: string;
+    scope_id: string;
+    source: string;
+    owner: string;
+    status: string;
+    version?: number | string;
+    content_hash?: string;
+    summary: string;
+    content: string;
+    token_count?: number;
+    freshness?: number;
+    confidence?: number;
+    created_at?: string;
+    updated_at?: string;
+  }
+
+  interface ContextFactForm {
+    type: string;
+    scope: string;
+    scope_id: string;
+    source: string;
+    owner: string;
+    status: string;
+    version: number;
+    summary: string;
+    content: string;
+    freshness: number;
+    confidence: number;
+  }
+
+  interface ContextPackPreviewItem {
+    id?: ContextFactID;
+    type: string;
+    scope: string;
+    scope_id: string;
+    summary: string;
+    content: string;
+    token_count?: number;
+    score?: number;
+    reason?: string;
+  }
+
+  interface ContextPackPreview {
+    id?: ContextFactID;
+    summary: string;
+    token_count?: number;
+    budget_tokens?: number;
+    cache_key?: string;
+    items: ContextPackPreviewItem[];
+  }
+
+  const contextFactTypes = [
+    { value: 'architecture', label: '架构事实' },
+    { value: 'workflow', label: '交付流程' },
+    { value: 'feature_boundary', label: '能力边界' },
+    { value: 'estimation_rule', label: '估算规则' },
+    { value: 'glossary', label: '术语口径' },
+    { value: 'risk_rule', label: '风险规则' },
+    { value: 'delivery_history', label: '交付样本' }
+  ];
+
+  const contextFactScopes = [
+    { value: 'global', label: '全局' },
+    { value: 'repo', label: '仓库' },
+    { value: 'module', label: '模块' },
+    { value: 'demand_type', label: '需求类型' }
+  ];
+
+  const contextFactSources = [
+    { value: 'manual', label: '手工录入' },
+    { value: 'config', label: '配置迁移' },
+    { value: 'gitlab', label: 'GitLab' },
+    { value: 'jira', label: 'Jira' },
+    { value: 'archive', label: '历史归档' },
+    { value: 'doc', label: '文档' }
+  ];
+
+  const contextFactStatuses = [
+    { value: 'active', label: '生效' },
+    { value: 'draft', label: '草稿' },
+    { value: 'paused', label: '暂停' },
+    { value: 'retired', label: '归档' }
+  ];
+
   let currentStep = 1;
   const steps = ['连接与凭证', '确认应用'];
   let editing = false;
@@ -62,7 +151,23 @@
   let testError = '';
   let testSuccess = '';
   let testDetails = '';
-  $: isConfigured = enabled || !!(baseURL || apiToken || modelName || projectArchitecture || deliveryWorkflow || implementedFeatures || estimationGuidelines);
+
+  let contextFacts: ContextFact[] = [];
+  let contextFactsLoading = false;
+  let contextFactsError = '';
+  let contextFactSaving = false;
+  let contextFactSaveError = '';
+  let contextFactSaveSuccess = '';
+  let editingContextFactId: ContextFactID | null = null;
+  let contextFactForm: ContextFactForm = createBlankContextFactForm();
+  let previewDemand = '';
+  let contextPreviewLoading = false;
+  let contextPreviewError = '';
+  let contextPackPreview: ContextPackPreview | null = null;
+
+  $: isConfigured = enabled || !!(baseURL || apiToken || modelName || activeContextFactCount);
+  $: activeContextFactCount = contextFacts.filter(fact => fact.status === 'active').length;
+  $: totalContextFactTokens = contextFacts.reduce((sum, fact) => sum + (Number(fact.token_count) || 0), 0);
   $: if (!editing && !saveSuccess) {
     enabled = config.enabled ?? false;
     provider = config.provider || 'openai';
@@ -77,6 +182,10 @@
     defaultWorkHoursPerDay = config.default_work_hours_per_day || 8;
     showTokenEditor = !config.api_token;
   }
+
+  onMount(() => {
+    fetchContextFacts();
+  });
 
   function formatUpdated(value: string) {
     if (!value) return '暂无版本记录';
@@ -194,6 +303,252 @@
   function contextStatus(value: string) {
     return value.trim() ? '已配置' : '未配置';
   }
+
+  function createBlankContextFactForm(): ContextFactForm {
+    return {
+      type: 'architecture',
+      scope: 'global',
+      scope_id: '',
+      source: 'manual',
+      owner: '',
+      status: 'active',
+      version: 1,
+      summary: '',
+      content: '',
+      freshness: 0.85,
+      confidence: 0.85
+    };
+  }
+
+  function normalizeContextFact(raw: any): ContextFact {
+    return {
+      id: raw?.id ?? raw?.fact_id ?? raw?.uuid,
+      type: raw?.type || 'architecture',
+      scope: raw?.scope || 'global',
+      scope_id: raw?.scope_id ?? raw?.scopeId ?? '',
+      source: raw?.source || 'manual',
+      owner: raw?.owner || '',
+      status: raw?.status || 'active',
+      version: raw?.version,
+      content_hash: raw?.content_hash ?? raw?.contentHash,
+      summary: raw?.summary || raw?.title || '',
+      content: raw?.content || raw?.text || raw?.body || raw?.summary || '',
+      token_count: raw?.token_count ?? raw?.tokenCount,
+      freshness: raw?.freshness,
+      confidence: raw?.confidence,
+      created_at: raw?.created_at ?? raw?.createdAt,
+      updated_at: raw?.updated_at ?? raw?.updatedAt
+    };
+  }
+
+  function normalizeContextFactList(payload: any): ContextFact[] {
+    const list = Array.isArray(payload)
+      ? payload
+      : (payload?.facts || payload?.items || payload?.data || payload?.context_facts || []);
+    return Array.isArray(list) ? list.map(normalizeContextFact) : [];
+  }
+
+  function contextFactKey(fact: ContextFact) {
+    return String(fact.id ?? fact.content_hash ?? `${fact.type}:${fact.scope}:${fact.scope_id}:${fact.summary}`);
+  }
+
+  function labelFor(options: Array<{ value: string; label: string }>, value: string) {
+    return options.find(option => option.value === value)?.label || value || '未定义';
+  }
+
+  function compactScope(fact: { scope: string; scope_id?: string }) {
+    if (fact.scope === 'global') return 'global';
+    return `${fact.scope}:${fact.scope_id || '未指定'}`;
+  }
+
+  function formatScore(value?: number) {
+    const score = Number(value);
+    if (!Number.isFinite(score)) return '未评分';
+    return `${Math.round(score * 100)}%`;
+  }
+
+  function beginCreateContextFact() {
+    editingContextFactId = null;
+    contextFactForm = createBlankContextFactForm();
+    contextFactSaveError = '';
+    contextFactSaveSuccess = '';
+  }
+
+  function beginEditContextFact(fact: ContextFact) {
+    editingContextFactId = fact.id ?? contextFactKey(fact);
+    contextFactForm = {
+      type: fact.type || 'architecture',
+      scope: fact.scope || 'global',
+      scope_id: fact.scope_id || '',
+      source: fact.source || 'manual',
+      owner: fact.owner || '',
+      status: fact.status || 'active',
+      version: Number(fact.version) || 1,
+      summary: fact.summary || '',
+      content: fact.content || '',
+      freshness: Number(fact.freshness) || 0.85,
+      confidence: Number(fact.confidence) || 0.85
+    };
+    contextFactSaveError = '';
+    contextFactSaveSuccess = '';
+  }
+
+  function buildContextFactPayload() {
+    const freshness = Number(contextFactForm.freshness);
+    const confidence = Number(contextFactForm.confidence);
+    return {
+      id: editingContextFactId ?? undefined,
+      type: contextFactForm.type,
+      scope: contextFactForm.scope,
+      scope_id: contextFactForm.scope === 'global' ? '' : contextFactForm.scope_id.trim(),
+      source: contextFactForm.source,
+      owner: contextFactForm.owner.trim(),
+      status: contextFactForm.status,
+      version: Number(contextFactForm.version) || 1,
+      summary: contextFactForm.summary.trim(),
+      content: contextFactForm.content.trim(),
+      freshness: Number.isFinite(freshness) ? freshness : 0.85,
+      confidence: Number.isFinite(confidence) ? confidence : 0.85
+    };
+  }
+
+  async function parseJSONResponse(res: Response) {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return { message: text };
+    }
+  }
+
+  async function fetchContextFacts() {
+    contextFactsLoading = true;
+    contextFactsError = '';
+    try {
+      const res = await fetch('/api/context/facts');
+      const data = await parseJSONResponse(res);
+      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+      contextFacts = normalizeContextFactList(data);
+    } catch (e: any) {
+      contextFactsError = e.message || '上下文事实加载失败';
+    } finally {
+      contextFactsLoading = false;
+    }
+  }
+
+  async function saveContextFact() {
+    contextFactSaveError = '';
+    contextFactSaveSuccess = '';
+    if (!contextFactForm.summary.trim() || !contextFactForm.content.trim()) {
+      contextFactSaveError = '请填写事实摘要和事实内容';
+      return;
+    }
+    if (contextFactForm.scope !== 'global' && !contextFactForm.scope_id.trim()) {
+      contextFactSaveError = '非全局事实需要填写 Scope ID';
+      return;
+    }
+
+    const payload = buildContextFactPayload();
+    const method = editingContextFactId ? 'PUT' : 'POST';
+    contextFactSaving = true;
+    try {
+      let res = await fetch('/api/context/facts', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok && editingContextFactId && [404, 405].includes(res.status)) {
+        res = await fetch(`/api/context/facts/${encodeURIComponent(String(editingContextFactId))}`, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      const data = await parseJSONResponse(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      contextFactSaveSuccess = editingContextFactId ? '上下文事实已更新' : '上下文事实已创建';
+      await fetchContextFacts();
+      if (!editingContextFactId) beginCreateContextFact();
+    } catch (e: any) {
+      contextFactSaveError = e.message || '上下文事实保存失败';
+    } finally {
+      contextFactSaving = false;
+    }
+  }
+
+  function normalizePreviewItem(raw: any): ContextPackPreviewItem {
+    if (typeof raw === 'string') {
+      return {
+        type: 'context',
+        scope: 'global',
+        scope_id: '',
+        summary: raw,
+        content: raw
+      };
+    }
+    return {
+      id: raw?.id ?? raw?.fact_id ?? raw?.item_id,
+      type: raw?.type || raw?.fact_type || 'context',
+      scope: raw?.scope || 'global',
+      scope_id: raw?.scope_id ?? raw?.scopeId ?? '',
+      summary: raw?.summary || raw?.title || raw?.content || '',
+      content: raw?.content || raw?.text || raw?.summary || '',
+      token_count: raw?.token_count ?? raw?.tokenCount,
+      score: raw?.score ?? raw?.rank_score,
+      reason: raw?.reason || raw?.match_reason || ''
+    };
+  }
+
+  function normalizeContextPackPreview(payload: any): ContextPackPreview {
+    const raw = payload?.pack || payload?.preview || payload?.data || payload;
+    const items = raw?.items || raw?.facts || raw?.selected_facts || raw?.context_items || payload?.items || [];
+    return {
+      id: raw?.id ?? raw?.pack_id ?? payload?.context_pack_id,
+      summary: raw?.summary || raw?.pack_summary || payload?.summary || '',
+      token_count: raw?.token_count ?? raw?.tokenCount ?? payload?.token_count,
+      budget_tokens: raw?.budget_tokens ?? raw?.budgetTokens ?? payload?.budget_tokens,
+      cache_key: raw?.cache_key ?? raw?.cacheKey,
+      items: Array.isArray(items) ? items.map(normalizePreviewItem) : []
+    };
+  }
+
+  async function previewContextPack() {
+    contextPreviewError = '';
+    contextPackPreview = null;
+    if (!previewDemand.trim()) {
+      contextPreviewError = '请输入一段需求文本后再预览上下文包';
+      return;
+    }
+
+    contextPreviewLoading = true;
+    try {
+      const res = await fetch('/api/context/pack/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          demand_text: previewDemand.trim(),
+          text: previewDemand.trim(),
+          model: modelName,
+          provider,
+          work_hours_per_day: normalizedWorkHours()
+        })
+      });
+      const data = await parseJSONResponse(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      contextPackPreview = normalizeContextPackPreview(data);
+    } catch (e: any) {
+      contextPreviewError = e.message || '上下文包预览失败';
+    } finally {
+      contextPreviewLoading = false;
+    }
+  }
 </script>
 
 <div class="wizard">
@@ -219,7 +574,7 @@
         <div>
           <span class="overview-kicker font-mono">AI Deconstructor</span>
           <h4>AI 引擎配置状态摘要</h4>
-          <p>已配置后默认显示模型状态、上下文覆盖、健康检查和编辑入口。</p>
+          <p>已配置后默认显示模型状态、上下文事实、健康检查和编辑入口。</p>
         </div>
         <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
       </div>
@@ -244,10 +599,10 @@
       </div>
 
       <div class="context-health-grid">
-        <span>架构 {contextStatus(projectArchitecture)}</span>
-        <span>流程 {contextStatus(deliveryWorkflow)}</span>
-        <span>已实现能力 {contextStatus(implementedFeatures)}</span>
-        <span>估算口径 {contextStatus(estimationGuidelines)}</span>
+        <span>上下文事实 {activeContextFactCount} active</span>
+        <span>上下文 tokens {totalContextFactTokens || 0}</span>
+        <span>每日折算 {defaultWorkHoursPerDay || 8} 小时</span>
+        <span>Pack 预览 {contextPackPreview ? '已生成' : '待生成'}</span>
       </div>
 
       {#if testDetails}
@@ -369,74 +724,17 @@
             </div>
           {/if}
 
-          <div class="context-config-panel">
+          <div class="context-config-panel compact-settings">
             <div class="context-header">
               <div>
-                <span class="context-kicker">Estimation Calibration</span>
-                <h4>项目上下文与估算口径</h4>
-                <p class="context-intro">最强大脑需要的是可校准的判断边界：系统负责什么、事实从哪里来、哪些能力已存在、估算如何折算，而不是把功能清单整表塞进 Prompt。</p>
+                <span class="context-kicker">Estimation</span>
+                <h4>估算折算设置</h4>
+                <p class="context-intro">系统上下文由下方事实注册表维护；这里仅保留模型请求和排期折算参数。</p>
               </div>
               <span class="context-chip">小时级估算</span>
             </div>
 
-            <div class="calibration-axis-grid">
-              <span><b>边界</b>模块职责、上下游、明确不负责的范围</span>
-              <span><b>事实源</b>GitLab / Jira / 配置库 / 决策面板的可信口径</span>
-              <span><b>复用基线</b>已存在的平台级能力与可复用组件</span>
-              <span><b>未知项</b>需要人工确认的接口、权限、数据与验收口径</span>
-              <span><b>验证成本</b>联调、自测、回归、灰度和观测成本</span>
-              <span><b>反馈闭环</b>估算与实际工时归档，用于后续校准</span>
-            </div>
-
-            <div class="context-grid">
-              <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-project-architecture">系统边界与责任域</label>
-                <textarea
-                  id="ai-project-architecture"
-                  class="context-textarea"
-                  rows="4"
-                  placeholder="写清系统拥有的模块、上下游依赖、不能越界假设的部分。例如：Go 后端负责配置/API/任务归档；Svelte 前端负责看板与解构；GitLab/Jira 是事实源..."
-                  bind:value={projectArchitecture}
-                ></textarea>
-                <span class="helper-text-custom">用于判断需求是配置、复用、扩展还是全新建设，避免把已有系统按从零开发估算。</span>
-              </div>
-
-              <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-delivery-workflow">事实源与交付链路</label>
-                <textarea
-                  id="ai-delivery-workflow"
-                  class="context-textarea"
-                  rows="4"
-                  placeholder="写清需求进入、AI 解构、影子任务、排期、分支/MR、Jira 状态同步、日报/周报与决策介入的真实链路..."
-                  bind:value={deliveryWorkflow}
-                ></textarea>
-                <span class="helper-text-custom">用于把跨仓、评审、联调、验收、状态回写和异常处理纳入小时估算。</span>
-              </div>
-
-              <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-implemented-features">平台级已实现基线</label>
-                <textarea
-                  id="ai-implemented-features"
-                  class="context-textarea"
-                  rows="4"
-                  placeholder="只写平台级共识能力，不粘贴完整能力清单。例如：已具备需求解构、影子任务归档、GitLab/Jira 同步、日报/周报预览、红区诊断盘..."
-                  bind:value={implementedFeatures}
-                ></textarea>
-                <span class="helper-text-custom">用于补充现有设计、功能和流程，让需求解构优先理解系统全局基线。</span>
-              </div>
-
-              <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-estimation-guidelines">估算校准规则</label>
-                <textarea
-                  id="ai-estimation-guidelines"
-                  class="context-textarea"
-                  rows="4"
-                  placeholder="例如：统一按小时输出；包含开发、配置、联调、自测、回归、上线与回滚预案；已实现能力只算增量；未知项必须进入 missing_info 与风险说明。"
-                  bind:value={estimationGuidelines}
-                ></textarea>
-                <span class="helper-text-custom">用于统一整体难度、子任务小时数、置信度、缓冲和后续估算准确性评估口径。</span>
-              </div>
-
+            <div class="context-grid compact">
               <div class="form-group-custom context-field hours-field">
                 <label class="form-label-custom" for="ai-work-hours">每日折算小时</label>
                 <input
@@ -448,7 +746,6 @@
                   step="0.5"
                   bind:value={defaultWorkHoursPerDay}
                 />
-                <span class="helper-text-custom">用于归档和排期折算，默认 8 小时/天。</span>
               </div>
             </div>
           </div>
@@ -497,20 +794,8 @@
               <span class="summary-value font-mono">{modelName || 'gpt-4o (默认)'}</span>
             </div>
             <div class="summary-row">
-              <span class="summary-label">项目架构上下文:</span>
-              <span class="summary-value">{contextStatus(projectArchitecture)}</span>
-            </div>
-            <div class="summary-row">
-              <span class="summary-label">研发流程上下文:</span>
-              <span class="summary-value">{contextStatus(deliveryWorkflow)}</span>
-            </div>
-            <div class="summary-row">
-              <span class="summary-label">已实现能力上下文:</span>
-              <span class="summary-value">{contextStatus(implementedFeatures)}</span>
-            </div>
-            <div class="summary-row">
-              <span class="summary-label">估算口径:</span>
-              <span class="summary-value">{contextStatus(estimationGuidelines)} · {defaultWorkHoursPerDay || 8} 小时/天</span>
+              <span class="summary-label">上下文事实注册表:</span>
+              <span class="summary-value">{activeContextFactCount} active · {defaultWorkHoursPerDay || 8} 小时/天</span>
             </div>
             <div class="summary-row">
               <span class="summary-label">API 凭证 Token:</span>
@@ -531,6 +816,248 @@
         </div>
       </div>
     {/if}
+  {/if}
+
+  {#if !saveSuccess && (!editing || currentStep === 1)}
+    <div class="context-registry-panel">
+      <div class="registry-header">
+        <div>
+          <span class="context-kicker">AI Context Registry</span>
+          <h4>上下文事实注册表</h4>
+          <p>将架构、流程、能力边界和估算规则沉淀为可审计事实卡，供需求解构时组装成压缩上下文包。</p>
+        </div>
+        <div class="registry-metrics font-mono">
+          <span>{activeContextFactCount} active</span>
+          <span>{totalContextFactTokens || 0} tokens</span>
+        </div>
+      </div>
+
+      {#if contextFactsError}
+        <div class="registry-error">
+          <span>{contextFactsError}</span>
+          <button type="button" on:click={fetchContextFacts}>重试</button>
+        </div>
+      {/if}
+
+      <div class="registry-layout">
+        <div class="registry-list-column">
+          <div class="registry-toolbar">
+            <span class="registry-section-title">事实卡片</span>
+            <button type="button" on:click={fetchContextFacts} disabled={contextFactsLoading}>
+              {contextFactsLoading ? '加载中' : '刷新'}
+            </button>
+          </div>
+
+          {#if contextFactsLoading}
+            <div class="registry-skeleton" aria-label="上下文事实加载中">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          {:else if contextFacts.length === 0}
+            <div class="registry-empty">
+              <strong>暂无上下文事实</strong>
+              <p>先创建一条全局架构或估算规则事实，后端就能在预览接口中返回候选上下文包。</p>
+            </div>
+          {:else}
+            <div class="registry-list" role="list" aria-label="上下文事实列表">
+              {#each contextFacts as fact (contextFactKey(fact))}
+                <button
+                  type="button"
+                  class="registry-fact-card {String(editingContextFactId) === String(fact.id ?? contextFactKey(fact)) ? 'active' : ''}"
+                  on:click={() => beginEditContextFact(fact)}
+                >
+                  <div class="fact-card-top">
+                    <span class="fact-type">{labelFor(contextFactTypes, fact.type)}</span>
+                    <span class="fact-status status-{fact.status}">{labelFor(contextFactStatuses, fact.status)}</span>
+                  </div>
+                  <strong>{fact.summary || '未命名事实'}</strong>
+                  <p>{fact.content || '暂无内容'}</p>
+                  <div class="fact-meta font-mono">
+                    <span>{compactScope(fact)}</span>
+                    <span>{fact.source || 'manual'}</span>
+                    <span>{fact.token_count || 0} tk</span>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="registry-editor-column">
+          <div class="registry-toolbar">
+            <span class="registry-section-title">{editingContextFactId ? '更新事实' : '创建事实'}</span>
+            <button type="button" on:click={beginCreateContextFact}>新建</button>
+          </div>
+
+          {#if contextFactSaveError}
+            <div class="inline-error">{contextFactSaveError}</div>
+          {/if}
+          {#if contextFactSaveSuccess}
+            <div class="inline-success">{contextFactSaveSuccess}</div>
+          {/if}
+
+          <div class="registry-form-grid">
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-type">事实类型</label>
+              <select id="context-fact-type" class="context-select" bind:value={contextFactForm.type}>
+                {#each contextFactTypes as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-status">状态</label>
+              <select id="context-fact-status" class="context-select" bind:value={contextFactForm.status}>
+                {#each contextFactStatuses as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-scope">Scope</label>
+              <select id="context-fact-scope" class="context-select" bind:value={contextFactForm.scope}>
+                {#each contextFactScopes as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-scope-id">Scope ID</label>
+              <input
+                id="context-fact-scope-id"
+                class="context-input"
+                placeholder={contextFactForm.scope === 'global' ? '全局事实可留空' : 'repo/module/demand type'}
+                bind:value={contextFactForm.scope_id}
+                disabled={contextFactForm.scope === 'global'}
+              />
+            </div>
+
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-source">来源</label>
+              <select id="context-fact-source" class="context-select" bind:value={contextFactForm.source}>
+                {#each contextFactSources as option}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="form-group-custom">
+              <label class="form-label-custom" for="context-fact-owner">Owner</label>
+              <input id="context-fact-owner" class="context-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} />
+            </div>
+
+            <div class="form-group-custom wide">
+              <label class="form-label-custom" for="context-fact-summary">事实摘要</label>
+              <input id="context-fact-summary" class="context-input" placeholder="一句话说明这条事实的用途" bind:value={contextFactForm.summary} />
+            </div>
+
+            <div class="form-group-custom wide">
+              <label class="form-label-custom" for="context-fact-content">事实内容</label>
+              <textarea
+                id="context-fact-content"
+                class="context-textarea compact"
+                rows="5"
+                placeholder="写入可压缩进 Prompt 的事实，不放临时讨论和未经确认的猜测。"
+                bind:value={contextFactForm.content}
+              ></textarea>
+            </div>
+
+            <div class="score-grid wide">
+              <label>
+                <span>新鲜度 <b class="font-mono">{formatScore(contextFactForm.freshness)}</b></span>
+                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.freshness} />
+              </label>
+              <label>
+                <span>置信度 <b class="font-mono">{formatScore(contextFactForm.confidence)}</b></span>
+                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.confidence} />
+              </label>
+            </div>
+          </div>
+
+          <div class="registry-actions">
+            <Button variant="ghost" on:click={beginCreateContextFact}>清空</Button>
+            <Button variant="primary" loading={contextFactSaving} on:click={saveContextFact}>
+              {editingContextFactId ? '更新事实' : '创建事实'}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pack-preview-panel">
+        <div class="registry-header compact">
+          <div>
+            <span class="context-kicker">Pack Preview</span>
+            <h4>上下文包预览</h4>
+            <p>输入一段需求文本，预览后端将选择哪些事实进入 AI 解构上下文。</p>
+          </div>
+          <Button variant="secondary" loading={contextPreviewLoading} on:click={previewContextPack}>预览上下文包</Button>
+        </div>
+
+        <textarea
+          class="context-textarea preview-demand"
+          rows="3"
+          placeholder="例如：为需求解构新增权限解释和上下文包归档能力，需要兼容现有粗粒度 RBAC。"
+          bind:value={previewDemand}
+        ></textarea>
+
+        {#if contextPreviewError}
+          <div class="inline-error">{contextPreviewError}</div>
+        {/if}
+
+        {#if contextPreviewLoading}
+          <div class="registry-skeleton slim" aria-label="上下文包预览加载中">
+            <span></span>
+            <span></span>
+          </div>
+        {:else if contextPackPreview}
+          <div class="pack-summary">
+            <div>
+              <span>Pack ID</span>
+              <strong class="font-mono">{contextPackPreview.id || 'preview'}</strong>
+            </div>
+            <div>
+              <span>Token 预算</span>
+              <strong class="font-mono">{contextPackPreview.token_count || 0}/{contextPackPreview.budget_tokens || 'auto'}</strong>
+            </div>
+            <div>
+              <span>Cache Key</span>
+              <strong class="font-mono">{contextPackPreview.cache_key || '等待后端返回'}</strong>
+            </div>
+          </div>
+
+          {#if contextPackPreview.summary}
+            <pre class="details-pre pack-text font-mono">{contextPackPreview.summary}</pre>
+          {/if}
+
+          <div class="pack-items">
+            {#each contextPackPreview.items as item, index}
+              <div class="pack-item">
+                <div class="pack-item-top">
+                  <span class="fact-type">{index + 1}. {labelFor(contextFactTypes, item.type)}</span>
+                  <span class="fact-meta font-mono">{compactScope(item)} · {formatScore(item.score)}</span>
+                </div>
+                <strong>{item.summary || '未命名候选事实'}</strong>
+                <p>{item.reason || item.content || '后端暂未返回命中说明'}</p>
+              </div>
+            {:else}
+              <div class="registry-empty compact">
+                <strong>预览未选中事实</strong>
+                <p>这通常表示后端接口仍在接入，或当前需求文本与可用事实没有匹配结果。</p>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="registry-empty compact">
+            <strong>等待预览</strong>
+            <p>预览结果会展示 pack 摘要、token 占用和被选中的事实卡。</p>
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -833,35 +1360,14 @@
     font-weight: 700;
   }
 
-  .calibration-axis-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .calibration-axis-grid span {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 9px 10px;
-    border: 1px solid rgba(51, 65, 85, 0.46);
-    border-radius: 7px;
-    background: rgba(2, 6, 23, 0.36);
-    color: #64748b;
-    font-size: 0.7rem;
-    line-height: 1.45;
-  }
-
-  .calibration-axis-grid b {
-    color: #cbd5e1;
-    font-size: 0.76rem;
-  }
-
   .context-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 14px;
+  }
+
+  .context-grid.compact {
+    grid-template-columns: minmax(180px, 220px);
   }
 
   .context-field.wide {
@@ -1108,7 +1614,6 @@
   }
 
   @media (max-width: 820px) {
-    .calibration-axis-grid,
     .context-grid {
       grid-template-columns: minmax(0, 1fr);
     }

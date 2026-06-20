@@ -36,7 +36,7 @@
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'offline';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'offline';
 
-  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'users' | 'matrix' | 'audit' = 'gitlab';
+  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
 
   interface GlobalConfig {
     server: { host: string; port: number };
@@ -180,10 +180,57 @@
     ip_address: string;
     created_at: string;
   }
+  interface AuthorizationPolicy {
+    id: number;
+    effect: string;
+    subject_type: string;
+    subject_id: string;
+    action: string;
+    resource_type: string;
+    resource_id: string;
+    scope: string;
+    scope_id: string;
+    condition_json: string;
+    priority: number;
+    enabled: boolean;
+    reason: string;
+    created_at: string;
+    updated_at: string;
+  }
+  interface AuthorizationAuditLog {
+    id: number;
+    subject_username: string;
+    action: string;
+    resource_type: string;
+    resource_id: string;
+    scope: string;
+    scope_id: string;
+    allowed: boolean;
+    reason: string;
+    missing_permission: string;
+    risk_level: string;
+    matched_policy_id?: number;
+    created_at: string;
+  }
+  interface AuthorizationDecision {
+    allowed: boolean;
+    reason: string;
+    missing_permission: string;
+    scope: string;
+    risk_level: string;
+    matched_policy?: AuthorizationPolicy;
+  }
 
   let users: User[] = [];
   let groups: Group[] = [];
   let auditLogs: AuditLog[] = [];
+  let authorizationPolicies: AuthorizationPolicy[] = [];
+  let authorizationAuditLogs: AuthorizationAuditLog[] = [];
+  let authorizationPolicyError = '';
+  let authorizationPolicySuccess = '';
+  let authorizationPolicySaving = false;
+  let authorizationDecision: AuthorizationDecision | null = null;
+  let authorizationExplainError = '';
 
   // Atomic permissions metadata
   const permissionMeta = [
@@ -194,8 +241,36 @@
     { code: 'users:transfer_super_admin', name: '转让超级管理员', desc: '将系统最高管理权转让给他人' },
     { code: 'dashboard:read', name: '查看协同看板', desc: '有权查看主界面协同看板、AI 需求解构日志与全部任务看板' },
     { code: 'demands:read', name: '查看需求看板', desc: '有权查看需求看板泳道及其排期卡片' },
-    { code: 'decision:read', name: '查看决策大屏', desc: '有权查看红区卡点诊断盘与决策会议大屏' }
+    { code: 'decision:read', name: '查看决策大屏', desc: '有权查看红区卡点诊断盘与决策会议大屏' },
+    { code: 'ai_context:read', name: '查看上下文事实', desc: '查看 AI 需求解构使用的结构化上下文事实' },
+    { code: 'ai_context:write', name: '管理上下文事实', desc: '新增、更新、停用 AI 上下文事实' },
+    { code: 'ai_context:preview', name: '预览上下文包', desc: '按需求文本预览上下文包选择结果' },
+    { code: 'policies:read', name: '查看授权策略', desc: '查看策略化 allow/deny 权限规则' },
+    { code: 'policies:write', name: '管理授权策略', desc: '新增或更新策略化权限规则' },
+    { code: 'authorization_audit:read', name: '授权决策审计', desc: '查看拒绝和高风险授权决策日志' }
   ];
+
+  let policyForm = {
+    effect: 'deny',
+    subject_type: 'group',
+    subject_id: 'member',
+    action: 'config:write',
+    resource_type: 'config',
+    resource_id: '',
+    scope: 'global',
+    scope_id: '',
+    priority: 100,
+    enabled: true,
+    reason: ''
+  };
+  let explainForm = {
+    username: '',
+    action: 'config:read',
+    resource_type: 'config',
+    resource_id: '',
+    scope: 'global',
+    scope_id: ''
+  };
 
   // Modals state for membership configuration
   let showAddMembershipModal = false;
@@ -355,6 +430,88 @@
     } catch (e) {
       console.error(e);
     }
+  }
+
+  async function fetchAuthorizationPolicies() {
+    if (!currentUserPermissions.includes('policies:read') && !currentUserPermissions.includes('users:read')) return;
+    try {
+      const res = await fetch('/api/authz/policies');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || '策略列表加载失败');
+      authorizationPolicies = Array.isArray(data) ? data : (data.policies || []);
+      authorizationPolicyError = '';
+    } catch (e: any) {
+      authorizationPolicyError = e.message || '策略列表加载失败';
+    }
+  }
+
+  async function fetchAuthorizationAuditLogs() {
+    if (!currentUserPermissions.includes('authorization_audit:read') && !currentUserPermissions.includes('users:read')) return;
+    try {
+      const res = await fetch('/api/authz/audit-logs?limit=40');
+      const data = await res.json();
+      if (res.ok) authorizationAuditLogs = Array.isArray(data) ? data : (data.logs || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function saveAuthorizationPolicy() {
+    authorizationPolicyError = '';
+    authorizationPolicySuccess = '';
+    if (!policyForm.action.trim()) {
+      authorizationPolicyError = 'Action 不能为空';
+      return;
+    }
+    if (policyForm.subject_type !== 'any' && !policyForm.subject_id.trim()) {
+      authorizationPolicyError = '非 any 主体需要填写 Subject ID';
+      return;
+    }
+
+    authorizationPolicySaving = true;
+    try {
+      const res = await fetch('/api/authz/policies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(policyForm)
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) throw new Error(data.message || '策略保存失败');
+      authorizationPolicySuccess = '授权策略已保存';
+      await fetchAuthorizationPolicies();
+    } catch (e: any) {
+      authorizationPolicyError = e.message || '策略保存失败';
+    } finally {
+      authorizationPolicySaving = false;
+    }
+  }
+
+  async function explainAuthorization() {
+    authorizationExplainError = '';
+    authorizationDecision = null;
+    if (!explainForm.username.trim() || !explainForm.action.trim()) {
+      authorizationExplainError = 'Username 与 Action 不能为空';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/authz/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(explainForm)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || '授权解释失败');
+      authorizationDecision = data;
+      await fetchAuthorizationAuditLogs();
+    } catch (e: any) {
+      authorizationExplainError = e.message || '授权解释失败';
+    }
+  }
+
+  function policyScopeLabel(policy: Pick<AuthorizationPolicy, 'scope' | 'scope_id'>) {
+    if (!policy.scope || policy.scope === 'global') return 'global';
+    return `${policy.scope}:${policy.scope_id || '*'}`;
   }
 
   function openAddMembership(username: string) {
@@ -529,6 +686,8 @@
     fetchUsers();
     fetchGroups();
     fetchAuditLogs();
+    fetchAuthorizationPolicies();
+    fetchAuthorizationAuditLogs();
 
     statusIntervalId = setInterval(fetchStatus, 5000);
 
@@ -562,7 +721,7 @@
   <aside class="settings-sidebar font-mono">
     <div class="sidebar-header">
       <h3>⚙️ 系统设置</h3>
-      <span class="version-label">Category settings</span>
+      <span class="version-label">Category settings · {currentUserRole}</span>
     </div>
     <nav class="sidebar-nav">
       <div class="nav-group">
@@ -593,6 +752,9 @@
           </button>
           <button class="nav-item {activeSection === 'matrix' ? 'active' : ''}" on:click={() => switchSection('matrix')}>
             🔒 权限矩阵矩阵
+          </button>
+          <button class="nav-item {activeSection === 'policies' ? 'active' : ''}" on:click={() => switchSection('policies')}>
+            🧭 策略化授权
           </button>
           <button class="nav-item {activeSection === 'audit' ? 'active' : ''}" on:click={() => switchSection('audit')}>
             📋 审计安全日志
@@ -744,6 +906,214 @@
           </table>
         </div>
       </div>
+    {:else if activeSection === 'policies'}
+      <div class="section-card">
+        <div class="card-header flex-header">
+          <div>
+            <h2>🧭 策略化授权控制台</h2>
+            <p>在原有用户组权限矩阵之上追加 allow/deny 策略，按主体、动作、资源与作用域解释最终授权结果。</p>
+          </div>
+          <Button variant="ghost" on:click={() => { fetchAuthorizationPolicies(); fetchAuthorizationAuditLogs(); }}>
+            刷新策略
+          </Button>
+        </div>
+
+        {#if authorizationPolicyError}
+          <div class="error-banner">{authorizationPolicyError}</div>
+        {/if}
+        {#if authorizationPolicySuccess}
+          <div class="success-banner">{authorizationPolicySuccess}</div>
+        {/if}
+
+        <div class="policy-workbench">
+          <section class="policy-panel">
+            <div class="policy-panel-header">
+              <span class="audit-kicker font-mono">Create Policy</span>
+              <h3>新增授权策略</h3>
+            </div>
+            <div class="policy-form-grid">
+              <div class="field-item">
+                <label for="policy-effect">Effect</label>
+                <select id="policy-effect" bind:value={policyForm.effect} class="custom-select font-mono">
+                  <option value="deny">deny</option>
+                  <option value="allow">allow</option>
+                </select>
+              </div>
+              <div class="field-item">
+                <label for="policy-subject-type">Subject Type</label>
+                <select id="policy-subject-type" bind:value={policyForm.subject_type} class="custom-select font-mono">
+                  <option value="group">group</option>
+                  <option value="user">user</option>
+                  <option value="any">any</option>
+                </select>
+              </div>
+              <div class="field-item">
+                <label for="policy-subject-id">Subject ID</label>
+                <input id="policy-subject-id" bind:value={policyForm.subject_id} class="custom-input font-mono" placeholder="member / admin / user@example.com" />
+              </div>
+              <div class="field-item">
+                <label for="policy-action">Action</label>
+                <input id="policy-action" bind:value={policyForm.action} class="custom-input font-mono" placeholder="config:write" />
+              </div>
+              <div class="field-item">
+                <label for="policy-resource-type">Resource Type</label>
+                <input id="policy-resource-type" bind:value={policyForm.resource_type} class="custom-input font-mono" placeholder="config / repo / demand" />
+              </div>
+              <div class="field-item">
+                <label for="policy-resource-id">Resource ID</label>
+                <input id="policy-resource-id" bind:value={policyForm.resource_id} class="custom-input font-mono" placeholder="可留空或填写具体资源" />
+              </div>
+              <div class="field-item">
+                <label for="policy-scope">Scope</label>
+                <select id="policy-scope" bind:value={policyForm.scope} class="custom-select font-mono">
+                  <option value="global">global</option>
+                  <option value="repo">repo</option>
+                </select>
+              </div>
+              <div class="field-item">
+                <label for="policy-scope-id">Scope ID</label>
+                <input id="policy-scope-id" bind:value={policyForm.scope_id} class="custom-input font-mono" placeholder="repo 名称，可留空" />
+              </div>
+              <div class="field-item">
+                <label for="policy-priority">Priority</label>
+                <input id="policy-priority" type="number" bind:value={policyForm.priority} class="custom-input font-mono" />
+              </div>
+              <label class="policy-toggle">
+                <input type="checkbox" bind:checked={policyForm.enabled} />
+                <span>启用策略</span>
+              </label>
+              <div class="field-item policy-wide">
+                <label for="policy-reason">Reason</label>
+                <input id="policy-reason" bind:value={policyForm.reason} class="custom-input" placeholder="写清为什么允许或拒绝，便于审计解释" />
+              </div>
+            </div>
+            <div class="policy-actions">
+              <Button variant="primary" loading={authorizationPolicySaving} on:click={saveAuthorizationPolicy}>
+                保存策略
+              </Button>
+            </div>
+          </section>
+
+          <section class="policy-panel">
+            <div class="policy-panel-header">
+              <span class="audit-kicker font-mono">Explain Decision</span>
+              <h3>授权解释器</h3>
+            </div>
+            {#if authorizationExplainError}
+              <div class="error-banner">{authorizationExplainError}</div>
+            {/if}
+            <div class="policy-form-grid">
+              <div class="field-item policy-wide">
+                <label for="explain-username">Username</label>
+                <input id="explain-username" bind:value={explainForm.username} class="custom-input font-mono" placeholder="user@example.com" />
+              </div>
+              <div class="field-item">
+                <label for="explain-action">Action</label>
+                <input id="explain-action" bind:value={explainForm.action} class="custom-input font-mono" />
+              </div>
+              <div class="field-item">
+                <label for="explain-resource-type">Resource Type</label>
+                <input id="explain-resource-type" bind:value={explainForm.resource_type} class="custom-input font-mono" />
+              </div>
+              <div class="field-item">
+                <label for="explain-resource-id">Resource ID</label>
+                <input id="explain-resource-id" bind:value={explainForm.resource_id} class="custom-input font-mono" />
+              </div>
+              <div class="field-item">
+                <label for="explain-scope">Scope</label>
+                <select id="explain-scope" bind:value={explainForm.scope} class="custom-select font-mono">
+                  <option value="global">global</option>
+                  <option value="repo">repo</option>
+                </select>
+              </div>
+              <div class="field-item">
+                <label for="explain-scope-id">Scope ID</label>
+                <input id="explain-scope-id" bind:value={explainForm.scope_id} class="custom-input font-mono" />
+              </div>
+            </div>
+            <div class="policy-actions">
+              <Button variant="secondary" on:click={explainAuthorization}>解释授权结果</Button>
+            </div>
+
+            {#if authorizationDecision}
+              <div class="decision-card {authorizationDecision.allowed ? 'allowed' : 'denied'}">
+                <span>{authorizationDecision.allowed ? 'Allowed' : 'Denied'}</span>
+                <strong>{authorizationDecision.reason}</strong>
+                <p class="font-mono">
+                  scope={authorizationDecision.scope || 'global'} · risk={authorizationDecision.risk_level || 'low'}
+                  {#if authorizationDecision.missing_permission}
+                    · missing={authorizationDecision.missing_permission}
+                  {/if}
+                </p>
+                {#if authorizationDecision.matched_policy}
+                  <p class="font-mono">matched_policy=#{authorizationDecision.matched_policy.id} {authorizationDecision.matched_policy.effect}</p>
+                {/if}
+              </div>
+            {/if}
+          </section>
+        </div>
+
+        <div class="policy-grid">
+          <section class="policy-panel">
+            <div class="policy-panel-header">
+              <span class="audit-kicker font-mono">Policies</span>
+              <h3>策略列表</h3>
+            </div>
+            <div class="table-responsive policy-table-wrap">
+              <table class="policy-table font-mono">
+                <thead>
+                  <tr>
+                    <th>Effect</th>
+                    <th>Subject</th>
+                    <th>Action</th>
+                    <th>Resource</th>
+                    <th>Scope</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each authorizationPolicies as policy}
+                    <tr>
+                      <td><span class="policy-effect effect-{policy.effect}">{policy.effect}</span></td>
+                      <td>{policy.subject_type}:{policy.subject_id || '*'}</td>
+                      <td>{policy.action}</td>
+                      <td>{policy.resource_type || '*'}:{policy.resource_id || '*'}</td>
+                      <td>{policyScopeLabel(policy)}</td>
+                      <td>{policy.priority}</td>
+                      <td>{policy.enabled ? 'enabled' : 'disabled'}</td>
+                    </tr>
+                  {:else}
+                    <tr>
+                      <td colspan="7" class="empty-table-cell">暂无策略，当前仅使用用户组权限矩阵。</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="policy-panel">
+            <div class="policy-panel-header">
+              <span class="audit-kicker font-mono">Decision Audit</span>
+              <h3>授权决策审计</h3>
+            </div>
+            <div class="decision-log-list">
+              {#each authorizationAuditLogs as log}
+                <div class="decision-log-item {log.allowed ? 'allowed' : 'denied'}">
+                  <div>
+                    <strong class="font-mono">{log.subject_username || 'unknown'} · {log.action}</strong>
+                    <p>{log.reason || log.missing_permission || '无解释'}</p>
+                  </div>
+                  <span class="font-mono">{log.allowed ? 'allow' : 'deny'} · {log.risk_level || 'low'}</span>
+                </div>
+              {:else}
+                <div class="empty-version-state">暂无授权审计记录。拒绝或高风险授权会自动进入这里。</div>
+              {/each}
+            </div>
+          </section>
+        </div>
+      </div>
     {:else if activeSection === 'audit'}
       <div class="section-card">
         <div class="card-header">
@@ -879,12 +1249,12 @@
         {/if}
         
         <div class="field-item">
-          <label>目标成员账户</label>
-          <input type="text" value={membershipTargetUser} disabled class="input-disabled font-mono" />
+          <label for="membership-target-user">目标成员账户</label>
+          <input id="membership-target-user" type="text" value={membershipTargetUser} disabled class="input-disabled font-mono" />
         </div>
         <div class="field-item">
-          <label>分配目标用户组</label>
-          <select bind:value={membershipSelectedGroup} class="custom-select font-mono">
+          <label for="membership-selected-group">分配目标用户组</label>
+          <select id="membership-selected-group" bind:value={membershipSelectedGroup} class="custom-select font-mono">
             {#each groups as g}
               {#if g.name !== 'super_admin'}
                 <option value={g.name}>{g.displayName} ({g.name})</option>
@@ -893,7 +1263,7 @@
           </select>
         </div>
         <div class="field-item">
-          <label>分配作用域等级 (Scope)</label>
+          <span class="field-label">分配作用域等级 (Scope)</span>
           <div class="radio-group font-mono">
             <label>
               <input type="radio" value="global" bind:group={membershipScope} /> 全局级作用域 (Global)
@@ -906,8 +1276,8 @@
         
         {#if membershipScope === 'repo'}
           <div class="field-item">
-            <label>特定作用域仓库标识 (ProjectID/RepoName)</label>
-            <input type="text" bind:value={membershipScopeID} placeholder="输入关联的代码仓名称，如 frontend-dashboard" class="custom-input font-mono" />
+            <label for="membership-scope-id">特定作用域仓库标识 (ProjectID/RepoName)</label>
+            <input id="membership-scope-id" type="text" bind:value={membershipScopeID} placeholder="输入关联的代码仓名称，如 frontend-dashboard" class="custom-input font-mono" />
             <p class="field-desc">该组权限将仅在用户操作指定的仓库项目时生效，其余仓库对该用户无管理权限。</p>
           </div>
         {/if}
@@ -936,12 +1306,13 @@
           转让超级管理员是高危操作。转让完成后，您的账号将被降级为「系统管理员组」，原有的超级管理员管理权与审批权将不可撤销地转让给他人。
         </Alert>
         <div class="field-item" style="margin-top: 16px;">
-          <label>目标接收者账户</label>
-          <input type="text" value={transferTargetUsername} disabled class="input-disabled font-mono" />
+          <label for="transfer-target-username">目标接收者账户</label>
+          <input id="transfer-target-username" type="text" value={transferTargetUsername} disabled class="input-disabled font-mono" />
         </div>
         <div class="field-item">
-          <label>请输入目标用户的真实姓名以确认安全转让</label>
+          <label for="transfer-confirm-name">请输入目标用户的真实姓名以确认安全转让</label>
           <input 
+            id="transfer-confirm-name"
             type="text" 
             bind:value={transferConfirmName} 
             placeholder="例如: Eddie" 
@@ -970,16 +1341,16 @@
           <div class="error-banner">❌ {createGroupError}</div>
         {/if}
         <div class="field-item">
-          <label>组代码名称 (英文小写下划线，作为系统唯一 Key)</label>
-          <input type="text" bind:value={newGroupName} placeholder="如 developer_lead" class="custom-input font-mono" />
+          <label for="new-group-name">组代码名称 (英文小写下划线，作为系统唯一 Key)</label>
+          <input id="new-group-name" type="text" bind:value={newGroupName} placeholder="如 developer_lead" class="custom-input font-mono" />
         </div>
         <div class="field-item">
-          <label>显示名称</label>
-          <input type="text" bind:value={newGroupDisplayName} placeholder="如 研发主导组" class="custom-input" />
+          <label for="new-group-display-name">显示名称</label>
+          <input id="new-group-display-name" type="text" bind:value={newGroupDisplayName} placeholder="如 研发主导组" class="custom-input" />
         </div>
         <div class="field-item">
-          <label>组描述说明</label>
-          <textarea bind:value={newGroupDescription} placeholder="请输入该组的使用场景和权限划分意图" class="custom-textarea" rows="3"></textarea>
+          <label for="new-group-description">组描述说明</label>
+          <textarea id="new-group-description" bind:value={newGroupDescription} placeholder="请输入该组的使用场景和权限划分意图" class="custom-textarea" rows="3"></textarea>
         </div>
       </div>
       <div class="modal-footer">
@@ -1088,6 +1459,177 @@
     border-radius: 10px;
     padding: 18px;
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+  }
+
+  .policy-workbench,
+  .policy-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    margin-top: 16px;
+  }
+
+  .policy-grid {
+    align-items: start;
+  }
+
+  .policy-panel {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    background: rgba(15, 23, 42, 0.42);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .policy-panel-header {
+    border-bottom: 1px solid rgba(51, 65, 85, 0.36);
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+
+  .policy-panel-header h3 {
+    margin: 4px 0 0 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .policy-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .policy-wide {
+    grid-column: 1 / -1;
+  }
+
+  .policy-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 0.85rem;
+    align-self: center;
+  }
+
+  .policy-toggle input {
+    width: 16px;
+    height: 16px;
+    accent-color: #6366f1;
+  }
+
+  .policy-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+  }
+
+  .decision-card {
+    margin-top: 14px;
+    border-radius: 8px;
+    padding: 12px;
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    background: rgba(2, 6, 23, 0.32);
+  }
+
+  .decision-card span,
+  .policy-effect {
+    display: inline-flex;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 0.7rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .decision-card.allowed span,
+  .effect-allow {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.24);
+  }
+
+  .decision-card.denied span,
+  .effect-deny {
+    color: #f87171;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.24);
+  }
+
+  .decision-card strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .decision-card p {
+    margin: 6px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    overflow-wrap: anywhere;
+  }
+
+  .policy-table-wrap {
+    max-height: 360px;
+    overflow: auto;
+  }
+
+  .policy-table td,
+  .policy-table th {
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+
+  .empty-table-cell {
+    text-align: center;
+    color: #64748b;
+    padding: 22px;
+  }
+
+  .decision-log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 360px;
+    overflow: auto;
+  }
+
+  .decision-log-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.28);
+    border-radius: 8px;
+    padding: 10px;
+  }
+
+  .decision-log-item.denied {
+    border-color: rgba(239, 68, 68, 0.2);
+  }
+
+  .decision-log-item.allowed {
+    border-color: rgba(16, 185, 129, 0.2);
+  }
+
+  .decision-log-item strong {
+    color: #e2e8f0;
+    font-size: 0.78rem;
+  }
+
+  .decision-log-item p {
+    margin: 4px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.76rem;
+    line-height: 1.4;
+  }
+
+  .decision-log-item > span {
+    color: #64748b;
+    font-size: 0.72rem;
+    flex: none;
   }
 
   .config-audit-header {

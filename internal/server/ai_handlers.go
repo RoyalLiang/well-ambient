@@ -55,10 +55,12 @@ type DeconstructAnalysis struct {
 }
 
 type DeconstructResponse struct {
-	MappedRepos []string            `json:"mappedRepos"`
-	Tasks       []TaskDetail        `json:"tasks"`
-	Analysis    DeconstructAnalysis `json:"analysis"`
-	IsMock      bool                `json:"is_mock,omitempty"`
+	MappedRepos    []string            `json:"mappedRepos"`
+	Tasks          []TaskDetail        `json:"tasks"`
+	Analysis       DeconstructAnalysis `json:"analysis"`
+	ContextPackID  uint                `json:"context_pack_id,omitempty"`
+	ContextPackKey string              `json:"context_pack_key,omitempty"`
+	IsMock         bool                `json:"is_mock,omitempty"`
 }
 
 // handleDeconstruct processes deconstruction requests
@@ -116,6 +118,18 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 	exampleAssignee := fmt.Sprintf(`"%s"`, teamMembers[0])
 	workHoursPerDay := normalizeWorkHoursPerDay(s.config.AI.DefaultWorkHoursPerDay)
 	projectContext := formatAIProjectContext(s.config.AI)
+	contextPackID := uint(0)
+	contextPackKey := ""
+	if db.DB != nil {
+		contextPack, err := s.buildContextPack(db.DB, req.Text, defaultContextTokenBudget, "deconstruct", true)
+		if err != nil {
+			log.Printf("[AI Deconstruct] Context pack assembly failed, using legacy fallback: %v", err)
+		} else {
+			projectContext = contextPack.Summary
+			contextPackID = contextPack.ID
+			contextPackKey = contextPack.CacheKey
+		}
+	}
 
 	// 3. Assemble Prompt
 	systemPrompt := fmt.Sprintf(`你是一个专业的软件需求自解构引擎（Deconstructor）。你负责将用户的产品需求/开发任务（一段自然语言描述）解构成多个独立的、可执行的具体开发任务（Task），并将其映射到系统的多仓库中。
@@ -338,6 +352,8 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to parse deconstruction JSON: %v. Raw response: %s", err, rawContent), http.StatusInternalServerError)
 		return
 	}
+	result.ContextPackID = contextPackID
+	result.ContextPackKey = contextPackKey
 
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
@@ -388,6 +404,10 @@ func formatAIProjectContext(ai config.AIConfig) string {
 		return strings.Join(lines, "\n")
 	}
 
+	return formatAIDefaultProjectContext()
+}
+
+func formatAIDefaultProjectContext() string {
 	return strings.Join([]string{
 		"- 系统架构与模块边界：well-ambient 是面向研发协同的内部系统，Go 后端负责配置、任务、遥测与归档 API，Svelte 前端负责需求解构、任务看板、决策面板、日报/周报预览和集成配置。",
 		"- 研发流程与状态流转：需求进入系统后可由 AI 解构成影子任务，再同步到看板，并结合 GitLab、Jira、飞书和任务遥测形成事实流。",
@@ -824,7 +844,7 @@ func getMockDeconstructResponse() DeconstructResponse {
 	return result
 }
 
-func createDeconstructArchive(tx *gorm.DB, inputText string, demandID string, taskGroupID string, result DeconstructResponse, now time.Time) (uint, error) {
+func createDeconstructArchive(tx *gorm.DB, inputText string, demandID string, taskGroupID string, contextPackID uint, result DeconstructResponse, now time.Time) (uint, error) {
 	mappedReposJSON, err := json.Marshal(result.MappedRepos)
 	if err != nil {
 		return 0, err
@@ -841,6 +861,7 @@ func createDeconstructArchive(tx *gorm.DB, inputText string, demandID string, ta
 	archive := db.DeconstructArchive{
 		DemandID:             demandID,
 		TaskGroupID:          taskGroupID,
+		ContextPackID:        contextPackID,
 		InputText:            inputText,
 		MappedReposJSON:      string(mappedReposJSON),
 		TasksJSON:            string(tasksJSON),
@@ -984,13 +1005,14 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		TaskGroupID string               `json:"task_group_id"`
-		DemandID    string               `json:"demand_id"`
-		InputText   string               `json:"input_text"`
-		MappedRepos []string             `json:"mappedRepos"`
-		Analysis    *DeconstructAnalysis `json:"analysis"`
-		IsMock      bool                 `json:"is_mock"`
-		Tasks       []TaskDetail         `json:"tasks"`
+		TaskGroupID   string               `json:"task_group_id"`
+		DemandID      string               `json:"demand_id"`
+		InputText     string               `json:"input_text"`
+		MappedRepos   []string             `json:"mappedRepos"`
+		Analysis      *DeconstructAnalysis `json:"analysis"`
+		ContextPackID uint                 `json:"context_pack_id"`
+		IsMock        bool                 `json:"is_mock"`
+		Tasks         []TaskDetail         `json:"tasks"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1048,7 +1070,18 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		taskGroupID = fmt.Sprintf("group-%d", now.Unix())
 	}
 
-	archiveID, err := createDeconstructArchive(tx, strings.TrimSpace(req.InputText), demandID, taskGroupID, normalizedImport, now)
+	contextPackID := req.ContextPackID
+	if contextPackID == 0 && strings.TrimSpace(req.InputText) != "" {
+		contextPack, err := s.buildContextPack(tx, strings.TrimSpace(req.InputText), defaultContextTokenBudget, "import_archive", true)
+		if err != nil {
+			tx.Rollback()
+			http.Error(w, fmt.Sprintf("Failed to archive context pack: %v", err), http.StatusInternalServerError)
+			return
+		}
+		contextPackID = contextPack.ID
+	}
+
+	archiveID, err := createDeconstructArchive(tx, strings.TrimSpace(req.InputText), demandID, taskGroupID, contextPackID, normalizedImport, now)
 	if err != nil {
 		tx.Rollback()
 		http.Error(w, fmt.Sprintf("Failed to archive deconstruction estimate: %v", err), http.StatusInternalServerError)

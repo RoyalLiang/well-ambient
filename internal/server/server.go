@@ -9,7 +9,7 @@ import (
 	"well-ambient/internal/agenda"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
-	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/server/authz"
 	"well-ambient/internal/telemetry"
 )
 
@@ -89,6 +89,16 @@ func (s *Server) routes() {
 	// Protected AI Deconstructor API
 	s.mux.HandleFunc("POST /api/deconstruct", s.withAuth(s.handleDeconstruct))
 	s.mux.HandleFunc("POST /api/tasks/import", s.withAuth(s.handleImportTasks))
+	s.mux.HandleFunc("GET /api/context/facts", s.withPermission("ai_context:read", s.handleListContextFacts))
+	s.mux.HandleFunc("POST /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
+	s.mux.HandleFunc("PUT /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
+	s.mux.HandleFunc("POST /api/context/pack/preview", s.withPermission("ai_context:preview", s.handlePreviewContextPack))
+
+	// Protected Policy Authorization APIs
+	s.mux.HandleFunc("GET /api/authz/policies", s.withPermission("policies:read", s.handleListAuthorizationPolicies))
+	s.mux.HandleFunc("POST /api/authz/policies", s.withPermission("policies:write", s.handleSaveAuthorizationPolicy))
+	s.mux.HandleFunc("POST /api/authz/explain", s.withPermission("policies:read", s.handleExplainAuthorization))
+	s.mux.HandleFunc("GET /api/authz/audit-logs", s.withPermission("authorization_audit:read", s.handleListAuthorizationAuditLogs))
 
 	// Protected Notification SSE API
 	s.mux.HandleFunc("GET /api/notifications/sse", s.withAuth(s.handleNotificationsSSE))
@@ -145,45 +155,63 @@ func (s *Server) withPermission(requiredPermission string, next http.HandlerFunc
 			return
 		}
 
-		// 1. Query user to get database User ID
-		var user userdb.User
-		if err := db.DB.Where("username = ?", userIDStr).First(&user).Error; err != nil {
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"error":"forbidden","message":"User not registered"}`))
-			return
-		}
-
-		// 2. Resolve Scope context from request
-		repoName := r.URL.Query().Get("repo")
-		if repoName == "" {
-			repoName = r.URL.Query().Get("project_id")
-		}
-
-		// 3. Match atomic permission and check Scope isolation
-		var count int64
-		query := db.DB.Table("permissions").
-			Joins("join group_permissions gp on gp.permission_id = permissions.id").
-			Joins("join user_group_memberships ugm on ugm.user_group_id = gp.user_group_id").
-			Where("ugm.user_id = ? AND permissions.code = ?", user.ID, requiredPermission)
-
-		if repoName != "" {
-			// Specific scope constraint: allow if group is global OR scoped specifically to this repository
-			query = query.Where("(ugm.scope = 'global') OR (ugm.scope = 'repo' AND ugm.scope_id = ?)", repoName)
-		} else {
-			// Global scope constraint
-			query = query.Where("ugm.scope = 'global'")
-		}
-
-		err := query.Count(&count).Error
-		if err != nil || count == 0 {
+		decision := authz.NewEvaluator(db.DB).Authorize(
+			r.Context(),
+			authz.Subject{Username: userIDStr},
+			requiredPermission,
+			authorizationResourceFromRequest(requiredPermission, r),
+		)
+		if !decision.Allowed {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
+			if decision.MissingPermission == authz.MissingSubject {
+				w.Write([]byte(`{"error":"forbidden","message":"User not registered"}`))
+				return
+			}
 			w.Write([]byte(`{"error":"forbidden","message":"You do not have permission to perform this action"}`))
 			return
 		}
 
 		next(w, r)
 	})
+}
+
+func authorizationResourceFromRequest(requiredPermission string, r *http.Request) authz.Resource {
+	repoName := strings.TrimSpace(r.URL.Query().Get("repo"))
+	if repoName == "" {
+		repoName = strings.TrimSpace(r.URL.Query().Get("project_id"))
+	}
+
+	resource := authz.Resource{
+		Type:        resourceTypeForPermission(requiredPermission),
+		Scope:       "global",
+		RequestPath: r.URL.Path,
+		IPAddress:   r.RemoteAddr,
+	}
+	if repoName != "" {
+		resource.Type = "repo"
+		resource.ID = repoName
+		resource.Scope = "repo"
+		resource.ScopeID = repoName
+	}
+	return resource
+}
+
+func resourceTypeForPermission(permission string) string {
+	switch strings.SplitN(permission, ":", 2)[0] {
+	case "config":
+		return "config"
+	case "users":
+		return "user"
+	case "demands":
+		return "demand"
+	case "ai_context":
+		return "config"
+	case "policies", "authorization_audit":
+		return "global"
+	default:
+		return "global"
+	}
 }
 
 // Start runs the server

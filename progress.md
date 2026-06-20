@@ -366,6 +366,45 @@
 | Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | sandbox loopback bind failed, then passed with approved loopback access | pass |
 | Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
 
+### Phase 16: Strongest Brain Context Registry And Policy RBAC
+- **Status:** complete
+- Actions taken:
+  - Wrote the implementation plan to `docs/strongest-brain-implementation-plan.md`.
+  - Added AI Context Registry data models for documents, facts, chunks, packs, and pack items.
+  - Added context fact list/create/update APIs plus deterministic context-pack preview and persistence.
+  - Rewired AI deconstruction to use a persisted context pack before prompt assembly and return `context_pack_id`.
+  - Linked imported deconstruction archives to `context_pack_id`, with import-time pack creation fallback.
+  - Added policy authorization models, fine-grained permission seeds, deny/allow evaluator, decision audit logging, and `withPermission` compatibility.
+  - Added policy list/save, authorization explain, and authorization audit APIs.
+  - Reworked AI settings UI so structured facts replace the old visible free-text context center; legacy fields remain backend fallback only.
+  - Added strategy/RBAC UI for policy creation, decision explanation, policy list, and audit logs.
+- Files modified:
+  - `docs/strongest-brain-implementation-plan.md`
+  - `internal/db/db.go`
+  - `internal/db/user/init.go`
+  - `internal/db/user/user.go`
+  - `internal/server/ai_handlers.go`
+  - `internal/server/authz/policy.go`
+  - `internal/server/authz_handlers.go`
+  - `internal/server/context_handlers.go`
+  - `internal/server/context_handlers_test.go`
+  - `internal/server/policy_authorization_test.go`
+  - `internal/server/server.go`
+  - `web/src/components/Deconstructor.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+  - `web/src/components/config/AIConfig.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+
+## Latest Validation After Phase 16
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Focused context/auth tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(Context|Authorization|WithPermission|Authorize|ImportTasksArchives|ParseDeconstruct)'` | new context, archive, and auth paths pass | passed | pass |
+| Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./...` | all Go packages pass | sandbox loopback bind failed, then passed with approved loopback access | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings in untouched DemandKanban/TaskKanban/shared controls | pass |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

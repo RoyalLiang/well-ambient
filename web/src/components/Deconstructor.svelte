@@ -55,7 +55,8 @@
   let result = {
     mappedRepos: [] as string[],
     tasks: [] as GeneratedTask[],
-    analysis: emptyAnalysis()
+    analysis: emptyAnalysis(),
+    context_pack_id: 0
   };
 
   let assigneesList: string[] = ['Eddie', 'Antigravity'];
@@ -415,7 +416,8 @@
       result = {
         mappedRepos: data.mappedRepos || [],
         tasks: tasksWithDefaults,
-        analysis: normalizeAnalysis(data.analysis)
+        analysis: normalizeAnalysis(data.analysis),
+        context_pack_id: Number(data.context_pack_id) || 0
       };
 
       // 成功生成解构任务时，优先沿用已选需求的任务组 ID，保证二次解构仍挂在同一父需求上。
@@ -510,6 +512,7 @@
           input_text: inputText,
           mappedRepos: result.mappedRepos,
           analysis: result.analysis,
+          context_pack_id: result.context_pack_id,
           is_mock: isMockResponse,
           tasks: result.tasks
         })

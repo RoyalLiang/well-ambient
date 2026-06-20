@@ -56,6 +56,11 @@
 - A long module capability catalog should be archived in a dedicated AI context document, with only a compact summary injected into `ai.project_architecture`, `ai.delivery_workflow`, `ai.implemented_features`, and `ai.estimation_guidelines`.
 - Module prompt context must explicitly state scope boundaries so AI does not confuse path-planning business capabilities with well-ambient's collaboration-system capabilities.
 - The path-planning/module-image direction was later identified as mis-scoped for “AI 上下文配置中心”: the center should configure system design, product capabilities, and delivery/process context for demand deconstruction, not behave as a targeted module capability feature.
+- AI context should now be maintained as structured facts rather than four large visible text areas. The old AI config fields remain a backend fallback only, while the UI path is fact cards plus pack preview.
+- A context pack must be persisted and linked to every deconstruction archive so future estimate review can reconstruct which system facts the model saw.
+- The first Context Registry retrieval path is deterministic scope/keyword scoring with token budgets. This is intentionally simpler than embeddings so cache keys, tests, and audit behavior are stable before adding vector recall.
+- Policy RBAC is now a layer over the existing permission matrix: explicit deny policies override legacy group grants, allow policies can grant exceptions, and global super_admin remains break-glass access.
+- Authorization failures and high-risk grants should be logged as decisions with subject, action, resource, scope, matched policy, missing permission, reason, and risk level.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -85,6 +90,10 @@
 | Make hours the primary deconstruction estimate unit | Operators tune task effort in hours; day values remain derived compatibility data for due-date and archive logic. |
 | Store long domain capability catalogs as archived context documents and inject compact summaries into config | Long feature inventories are better versioned/audited in docs, while runtime prompt fields should stay concise enough for stable AI behavior. |
 | Remove the module-image AI context center rather than renaming it | Its upload/version/toggle model made the context center behave like a targeted feature; the remaining generic AI context fields better match the intended system-design and workflow calibration purpose. |
+| Build AI context as a structured fact registry | Demand deconstruction needs typed facts, scope, freshness, confidence, token counts, hashes, and persisted pack assembly to keep prompts compact and auditable. |
+| Keep legacy AI context fields as fallback only | Existing deployments should not lose prompt context, but future context should be curated through facts and packs rather than a broad text configuration center. |
+| Layer policy authorization over existing RBAC | This preserves current group-permission compatibility while enabling subject/action/resource/scope decisions and explicit deny overrides. |
+| Log denied and high-risk authorization decisions | Permission problems should be explainable without guessing which group, policy, scope, or missing permission caused the result. |
 
 ## Issues Encountered
 | Issue | Resolution |
