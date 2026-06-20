@@ -6,14 +6,17 @@ import (
 
 // User represents a system user mapping to WellOS identity
 type User struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	Username   string    `gorm:"uniqueIndex:idx_user_username;type:varchar(128)" json:"username"` // Unique username e.g. eddie
-	Email      string    `gorm:"uniqueIndex:idx_user_email;type:varchar(128)" json:"email"`       // Unique email e.g. eddie@westwell-lab.com
-	Name       string    `json:"name"`                                                            // Full name
-	Avatar     string    `json:"avatar"`                                                          // Avatar URL
-	Department string    `json:"department"`                                                      // Department name
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         uint   `gorm:"primaryKey" json:"id"`
+	Username   string `gorm:"uniqueIndex:idx_user_username;type:varchar(128)" json:"username"` // Unique username e.g. eddie
+	Email      string `gorm:"uniqueIndex:idx_user_email;type:varchar(128)" json:"email"`       // Unique email e.g. eddie@westwell-lab.com
+	Name       string `json:"name"`                                                            // Full name
+	Avatar     string `json:"avatar"`                                                          // Avatar URL
+	Department string `json:"department"`                                                      // Department name
+	// LocalPasswordHash is only used to authenticate known users during planned WellOS outages.
+	LocalPasswordHash      string     `gorm:"type:text" json:"-"`
+	LocalPasswordUpdatedAt *time.Time `json:"-"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 // UserGroup represents a role or user group
@@ -48,10 +51,10 @@ type Permission struct {
 
 // GroupPermission maps Permissions to UserGroups
 type GroupPermission struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	UserGroupID uint      `gorm:"uniqueIndex:idx_group_perm" json:"user_group_id"`
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	UserGroupID  uint      `gorm:"uniqueIndex:idx_group_perm" json:"user_group_id"`
 	PermissionID uint      `gorm:"uniqueIndex:idx_group_perm" json:"permission_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // AuditLog tracks sensitive configuration and RBAC changes
@@ -60,9 +63,9 @@ type AuditLog struct {
 	ActorID       uint      `json:"actor_id"`
 	ActorName     string    `json:"actor_name"`
 	ActorUsername string    `json:"actor_username"`
-	Action        string    `json:"action"`          // config_update, config_test, role_assign, admin_transfer, group_create, group_update
-	TargetID      string    `json:"target_id"`       // Target identifier (e.g. username, group ID)
-	TargetType    string    `json:"target_type"`     // Target type (e.g. user, group, config)
+	Action        string    `json:"action"`      // config_update, config_test, role_assign, admin_transfer, group_create, group_update
+	TargetID      string    `json:"target_id"`   // Target identifier (e.g. username, group ID)
+	TargetType    string    `json:"target_type"` // Target type (e.g. user, group, config)
 	Detail        string    `gorm:"type:text" json:"detail"`
 	IpAddress     string    `json:"ip_address"`
 	CreatedAt     time.Time `json:"created_at"`

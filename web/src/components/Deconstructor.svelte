@@ -3,14 +3,59 @@
   import { slide } from 'svelte/transition';
 
   let inputText = '';
-  
+
   let isLoading = false;
   let hasResult = false;
   let isAIEnabled = false;
-  
+
+  type DeconstructAnalysis = {
+    completeness_score: number;
+    overall_estimated_days: number;
+    overall_estimated_hours: number;
+    overall_difficulty: string;
+    estimate_basis: string;
+    missing_info: string[];
+    risks: string[];
+    dependencies: string[];
+    acceptance_criteria: string[];
+    schedule_notes: string[];
+    meeting_questions: string[];
+    confidence: number;
+  };
+
+  const emptyAnalysis = (): DeconstructAnalysis => ({
+    completeness_score: 0,
+    overall_estimated_days: 0,
+    overall_estimated_hours: 0,
+    overall_difficulty: 'Medium',
+    estimate_basis: '',
+    missing_info: [],
+    risks: [],
+    dependencies: [],
+    acceptance_criteria: [],
+    schedule_notes: [],
+    meeting_questions: [],
+    confidence: 0
+  });
+
+  type GeneratedTask = {
+    id: string;
+    repo: string;
+    title: string;
+    assignee: string;
+    priority: string;
+    complexity: string;
+    difficulty: string;
+    estimated_days: number;
+    estimated_hours: number;
+    estimate_basis: string;
+    period_days: number;
+  };
+
   let result = {
     mappedRepos: [] as string[],
-    tasks: [] as any[]
+    tasks: [] as GeneratedTask[],
+    analysis: emptyAnalysis()
   };
 
   let assigneesList: string[] = ['Eddie', 'Antigravity'];
@@ -97,6 +142,9 @@
   function selectDropdownValue(taskId: string, field: string, value: any) {
     result.tasks = result.tasks.map(t => {
       if (t.id === taskId) {
+        if (field === 'difficulty') {
+          return { ...t, difficulty: value, complexity: value };
+        }
         return { ...t, [field]: value };
       }
       return t;
@@ -104,15 +152,120 @@
     activeDropdown = null;
   }
 
-  function getPeriodLabel(days: number) {
-    if (days === 1) return '1 天 (极速)';
-    if (days === 2) return '2 天';
-    if (days === 3) return '3 天 (快捷)';
-    if (days === 5) return '5 天 (常规一周)';
-    if (days === 7) return '7 天';
-    if (days === 10) return '10 天 (双周)';
-    if (days === 14) return '14 天 (长周期)';
-    return `${days} 天`;
+  function getHoursLabel(hours: number) {
+    const normalized = Number.isFinite(hours) && hours > 0 ? Math.round(hours * 10) / 10 : 0;
+    if (normalized <= 0) return '待估算';
+    const dayEquivalent = Math.round((normalized / 8) * 10) / 10;
+    if (normalized === 2) return '2 小时 (微调)';
+    if (normalized === 4) return '4 小时 (半天)';
+    if (normalized === 8) return '8 小时 (1 天)';
+    if (normalized === 16) return '16 小时 (2 天)';
+    if (normalized === 24) return '24 小时 (3 天)';
+    if (normalized === 40) return '40 小时 (常规一周)';
+    if (normalized % 8 === 0) return `${normalized} 小时 (${dayEquivalent} 天)`;
+    return `${normalized} 小时`;
+  }
+
+  function normalizeAnalysis(analysis: any): DeconstructAnalysis {
+    const normalized = emptyAnalysis();
+    if (!analysis || typeof analysis !== 'object') return normalized;
+
+    const listFields: Array<'missing_info' | 'risks' | 'dependencies' | 'acceptance_criteria' | 'schedule_notes' | 'meeting_questions'> = [
+      'missing_info',
+      'risks',
+      'dependencies',
+      'acceptance_criteria',
+      'schedule_notes',
+      'meeting_questions'
+    ];
+
+    for (const field of listFields) {
+      const value = analysis[field];
+      normalized[field] = Array.isArray(value)
+        ? value.map((item: any) => String(item).trim()).filter(Boolean)
+        : [];
+    }
+
+    const score = Number(analysis.completeness_score);
+    normalized.completeness_score = Number.isFinite(score) ? Math.min(100, Math.max(0, Math.round(score))) : 0;
+
+    const overallDays = Number(analysis.overall_estimated_days);
+    const overallHours = Number(analysis.overall_estimated_hours);
+    normalized.overall_estimated_days = Number.isFinite(overallDays) ? Math.max(0, Math.round(overallDays * 10) / 10) : 0;
+    normalized.overall_estimated_hours = Number.isFinite(overallHours) ? Math.max(0, Math.round(overallHours * 10) / 10) : normalized.overall_estimated_days * 8;
+    normalized.overall_difficulty = normalizeDifficulty(analysis.overall_difficulty);
+    normalized.estimate_basis = typeof analysis.estimate_basis === 'string' ? analysis.estimate_basis.trim() : '';
+
+    const confidence = Number(analysis.confidence);
+    normalized.confidence = Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence > 1 ? confidence / 100 : confidence)) : 0;
+
+    return normalized;
+  }
+
+  function normalizeDifficulty(value: any) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (['high', '高', '困难', '复杂'].includes(normalized)) return 'High';
+    if (['low', '低', '简单'].includes(normalized)) return 'Low';
+    return 'Medium';
+  }
+
+  function difficultyLabel(value: string) {
+    if (value === 'High') return 'High (高)';
+    if (value === 'Low') return 'Low (低)';
+    return 'Medium (中)';
+  }
+
+  function estimateSummaryLabel(days: number, hours: number) {
+    if (hours > 0) return `${Math.round(hours)} 小时`;
+    if (days > 0) return `${Math.round(days * 8)} 小时`;
+    return '待估算';
+  }
+
+  function normalizeGeneratedTask(t: any): GeneratedTask {
+    const estimatedHours = Number(t.estimated_hours);
+    const estimatedDays = Number(t.estimated_days ?? t.period_days);
+    const hours = Number.isFinite(estimatedHours) && estimatedHours > 0
+      ? Math.round(estimatedHours * 10) / 10
+      : Number.isFinite(estimatedDays) && estimatedDays > 0
+        ? Math.round(estimatedDays * 80) / 10
+        : 40;
+    const days = Math.round((hours / 8) * 10) / 10;
+    const difficulty = normalizeDifficulty(t.difficulty || t.complexity);
+
+    return {
+      ...t,
+      priority: t.priority || 'Medium',
+      complexity: t.complexity || difficulty,
+      difficulty,
+      estimated_days: days,
+      estimated_hours: hours,
+      estimate_basis: typeof t.estimate_basis === 'string' ? t.estimate_basis.trim() : '',
+      period_days: days
+    };
+  }
+
+  function selectEstimateHours(taskId: string, hours: number) {
+    const days = Math.round((hours / 8) * 10) / 10;
+    result.tasks = result.tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          estimated_days: days,
+          estimated_hours: hours,
+          period_days: days
+        };
+      }
+      return t;
+    });
+    activeDropdown = null;
+  }
+
+  function percentLabel(value: number) {
+    return `${Math.round(value)}%`;
+  }
+
+  function confidenceLabel(value: number) {
+    return `${Math.round(value * 100)}%`;
   }
 
   async function fetchConfig() {
@@ -121,7 +274,7 @@
       if (res.ok) {
         const config = await res.json();
         isAIEnabled = !!(config.ai && config.ai.enabled);
-        
+
         let users: string[] = [];
         if (config.jira) {
           if (config.jira.sync_users && config.jira.sync_users.length > 0) {
@@ -151,7 +304,7 @@
     console.log('[Deconstructor] Received config-updated event:', config);
     if (config) {
       isAIEnabled = !!(config.ai && config.ai.enabled);
-      
+
       let users: string[] = [];
       if (config.jira) {
         if (config.jira.sync_users && config.jira.sync_users.length > 0) {
@@ -176,7 +329,7 @@
   onMount(() => {
     fetchConfig();
     fetchActiveDemands();
-    
+
     const handleWindowFocus = () => {
       fetchConfig();
       fetchActiveDemands();
@@ -233,7 +386,7 @@
 
       const data = await res.json();
       const rawTasks = data.tasks || [];
-      
+
       // 规范化负责人：模糊匹配真实 sync_users 列表中的名字，不符合的强制指派
       const tasksWithDefaults = rawTasks.map((t: any) => {
         let assigned = t.assignee || '';
@@ -244,7 +397,7 @@
             break;
           }
         }
-        
+
         let finalAssignee = '';
         if (matchedMember) {
           finalAssignee = matchedMember;
@@ -253,18 +406,18 @@
           finalAssignee = assigneesList.length > 0 ? assigneesList[0] : 'Unassigned';
         }
 
-        return {
+        return normalizeGeneratedTask({
           ...t,
-          assignee: finalAssignee,
-          period_days: t.period_days || 5
-        };
+          assignee: finalAssignee
+        });
       });
 
       result = {
         mappedRepos: data.mappedRepos || [],
-        tasks: tasksWithDefaults
+        tasks: tasksWithDefaults,
+        analysis: normalizeAnalysis(data.analysis)
       };
-      
+
       // 成功生成解构任务时，优先沿用已选需求的任务组 ID，保证二次解构仍挂在同一父需求上。
       currentTaskGroupId = getSelectedDemandTaskGroupId() || (selectedDemandId ? createBrainGroupId(selectedDemandId) : 'group-' + Date.now());
       isMockResponse = !!data.is_mock;
@@ -351,10 +504,14 @@
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           task_group_id: currentTaskGroupId,
           demand_id: selectedDemandId,
-          tasks: result.tasks 
+          input_text: inputText,
+          mappedRepos: result.mappedRepos,
+          analysis: result.analysis,
+          is_mock: isMockResponse,
+          tasks: result.tasks
         })
       });
 
@@ -392,7 +549,7 @@
     <!-- Input Panel -->
     <div class="panel input-panel {!isAIEnabled ? 'disabled-panel' : ''}">
       <label for="raw-demand" class="input-label">输入非结构化需求草案 / Bug 描述</label>
-      
+
       {#if !isAIEnabled}
         <div class="ai-disabled-indicator">
           <span class="warning-icon">⚠️</span>
@@ -405,19 +562,19 @@
 
       <!-- File Upload Dropzone -->
       {#if isAIEnabled}
-        <div 
-          class="file-dropzone {isDragging ? 'dragging' : ''}" 
+        <div
+          class="file-dropzone {isDragging ? 'dragging' : ''}"
           on:dragover={handleDragOver}
           on:dragleave={handleDragLeave}
           on:drop={handleDrop}
           role="button"
           tabindex="0"
         >
-          <input 
-            type="file" 
-            id="file-upload" 
-            accept=".txt,.md,.json,.csv,.xml,.html" 
-            on:change={handleFileSelect} 
+          <input
+            type="file"
+            id="file-upload"
+            accept=".txt,.md,.json,.csv,.xml,.html"
+            on:change={handleFileSelect}
             class="file-input"
           />
           <label for="file-upload" class="dropzone-label">
@@ -459,15 +616,33 @@
       "title": "任务标题（描述该仓库具体功能）",
       "assignee": "推荐人名字（如 Eddie）",
       "priority": "High/Medium/Low",
-      "complexity": "High/Medium/Low"
+      "complexity": "High/Medium/Low",
+      "difficulty": "High/Medium/Low",
+      "estimated_days": 2.5,
+      "estimated_hours": 20,
+      "estimate_basis": "估算依据"
     }
-  ]
+  ],
+  "analysis": {
+    "completeness_score": 82,
+    "overall_estimated_days": 6,
+    "overall_estimated_hours": 48,
+    "overall_difficulty": "Medium",
+    "estimate_basis": "整体估算依据",
+    "missing_info": ["待补充的信息"],
+    "risks": ["交付风险"],
+    "dependencies": ["依赖项"],
+    "acceptance_criteria": ["可验证验收标准"],
+    "schedule_notes": ["排期提示"],
+    "meeting_questions": ["评审会问题"],
+    "confidence": 0.78
+  }
 }`}</code></pre>
             </div>
           {/if}
         </div>
       {/if}
-      
+
       <div class="actions">
         <button
           on:click={handleDeconstruct}
@@ -482,6 +657,129 @@
           {/if}
         </button>
       </div>
+
+      {#if hasResult}
+        <div class="analysis-panel input-analysis-panel">
+          <div class="analysis-header">
+            <div>
+              <span class="result-section-label">需求作战图 / AI 分析</span>
+              <p class="analysis-subtitle">完整性、风险、依赖与验收口径</p>
+            </div>
+            <div class="analysis-score-row">
+              <div class="analysis-score-block">
+                <span class="score-label">预估工时</span>
+                <span class="score-value estimate-value">{estimateSummaryLabel(result.analysis.overall_estimated_days, result.analysis.overall_estimated_hours)}</span>
+              </div>
+              <div class="analysis-score-block">
+                <span class="score-label">整体难度</span>
+                <span class="score-value difficulty-value">{difficultyLabel(result.analysis.overall_difficulty)}</span>
+              </div>
+              <div class="analysis-score-block">
+                <span class="score-label">完整性</span>
+                <span class="score-value">{percentLabel(result.analysis.completeness_score)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="score-track" aria-label="需求完整性">
+            <span style:width={`${result.analysis.completeness_score}%`}></span>
+          </div>
+
+          <div class="analysis-kpi-row">
+            <span>置信度 <strong>{confidenceLabel(result.analysis.confidence)}</strong></span>
+            <span>预估 <strong>{estimateSummaryLabel(result.analysis.overall_estimated_days, result.analysis.overall_estimated_hours)}</strong></span>
+            <span>风险项 <strong>{result.analysis.risks.length}</strong></span>
+            <span>待确认 <strong>{result.analysis.meeting_questions.length}</strong></span>
+          </div>
+
+          {#if result.analysis.estimate_basis}
+            <div class="estimate-basis-strip">
+              <span class="estimate-basis-label">估算依据</span>
+              <span>{result.analysis.estimate_basis}</span>
+            </div>
+          {/if}
+
+          <div class="analysis-grid">
+            <div class="analysis-cell">
+              <span class="analysis-cell-title">缺失信息</span>
+              {#if result.analysis.missing_info.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.missing_info as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">暂无明显缺口</p>
+              {/if}
+            </div>
+
+            <div class="analysis-cell risk-cell">
+              <span class="analysis-cell-title">风险</span>
+              {#if result.analysis.risks.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.risks as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">暂无高风险提示</p>
+              {/if}
+            </div>
+
+            <div class="analysis-cell">
+              <span class="analysis-cell-title">验收标准</span>
+              {#if result.analysis.acceptance_criteria.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.acceptance_criteria as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">待补充可验证标准</p>
+              {/if}
+            </div>
+
+            <div class="analysis-cell">
+              <span class="analysis-cell-title">会议问题</span>
+              {#if result.analysis.meeting_questions.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.meeting_questions as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">暂无待会审问题</p>
+              {/if}
+            </div>
+
+            <div class="analysis-cell compact">
+              <span class="analysis-cell-title">依赖</span>
+              {#if result.analysis.dependencies.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.dependencies as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">暂无显式依赖</p>
+              {/if}
+            </div>
+
+            <div class="analysis-cell compact">
+              <span class="analysis-cell-title">排期提示</span>
+              {#if result.analysis.schedule_notes.length > 0}
+                <ul class="analysis-list">
+                  {#each result.analysis.schedule_notes as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {:else}
+                <p class="analysis-empty">按任务复杂度常规排期</p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {/if}
     </div>
 
     <!-- Output Panel -->
@@ -517,13 +815,13 @@
           <div class="result-section">
             <div class="result-header-row">
               <span class="result-section-label">生成影子任务卡 (Subtasks)</span>
-              
+
               <div class="sync-actions-group">
                 <!-- 关联需求下拉框 -->
                 <div class="custom-dropdown-container deconstruct-demand-link-select">
-                  <button 
+                  <button
                     type="button"
-                    class="dropdown-trigger" 
+                    class="dropdown-trigger"
                     on:click|stopPropagation={() => showDemandDropdown = !showDemandDropdown}
                   >
                     <span>{selectedDemandId === '' ? '不关联需求，仅同步任务' : selectedDemandTitle}</span>
@@ -531,7 +829,7 @@
                   </button>
                   {#if showDemandDropdown}
                     <div class="dropdown-options-list glass-panel">
-                      <button 
+                      <button
                         type="button"
                         class="dropdown-option-item {selectedDemandId === '' ? 'selected' : ''}"
                         on:click={() => selectDemandLink(null)}
@@ -539,7 +837,7 @@
                         不关联需求，仅同步任务
                       </button>
                       {#each activeDemands as d}
-                        <button 
+                        <button
                           type="button"
                           class="dropdown-option-item {selectedDemandId === d.task_id ? 'selected' : ''}"
                           on:click={() => selectDemandLink(d)}
@@ -551,9 +849,9 @@
                   {/if}
                 </div>
 
-                <button 
-                  class="btn-sync-kanban font-sans" 
-                  on:click={importTasksToKanban} 
+                <button
+                  class="btn-sync-kanban font-sans"
+                  on:click={importTasksToKanban}
                   disabled={isImporting}
                 >
                   {#if isImporting}
@@ -566,7 +864,7 @@
             </div>
             <div class="task-list">
               {#each result.tasks as task (task.id)}
-                <div 
+                <div
                   class="generated-task-card"
                   style={activeDropdown && activeDropdown.taskId === task.id ? 'z-index: 10;' : 'z-index: 1;'}
                 >
@@ -578,7 +876,7 @@
                         <span class="task-group-badge" title="当前影子任务所属的大脑任务组">🔗 {currentTaskGroupId}</span>
                       {/if}
                     </div>
-                    
+
                     <button class="delete-task-btn-premium" on:click={() => deleteTask(task.id)} title="删除影子任务">
                       <svg xmlns="http://www.w3.org/2000/svg" class="icon-trash-premium" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
@@ -586,34 +884,34 @@
                       <span class="delete-text-mini">删除</span>
                     </button>
                   </div>
-                  
+
                   <!-- 卡片标题编辑 -->
                   <div class="task-title-container">
                     <span class="edit-icon-indicator">✏️</span>
                     <input type="text" class="task-title-input-premium" bind:value={task.title} placeholder="修改任务标题..." />
                   </div>
-                  
+
                   <!-- Bento 风格的开发属性微调网格 -->
                   <div class="task-bento-grid">
                     <!-- 关联仓库 -->
                     <div class="bento-edit-cell">
                       <span class="cell-label">📦 关联仓库</span>
                       <div class="custom-dropdown-container">
-                        <button 
+                        <button
                           type="button"
-                          class="custom-dropdown-trigger" 
+                          class="custom-dropdown-trigger"
                           on:click|stopPropagation={() => toggleDropdown(task.id, 'repo')}
                         >
                           <span class="trigger-value">{task.repo}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'repo') ? 'rotated' : ''}">▼</span>
                         </button>
-                        
+
                         {#if isDropdownOpen(task.id, 'repo')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
                             {#each result.mappedRepos.length > 0 ? result.mappedRepos : ['frontend-dashboard', 'backend-core'] as repo}
-                              <button 
+                              <button
                                 type="button"
-                                class="dropdown-option-btn {task.repo === repo ? 'selected' : ''}" 
+                                class="dropdown-option-btn {task.repo === repo ? 'selected' : ''}"
                                 on:click|stopPropagation={() => selectDropdownValue(task.id, 'repo', repo)}
                               >
                                 {repo}
@@ -623,34 +921,34 @@
                         {/if}
                       </div>
                     </div>
-                    
+
                     <!-- 负责人 -->
                     <div class="bento-edit-cell">
                       <span class="cell-label">👤 负责人</span>
                       <div class="custom-dropdown-container">
-                        <button 
+                        <button
                           type="button"
-                          class="custom-dropdown-trigger" 
+                          class="custom-dropdown-trigger"
                           on:click|stopPropagation={() => toggleDropdown(task.id, 'assignee')}
                         >
                           <span class="trigger-value">{task.assignee}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'assignee') ? 'rotated' : ''}">▼</span>
                         </button>
-                        
+
                         {#if isDropdownOpen(task.id, 'assignee')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
                             {#each assigneesList as member}
-                              <button 
+                              <button
                                 type="button"
-                                class="dropdown-option-btn {task.assignee === member ? 'selected' : ''}" 
+                                class="dropdown-option-btn {task.assignee === member ? 'selected' : ''}"
                                 on:click|stopPropagation={() => selectDropdownValue(task.id, 'assignee', member)}
                               >
                                 {member}
                               </button>
                             {/each}
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.assignee === 'Unassigned' ? 'selected' : ''}" 
+                              class="dropdown-option-btn {task.assignee === 'Unassigned' ? 'selected' : ''}"
                               on:click|stopPropagation={() => selectDropdownValue(task.id, 'assignee', 'Unassigned')}
                             >
                               暂无分配
@@ -659,68 +957,68 @@
                         {/if}
                       </div>
                     </div>
-                    
-                    <!-- 开发周期 -->
+
+                    <!-- 预估工时 -->
                     <div class="bento-edit-cell">
-                      <span class="cell-label">⏳ 开发周期</span>
+                      <span class="cell-label">⏳ 预估工时</span>
                       <div class="custom-dropdown-container">
-                        <button 
+                        <button
                           type="button"
-                          class="custom-dropdown-trigger" 
-                          on:click|stopPropagation={() => toggleDropdown(task.id, 'period_days')}
+                          class="custom-dropdown-trigger"
+                          on:click|stopPropagation={() => toggleDropdown(task.id, 'estimated_hours')}
                         >
-                          <span class="trigger-value">{getPeriodLabel(task.period_days)}</span>
-                          <span class="trigger-arrow {isDropdownOpen(task.id, 'period_days') ? 'rotated' : ''}">▼</span>
+                          <span class="trigger-value">{getHoursLabel(task.estimated_hours)}</span>
+                          <span class="trigger-arrow {isDropdownOpen(task.id, 'estimated_hours') ? 'rotated' : ''}">▼</span>
                         </button>
-                        
-                        {#if isDropdownOpen(task.id, 'period_days')}
+
+                        {#if isDropdownOpen(task.id, 'estimated_hours')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
-                            {#each [1, 2, 3, 5, 7, 10, 14] as days}
-                              <button 
+                            {#each [2, 4, 6, 8, 12, 16, 24, 32, 40, 56, 80, 112] as hours}
+                              <button
                                 type="button"
-                                class="dropdown-option-btn {task.period_days === days ? 'selected' : ''}" 
-                                on:click|stopPropagation={() => selectDropdownValue(task.id, 'period_days', days)}
+                                class="dropdown-option-btn {task.estimated_hours === hours ? 'selected' : ''}"
+                                on:click|stopPropagation={() => selectEstimateHours(task.id, hours)}
                               >
-                                {getPeriodLabel(days)}
+                                {getHoursLabel(hours)}
                               </button>
                             {/each}
                           </div>
                         {/if}
                       </div>
                     </div>
- 
+
                     <!-- 优先级 -->
                     <div class="bento-edit-cell">
                       <span class="cell-label">⚡ 优先级</span>
                       <div class="custom-dropdown-container">
-                        <button 
+                        <button
                           type="button"
-                          class="custom-dropdown-trigger" 
+                          class="custom-dropdown-trigger"
                           on:click|stopPropagation={() => toggleDropdown(task.id, 'priority')}
                         >
                           <span class="trigger-value">{task.priority === 'High' ? 'High (高)' : task.priority === 'Medium' ? 'Medium (中)' : 'Low (低)'}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'priority') ? 'rotated' : ''}">▼</span>
                         </button>
-                        
+
                         {#if isDropdownOpen(task.id, 'priority')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.priority === 'High' ? 'selected' : ''}" 
+                              class="dropdown-option-btn {task.priority === 'High' ? 'selected' : ''}"
                               on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'High')}
                             >
                               High (高)
                             </button>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.priority === 'Medium' ? 'selected' : ''}" 
+                              class="dropdown-option-btn {task.priority === 'Medium' ? 'selected' : ''}"
                               on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'Medium')}
                             >
                               Medium (中)
                             </button>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.priority === 'Low' ? 'selected' : ''}" 
+                              class="dropdown-option-btn {task.priority === 'Low' ? 'selected' : ''}"
                               on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'Low')}
                             >
                               Low (低)
@@ -729,40 +1027,40 @@
                         {/if}
                       </div>
                     </div>
- 
-                    <!-- 复杂度 -->
+
+                    <!-- 预估难度 -->
                     <div class="bento-edit-cell">
-                      <span class="cell-label">📊 复杂度</span>
+                      <span class="cell-label">📊 预估难度</span>
                       <div class="custom-dropdown-container">
-                        <button 
+                        <button
                           type="button"
-                          class="custom-dropdown-trigger" 
-                          on:click|stopPropagation={() => toggleDropdown(task.id, 'complexity')}
+                          class="custom-dropdown-trigger"
+                          on:click|stopPropagation={() => toggleDropdown(task.id, 'difficulty')}
                         >
-                          <span class="trigger-value">{task.complexity === 'High' ? 'High (高)' : task.complexity === 'Medium' ? 'Medium (中)' : 'Low (低)'}</span>
-                          <span class="trigger-arrow {isDropdownOpen(task.id, 'complexity') ? 'rotated' : ''}">▼</span>
+                          <span class="trigger-value">{difficultyLabel(task.difficulty)}</span>
+                          <span class="trigger-arrow {isDropdownOpen(task.id, 'difficulty') ? 'rotated' : ''}">▼</span>
                         </button>
-                        
-                        {#if isDropdownOpen(task.id, 'complexity')}
+
+                        {#if isDropdownOpen(task.id, 'difficulty')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.complexity === 'High' ? 'selected' : ''}" 
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'complexity', 'High')}
+                              class="dropdown-option-btn {task.difficulty === 'High' ? 'selected' : ''}"
+                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'High')}
                             >
                               High (高)
                             </button>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.complexity === 'Medium' ? 'selected' : ''}" 
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'complexity', 'Medium')}
+                              class="dropdown-option-btn {task.difficulty === 'Medium' ? 'selected' : ''}"
+                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'Medium')}
                             >
                               Medium (中)
                             </button>
-                            <button 
+                            <button
                               type="button"
-                              class="dropdown-option-btn {task.complexity === 'Low' ? 'selected' : ''}" 
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'complexity', 'Low')}
+                              class="dropdown-option-btn {task.difficulty === 'Low' ? 'selected' : ''}"
+                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'Low')}
                             >
                               Low (低)
                             </button>
@@ -771,6 +1069,13 @@
                       </div>
                     </div>
                   </div>
+
+                  {#if task.estimate_basis}
+                    <div class="task-estimate-basis">
+                      <span>估算依据</span>
+                      <p>{task.estimate_basis}</p>
+                    </div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -823,6 +1128,7 @@
     font-size: 1.5rem;
     font-weight: 700;
     background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin: 0;
@@ -1066,6 +1372,241 @@
     font-weight: 500;
   }
 
+  .analysis-panel {
+    background: rgba(15, 23, 42, 0.46);
+    border: 1px solid rgba(51, 65, 85, 0.38);
+    border-radius: 8px;
+    padding: 14px;
+    box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+  }
+
+  .input-analysis-panel {
+    margin-top: 18px;
+    max-height: 520px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100, 116, 139, 0.55) transparent;
+  }
+
+  .analysis-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .analysis-subtitle {
+    margin: 4px 0 0 0;
+    color: #64748b;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+
+  .analysis-score-block {
+    min-width: 84px;
+    text-align: right;
+  }
+
+  .analysis-score-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+    max-width: 360px;
+  }
+
+  .score-label {
+    display: block;
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .score-value {
+    display: block;
+    color: #38bdf8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 1.38rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-top: 2px;
+  }
+
+  .estimate-value,
+  .difficulty-value {
+    color: #c4b5fd;
+    font-size: 0.92rem;
+    line-height: 1.2;
+    margin-top: 6px;
+    white-space: nowrap;
+  }
+
+  .score-track {
+    height: 6px;
+    background: rgba(2, 6, 23, 0.78);
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    border-radius: 999px;
+    margin: 12px 0 10px 0;
+    overflow: hidden;
+  }
+
+  .score-track span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #0f766e 0%, #38bdf8 100%);
+    border-radius: inherit;
+  }
+
+  .analysis-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .analysis-kpi-row span {
+    min-width: 0;
+    background: rgba(2, 6, 23, 0.38);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 6px;
+    color: #64748b;
+    font-size: 0.66rem;
+    padding: 5px 7px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .analysis-kpi-row strong {
+    color: #cbd5e1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 700;
+  }
+
+  .estimate-basis-strip {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    margin-bottom: 10px;
+    padding: 7px 9px;
+    background: rgba(30, 41, 59, 0.34);
+    border: 1px solid rgba(129, 140, 248, 0.22);
+    border-radius: 6px;
+    color: #cbd5e1;
+    font-size: 0.7rem;
+    line-height: 1.45;
+  }
+
+  .estimate-basis-label {
+    color: #818cf8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+
+  .analysis-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .analysis-cell {
+    min-height: 78px;
+    background: rgba(2, 6, 23, 0.36);
+    border: 1px solid rgba(51, 65, 85, 0.32);
+    border-radius: 6px;
+    padding: 9px 10px;
+    box-sizing: border-box;
+  }
+
+  .analysis-cell.compact {
+    min-height: 62px;
+  }
+
+  .analysis-cell.risk-cell {
+    border-color: rgba(245, 158, 11, 0.22);
+    background: rgba(120, 53, 15, 0.08);
+  }
+
+  .analysis-cell-title {
+    display: block;
+    margin-bottom: 6px;
+    color: #94a3b8;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .analysis-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .analysis-list li {
+    position: relative;
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    padding-left: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .analysis-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #38bdf8;
+  }
+
+  .risk-cell .analysis-list li::before {
+    background: #f59e0b;
+  }
+
+  .analysis-empty {
+    margin: 0;
+    color: #475569;
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+
+  @media (max-width: 640px) {
+    .analysis-header {
+      flex-direction: column;
+    }
+
+    .analysis-score-block {
+      width: 100%;
+      text-align: left;
+    }
+
+    .analysis-score-row {
+      width: 100%;
+      max-width: none;
+      justify-content: flex-start;
+    }
+
+    .analysis-kpi-row,
+    .analysis-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .task-list {
     display: flex;
     flex-direction: column;
@@ -1236,6 +1777,33 @@
     margin-bottom: 2px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  .task-estimate-basis {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: rgba(2, 6, 23, 0.34);
+    border: 1px solid rgba(51, 65, 85, 0.28);
+    border-radius: 6px;
+  }
+
+  .task-estimate-basis span {
+    color: #818cf8;
+    font-size: 0.62rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .task-estimate-basis p {
+    margin: 0;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
   }
 
   /* 任务组标识样式 */

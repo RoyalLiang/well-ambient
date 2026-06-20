@@ -49,8 +49,14 @@
       enabled: boolean;
       provider: string;
       base_url: string;
+      endpoint_type?: string;
       api_token: string;
       model: string;
+      project_architecture?: string;
+      delivery_workflow?: string;
+      implemented_features?: string;
+      estimation_guidelines?: string;
+      default_work_hours_per_day?: number;
     };
   }
 
@@ -69,7 +75,19 @@
       bitable: { enabled: false, app_token: '', table_id: '', status_column: '', task_id_column: '' }
     },
     jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '' },
-    ai: { enabled: false, provider: 'openai', base_url: '', api_token: '', model: '' }
+    ai: {
+      enabled: false,
+      provider: 'openai',
+      base_url: '',
+      endpoint_type: 'completions',
+      api_token: '',
+      model: '',
+      project_architecture: '',
+      delivery_workflow: '',
+      implemented_features: '',
+      estimation_guidelines: '',
+      default_work_hours_per_day: 8
+    }
   };
 
   // Modal display states

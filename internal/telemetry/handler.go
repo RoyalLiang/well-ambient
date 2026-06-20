@@ -371,6 +371,11 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 	var dueDate *time.Time
 	var decisionLogs string
 	var taskGroupID string
+	var estimateDays float64
+	var estimateHours float64
+	var difficulty string
+	var estimateSource string
+	var estimateArchiveID uint
 
 	if existing.TaskID != "" {
 		taskCreatedAt = existing.TaskCreatedAt
@@ -380,6 +385,11 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 		dueDate = existing.DueDate
 		decisionLogs = existing.DecisionLogs
 		taskGroupID = existing.TaskGroupID
+		estimateDays = existing.EstimateDays
+		estimateHours = existing.EstimateHours
+		difficulty = existing.Difficulty
+		estimateSource = existing.EstimateSource
+		estimateArchiveID = existing.EstimateArchiveID
 		if mrIID == 0 {
 			mrIID = existing.MrIID
 		}
@@ -402,25 +412,30 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 	}
 
 	telemetry := db.TaskTelemetry{
-		TaskID:        taskID,
-		Title:         taskTitle,
-		Description:   existing.Description,
-		Repo:          repoName,
-		Assignee:      assigneeName,
-		Creator:       creator,
-		CreatorDept:   creatorDept,
-		Branch:        branchName,
-		LastCommit:    lastCommit,
-		Status:        status,
-		IssueType:     issueType,
-		TaskCreatedAt: taskCreatedAt,
-		LastUpdate:    time.Now(),
-		CompletedAt:   completedAt,
-		DueDate:       dueDate,
-		DecisionLogs:  decisionLogs,
-		MrIID:         mrIID,
-		MrURL:         mrURL,
-		TaskGroupID:   taskGroupID,
+		TaskID:            taskID,
+		Title:             taskTitle,
+		Description:       existing.Description,
+		Repo:              repoName,
+		Assignee:          assigneeName,
+		Creator:           creator,
+		CreatorDept:       creatorDept,
+		Branch:            branchName,
+		LastCommit:        lastCommit,
+		Status:            status,
+		IssueType:         issueType,
+		TaskCreatedAt:     taskCreatedAt,
+		LastUpdate:        time.Now(),
+		CompletedAt:       completedAt,
+		DueDate:           dueDate,
+		DecisionLogs:      decisionLogs,
+		MrIID:             mrIID,
+		MrURL:             mrURL,
+		TaskGroupID:       taskGroupID,
+		EstimateDays:      estimateDays,
+		EstimateHours:     estimateHours,
+		Difficulty:        difficulty,
+		EstimateSource:    estimateSource,
+		EstimateArchiveID: estimateArchiveID,
 	}
 
 	if db.DB != nil {

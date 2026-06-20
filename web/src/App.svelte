@@ -39,6 +39,8 @@
   let currentUserAvatar = localStorage.getItem('current_user_avatar') || '';
   let currentUserRole = localStorage.getItem('current_user_role') || 'member';
   let currentUserDepartment = localStorage.getItem('current_user_department') || '';
+  let authDegraded = localStorage.getItem('auth_degraded') === 'true';
+  let authDegradedMessage = localStorage.getItem('auth_degraded_message') || '';
   let currentUserPermissions: string[] = [];
   try {
     currentUserPermissions = JSON.parse(localStorage.getItem('current_user_permissions') || '[]');
@@ -58,6 +60,7 @@
   let loginUsernamePrefix = '';
   let loginPassword = '';
   let loginError = '';
+  let loginNotice = '';
   let loggingIn = false;
 
   function hasPermission(p: string): boolean {
@@ -188,6 +191,10 @@
     localStorage.removeItem('current_user_role');
     localStorage.removeItem('current_user_permissions');
     localStorage.removeItem('current_user_department');
+    localStorage.removeItem('auth_degraded');
+    localStorage.removeItem('auth_degraded_message');
+    authDegraded = false;
+    authDegradedMessage = '';
     if (eventSource) {
       eventSource.close();
       eventSource = null;
@@ -206,6 +213,7 @@
     
     loggingIn = true;
     loginError = '';
+    loginNotice = '';
     
     try {
       const fullEmail = loginUsernamePrefix.trim() + '@westwell-lab.com';
@@ -230,6 +238,9 @@
         currentUserRole = data.user.role || 'member';
         currentUserDepartment = normalizeDepartment(data.user.department);
         currentUserPermissions = data.user.permissions || [];
+        authDegraded = data.degraded === true;
+        authDegradedMessage = data.degraded ? (data.message || 'WellOS 维护中，已使用本地临时会话登录') : '';
+        loginNotice = data.degraded ? (data.message || 'WellOS 维护中，已使用本地临时会话登录') : '';
         
         localStorage.setItem('jwt_token', jwtToken);
         localStorage.setItem('current_user_name', currentUserName);
@@ -238,6 +249,8 @@
         localStorage.setItem('current_user_role', currentUserRole);
         localStorage.setItem('current_user_department', currentUserDepartment);
         localStorage.setItem('current_user_permissions', JSON.stringify(currentUserPermissions));
+        localStorage.setItem('auth_degraded', authDegraded ? 'true' : 'false');
+        localStorage.setItem('auth_degraded_message', authDegradedMessage);
         
         autoRedirectTab();
         
@@ -250,10 +263,12 @@
         window.dispatchEvent(new CustomEvent('user-logged-in'));
       } else {
         loginError = data.message || '登录失败，请检查账号密码';
+        loginNotice = '';
       }
     } catch (err) {
       console.error('Login error:', err);
       loginError = '登录请求失败，请确保网络通畅';
+      loginNotice = '';
     } finally {
       loggingIn = false;
     }
@@ -573,7 +588,7 @@
 {:else}
 <main class="app-container">
   <!-- Header -->
-  <header class="app-header">
+  <header class="app-header {authDegraded ? 'has-maintenance-banner' : ''}">
     <div class="brand">
       <div class="logo-circle">
         <span class="logo-symbol">⇅</span>
@@ -698,6 +713,13 @@
     </div>
   </header>
 
+  {#if authDegraded}
+    <div class="auth-degraded-banner">
+      <span class="auth-degraded-kicker font-mono">OS MAINTENANCE</span>
+      <span>{authDegradedMessage || 'WellOS 维护中，当前为本地临时会话，资料同步将在 OS 恢复后更新。'}</span>
+    </div>
+  {/if}
+
   <!-- Tab Navigation -->
   <div class="tabs-navigation font-mono">
     {#if hasPermission('dashboard:read')}
@@ -803,6 +825,32 @@
     margin-bottom: 32px;
     flex-wrap: wrap;
     gap: 16px;
+  }
+
+  .app-header.has-maintenance-banner {
+    margin-bottom: 14px;
+  }
+
+  .auth-degraded-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
+    border: 1px solid rgba(245, 158, 11, 0.34);
+    background: rgba(120, 53, 15, 0.18);
+    color: #fde68a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+
+  .auth-degraded-kicker {
+    color: #f59e0b;
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
   }
 
   .user-selector-container {

@@ -2,6 +2,31 @@
 
 ## Session: 2026-06-20
 
+### GitLab/Jira Integration Worker A: Webhook Ensure/Status MVP
+- **Status:** complete
+- Actions taken:
+  - Loaded required AGENTS cold-start files and selected the complex coding preset.
+  - Inspected `internal/config/config.go`, `internal/server/config_handlers.go`, `internal/server/server.go`, and `internal/telemetry/jira_client.go`.
+  - Added protected GitLab webhook installation and inspection handlers.
+  - Registered `POST /api/gitlab/webhooks/ensure` and `GET /api/gitlab/webhooks/status` behind `config:write`.
+  - Implemented GitLab API list/create/update project hook calls with push and merge request events enabled.
+  - Kept GitLab API token and webhook secret out of response bodies and returned status-only GitLab API errors.
+  - Added httptest-backed regression coverage for update, create, status, URL defaulting, event flags, and response secret redaction.
+- Files modified:
+  - `internal/server/config_handlers.go`
+  - `internal/server/server.go`
+  - `internal/server/config_handlers_gitlab_webhook_test.go`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Validation:
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestEnsureGitLabWebhooks|TestGetGitLabWebhookStatus|TestResolveGitLabWebhookURL' -count=1 -v` passed after rerun with loopback bind permission.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -count=1` passed.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/telemetry -count=1` passed.
+- Notes:
+  - A sandboxed first attempt at the httptest suite failed because the sandbox blocked local listener binding; the same tests passed with approved loopback access.
+  - `internal/server/*` is ignored by `.gitignore`, so normal `git status` does not show those edited files.
+
 ### Phase 1: Requirements & Discovery
 - **Status:** complete
 - **Started:** 2026-06-20
@@ -133,12 +158,182 @@
 | Full Go tests after brain/profile/calendar follow-up | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed | pass |
 | Frontend production build after brain/profile/calendar follow-up | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
 
+### Phase 9: WellOS Maintenance Login Degradation
+- **Status:** complete
+- Actions taken:
+  - Added a guarded local fallback for WellOS login outages.
+  - Allowed degraded login only for users that already exist locally, have a local user-group/permission snapshot, and pass local cached-password verification from a prior successful WellOS login.
+  - Denied degraded login for unknown users or users without local access permissions.
+  - Issued degraded JWT sessions with a `wellos-maintenance-fallback` marker instead of a real WellOS token.
+  - Recorded degraded logins as `user_login_degraded` audit events.
+  - Kept the hardened WellOS request path using HTTP/1.1, no keep-alive reuse, browser-like headers, and one retry for transient EOF/reset errors.
+  - Added a frontend maintenance banner when the backend returns `degraded: true`.
+  - Added regression tests for allowed degraded login, unknown-user denial, and wrong-password denial.
+  - Added an explicit local-development auth switch for OS outages: `WELL_AMBIENT_DEV_AUTH=1`.
+  - Restricted dev auth to loopback requests only, creates/updates a local developer user, binds `super_admin`, and marks the session with `local_dev_auth`.
+- Files modified:
+  - `internal/db/user/user.go`
+  - `internal/server/notification_handlers.go`
+  - `internal/server/server_test.go`
+  - `web/src/App.svelte`
+
+## Latest Validation After Maintenance Fallback
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Degraded login server tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestLogin(FallsBack|DoesNotFallback)' -count=1 -v` | existing local user succeeds, unknown user fails | passed | pass |
+| Full Go tests after degraded login | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed | pass |
+| Frontend production build after degraded login banner | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+| Dev auth server tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestLogin(FallsBack|DoesNotFallback|UsesDevAuth)' -count=1 -v` | dev auth works only on loopback when enabled | passed | pass |
+
+### Phase 10: System Extension Landing
+- **Status:** complete
+- Actions taken:
+  - Converted the extension recommendations into three bounded implementation tracks.
+  - Spawned worker A for GitLab/Jira integration and GitLab webhook ensure/status backend APIs.
+  - Spawned worker B for KPI personal performance analysis and daily/weekly report preview.
+  - Spawned worker C for AI demand deconstruction analysis fields and frontend display.
+  - Applied `design-taste-frontend` as the active UI constraint for touched dashboard UI: internal dark cockpit, low motion, high density, no marketing-style sections.
+  - Added GitLab config-panel actions for webhook status inspection and install/update after a successful config save.
+  - Integrated worker changes and validated Go plus frontend build.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `internal/server/config_handlers.go`
+  - `internal/server/config_handlers_gitlab_webhook_test.go`
+  - `internal/server/server.go`
+  - `internal/server/ai_handlers.go`
+  - `internal/server/ai_handlers_test.go`
+  - `internal/server/kpi_handlers.go`
+  - `internal/server/kpi_handlers_test.go`
+  - `web/src/components/config/GitLabConfig.svelte`
+  - `web/src/components/Deconstructor.svelte`
+  - `web/src/components/KPIKanban.svelte`
+
+## Latest Validation After Phase 10
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Targeted extension tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestEnsureGitLabWebhooks|TestGetGitLabWebhookStatus|TestResolveGitLabWebhookURL|TestParseDeconstructResponseContent|TestKPIPerformanceIncludesProcessRiskFields|TestKPIReportPreview' -count=1 -v` | GitLab webhook, AI analysis, and KPI report tests pass | passed with approved loopback bind for httptest | pass |
+| Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed with approved loopback bind for httptest | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+
 ## Latest Validation
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
 | Full Go tests after modal/department/date follow-up | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed | pass |
 | Frontend production build after modal/department/date follow-up | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
 | Frontend type check | `pnpm --dir web check` | no type errors | failed on pre-existing TS errors outside this change set | known issue |
+
+### Phase 11: Dashboard UI Control Polish
+- **Status:** complete
+- Actions taken:
+  - Applied `design-taste-frontend` as a constrained internal dashboard UI repair.
+  - Replaced the Override assignee text input with a dark-system custom dropdown populated from the selected item, AI suggestion, core members, and agenda assignees.
+  - Replaced the Override deadline native visual surface with a custom dark display shell backed by a transparent clickable native date input.
+  - Renamed the red-zone diagnostic filter from code repository language to project filtering while preserving the existing `repo` API field.
+  - Replaced the KPI report preview team-view native select with a custom dark dropdown and outside-click dismissal.
+  - Added wrapping constraints for Jira custom JQL summary values so long JQL strings remain inside the summary card.
+- Files modified:
+  - `web/src/components/DecisionDashboard.svelte`
+  - `web/src/components/KPIKanban.svelte`
+  - `web/src/components/config/JiraConfig.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+
+## Latest Validation After Dashboard UI Control Polish
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+| Frontend type check | `pnpm --dir web check` | no type errors | failed on pre-existing TS errors outside this change set | known issue |
+
+### Phase 12: AI Deconstruction Estimation & Meeting Replacement
+- **Status:** complete
+- Actions taken:
+  - Extended the AI deconstruction prompt and JSON contract with overall estimated days/hours, overall difficulty, estimate basis, and subtask estimated days/hours/difficulty.
+  - Added deterministic normalization so missing task estimates are distributed from the overall estimate using difficulty weights.
+  - Added `DeconstructArchive` to persist each imported deconstruction run with input text, mapped repos, task snapshot, analysis snapshot, overall estimate, difficulty, confidence, and task group.
+  - Added task-level estimate telemetry fields: estimate days, estimate hours, difficulty, source, and archive ID.
+  - Preserved estimate telemetry through GitLab/MR webhook state updates.
+  - Updated the Deconstructor UI to show overall estimate/difficulty and editable subtask estimate/difficulty while keeping the existing dark cockpit style.
+  - Sent input text, analysis, mapped repos, mock state, and task estimates during one-click import so archives are complete.
+  - Added regression tests for estimate normalization and import archive persistence.
+- Files modified:
+  - `internal/db/db.go`
+  - `internal/server/ai_handlers.go`
+  - `internal/server/ai_handlers_test.go`
+  - `internal/server/server_test.go`
+  - `internal/telemetry/handler.go`
+  - `web/src/components/Deconstructor.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.learnings/ERRORS.md`
+
+## Latest Validation After Phase 12
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Estimate/import focused tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasks(LinksDemand|ReusesLinkedDemandTaskGroup|CreatesStableBrainGroupForDemand|ArchivesEstimates|RejectsUnknownDemand)' -count=1 -v` | estimate parsing and archive import pass | passed | pass |
+| Telemetry preservation tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/telemetry -run TestProcessWebhook -count=1 -v` | webhook tests pass | passed | pass |
+| Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed with approved loopback access for httptest | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+| Frontend type check | `pnpm --dir web check` | no type errors | failed on pre-existing TS errors outside this change set | known issue |
+
+### Phase 13: AI Project Context & Hour-Based Deconstruction
+- **Status:** complete
+- Actions taken:
+  - Added AI settings fields for project architecture, delivery workflow, implemented capabilities, estimation guidelines, and default work-hours-per-day.
+  - Injected those context fields into the deconstruction prompt, with a fallback well-ambient system summary when fields are empty.
+  - Made `estimated_hours` and `overall_estimated_hours` the primary prompt/UI estimate fields while preserving `estimated_days` as derived scheduling/archive compatibility data.
+  - Added configured work-hours normalization so non-8-hour day settings remain consistent in parsed AI output.
+  - Moved the AI analysis panel to the left input column directly under the deconstruction button, keeping the right panel focused on project mapping and shadow task cards.
+  - Updated Deconstructor subtask effort controls from day options to hour options.
+  - Removed the local `Switch helperText` type error from `AIConfig.svelte`.
+- Files modified:
+  - `internal/config/config.go`
+  - `internal/server/ai_handlers.go`
+  - `internal/server/ai_handlers_test.go`
+  - `web/src/components/config/AIConfig.svelte`
+  - `web/src/components/Deconstructor.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+  - `web/src/components/IntegrationPanel.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+
+## Latest Validation After Phase 13
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Focused AI deconstruction tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasksArchivesEstimates' -count=1 -v` | parse/import estimate tests pass | passed | pass |
+| Full Go regression | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed with approved loopback access for httptest | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte a11y warnings | pass |
+| Frontend type check | `pnpm --dir web check` | no type errors | failed on 8 pre-existing TS errors outside this change set; no `AIConfig` type error remains | known issue |
+
+### Phase 14: Path Planning Module Prompt Context
+- **Status:** complete
+- Actions taken:
+  - Read the uploaded workbook `全局领航能力汇总.xlsx`, first sheet `功能列表`.
+  - Extracted 39 path-planning module capabilities with category, status, configurability, site/project coverage, and validation notes.
+  - Created `docs/ai-context/path-planning-module.md` as the archived source-of-truth summary for AI use.
+  - Populated `config.example.yaml` AI context fields with a compact prompt-ready summary that references the archive document.
+  - Preserved module scope boundaries: this catalog is path-planning business context, not the full well-ambient collaboration architecture.
+  - Validated config parsing and focused AI deconstruction tests.
+- Files modified:
+  - `config.example.yaml`
+  - `docs/ai-context/path-planning-module.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+  - `.learnings/ERRORS.md`
+
+## Latest Validation After Phase 14
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Config package tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/config -run Test -count=1 -v` | config tests pass and YAML remains load-compatible | passed | pass |
+| Focused AI deconstruction tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasksArchivesEstimates' -count=1 -v` | parse/import estimate tests pass | passed | pass |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -147,12 +342,13 @@
 | 2026-06-20 | Go tests could not write default Go cache in sandbox | 1 | Re-ran with approved elevated `go test`. |
 | 2026-06-20 | `pnpm build` failed on invalid nested `{@const}` in `TaskKanban.svelte` | 1 | Removed duplicate nested const from Done lane. |
 | 2026-06-20 | `apply_patch` context did not match after `gofmt` | 1 | Re-read formatted snippets, patched with smaller context, and logged to `.learnings/ERRORS.md`. |
+| 2026-06-20 | `apply_patch` context did not match while updating `task_plan.md` | 1 | Re-read the exact current section and applied a smaller-context patch. |
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
 | Where am I? | Complete |
 | Where am I going? | Deliver concise final summary |
-| What's the goal? | Check and repair the repository according to the provided implementation plan and follow-up fixes |
-| What have I learned? | Earlier UI work used fallback guidance when `taste-skill` was unavailable; the latest follow-up explicitly used the requested `design-taste-frontend` skill. Department display needs backend extraction, token/profile transport, placeholder normalization, and frontend refresh; AI binding should reuse demand task groups. |
-| What have I done? | Implemented backend/frontend fixes, added focused tests, updated rules/memory, and validated Go plus frontend build |
+| What's the goal? | Polish four dashboard/config UI issues: Override controls, red-zone project filtering, report preview dropdown styling, and Jira JQL overflow. |
+| What have I learned? | For this app's dark cockpit UI, custom button/dropdown shells are more consistent than trying to theme native select controls, while native date inputs can remain as transparent interaction layers. |
+| What have I done? | Updated the three affected Svelte components, recorded task memory, confirmed production build, and documented existing type-check blockers outside this change set. |

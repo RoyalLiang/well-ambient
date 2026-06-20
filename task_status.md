@@ -93,8 +93,8 @@
 | TH-2566 | 007rtgc转场，现场监控上看，和fms上显示的位置，有1-2秒延时误差 | - | jira公用账号-南通通海 | - | - |
 | TH-2568 | 车辆在QC下方作业，作业结束回缓冲区等待，车辆有长短路经，但是未走，等待tos任务出来才走 | - | 张晨 | - | - |
 | QUZ-465 | 【回放】【日志】3车进入3号停车位，倒车进入3号倒车固定位置时报agent模块未在线 | - | 袁梦莎 | - | - |
-| DEMAND-005 | 11 | - | 梁志远 | - | - |
-| DEMAND-002 | rrr | - | 梁志远 | - | - |
+| NS2-1444 | 【回放】【日志】VX101装船M7送箱任务,M7抓走后箱任务不完成,作业指令页面,后箱任务状态一直显示执行中 | - | 梁志远 | - | - |
+| TH-2582 | 【下发了未定义的场桥编号】【回放】【日志】5车在202堆场报超出对位阀值故障对位不准确 | - | 朱家聪 | - | - |
 
 ## 进行中 (In Progress)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -106,7 +106,6 @@
 | middleq-20260603 | Merge branch 'feat-RTGC-middleq-20260603' into prod_develop_lmj_tangs | vehicle_manager | MiddleQ | prod_develop_lmj_tangs | Merge branch 'feat-RTGC-middleq-20260603' into prod_develop_lmj_tangs |
 | with-5 | Merge remote-tracking branch 'origin/prod_develop_lmj_tangs' into feat-fms-auth-with-5.1.1-20260612 | task_executor | zhongkou.chang | feat-fms-auth-with-5.1.1-20260612 | - |
 | PRJ23096-1990 | RTG和空箱区堆场地图制作 | vehicle_manager | 刘雪健 | dev_psa_rtg_ech_V3 | Merge branch 'dev_tian' into dev_psa_rtg_ech_V3 |
-| NS2-1453 | 南沙二期停车场（充电桩）区域出场需要走折返路径，对此需要新增任务类型，并且需要能够限定点位走该任务类型 | - | 梁志远 | - | - |
 
 ## 代码评审 (In Review)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -120,3 +119,4 @@
 | PRJ23003-2546 | PTMS系统【 集卡车辆管理——按目的区车辆管理】导出按钮超时 | - | 梁志远 | - | - |
 | TPY-6597 | 更改现场的PARK位和VPB位置 | - | 朱家聪 | - | - |
 | QZ-1664 | 【hotfix: FMS-18648 due: 2026/01/31】【已更新】3车（T601）BJS双20尺不同堆场送箱任务，OCR信息，车上箱号信息正常，任务前后箱位置错误，5场应该是后箱，FMS生成任务为前箱 | - | 袁梦莎 | - | - |
+| NS2-1453 | 南沙二期停车场（充电桩）区域出场需要走折返路径，对此需要新增任务类型，并且需要能够限定点位走该任务类型 | task_executor | 梁志远 | dev_nansha2 | NS2-1453停车区域设置倒箱门标识;  更新临停逻辑，堆场收单箱时跳过临停; |

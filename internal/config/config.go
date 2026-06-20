@@ -24,10 +24,10 @@ type ServerConfig struct {
 
 // GitLabConfig holds connection settings for self-hosted GitLab
 type GitLabConfig struct {
-	BaseURL  string          `yaml:"base_url" json:"base_url"`
-	Secret   string          `yaml:"secret_token" json:"secret_token"` // For webhook validation
-	APIToken string          `yaml:"api_token" json:"api_token"`       // For GitLab API requests
-	Repos    []RepoMapping   `yaml:"repos" json:"repos"`
+	BaseURL  string        `yaml:"base_url" json:"base_url"`
+	Secret   string        `yaml:"secret_token" json:"secret_token"` // For webhook validation
+	APIToken string        `yaml:"api_token" json:"api_token"`       // For GitLab API requests
+	Repos    []RepoMapping `yaml:"repos" json:"repos"`
 }
 
 // RepoMapping maps GitLab repositories to internal projects or tasks
@@ -53,11 +53,11 @@ type BotConfig struct {
 
 // BitableConfig holds settings for Feishu Multidimensional Tables
 type BitableConfig struct {
-	Enabled    bool   `yaml:"enabled" json:"enabled"`
-	AppToken   string `yaml:"app_token" json:"app_token"`
-	TableID    string `yaml:"table_id" json:"table_id"`
-	StatusCol  string `yaml:"status_column" json:"status_column"`
-	TaskIDCol  string `yaml:"task_id_column" json:"task_id_column"`
+	Enabled   bool   `yaml:"enabled" json:"enabled"`
+	AppToken  string `yaml:"app_token" json:"app_token"`
+	TableID   string `yaml:"table_id" json:"table_id"`
+	StatusCol string `yaml:"status_column" json:"status_column"`
+	TaskIDCol string `yaml:"task_id_column" json:"task_id_column"`
 }
 
 // JiraConfig holds settings for Jira Integration
@@ -74,12 +74,17 @@ type JiraConfig struct {
 
 // AIConfig holds settings for LLM deconstructor
 type AIConfig struct {
-	Enabled      bool   `yaml:"enabled" json:"enabled"`
-	Provider     string `yaml:"provider" json:"provider"` // e.g. "openai"
-	BaseURL      string `yaml:"base_url" json:"base_url"`
-	EndpointType string `yaml:"endpoint_type" json:"endpoint_type"` // e.g. "completions" or "responses"
-	APIToken     string `yaml:"api_token" json:"api_token"`
-	Model        string `yaml:"model" json:"model"`
+	Enabled                bool    `yaml:"enabled" json:"enabled"`
+	Provider               string  `yaml:"provider" json:"provider"` // e.g. "openai"
+	BaseURL                string  `yaml:"base_url" json:"base_url"`
+	EndpointType           string  `yaml:"endpoint_type" json:"endpoint_type"` // e.g. "completions" or "responses"
+	APIToken               string  `yaml:"api_token" json:"api_token"`
+	Model                  string  `yaml:"model" json:"model"`
+	ProjectArchitecture    string  `yaml:"project_architecture" json:"project_architecture"`
+	DeliveryWorkflow       string  `yaml:"delivery_workflow" json:"delivery_workflow"`
+	ImplementedFeatures    string  `yaml:"implemented_features" json:"implemented_features"`
+	EstimationGuidelines   string  `yaml:"estimation_guidelines" json:"estimation_guidelines"`
+	DefaultWorkHoursPerDay float64 `yaml:"default_work_hours_per_day" json:"default_work_hours_per_day"`
 }
 
 // LoadConfig reads configuration from a YAML file
@@ -128,4 +133,3 @@ func (c *AIConfig) GetRealAPIURL() string {
 	}
 	return urlStr + "/v1/chat/completions"
 }
-

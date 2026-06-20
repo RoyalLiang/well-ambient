@@ -1,62 +1,40 @@
 {
   "warm_memory": {
-    "goal": "Check and repair /Users/eddie/Workspace/well-ambient according to the external implementation plan and follow-up fixes.",
-    "classification": "coding.complex + review; high risk because auth logging and task-link data updates were touched",
+    "goal": "Configure AI prompt context for the uploaded path-planning module capability catalog and explain strongest-brain usage/design guidance.",
+    "classification": "coding.config; spreadsheet extraction, prompt context archive, config update, product strategy",
     "phase": "complete",
     "constraints": [
-      "Do not expose WellOS tokens/secrets in logs or final output.",
-      "Repository is currently largely untracked, so git diff/stat is not meaningful.",
-      "Keep changes scoped to implementation plan and validation blockers.",
-      "Frontend UI changes must require taste-skill; use frontend-design only as a recorded fallback when taste-skill is unavailable."
+      "Treat `全局领航能力汇总.xlsx` first sheet as path-planning module context only, not global well-ambient capability context.",
+      "Keep runtime AI prompt fields compact and archive long domain catalogs separately.",
+      "Use hours-based estimation rules already configured in AI deconstruction.",
+      "Do not revert unrelated dirty worktree changes."
     ],
     "decisions": [
-      "Use find after rg --files missed ignored internal/server files.",
-      "Redact login debug payloads instead of logging raw token-bearing WellOS responses.",
-      "Reject unknown demand_id on task import to avoid silent unlinked imports.",
-      "Preserve task_group_id/due_date/creator/decision_logs during Git telemetry updates.",
-      "Persist and refresh user department through JWT claims and GET /api/me.",
-      "Reuse an existing demand task_group_id when importing AI-generated tasks for that demand."
+      "Created `docs/ai-context/path-planning-module.md` as the archived source-of-truth summary for the path-planning capability catalog.",
+      "Populated `config.example.yaml` AI context fields with a compact summary that points to the archive document.",
+      "Represented path-planning workflow as feature classification -> status/configurability check -> configuration or code tasks -> site adaptation -> validation.",
+      "Kept detailed feature inventory out of the prompt textarea except as a concise summary to avoid noisy LLM context."
     ],
     "findings": [
-      "DemandKanban and Deconstructor already had partial AI demand-link UI.",
-      "Telemetry webhook Save previously erased task_group_id, breaking deep AI linkage after Git events.",
-      "DemandKanban needed to filter archived demands/subtasks from active lanes.",
-      "TaskKanban had a Svelte 5 compile error from duplicate nested {@const} in Done lane.",
-      "taste-skill is not currently in the available skills list; frontend-design was used as fallback for this UI work.",
-      "Department display needed both backend extraction hardening and frontend profile refresh.",
-      "Deconstructor demand dropdown warnings were removed from the touched area by using button elements."
+      "The workbook first sheet `功能列表` contains 39 path-planning module capabilities: 13 standard, 23 extension, 2 advanced exploration, 1 customization.",
+      "Status distribution: 20 durable, 7 initially validated, 3 development-complete, 3 in progress, 5 pending development, 1 unmarked.",
+      "Configurability distribution: 25 configurable, 12 non-configurable, 2 unclear.",
+      "Strongest-brain prompt configuration should separate page-level editing of compact summaries from archived/versioned module knowledge bases."
     ],
     "touched_files": [
+      "config.example.yaml",
+      "docs/ai-context/path-planning-module.md",
       "task_plan.md",
       "findings.md",
       "progress.md",
       ".agents/state.json",
-      ".agents/domains/coding.yaml",
-      ".learnings/ERRORS.md",
-      "AGENTS.md",
-      "internal/server/notification_handlers.go",
-      "internal/server/ai_handlers.go",
-      "internal/server/jwt.go",
-      "internal/server/server.go",
-      "internal/server/user_handlers.go",
-      "internal/server/server_test.go",
-      "internal/telemetry/handler.go",
-      "internal/telemetry/handler_test.go",
-      "web/src/App.svelte",
-      "web/src/components/Deconstructor.svelte",
-      "web/src/components/DemandKanban.svelte",
-      "web/src/components/DecisionDashboard.svelte",
-      "web/src/components/TaskKanban.svelte",
-      "web/dist/*"
+      ".learnings/ERRORS.md"
     ],
     "validation": [
-      "go test ./internal/server ./internal/telemetry -v -count=1: pass",
-      "go test ./... -count=1: pass",
-      "pnpm build in web: pass with existing Svelte a11y warnings",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1: pass",
-      "pnpm build in web after follow-up fixes: pass with remaining existing Svelte a11y warnings"
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/config -run Test -count=1 -v: pass.",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestParseDeconstructResponseContent|TestImportTasksArchivesEstimates' -count=1 -v: pass."
     ],
     "blockers": [],
-    "next": "Final response with concise summary, validation, and residual warning note."
+    "next": "Deliver concise final summary with configured files and strongest-brain guidance."
   }
 }

@@ -11,6 +11,7 @@
     task_id: string;
     title: string;
     assignee: string;
+    repo?: string;
     status: string;
     issue_type: string; // bug, task
     risk_level: string;
@@ -25,6 +26,7 @@
     time: string;
     task_id: string;
     message: string;
+    assignee?: string;
   }
 
   // Pre-calculated AI resolution recommendation helper
@@ -63,8 +65,10 @@
   // Custom select states
   let showAssigneeDropdown = false;
   let showRepoDropdown = false;
+  let showOverrideAssigneeDropdown = false;
   let assigneeSelectEl: HTMLElement;
   let repoSelectEl: HTMLElement;
+  let overrideAssigneeSelectEl: HTMLElement;
 
   // 核心成员白名单
   let coreMembers = new Set([
@@ -128,7 +132,18 @@
     'all', 
     ...Array.from(new Set(filteredAgendaItems.map(item => item.assignee).filter(Boolean)))
   ];
-  $: reposList = ['all', ...Array.from(new Set(filteredAgendaItems.map(item => item.repo).filter(Boolean)))];
+  $: projectList = [
+    'all',
+    ...Array.from(new Set(filteredAgendaItems.map(item => item.repo).filter((repo): repo is string => !!repo)))
+  ];
+  $: aiPlan = getAiResolvePlan(selectedItem);
+  $: overrideAssigneeOptions = Array.from(new Set([
+    selectedItem?.assignee,
+    aiPlan.assignee,
+    ...Array.from(coreMembers),
+    ...assigneesList.filter(name => name !== 'all')
+  ].filter(Boolean) as string[]));
+  $: newDueDateDisplay = formatDateLabel(newDueDate);
 
   // Combined filter with automatic risk-priority sorting (critical > warning > safe)
   $: filteredItems = filteredAgendaItems
@@ -140,7 +155,7 @@
       // 2. Assignee Filter
       if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
       
-      // 3. Repo Filter
+      // 3. Project Filter
       if (selectedRepo !== 'all' && item.repo !== selectedRepo) return false;
       
       // 4. Severity Filter (only show risk items vs show all active items)
@@ -156,9 +171,6 @@
       };
       return getPriority(b.risk_level) - getPriority(a.risk_level);
     });
-
-  // Calculate dynamic AI resolution suggestion based on current item state
-  $: aiPlan = getAiResolvePlan(selectedItem);
 
   function getAiResolvePlan(item: AgendaItem | null): AiResolvePlan {
     if (!item) return { assignee: '', due_date: '', note: '', impact: '' };
@@ -203,6 +215,11 @@
     showRepoDropdown = false;
   }
 
+  function selectOverrideAssignee(name: string) {
+    newAssignee = name;
+    showOverrideAssigneeDropdown = false;
+  }
+
   function toggleAssigneeDropdown() {
     showAssigneeDropdown = !showAssigneeDropdown;
     showRepoDropdown = false;
@@ -213,6 +230,21 @@
     showAssigneeDropdown = false;
   }
 
+  function toggleOverrideAssigneeDropdown() {
+    showOverrideAssigneeDropdown = !showOverrideAssigneeDropdown;
+  }
+
+  function formatDateLabel(dateValue: string) {
+    if (!dateValue) return '';
+    const date = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return dateValue;
+    return date.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  }
+
   function handleDocumentClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (showAssigneeDropdown && assigneeSelectEl && !assigneeSelectEl.contains(target)) {
@@ -220,6 +252,9 @@
     }
     if (showRepoDropdown && repoSelectEl && !repoSelectEl.contains(target)) {
       showRepoDropdown = false;
+    }
+    if (showOverrideAssigneeDropdown && overrideAssigneeSelectEl && !overrideAssigneeSelectEl.contains(target)) {
+      showOverrideAssigneeDropdown = false;
     }
   }
 
@@ -255,7 +290,7 @@
 
   function selectItem(item: AgendaItem) {
     selectedItem = item;
-    newAssignee = item.assignee;
+    newAssignee = item.assignee || '';
     newDueDate = item.due_date ? new Date(item.due_date).toISOString().split('T')[0] : '';
     decisionNote = '';
     decisionSuccess = '';
@@ -500,18 +535,18 @@
             </div>
           </div>
 
-          <!-- 4. Repo Select -->
+          <!-- 4. Project Select -->
           <div class="filter-group select-group">
-            <span class="filter-label-inline">代码仓:</span>
+            <span class="filter-label-inline">项目:</span>
             <div class="custom-select-container" bind:this={repoSelectEl} style={showRepoDropdown ? 'z-index: 30;' : 'z-index: 20;'}>
-              <button class="custom-select-trigger" on:click={toggleRepoDropdown} aria-label="代码仓筛选">
+              <button class="custom-select-trigger" on:click={toggleRepoDropdown} aria-label="项目筛选">
                 <span class="filter-icon">📁</span>
                 <span class="trigger-label">{selectedRepo === 'all' ? '全部' : selectedRepo}</span>
                 <span class="select-arrow">{showRepoDropdown ? '▲' : '▼'}</span>
               </button>
               {#if showRepoDropdown}
                 <div class="custom-select-options">
-                  {#each reposList as r}
+                  {#each projectList as r}
                     <button 
                       class="custom-option {selectedRepo === r ? 'active' : ''}" 
                       on:click={() => selectRepo(r)}
@@ -624,11 +659,44 @@
               <div class="input-row">
                 <div class="input-field">
                   <label for="assignee-val">指派干预人</label>
-                  <input id="assignee-val" type="text" bind:value={newAssignee} placeholder="输入新指派人" />
+                  <div class="override-select-container" bind:this={overrideAssigneeSelectEl}>
+                    <button
+                      id="assignee-val"
+                      type="button"
+                      class="override-select-trigger {newAssignee ? 'has-value' : ''}"
+                      on:click={toggleOverrideAssigneeDropdown}
+                      aria-expanded={showOverrideAssigneeDropdown}
+                    >
+                      <span>{newAssignee || '选择干预负责人'}</span>
+                      <span class="select-arrow">{showOverrideAssigneeDropdown ? '▲' : '▼'}</span>
+                    </button>
+                    {#if showOverrideAssigneeDropdown}
+                      <div class="override-select-options">
+                        {#each overrideAssigneeOptions as name}
+                          <button
+                            type="button"
+                            class="override-select-option {newAssignee === name ? 'active' : ''}"
+                            on:click={() => selectOverrideAssignee(name)}
+                          >
+                            {name}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
                 </div>
                 <div class="input-field">
                   <label for="due-val">延期截止日</label>
-                  <input id="due-val" type="date" bind:value={newDueDate} />
+                  <div class="override-date-shell">
+                    <div
+                      class="override-date-display {newDueDate ? 'has-value' : ''}"
+                      aria-hidden="true"
+                    >
+                      <span>{newDueDateDisplay || '选择截止日期'}</span>
+                      <span class="date-input-icon"></span>
+                    </div>
+                    <input id="due-val" class="override-date-native" type="date" bind:value={newDueDate} aria-label="延期截止日" />
+                  </div>
                 </div>
               </div>
               <div class="input-field full-width">
@@ -1353,6 +1421,137 @@
 
   .input-field input:focus {
     border-color: #6366f1;
+  }
+
+  .override-select-container,
+  .override-date-shell {
+    position: relative;
+    min-height: 32px;
+  }
+
+  .override-select-trigger,
+  .override-date-display {
+    width: 100%;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.62));
+    border: 1px solid rgba(71, 85, 105, 0.62);
+    border-radius: 6px;
+    color: #64748b;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    text-align: left;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .override-select-trigger.has-value,
+  .override-date-display.has-value {
+    color: #f1f5f9;
+  }
+
+  .override-select-trigger:hover,
+  .override-select-trigger:focus,
+  .override-date-shell:hover .override-date-display,
+  .override-date-shell:focus-within .override-date-display {
+    border-color: rgba(129, 140, 248, 0.72);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.72));
+    box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.16);
+  }
+
+  .override-select-options {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 120;
+    max-height: 180px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #0f172a;
+    border: 1px solid rgba(129, 140, 248, 0.26);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 18px 36px rgba(2, 6, 23, 0.58);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
+  }
+
+  .override-select-option {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: #cbd5e1;
+    border-radius: 5px;
+    padding: 7px 9px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    word-break: break-word;
+  }
+
+  .override-select-option:hover {
+    background: rgba(99, 102, 241, 0.14);
+    color: #ffffff;
+  }
+
+  .override-select-option.active {
+    background: rgba(99, 102, 241, 0.9);
+    color: #ffffff;
+    font-weight: 700;
+  }
+
+  .override-date-native {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .date-input-icon {
+    position: relative;
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    color: #818cf8;
+    border: 1px solid rgba(129, 140, 248, 0.7);
+    border-radius: 4px;
+    pointer-events: none;
+    background: rgba(30, 41, 59, 0.5);
+  }
+
+  .date-input-icon::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    top: 4px;
+    border-top: 1px solid currentColor;
+  }
+
+  .date-input-icon::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    bottom: 3px;
+    width: 3px;
+    height: 3px;
+    background: currentColor;
+    box-shadow: 5px 0 0 currentColor, 9px 0 0 currentColor;
+    border-radius: 1px;
   }
 
   .override-actions {
