@@ -373,59 +373,69 @@
           <div class="context-config-panel">
             <div class="context-header">
               <div>
-                <span class="context-kicker">AI Project Context</span>
+                <span class="context-kicker">Estimation Calibration</span>
                 <h4>项目上下文与估算口径</h4>
+                <p class="context-intro">最强大脑需要的是可校准的判断边界：系统负责什么、事实从哪里来、哪些能力已存在、估算如何折算，而不是把功能清单整表塞进 Prompt。</p>
               </div>
-              <span class="context-chip">用于需求解构 Prompt</span>
+              <span class="context-chip">小时级估算</span>
+            </div>
+
+            <div class="calibration-axis-grid">
+              <span><b>边界</b>模块职责、上下游、明确不负责的范围</span>
+              <span><b>事实源</b>GitLab / Jira / 配置库 / 决策面板的可信口径</span>
+              <span><b>复用基线</b>已存在的平台级能力与可复用组件</span>
+              <span><b>未知项</b>需要人工确认的接口、权限、数据与验收口径</span>
+              <span><b>验证成本</b>联调、自测、回归、灰度和观测成本</span>
+              <span><b>反馈闭环</b>估算与实际工时归档，用于后续校准</span>
             </div>
 
             <div class="context-grid">
               <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-project-architecture">当前系统架构与模块边界</label>
+                <label class="form-label-custom" for="ai-project-architecture">系统边界与责任域</label>
                 <textarea
                   id="ai-project-architecture"
                   class="context-textarea"
                   rows="4"
-                  placeholder="例如：Go 后端负责配置/API/任务归档，Svelte 前端负责看板、决策面板与需求解构，GitLab/Jira/飞书作为事实源..."
+                  placeholder="写清系统拥有的模块、上下游依赖、不能越界假设的部分。例如：Go 后端负责配置/API/任务归档；Svelte 前端负责看板与解构；GitLab/Jira 是事实源..."
                   bind:value={projectArchitecture}
                 ></textarea>
-                <span class="helper-text-custom">帮助 AI 判断新增需求是复用、改造还是新增模块，避免按从零开发估算。</span>
+                <span class="helper-text-custom">用于判断需求是配置、复用、扩展还是全新建设，避免把已有系统按从零开发估算。</span>
               </div>
 
               <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-delivery-workflow">研发流程与状态流转</label>
+                <label class="form-label-custom" for="ai-delivery-workflow">事实源与交付链路</label>
                 <textarea
                   id="ai-delivery-workflow"
                   class="context-textarea"
                   rows="4"
-                  placeholder="例如：产品需求 -> AI 解构影子任务 -> 看板排期 -> GitLab 分支/MR -> Jira 状态同步 -> 决策面板介入..."
+                  placeholder="写清需求进入、AI 解构、影子任务、排期、分支/MR、Jira 状态同步、日报/周报与决策介入的真实链路..."
                   bind:value={deliveryWorkflow}
                 ></textarea>
-                <span class="helper-text-custom">让 AI 估算跨仓、联调、评审、验收和状态回写的真实链路成本。</span>
+                <span class="helper-text-custom">用于把跨仓、评审、联调、验收、状态回写和异常处理纳入小时估算。</span>
               </div>
 
               <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-implemented-features">已实现能力与约束</label>
+                <label class="form-label-custom" for="ai-implemented-features">平台级已实现基线</label>
                 <textarea
                   id="ai-implemented-features"
                   class="context-textarea"
                   rows="4"
-                  placeholder="例如：已具备需求解构、影子任务归档、GitLab/Jira 同步、日报/周报预览、红区诊断盘、人工干预面板..."
+                  placeholder="只写平台级共识能力，不粘贴完整能力清单。例如：已具备需求解构、影子任务归档、GitLab/Jira 同步、日报/周报预览、红区诊断盘..."
                   bind:value={implementedFeatures}
                 ></textarea>
-                <span class="helper-text-custom">明确哪些能力已经存在，AI 只评估增量改造、集成和验证成本。</span>
+                <span class="helper-text-custom">细粒度功能是否已实现放在下方模块画像中维护，这里只保留估算需要的全局基线。</span>
               </div>
 
               <div class="form-group-custom context-field wide">
-                <label class="form-label-custom" for="ai-estimation-guidelines">工时估算口径</label>
+                <label class="form-label-custom" for="ai-estimation-guidelines">估算校准规则</label>
                 <textarea
                   id="ai-estimation-guidelines"
                   class="context-textarea"
                   rows="4"
-                  placeholder="例如：以小时为主；包含开发、联调、自测、回归和配置成本；不把已实现通用组件重复计入；高不确定性需显式写入风险。"
+                  placeholder="例如：统一按小时输出；包含开发、配置、联调、自测、回归、上线与回滚预案；已实现能力只算增量；未知项必须进入 missing_info 与风险说明。"
                   bind:value={estimationGuidelines}
                 ></textarea>
-                <span class="helper-text-custom">统一整体难度、子任务小时数和估算依据的判断方式。</span>
+                <span class="helper-text-custom">用于统一整体难度、子任务小时数、置信度、缓冲和后续估算准确性评估口径。</span>
               </div>
 
               <div class="form-group-custom context-field hours-field">
@@ -798,6 +808,14 @@
     font-weight: 700;
   }
 
+  .context-intro {
+    max-width: 720px;
+    margin: 6px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.55;
+  }
+
   .context-kicker {
     color: #38bdf8;
     font-size: 0.65rem;
@@ -815,6 +833,31 @@
     color: #7dd3fc;
     font-size: 0.7rem;
     font-weight: 700;
+  }
+
+  .calibration-axis-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .calibration-axis-grid span {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 9px 10px;
+    border: 1px solid rgba(51, 65, 85, 0.46);
+    border-radius: 7px;
+    background: rgba(2, 6, 23, 0.36);
+    color: #64748b;
+    font-size: 0.7rem;
+    line-height: 1.45;
+  }
+
+  .calibration-axis-grid b {
+    color: #cbd5e1;
+    font-size: 0.76rem;
   }
 
   .context-grid {
@@ -850,6 +893,31 @@
     padding: 10px 11px;
     line-height: 1.5;
     resize: vertical;
+  }
+
+  .context-textarea,
+  .details-pre {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(56, 189, 248, 0.5) rgba(15, 23, 42, 0.72);
+  }
+
+  .context-textarea::-webkit-scrollbar,
+  .details-pre::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .context-textarea::-webkit-scrollbar-track,
+  .details-pre::-webkit-scrollbar-track {
+    background: rgba(2, 6, 23, 0.44);
+    border-radius: 999px;
+  }
+
+  .context-textarea::-webkit-scrollbar-thumb,
+  .details-pre::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.62), rgba(52, 211, 153, 0.34));
+    border: 2px solid rgba(2, 6, 23, 0.44);
+    border-radius: 999px;
   }
 
   .context-input {
@@ -1042,6 +1110,7 @@
   }
 
   @media (max-width: 820px) {
+    .calibration-axis-grid,
     .context-grid {
       grid-template-columns: minmax(0, 1fr);
     }

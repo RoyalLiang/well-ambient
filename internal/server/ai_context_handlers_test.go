@@ -37,6 +37,10 @@ func TestExtractAIContextFeaturesFromRows(t *testing.T) {
 	if configurableCount != 1 {
 		t.Fatalf("expected one configurable feature, got %d", configurableCount)
 	}
+	implementationBreakdown, implementedCount, partialCount, notImplementedCount, unknownCount := summarizeImplementationFeatures(features)
+	if implementedCount != 1 || partialCount != 0 || notImplementedCount != 1 || unknownCount != 0 {
+		t.Fatalf("unexpected implementation counts: %#v", implementationBreakdown)
+	}
 }
 
 func TestDiffAIContextFeatures(t *testing.T) {
@@ -57,8 +61,22 @@ func TestDiffAIContextFeatures(t *testing.T) {
 	if diff.RemovedCount != 0 {
 		t.Fatalf("unexpected removed diff: %#v", diff)
 	}
-	if diff.ChangedCount != 1 || diff.Changed[0] != "能力 B" {
+	if diff.ChangedCount != 1 || diff.Changed[0] != "能力 B：未实现 -> 已实现" {
 		t.Fatalf("unexpected changed diff: %#v", diff)
+	}
+}
+
+func TestDiffAIContextFeaturesIgnoresNonImplementationMetadata(t *testing.T) {
+	before := []AIContextFeature{
+		{Feature: "能力 A", Type: "领航能力", Status: "已实现", Configurable: "否", Scenario: "研发协同", Description: "旧说明"},
+	}
+	after := []AIContextFeature{
+		{Feature: "能力 A", Type: "决策能力", Status: "已耐久", Configurable: "是", Scenario: "决策面板", Description: "新说明"},
+	}
+
+	diff := diffAIContextFeatures(before, after)
+	if diff.ChangedCount != 0 {
+		t.Fatalf("expected metadata-only changes to be ignored: %#v", diff)
 	}
 }
 

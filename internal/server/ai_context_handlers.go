@@ -24,6 +24,13 @@ import (
 
 const maxAIContextUploadBytes = 16 << 20
 
+const (
+	implementationImplemented    = "已实现"
+	implementationPartial        = "部分可用"
+	implementationNotImplemented = "未实现"
+	implementationUnknown        = "未标注"
+)
+
 type AIContextFeature struct {
 	Feature      string `json:"feature"`
 	Type         string `json:"type"`
@@ -46,23 +53,28 @@ type AIContextDiff struct {
 }
 
 type AIContextProfileDTO struct {
-	ID                   uint               `json:"id"`
-	ModuleName           string             `json:"module_name"`
-	SourceFilename       string             `json:"source_filename"`
-	SourceSheet          string             `json:"source_sheet"`
-	Summary              string             `json:"summary"`
-	PromptSummary        string             `json:"prompt_summary"`
-	FeatureCount         int                `json:"feature_count"`
-	ConfigurableCount    int                `json:"configurable_count"`
-	NonConfigurableCount int                `json:"non_configurable_count"`
-	StatusBreakdown      map[string]int     `json:"status_breakdown"`
-	TypeBreakdown        map[string]int     `json:"type_breakdown"`
-	FeatureSnapshot      []AIContextFeature `json:"feature_snapshot"`
-	Enabled              bool               `json:"enabled"`
-	Version              int                `json:"version"`
-	Diff                 *AIContextDiff     `json:"diff,omitempty"`
-	CreatedAt            time.Time          `json:"created_at"`
-	UpdatedAt            time.Time          `json:"updated_at"`
+	ID                      uint               `json:"id"`
+	ModuleName              string             `json:"module_name"`
+	SourceFilename          string             `json:"source_filename"`
+	SourceSheet             string             `json:"source_sheet"`
+	Summary                 string             `json:"summary"`
+	PromptSummary           string             `json:"prompt_summary"`
+	FeatureCount            int                `json:"feature_count"`
+	ImplementedCount        int                `json:"implemented_count"`
+	PartialCount            int                `json:"partial_count"`
+	NotImplementedCount     int                `json:"not_implemented_count"`
+	UnknownCount            int                `json:"unknown_count"`
+	ConfigurableCount       int                `json:"configurable_count"`
+	NonConfigurableCount    int                `json:"non_configurable_count"`
+	ImplementationBreakdown map[string]int     `json:"implementation_breakdown"`
+	StatusBreakdown         map[string]int     `json:"status_breakdown"`
+	TypeBreakdown           map[string]int     `json:"type_breakdown"`
+	FeatureSnapshot         []AIContextFeature `json:"feature_snapshot"`
+	Enabled                 bool               `json:"enabled"`
+	Version                 int                `json:"version"`
+	Diff                    *AIContextDiff     `json:"diff,omitempty"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
 }
 
 type worksheetTextRun struct {
@@ -704,76 +716,97 @@ func summarizeAIContextFeatures(features []AIContextFeature) (map[string]int, ma
 	return statusBreakdown, typeBreakdown, configurableCount
 }
 
+func summarizeImplementationFeatures(features []AIContextFeature) (map[string]int, int, int, int, int) {
+	breakdown := map[string]int{
+		implementationImplemented:    0,
+		implementationPartial:        0,
+		implementationNotImplemented: 0,
+		implementationUnknown:        0,
+	}
+	for _, feature := range features {
+		breakdown[implementationBucket(feature.Status)]++
+	}
+	return breakdown,
+		breakdown[implementationImplemented],
+		breakdown[implementationPartial],
+		breakdown[implementationNotImplemented],
+		breakdown[implementationUnknown]
+}
+
+func implementationBucket(status string) string {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	normalized = strings.NewReplacer(" ", "", "_", "", "-", "", "/", "").Replace(normalized)
+	switch {
+	case normalized == "":
+		return implementationUnknown
+	case containsAny(normalized, "未标注", "未知", "不明确", "待确认", "unknown", "na", "n/a"):
+		return implementationUnknown
+	case containsAny(normalized, "未实现", "未开发", "待开发", "不可用", "规划中", "计划中", "backlog", "planned", "todo", "notimplemented", "notstarted"):
+		return implementationNotImplemented
+	case containsAny(normalized, "部分", "开发中", "进行中", "验证中", "待测试", "灰度", "已初步验证", "初步验证", "partial", "inprogress", "testing", "beta", "wip"):
+		return implementationPartial
+	case containsAny(normalized, "已实现", "已耐久", "已完成", "开发完成", "已开发完成", "已上线", "已发布", "可用", "done", "implemented", "complete", "completed", "production", "ga", "available"):
+		return implementationImplemented
+	default:
+		return implementationUnknown
+	}
+}
+
 func buildAIContextSummary(moduleName string, filename string, sheetName string, version int, features []AIContextFeature, statusBreakdown map[string]int, typeBreakdown map[string]int, configurableCount int) string {
-	return fmt.Sprintf("%s v%d：从 %s/%s 解析 %d 项能力；可配置 %d 项，不可配置或未标注 %d 项；状态分布 %s；类型分布 %s。",
+	_, implementedCount, partialCount, notImplementedCount, unknownCount := summarizeImplementationFeatures(features)
+	return fmt.Sprintf("%s v%d：沉淀 %d 项模块能力实现状态；已实现 %d 项，部分可用 %d 项，未实现 %d 项，未标注 %d 项。来源仅作为摄取记录：%s/%s。",
 		moduleName,
 		version,
+		len(features),
+		implementedCount,
+		partialCount,
+		notImplementedCount,
+		unknownCount,
 		filename,
 		sheetName,
-		len(features),
-		configurableCount,
-		len(features)-configurableCount,
-		formatBreakdown(statusBreakdown, 4),
-		formatBreakdown(typeBreakdown, 4),
 	)
 }
 
 func buildAIContextPromptSummary(moduleName string, filename string, sheetName string, version int, features []AIContextFeature, statusBreakdown map[string]int, typeBreakdown map[string]int, configurableCount int) string {
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("模块画像：%s v%d\n", moduleName, version))
-	builder.WriteString(fmt.Sprintf("来源：%s / %s\n", filename, sheetName))
-	builder.WriteString(fmt.Sprintf("能力规模：共 %d 项；可配置 %d 项；不可配置或未标注 %d 项。\n", len(features), configurableCount, len(features)-configurableCount))
-	builder.WriteString(fmt.Sprintf("状态分布：%s。\n", formatBreakdown(statusBreakdown, 6)))
-	builder.WriteString(fmt.Sprintf("类型分布：%s。\n", formatBreakdown(typeBreakdown, 6)))
-	builder.WriteString("核心能力清单：\n")
-	for _, feature := range limitFeatures(features, 16) {
-		details := []string{}
-		if feature.Type != "" {
-			details = append(details, "类型="+feature.Type)
-		}
-		if feature.Status != "" {
-			details = append(details, "状态="+feature.Status)
-		}
-		if feature.Configurable != "" {
-			details = append(details, "可配置="+feature.Configurable)
-		}
-		if feature.Scenario != "" {
-			details = append(details, "场景="+feature.Scenario)
-		}
-		if feature.Description != "" {
-			details = append(details, "说明="+truncateString(feature.Description, 80))
-		}
-		builder.WriteString("- ")
-		builder.WriteString(feature.Feature)
-		if len(details) > 0 {
-			builder.WriteString("（")
-			builder.WriteString(strings.Join(details, "；"))
-			builder.WriteString("）")
-		}
-		builder.WriteString("\n")
-	}
-	builder.WriteString("估算使用规则：AI 需求解构时，若需求命中上述已存在能力，应按配置、接入、改造、联调和验证的增量成本估算；若需求超出清单或状态不明确，需要显式标注不确定性、依赖和需人工确认的问题。")
+	implementationBreakdown, implementedCount, partialCount, notImplementedCount, unknownCount := summarizeImplementationFeatures(features)
+	builder.WriteString(fmt.Sprintf("模块能力实现画像：%s v%d\n", moduleName, version))
+	builder.WriteString("用途：仅用于判断需求是否命中已实现能力，以及由此校准工时；不要把来源文件中的类型、场景或备注当作完整系统架构。\n")
+	builder.WriteString(fmt.Sprintf("实现状态：共 %d 项；已实现 %d 项；部分可用 %d 项；未实现 %d 项；未标注 %d 项。\n",
+		len(features), implementedCount, partialCount, notImplementedCount, unknownCount))
+	builder.WriteString(fmt.Sprintf("状态分布：%s。\n", formatImplementationBreakdown(implementationBreakdown)))
+	builder.WriteString(fmt.Sprintf("已实现能力：%s。\n", formatFeatureNamesByImplementation(features, implementationImplemented, 24)))
+	builder.WriteString(fmt.Sprintf("部分可用/需验证：%s。\n", formatFeatureNamesByImplementation(features, implementationPartial, 18)))
+	builder.WriteString(fmt.Sprintf("未实现/待开发：%s。\n", formatFeatureNamesByImplementation(features, implementationNotImplemented, 18)))
+	builder.WriteString("估算使用规则：命中已实现能力时，只计算配置、复用接入、局部改造、联调和验证成本；命中部分可用能力时，补充完成度验证、缺口实现和回归成本；命中未实现或未标注能力时，按新增设计、实现、集成、验收和风险缓冲估算，并在 missing_info 中列出需人工确认的问题。")
 	return strings.TrimSpace(builder.String())
 }
 
 func aiContextProfileDTO(profile db.AIContextProfile) AIContextProfileDTO {
+	features := decodeAIContextFeatures(profile.FeatureSnapshotJSON)
+	implementationBreakdown, implementedCount, partialCount, notImplementedCount, unknownCount := summarizeImplementationFeatures(features)
 	return AIContextProfileDTO{
-		ID:                   profile.ID,
-		ModuleName:           profile.ModuleName,
-		SourceFilename:       profile.SourceFilename,
-		SourceSheet:          profile.SourceSheet,
-		Summary:              profile.Summary,
-		PromptSummary:        profile.PromptSummary,
-		FeatureCount:         profile.FeatureCount,
-		ConfigurableCount:    profile.ConfigurableCount,
-		NonConfigurableCount: profile.NonConfigurableCount,
-		StatusBreakdown:      decodeIntMap(profile.StatusBreakdownJSON),
-		TypeBreakdown:        decodeIntMap(profile.TypeBreakdownJSON),
-		FeatureSnapshot:      decodeAIContextFeatures(profile.FeatureSnapshotJSON),
-		Enabled:              profile.Enabled,
-		Version:              profile.Version,
-		CreatedAt:            profile.CreatedAt,
-		UpdatedAt:            profile.UpdatedAt,
+		ID:                      profile.ID,
+		ModuleName:              profile.ModuleName,
+		SourceFilename:          profile.SourceFilename,
+		SourceSheet:             profile.SourceSheet,
+		Summary:                 profile.Summary,
+		PromptSummary:           profile.PromptSummary,
+		FeatureCount:            profile.FeatureCount,
+		ImplementedCount:        implementedCount,
+		PartialCount:            partialCount,
+		NotImplementedCount:     notImplementedCount,
+		UnknownCount:            unknownCount,
+		ConfigurableCount:       profile.ConfigurableCount,
+		NonConfigurableCount:    profile.NonConfigurableCount,
+		ImplementationBreakdown: implementationBreakdown,
+		StatusBreakdown:         decodeIntMap(profile.StatusBreakdownJSON),
+		TypeBreakdown:           decodeIntMap(profile.TypeBreakdownJSON),
+		FeatureSnapshot:         features,
+		Enabled:                 profile.Enabled,
+		Version:                 profile.Version,
+		CreatedAt:               profile.CreatedAt,
+		UpdatedAt:               profile.UpdatedAt,
 	}
 }
 
@@ -814,7 +847,11 @@ func diffAIContextFeatures(before []AIContextFeature, after []AIContextFeature) 
 			continue
 		}
 		if !sameAIContextFeature(previous, feature) {
-			diff.Changed = append(diff.Changed, feature.Feature)
+			diff.Changed = append(diff.Changed, fmt.Sprintf("%s：%s -> %s",
+				feature.Feature,
+				implementationBucket(previous.Status),
+				implementationBucket(feature.Status),
+			))
 		}
 	}
 	for key, feature := range beforeMap {
@@ -832,11 +869,7 @@ func diffAIContextFeatures(before []AIContextFeature, after []AIContextFeature) 
 }
 
 func sameAIContextFeature(a AIContextFeature, b AIContextFeature) bool {
-	return strings.TrimSpace(a.Type) == strings.TrimSpace(b.Type) &&
-		strings.TrimSpace(a.Status) == strings.TrimSpace(b.Status) &&
-		strings.TrimSpace(a.Configurable) == strings.TrimSpace(b.Configurable) &&
-		strings.TrimSpace(a.Scenario) == strings.TrimSpace(b.Scenario) &&
-		strings.TrimSpace(a.Description) == strings.TrimSpace(b.Description)
+	return implementationBucket(a.Status) == implementationBucket(b.Status)
 }
 
 func decodeIntMap(raw string) map[string]int {
@@ -956,6 +989,31 @@ func formatBreakdown(values map[string]int, limit int) string {
 		return "无"
 	}
 	return strings.Join(parts, " / ")
+}
+
+func formatImplementationBreakdown(values map[string]int) string {
+	parts := []string{}
+	for _, key := range []string{implementationImplemented, implementationPartial, implementationNotImplemented, implementationUnknown} {
+		parts = append(parts, fmt.Sprintf("%s %d", key, values[key]))
+	}
+	return strings.Join(parts, " / ")
+}
+
+func formatFeatureNamesByImplementation(features []AIContextFeature, bucket string, limit int) string {
+	names := make([]string, 0, len(features))
+	for _, feature := range features {
+		if implementationBucket(feature.Status) == bucket {
+			names = append(names, feature.Feature)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "无"
+	}
+	if limit > 0 && len(names) > limit {
+		return strings.Join(names[:limit], "、") + fmt.Sprintf("、+%d", len(names)-limit)
+	}
+	return strings.Join(names, "、")
 }
 
 func limitFeatures(features []AIContextFeature, limit int) []AIContextFeature {
