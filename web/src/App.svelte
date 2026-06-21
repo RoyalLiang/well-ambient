@@ -586,7 +586,7 @@
     </div>
   </div>
 {:else}
-<main class="app-container">
+<main class="app-container {activeTab === 'settings' ? 'settings-mode' : ''}">
   <!-- Header -->
   <header class="app-header {authDegraded ? 'has-maintenance-banner' : ''}">
     <div class="brand">
@@ -750,46 +750,50 @@
   </div>
 
   <!-- Core Dashboard Layout -->
-  {#if activeTab === 'dashboard'}
-    <div class="dashboard-content">
-      <!-- AI Deconstructor -->
-      <Deconstructor />
+  <section class="app-content-shell">
+    {#if activeTab === 'dashboard'}
+      <div class="dashboard-content">
+        <!-- AI Deconstructor -->
+        <Deconstructor />
 
-      <!-- Kanban -->
-      <TaskKanban />
-    </div>
-  {:else if activeTab === 'demands'}
-    <DemandKanban 
-      currentUserPermissions={currentUserPermissions}
-      currentUserName={currentUserName}
-      currentUserEmail={currentUserEmail}
-      currentUserDepartment={currentUserDepartment}
-    />
-  {:else if activeTab === 'kpi'}
-    <KPIKanban />
-  {:else if activeTab === 'decision'}
-    <DecisionDashboard />
-  {:else if activeTab === 'settings'}
-    <SettingsPanel 
-      currentUserRole={currentUserRole} 
-      currentUserEmail={currentUserEmail}
-      currentUserPermissions={currentUserPermissions} 
-    />
-  {:else if activeTab === 'no_permission'}
-    <div class="no-permission-warning glass-panel">
-      <div class="warning-icon">🔒</div>
-      <h2>访问受限</h2>
-      <p>您当前没有访问该系统的任何页面权限。</p>
-      <p class="sub-text">请联系系统管理员分配权限组或配置查看作用域。</p>
-      <button class="logout-btn font-mono" on:click={logout}>退出登录</button>
-    </div>
-  {/if}
+        <!-- Kanban -->
+        <TaskKanban />
+      </div>
+    {:else if activeTab === 'demands'}
+      <DemandKanban
+        currentUserPermissions={currentUserPermissions}
+        currentUserName={currentUserName}
+        currentUserEmail={currentUserEmail}
+        currentUserDepartment={currentUserDepartment}
+      />
+    {:else if activeTab === 'kpi'}
+      <KPIKanban />
+    {:else if activeTab === 'decision'}
+      <DecisionDashboard />
+    {:else if activeTab === 'settings'}
+      <SettingsPanel
+        currentUserRole={currentUserRole}
+        currentUserEmail={currentUserEmail}
+        currentUserPermissions={currentUserPermissions}
+      />
+    {:else if activeTab === 'no_permission'}
+      <div class="no-permission-warning glass-panel">
+        <div class="warning-icon">🔒</div>
+        <h2>访问受限</h2>
+        <p>您当前没有访问该系统的任何页面权限。</p>
+        <p class="sub-text">请联系系统管理员分配权限组或配置查看作用域。</p>
+        <button class="logout-btn font-mono" on:click={logout}>退出登录</button>
+      </div>
+    {/if}
+  </section>
 
   <!-- Footer -->
-  <footer class="app-footer">
-    <p>© 2026 well-ambient Sync System. All rights reserved.</p>
-    <p class="font-mono text-muted">v0.1.0-alpha | Embedded Svelte Dashboard</p>
-  </footer>
+  {#if activeTab !== 'settings'}
+    <footer class="app-footer">
+      <p>© 2026 well-ambient Sync System. All rights reserved.</p>
+      <p class="font-mono text-muted">v0.1.0-alpha | Embedded Svelte Dashboard</p>
+    </footer>
+  {/if}
 </main>
 {/if}
 
@@ -814,6 +818,21 @@
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+  }
+
+  .app-container.settings-mode {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .app-content-shell {
+    min-width: 0;
+  }
+
+  .settings-mode .app-content-shell {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .app-header {

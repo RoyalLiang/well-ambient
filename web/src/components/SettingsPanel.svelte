@@ -1939,66 +1939,59 @@
     display: flex;
     align-items: flex-start;
     gap: 32px;
-    margin-bottom: 48px;
-    min-height: 70vh;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .settings-sidebar {
-    --sidebar-pad: clamp(12px, 2.4vh, 20px);
-    --sidebar-group-gap: clamp(10px, 1.9vh, 20px);
-    --sidebar-nav-gap: clamp(3px, 0.7vh, 6px);
-    --sidebar-item-pad-y: clamp(5px, 0.9vh, 8px);
-    --sidebar-item-pad-x: clamp(9px, 1.1vw, 12px);
     width: 250px;
     flex-shrink: 0;
     background: #0b1329;
     border: 1px solid rgba(51, 65, 85, 0.4);
     border-radius: 12px;
-    padding: var(--sidebar-pad);
+    padding: 20px;
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
-    align-self: flex-start;
-    position: sticky;
-    top: clamp(64px, 9vh, 88px);
+    align-self: stretch;
   }
 
   .sidebar-header {
     border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-    padding-bottom: clamp(8px, 1.3vh, 12px);
-    margin-bottom: clamp(10px, 1.8vh, 16px);
+    padding-bottom: 12px;
+    margin-bottom: 16px;
   }
 
   .sidebar-header h3 {
     margin: 0 0 4px 0;
-    font-size: clamp(0.95rem, 1.7vh, 1.1rem);
+    font-size: 1.1rem;
     color: #e2e8f0;
   }
 
   .version-label {
-    font-size: clamp(0.62rem, 1.1vh, 0.7rem);
+    font-size: 0.7rem;
     color: #64748b;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
-    gap: var(--sidebar-group-gap);
   }
 
   .nav-group {
     display: flex;
     flex-direction: column;
-    gap: var(--sidebar-nav-gap);
-    margin-bottom: 0;
+    gap: 6px;
+    margin-bottom: 20px;
   }
 
   .group-title {
-    font-size: clamp(0.62rem, 1.1vh, 0.75rem);
+    font-size: 0.75rem;
     color: #475569;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: clamp(2px, 0.5vh, 4px);
-    padding-left: var(--sidebar-item-pad-x);
+    margin-bottom: 4px;
+    padding-left: 8px;
   }
 
   .nav-item {
@@ -2006,18 +1999,17 @@
     border: none;
     color: #94a3b8;
     text-align: left;
-    padding: var(--sidebar-item-pad-y) var(--sidebar-item-pad-x);
+    padding: 8px 12px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: clamp(0.74rem, 1.3vh, 0.85rem);
-    line-height: 1.2;
+    font-size: 0.85rem;
     transition: all 0.2s ease;
   }
 
   .nav-item:hover {
     background: rgba(30, 41, 59, 0.5);
     color: #e2e8f0;
-    transform: translateX(2px);
+    padding-left: 16px;
   }
 
   .nav-item.active {
@@ -2027,34 +2019,28 @@
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
   }
 
-  @media (max-height: 760px) and (min-width: 1101px) {
-    .settings-sidebar {
-      width: 236px;
-      --sidebar-pad: 10px;
-      --sidebar-group-gap: 8px;
-      --sidebar-nav-gap: 2px;
-      --sidebar-item-pad-y: 4px;
-      --sidebar-item-pad-x: 8px;
-      top: 64px;
-    }
-
-    .sidebar-header {
-      padding-bottom: 8px;
-      margin-bottom: 8px;
-    }
-
-    .sidebar-header h3 {
-      font-size: 0.92rem;
-    }
-
-    .version-label {
-      display: none;
-    }
-  }
-
   .settings-main {
     flex-grow: 1;
     min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 6px;
+    overscroll-behavior: contain;
+  }
+
+  .settings-main::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .settings-main::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.72);
+    border-radius: 999px;
+  }
+
+  .settings-main::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.36);
+    border-radius: 999px;
   }
 
   .section-card {
@@ -3450,11 +3436,22 @@
     .settings-container {
       flex-direction: column;
       gap: 18px;
+      height: auto;
+      overflow: visible;
     }
 
     .settings-sidebar {
       width: auto;
       position: static;
+      max-height: none;
+      overflow: visible;
+      align-self: stretch;
+    }
+
+    .settings-main {
+      height: auto;
+      overflow: visible;
+      padding-right: 0;
     }
 
     .sidebar-nav {
