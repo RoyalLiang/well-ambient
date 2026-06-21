@@ -822,6 +822,7 @@
 
   .app-container.settings-mode {
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
   }
 
@@ -833,6 +834,46 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  @media (min-width: 1101px) {
+    .app-container.settings-mode {
+      padding-block: clamp(16px, 2.2vh, 24px);
+    }
+
+    .settings-mode .app-header {
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+    }
+
+    .settings-mode .tabs-navigation {
+      padding-bottom: 10px;
+      margin-bottom: 16px;
+    }
+  }
+
+  @media (max-height: 760px) and (min-width: 1101px) {
+    .settings-mode .app-header {
+      padding-bottom: 10px;
+      margin-bottom: 14px;
+    }
+
+    .settings-mode .tabs-navigation {
+      padding-bottom: 8px;
+      margin-bottom: 12px;
+    }
+  }
+
+  @media (max-width: 1100px) {
+    .app-container.settings-mode {
+      height: auto;
+      min-height: 100vh;
+      overflow: visible;
+    }
+
+    .settings-mode .app-content-shell {
+      overflow: visible;
+    }
   }
 
   .app-header {

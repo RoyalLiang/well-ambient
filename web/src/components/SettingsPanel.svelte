@@ -1054,7 +1054,7 @@
       <span class="version-label">Category settings · {currentUserRole}</span>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-group">
+      <div class="nav-group integration-nav-group">
         <span class="group-title">集成设置</span>
         <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
           <span>🔌 GitLab 仓库</span>
@@ -1070,7 +1070,7 @@
         </button>
       </div>
 
-      <div class="nav-group">
+      <div class="nav-group ai-nav-group">
         <span class="group-title">AI 工作台</span>
         <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
           <span>🧠 AI 引擎配置</span>
@@ -1083,7 +1083,7 @@
       </div>
 
       {#if currentUserPermissions.includes('users:read')}
-        <div class="nav-group">
+        <div class="nav-group security-nav-group">
           <span class="group-title">安全与授权</span>
           <button class="nav-item {activeSection === 'users' ? 'active' : ''}" on:click={() => switchSection('users')}>
             👥 成员角色管理
@@ -1947,50 +1947,59 @@
   .settings-sidebar {
     width: 250px;
     flex-shrink: 0;
+    box-sizing: border-box;
     background: #0b1329;
     border: 1px solid rgba(51, 65, 85, 0.4);
     border-radius: 12px;
-    padding: 20px;
+    padding: clamp(16px, 2.1vh, 20px);
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
-    align-self: stretch;
+    align-self: flex-start;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
   .sidebar-header {
     border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-    padding-bottom: 12px;
-    margin-bottom: 16px;
+    padding-bottom: clamp(10px, 1.4vh, 12px);
+    margin-bottom: clamp(12px, 1.8vh, 16px);
+    flex-shrink: 0;
   }
 
   .sidebar-header h3 {
     margin: 0 0 4px 0;
-    font-size: 1.1rem;
+    font-size: clamp(1rem, 1.7vh, 1.1rem);
     color: #e2e8f0;
   }
 
   .version-label {
-    font-size: 0.7rem;
+    display: block;
+    font-size: clamp(0.64rem, 1.1vh, 0.7rem);
     color: #64748b;
+    line-height: 1.35;
   }
 
   .sidebar-nav {
     display: flex;
     flex-direction: column;
+    gap: clamp(10px, 1.6vh, 16px);
+    min-height: 0;
   }
 
   .nav-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 20px;
+    gap: clamp(4px, 0.7vh, 6px);
+    margin-bottom: 0;
   }
 
   .group-title {
-    font-size: 0.75rem;
+    font-size: clamp(0.68rem, 1.15vh, 0.75rem);
     color: #475569;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 4px;
+    margin-bottom: clamp(2px, 0.5vh, 4px);
     padding-left: 8px;
   }
 
@@ -1999,10 +2008,11 @@
     border: none;
     color: #94a3b8;
     text-align: left;
-    padding: 8px 12px;
+    padding: clamp(6px, 1vh, 8px) 12px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: clamp(0.78rem, 1.35vh, 0.85rem);
+    line-height: 1.25;
     transition: all 0.2s ease;
   }
 
@@ -2017,6 +2027,74 @@
     color: #ffffff;
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  }
+
+  @media (max-height: 760px) and (min-width: 1101px) {
+    .settings-sidebar {
+      width: min(520px, 42vw);
+      max-height: 100%;
+      padding: 12px;
+    }
+
+    .sidebar-header {
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+
+    .sidebar-header h3 {
+      font-size: 0.98rem;
+    }
+
+    .version-label {
+      font-size: 0.64rem;
+    }
+
+    .sidebar-nav {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+
+    .nav-group {
+      gap: 4px;
+    }
+
+    .security-nav-group {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+    }
+
+    .security-nav-group .group-title {
+      grid-column: 1 / -1;
+    }
+
+    .group-title {
+      font-size: 0.66rem;
+      margin-bottom: 2px;
+    }
+
+    .nav-item {
+      padding: 5px 8px;
+      font-size: 0.75rem;
+    }
+  }
+
+  @media (max-height: 640px) and (min-width: 1101px) {
+    .settings-sidebar {
+      width: min(720px, 60vw);
+    }
+
+    .sidebar-nav {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 10px;
+    }
+
+    .security-nav-group {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 4px;
+    }
   }
 
   .settings-main {
