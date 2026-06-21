@@ -400,6 +400,8 @@
   let groupMutationError = '';
   let groupMutationSuccess = '';
   let groupDeletingName = '';
+  let showDeleteGroupModal = false;
+  let deleteGroupTarget: Group | null = null;
 
   async function fetchConfig() {
     try {
@@ -927,9 +929,8 @@
     }
   }
 
-  async function deleteCustomGroup(group: Group) {
+  function requestDeleteCustomGroup(group: Group) {
     if (!currentUserPermissions.includes('users:write') || isBuiltInGroup(group)) return;
-
     groupMutationError = '';
     groupMutationSuccess = '';
 
@@ -939,8 +940,16 @@
       return;
     }
 
-    if (!confirm(`确定删除自定义用户组「${group.displayName}」吗？该组的权限映射会一并清理。`)) return;
+    deleteGroupTarget = group;
+    showDeleteGroupModal = true;
+  }
 
+  async function deleteCustomGroup() {
+    if (!deleteGroupTarget || isBuiltInGroup(deleteGroupTarget)) return;
+
+    const group = deleteGroupTarget;
+    groupMutationError = '';
+    groupMutationSuccess = '';
     groupDeletingName = group.name;
     try {
       const res = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
@@ -952,6 +961,8 @@
       }
 
       groupMutationSuccess = `已删除自定义组「${group.displayName}」`;
+      showDeleteGroupModal = false;
+      deleteGroupTarget = null;
       await fetchGroups();
       await fetchUsers();
       await fetchAuditLogs();
@@ -1235,7 +1246,7 @@
                     class="group-delete-btn"
                     disabled={groupDeletingName === group.name || groupMemberCount(group) > 0}
                     title={groupMemberCount(group) > 0 ? '请先移除该组下的成员身份' : `删除 ${group.displayName}`}
-                    on:click={() => deleteCustomGroup(group)}
+                    on:click={() => requestDeleteCustomGroup(group)}
                   >
                     {groupDeletingName === group.name ? '删除中' : '删除'}
                   </button>
@@ -1869,6 +1880,60 @@
   </div>
 {/if}
 
+{#if showDeleteGroupModal && deleteGroupTarget}
+  <div class="modal-overlay">
+    <div class="modal-card delete-group-modal" role="dialog" aria-modal="true" aria-labelledby="delete-group-title">
+      <div class="modal-header delete-modal-header">
+        <div>
+          <span class="danger-kicker font-mono">Delete custom group</span>
+          <h3 id="delete-group-title">删除自定义用户组</h3>
+        </div>
+        <button
+          class="close-modal-btn"
+          aria-label="关闭删除用户组确认弹窗"
+          on:click={() => { showDeleteGroupModal = false; deleteGroupTarget = null; }}
+        >
+          &times;
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-target-card">
+          <div>
+            <span class="group-title-label badge-{deleteGroupTarget.name}">{deleteGroupTarget.displayName}</span>
+            <p>{deleteGroupTarget.description || '暂无描述'}</p>
+          </div>
+          <div class="delete-target-stats">
+            <strong class="font-mono">{groupPermissionCount(deleteGroupTarget)}</strong>
+            <small>permissions</small>
+          </div>
+        </div>
+        <p class="delete-confirm-copy">
+          删除后，该组的权限映射会被一并清理。该操作不会删除成员账号，也不会影响系统内置组。
+        </p>
+        {#if groupMutationError}
+          <div class="error-banner">{groupMutationError}</div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <Button
+          variant="ghost"
+          on:click={() => { showDeleteGroupModal = false; deleteGroupTarget = null; }}
+          disabled={groupDeletingName === deleteGroupTarget.name}
+        >
+          取消
+        </Button>
+        <Button
+          variant="danger"
+          on:click={deleteCustomGroup}
+          loading={groupDeletingName === deleteGroupTarget.name}
+        >
+          确认删除
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .settings-container {
     display: flex;
@@ -1879,62 +1944,61 @@
   }
 
   .settings-sidebar {
+    --sidebar-pad: clamp(12px, 2.4vh, 20px);
+    --sidebar-group-gap: clamp(10px, 1.9vh, 20px);
+    --sidebar-nav-gap: clamp(3px, 0.7vh, 6px);
+    --sidebar-item-pad-y: clamp(5px, 0.9vh, 8px);
+    --sidebar-item-pad-x: clamp(9px, 1.1vw, 12px);
     width: 250px;
     flex-shrink: 0;
     background: #0b1329;
     border: 1px solid rgba(51, 65, 85, 0.4);
     border-radius: 12px;
-    padding: 20px;
+    padding: var(--sidebar-pad);
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
     align-self: flex-start;
     position: sticky;
-    top: 88px;
-    max-height: calc(100vh - 112px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-
-  .settings-sidebar::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .settings-sidebar::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.72);
-    border-radius: 999px;
+    top: clamp(64px, 9vh, 88px);
   }
 
   .sidebar-header {
     border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-    padding-bottom: 12px;
-    margin-bottom: 16px;
+    padding-bottom: clamp(8px, 1.3vh, 12px);
+    margin-bottom: clamp(10px, 1.8vh, 16px);
   }
 
   .sidebar-header h3 {
     margin: 0 0 4px 0;
-    font-size: 1.1rem;
+    font-size: clamp(0.95rem, 1.7vh, 1.1rem);
     color: #e2e8f0;
   }
 
   .version-label {
-    font-size: 0.7rem;
+    font-size: clamp(0.62rem, 1.1vh, 0.7rem);
     color: #64748b;
+  }
+
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sidebar-group-gap);
   }
 
   .nav-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 20px;
+    gap: var(--sidebar-nav-gap);
+    margin-bottom: 0;
   }
 
   .group-title {
-    font-size: 0.75rem;
+    font-size: clamp(0.62rem, 1.1vh, 0.75rem);
     color: #475569;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 4px;
-    padding-left: 8px;
+    margin-bottom: clamp(2px, 0.5vh, 4px);
+    padding-left: var(--sidebar-item-pad-x);
   }
 
   .nav-item {
@@ -1942,17 +2006,18 @@
     border: none;
     color: #94a3b8;
     text-align: left;
-    padding: 8px 12px;
+    padding: var(--sidebar-item-pad-y) var(--sidebar-item-pad-x);
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: clamp(0.74rem, 1.3vh, 0.85rem);
+    line-height: 1.2;
     transition: all 0.2s ease;
   }
 
   .nav-item:hover {
     background: rgba(30, 41, 59, 0.5);
     color: #e2e8f0;
-    padding-left: 16px;
+    transform: translateX(2px);
   }
 
   .nav-item.active {
@@ -1960,6 +2025,31 @@
     color: #ffffff;
     font-weight: 700;
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  }
+
+  @media (max-height: 760px) and (min-width: 1101px) {
+    .settings-sidebar {
+      width: 236px;
+      --sidebar-pad: 10px;
+      --sidebar-group-gap: 8px;
+      --sidebar-nav-gap: 2px;
+      --sidebar-item-pad-y: 4px;
+      --sidebar-item-pad-x: 8px;
+      top: 64px;
+    }
+
+    .sidebar-header {
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+    }
+
+    .sidebar-header h3 {
+      font-size: 0.92rem;
+    }
+
+    .version-label {
+      display: none;
+    }
   }
 
   .settings-main {
@@ -3117,6 +3207,11 @@
     overflow: hidden;
   }
 
+  .delete-group-modal {
+    max-width: 520px;
+    border-color: rgba(248, 113, 113, 0.32);
+  }
+
   .modal-header {
     display: flex;
     justify-content: space-between;
@@ -3126,10 +3221,68 @@
     background: #0b1329;
   }
 
+  .delete-modal-header {
+    align-items: flex-start;
+    background:
+      linear-gradient(135deg, rgba(127, 29, 29, 0.28), rgba(15, 23, 42, 0.96)),
+      #0b1329;
+  }
+
   .modal-header h3 {
     margin: 0;
     font-size: 1.1rem;
     color: #f8fafc;
+  }
+
+  .danger-kicker {
+    display: block;
+    margin-bottom: 5px;
+    color: #fca5a5;
+    font-size: 0.68rem;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .delete-target-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 14px;
+    background: rgba(2, 6, 23, 0.34);
+  }
+
+  .delete-target-card p,
+  .delete-confirm-copy {
+    margin: 6px 0 0 0;
+    color: #94a3b8;
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+
+  .delete-target-stats {
+    min-width: 84px;
+    border-left: 1px solid rgba(51, 65, 85, 0.5);
+    padding-left: 14px;
+    text-align: right;
+  }
+
+  .delete-target-stats strong {
+    display: block;
+    color: #fecaca;
+    font-size: 1.25rem;
+  }
+
+  .delete-target-stats small {
+    color: #64748b;
+    font-size: 0.7rem;
+  }
+
+  .delete-confirm-copy {
+    margin-top: 14px;
   }
 
   .close-modal-btn {
@@ -3302,8 +3455,6 @@
     .settings-sidebar {
       width: auto;
       position: static;
-      max-height: none;
-      overflow: visible;
     }
 
     .sidebar-nav {
