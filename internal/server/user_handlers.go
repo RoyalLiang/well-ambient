@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
@@ -533,6 +534,80 @@ func (s *Server) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"success":true,"message":"User group created successfully"}`))
+}
+
+func isBuiltInGroupName(name string) bool {
+	switch name {
+	case "super_admin", "admin", "member":
+		return true
+	default:
+		return false
+	}
+}
+
+// handleDeleteGroup deletes a custom user group after membership and built-in safety checks.
+func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	actorUsername := r.Header.Get("x-authenticated-user-id")
+	groupName := strings.TrimSpace(r.PathValue("name"))
+	if groupName == "" {
+		http.Error(w, "GroupName is required", http.StatusBadRequest)
+		return
+	}
+	if isBuiltInGroupName(groupName) {
+		http.Error(w, "Built-in groups cannot be deleted", http.StatusBadRequest)
+		return
+	}
+
+	var group userdb.UserGroup
+	if err := db.DB.Where("name = ?", groupName).First(&group).Error; err != nil {
+		http.Error(w, "Group not found", http.StatusNotFound)
+		return
+	}
+
+	var memberCount int64
+	if err := db.DB.Model(&userdb.UserGroupMembership{}).
+		Where("user_group_id = ?", group.ID).
+		Count(&memberCount).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Query group memberships failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if memberCount > 0 {
+		http.Error(w, fmt.Sprintf("Cannot delete group with %d assigned member(s)", memberCount), http.StatusConflict)
+		return
+	}
+
+	tx := db.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Where("user_group_id = ?", group.ID).Delete(&userdb.GroupPermission{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, fmt.Sprintf("Failed to clear group permissions: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Delete(&group).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, fmt.Sprintf("Failed to delete group: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		http.Error(w, fmt.Sprintf("Commit failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	userdb.RecordAuditLog(db.DB, actorUsername, "group_delete", "group", groupName,
+		fmt.Sprintf("删除了自定义用户组 [%s]，显示名: %s", groupName, group.DisplayName), r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"success":true,"message":"User group deleted successfully"}`))
 }
 
 type SaveGroupPermissionsRequest struct {

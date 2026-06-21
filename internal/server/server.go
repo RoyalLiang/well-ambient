@@ -72,6 +72,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/groups", s.withPermission("users:read", s.handleGetGroups))
 	s.mux.HandleFunc("GET /api/permissions", s.withPermission("users:read", s.handleListPermissions))
 	s.mux.HandleFunc("POST /api/groups", s.withPermission("users:write", s.handleCreateGroup))
+	s.mux.HandleFunc("DELETE /api/groups/{name}", s.withPermission("users:write", s.handleDeleteGroup))
 	s.mux.HandleFunc("POST /api/groups/permissions", s.withPermission("users:write", s.handleSaveGroupPermissions))
 
 	s.mux.HandleFunc("GET /api/audit-logs", s.withPermission("users:read", s.handleGetAuditLogs))

@@ -93,6 +93,103 @@ func TestHandleListPermissionsReturnsSeededCatalog(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteCustomGroupRemovesGroupAndPermissions(t *testing.T) {
+	setupServerTestDB(t)
+
+	group := userdb.UserGroup{
+		Name:        "qa_reviewer",
+		DisplayName: "QA Reviewer",
+		Description: "Temporary review role",
+	}
+	if err := db.DB.Create(&group).Error; err != nil {
+		t.Fatalf("Failed to create test group: %v", err)
+	}
+
+	var permission userdb.Permission
+	if err := db.DB.Where("code = ?", "config:read").First(&permission).Error; err != nil {
+		t.Fatalf("Failed to find seeded permission: %v", err)
+	}
+	if err := db.DB.Create(&userdb.GroupPermission{
+		UserGroupID:  group.ID,
+		PermissionID: permission.ID,
+	}).Error; err != nil {
+		t.Fatalf("Failed to create group permission: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/groups/qa_reviewer", nil)
+	req.SetPathValue("name", group.Name)
+	req.Header.Set("x-authenticated-user-id", "security-admin@westwell-lab.com")
+	rr := httptest.NewRecorder()
+
+	(&Server{}).handleDeleteGroup(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body %s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+
+	var groupCount int64
+	if err := db.DB.Model(&userdb.UserGroup{}).Where("name = ?", group.Name).Count(&groupCount).Error; err != nil {
+		t.Fatalf("Failed to query group count: %v", err)
+	}
+	if groupCount != 0 {
+		t.Fatalf("group count = %d, want 0", groupCount)
+	}
+
+	var permissionCount int64
+	if err := db.DB.Model(&userdb.GroupPermission{}).Where("user_group_id = ?", group.ID).Count(&permissionCount).Error; err != nil {
+		t.Fatalf("Failed to query group permission count: %v", err)
+	}
+	if permissionCount != 0 {
+		t.Fatalf("group permission count = %d, want 0", permissionCount)
+	}
+}
+
+func TestHandleDeleteCustomGroupRejectsAssignedMembers(t *testing.T) {
+	setupServerTestDB(t)
+
+	member := userdb.User{
+		Username: "assigned-reviewer@westwell-lab.com",
+		Email:    "assigned-reviewer@westwell-lab.com",
+		Name:     "Assigned Reviewer",
+	}
+	if err := db.DB.Create(&member).Error; err != nil {
+		t.Fatalf("Failed to create test user: %v", err)
+	}
+	group := userdb.UserGroup{
+		Name:        "release_gate",
+		DisplayName: "Release Gate",
+		Description: "Assigned temporary role",
+	}
+	if err := db.DB.Create(&group).Error; err != nil {
+		t.Fatalf("Failed to create test group: %v", err)
+	}
+	if err := db.DB.Create(&userdb.UserGroupMembership{
+		UserID:      member.ID,
+		UserGroupID: group.ID,
+		Scope:       "global",
+	}).Error; err != nil {
+		t.Fatalf("Failed to create group membership: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/groups/release_gate", nil)
+	req.SetPathValue("name", group.Name)
+	rr := httptest.NewRecorder()
+
+	(&Server{}).handleDeleteGroup(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body %s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+
+	var groupCount int64
+	if err := db.DB.Model(&userdb.UserGroup{}).Where("name = ?", group.Name).Count(&groupCount).Error; err != nil {
+		t.Fatalf("Failed to query group count: %v", err)
+	}
+	if groupCount != 1 {
+		t.Fatalf("group count = %d, want 1", groupCount)
+	}
+}
+
 func TestWithPermissionExplicitDenyOverridesLegacyGroupPermission(t *testing.T) {
 	setupServerTestDB(t)
 	token := seedPolicyTestUser(t, "denied-admin@westwell-lab.com", "admin", "global", "")

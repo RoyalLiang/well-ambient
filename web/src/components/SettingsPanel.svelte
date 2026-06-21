@@ -275,6 +275,7 @@
     policies: { label: '策略化授权', summary: 'allow/deny 策略的查看、创建、启停与解释。', order: 80 },
     authorization_audit: { label: '授权审计', summary: '拒绝、高风险授权决策和命中链路审计。', order: 90 }
   };
+  const builtInGroupNames = new Set(['super_admin', 'admin', 'member']);
 
   const effectOptions = [
     { value: 'deny', label: '拒绝', desc: '优先阻断高风险动作' },
@@ -351,6 +352,7 @@
   $: permissionMeta = permissionCatalog.length ? permissionCatalog : fallbackPermissionMeta;
   $: permissionTree = buildPermissionTree(permissionMeta);
   $: policyActionOptions = permissionMeta.map(perm => ({ code: perm.code, name: perm.name }));
+  $: permissionCatalogSourceLabel = permissionCatalog.length ? '实时权限目录' : '本地兜底目录';
 
   let policyForm = {
     effect: 'deny',
@@ -395,6 +397,9 @@
   let newGroupDisplayName = '';
   let newGroupDescription = '';
   let createGroupError = '';
+  let groupMutationError = '';
+  let groupMutationSuccess = '';
+  let groupDeletingName = '';
 
   async function fetchConfig() {
     try {
@@ -432,6 +437,16 @@
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString();
+  }
+
+  async function readResponsePayload(res: Response): Promise<any> {
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { message: text };
+    }
   }
 
   function formatDiffValue(value: any) {
@@ -698,6 +713,16 @@
     return `${Math.round((groupPermissionCount(group) / permissionMeta.length) * 100)}%`;
   }
 
+  function isBuiltInGroup(group: Group) {
+    return builtInGroupNames.has(group.name);
+  }
+
+  function groupMemberCount(group: Group) {
+    return users.reduce((count, user) => {
+      return count + user.memberships.filter(membership => membership.group_name === group.name).length;
+    }, 0);
+  }
+
   function applyPolicyQuickStart(template: typeof policyQuickStarts[number]) {
     policyForm = {
       effect: template.effect,
@@ -902,8 +927,45 @@
     }
   }
 
+  async function deleteCustomGroup(group: Group) {
+    if (!currentUserPermissions.includes('users:write') || isBuiltInGroup(group)) return;
+
+    groupMutationError = '';
+    groupMutationSuccess = '';
+
+    const members = groupMemberCount(group);
+    if (members > 0) {
+      groupMutationError = `「${group.displayName}」仍有 ${members} 个成员，请先移除成员身份后再删除`;
+      return;
+    }
+
+    if (!confirm(`确定删除自定义用户组「${group.displayName}」吗？该组的权限映射会一并清理。`)) return;
+
+    groupDeletingName = group.name;
+    try {
+      const res = await fetch(`/api/groups/${encodeURIComponent(group.name)}`, {
+        method: 'DELETE'
+      });
+      const data = await readResponsePayload(res);
+      if (!res.ok) {
+        throw new Error(data.message || data.error || '删除用户组失败');
+      }
+
+      groupMutationSuccess = `已删除自定义组「${group.displayName}」`;
+      await fetchGroups();
+      await fetchUsers();
+      await fetchAuditLogs();
+    } catch (e: any) {
+      groupMutationError = e.message || '删除用户组失败';
+    } finally {
+      groupDeletingName = '';
+    }
+  }
+
   async function createCustomGroup() {
     createGroupError = '';
+    groupMutationError = '';
+    groupMutationSuccess = '';
     if (!newGroupName || !newGroupDisplayName) {
       createGroupError = '组代码与显示名称不能为空';
       return;
@@ -920,10 +982,12 @@
       });
       const data = await res.json();
       if (res.ok) {
+        const createdDisplayName = newGroupDisplayName.trim();
         showCreateGroupModal = false;
         newGroupName = '';
         newGroupDisplayName = '';
         newGroupDescription = '';
+        groupMutationSuccess = `已创建自定义组「${createdDisplayName}」`;
         fetchGroups();
       } else {
         createGroupError = data.message || '创建用户组失败';
@@ -1125,13 +1189,29 @@
           <div>
             <h2>🌲 可视化权限树配置</h2>
             <p>按权限命名空间自动归类，纵向展示每个原子权限与用户组覆盖关系。</p>
+            <div class="permission-catalog-status">
+              <span class:live={permissionCatalog.length > 0}>{permissionCatalogSourceLabel}</span>
+              <small>{permissionMeta.length} permissions · {permissionTree.length} branches</small>
+            </div>
           </div>
-          {#if currentUserPermissions.includes('users:write')}
-            <Button variant="ghost" on:click={() => showCreateGroupModal = true}>
-              🛠️ 创建自定义组
+          <div class="matrix-header-actions">
+            <Button variant="ghost" on:click={() => { fetchPermissions(); fetchGroups(); }}>
+              刷新目录
             </Button>
-          {/if}
+            {#if currentUserPermissions.includes('users:write')}
+              <Button variant="ghost" on:click={() => showCreateGroupModal = true}>
+                🛠️ 创建自定义组
+              </Button>
+            {/if}
+          </div>
         </div>
+
+        {#if groupMutationError}
+          <div class="error-banner">{groupMutationError}</div>
+        {/if}
+        {#if groupMutationSuccess}
+          <div class="success-banner">{groupMutationSuccess}</div>
+        {/if}
 
         <div class="permission-summary-strip">
           {#each groups as group}
@@ -1140,10 +1220,27 @@
                 <span class="group-title-label badge-{group.name}">{group.displayName}</span>
                 <p>{group.description || '暂无描述'}</p>
               </div>
-              <strong class="font-mono">{groupPermissionCount(group)}/{permissionMeta.length}</strong>
+              <div class="group-coverage-meta">
+                <strong class="font-mono">{groupPermissionCount(group)}/{permissionMeta.length}</strong>
+                <small>{groupMemberCount(group)} 成员</small>
+              </div>
               <span class="coverage-bar" aria-hidden="true">
                 <i style:width={groupPermissionRatio(group)}></i>
               </span>
+              <div class="group-card-actions">
+                <span>{isBuiltInGroup(group) ? '系统组' : '自定义组'}</span>
+                {#if currentUserPermissions.includes('users:write') && !isBuiltInGroup(group)}
+                  <button
+                    type="button"
+                    class="group-delete-btn"
+                    disabled={groupDeletingName === group.name || groupMemberCount(group) > 0}
+                    title={groupMemberCount(group) > 0 ? '请先移除该组下的成员身份' : `删除 ${group.displayName}`}
+                    on:click={() => deleteCustomGroup(group)}
+                  >
+                    {groupDeletingName === group.name ? '删除中' : '删除'}
+                  </button>
+                {/if}
+              </div>
             </div>
           {/each}
         </div>
@@ -1775,6 +1872,7 @@
 <style>
   .settings-container {
     display: flex;
+    align-items: flex-start;
     gap: 32px;
     margin-bottom: 48px;
     min-height: 70vh;
@@ -1789,6 +1887,20 @@
     padding: 20px;
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
     align-self: flex-start;
+    position: sticky;
+    top: 88px;
+    max-height: calc(100vh - 112px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .settings-sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .settings-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.72);
+    border-radius: 999px;
   }
 
   .sidebar-header {
@@ -2661,6 +2773,44 @@
     margin-bottom: 18px;
   }
 
+  .matrix-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .permission-catalog-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .permission-catalog-status span {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: rgba(15, 23, 42, 0.58);
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .permission-catalog-status span.live {
+    border-color: rgba(52, 211, 153, 0.32);
+    background: rgba(16, 185, 129, 0.1);
+    color: #86efac;
+  }
+
+  .permission-catalog-status small {
+    color: #64748b;
+    font-size: 0.72rem;
+  }
+
   .group-coverage-card {
     min-width: 0;
     border: 1px solid rgba(51, 65, 85, 0.46);
@@ -2685,6 +2835,20 @@
     font-size: 0.86rem;
   }
 
+  .group-coverage-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    min-width: 58px;
+  }
+
+  .group-coverage-meta small {
+    color: #64748b;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
   .coverage-bar {
     grid-column: 1 / -1;
     height: 5px;
@@ -2698,6 +2862,42 @@
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, #38bdf8, #34d399);
+  }
+
+  .group-card-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-top: 1px solid rgba(51, 65, 85, 0.34);
+    padding-top: 8px;
+    color: #64748b;
+    font-size: 0.72rem;
+  }
+
+  .group-delete-btn {
+    min-height: 28px;
+    border: 1px solid rgba(248, 113, 113, 0.36);
+    border-radius: 6px;
+    padding: 0 10px;
+    background: rgba(127, 29, 29, 0.18);
+    color: #fecaca;
+    font-size: 0.72rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  }
+
+  .group-delete-btn:hover:not(:disabled) {
+    border-color: rgba(248, 113, 113, 0.72);
+    background: rgba(127, 29, 29, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .group-delete-btn:disabled {
+    opacity: 0.46;
+    cursor: not-allowed;
   }
 
   .permission-tree {
@@ -3102,6 +3302,8 @@
     .settings-sidebar {
       width: auto;
       position: static;
+      max-height: none;
+      overflow: visible;
     }
 
     .sidebar-nav {
