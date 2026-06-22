@@ -67,6 +67,7 @@
 - The latest demand creation issue is a source aggregation problem: the modal needs candidates from users, Jira config/JQL, historical tasks, current user, and configured projects, not only `/api/users`.
 - In this deployment Jira `Task` is a demand, not an execution-only task. The code should map Jira Task/Story/Feature/Epic-like issue types to `issue_type = demand`, while Bug/Defect-like issue types remain `bug`.
 - Execution tracking remains useful after that change, but its scope becomes AI shadow tasks, manually split execution tasks, and Bug development evidence, not Jira Task demand intake.
+- WellOS login no longer provides the authoritative avatar and department fields directly. After login succeeds, the backend must call `GET /api/user/info?token={token}` and use `data.avatar`, `data.realname`, and `data.department_name`.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -104,6 +105,7 @@
 | Keep AI context facts in their own Settings tab | The context registry is an input layer for demand deconstruction, while AI engine config is provider/model connectivity. |
 | Replace policy raw selects with guided controls | Admins need fewer fragile fields and more visible policy intent before saving allow/deny rules. |
 | Map Jira Task-like issue types to demands | The team's Jira Task items are real requirements that need scheduling, iteration planning, and delivery tracking. |
+| Keep user-info refresh best-effort after successful auth | A temporary user-info failure should not reject a valid WellOS login, but successful responses must refresh DB, JWT, and frontend payload profile fields. |
 
 ## Issues Encountered
 | Issue | Resolution |

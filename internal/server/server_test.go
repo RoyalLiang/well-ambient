@@ -462,6 +462,93 @@ func TestRedactSensitiveLoginPayload(t *testing.T) {
 	}
 }
 
+func TestLoginRefreshesAvatarAndDepartmentFromWellOSUserInfo(t *testing.T) {
+	setupServerTestDB(t)
+
+	oldLoginDoer := wellOSLoginDoer
+	oldUserInfoDoer := wellOSUserInfoDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		if username != "zhiyuan_liang@westwell-lab.com" || password != "password-ok" {
+			t.Fatalf("unexpected login credentials: %s / %s", username, password)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"code":0,"token":"wellos-user-token","name":"旧姓名"}`)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	wellOSUserInfoDoer = func(client *http.Client, token string) (*http.Response, error) {
+		if token != "wellos-user-token" {
+			t.Fatalf("user info token = %q, want wellos-user-token", token)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body: io.NopCloser(strings.NewReader(`{
+				"code": 0,
+				"data": {
+					"uid": 1136,
+					"email": "zhiyuan_liang@westwell-lab.com",
+					"avatar": "https://s1-imfile.feishucdn.com/static-resource/v1/avatar.png",
+					"realname": "梁志远",
+					"department_name": "研发二部",
+					"role_name": "研发工程师"
+				},
+				"msg": "success"
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() {
+		wellOSLoginDoer = oldLoginDoer
+		wellOSUserInfoDoer = oldUserInfoDoer
+	})
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9103, Host: "127.0.0.1"}}, "")
+	body := bytes.NewBufferString(`{"username":"zhiyuan_liang@westwell-lab.com","password":"password-ok"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var res map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+	user, ok := res["user"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("login response missing user: %+v", res)
+	}
+	if user["name"] != "梁志远" {
+		t.Fatalf("response user.name = %v, want 梁志远", user["name"])
+	}
+	if user["department"] != "研发二部" {
+		t.Fatalf("response user.department = %v, want 研发二部", user["department"])
+	}
+	if user["avatar"] != "https://s1-imfile.feishucdn.com/static-resource/v1/avatar.png" {
+		t.Fatalf("response user.avatar = %v", user["avatar"])
+	}
+
+	token, _ := res["token"].(string)
+	claims, err := ParseJWT(token)
+	if err != nil {
+		t.Fatalf("parse login JWT: %v", err)
+	}
+	if claims.Name != "梁志远" || claims.Department != "研发二部" || claims.Avatar == "" {
+		t.Fatalf("JWT profile mismatch: %+v", claims)
+	}
+
+	var saved userdb.User
+	if err := db.DB.Where("username = ?", "zhiyuan_liang@westwell-lab.com").First(&saved).Error; err != nil {
+		t.Fatalf("saved user not found: %v", err)
+	}
+	if saved.Name != "梁志远" || saved.Department != "研发二部" || saved.Avatar == "" {
+		t.Fatalf("saved user profile mismatch: %+v", saved)
+	}
+}
+
 func setupServerTestDB(t *testing.T) {
 	t.Helper()
 	if err := db.InitDB(":memory:"); err != nil {

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -637,9 +638,29 @@ type WellOSLoginResponse struct {
 	DeptIdData interface{} `json:"dept_id_data"`
 }
 
+type WellOSUserInfoResponse struct {
+	Code int                `json:"code"`
+	Data WellOSUserInfoData `json:"data"`
+	Msg  string             `json:"msg"`
+}
+
+type WellOSUserInfoData struct {
+	UID              int    `json:"uid"`
+	Email            string `json:"email"`
+	AlternativeEmail string `json:"alternative_email"`
+	Avatar           string `json:"avatar"`
+	EmployeeNo       string `json:"employee_no"`
+	Job              string `json:"job"`
+	RealName         string `json:"realname"`
+	RoleName         string `json:"role_name"`
+	DepartmentName   string `json:"department_name"`
+}
+
 const wellOSLoginURL = "https://wellos.westwell-lab.com/api/user/login"
+const wellOSUserInfoURL = "https://wellos.westwell-lab.com/api/user/info"
 
 var wellOSLoginDoer = doWellOSLoginRequest
+var wellOSUserInfoDoer = doWellOSUserInfoRequest
 
 const localPasswordHashIterations = 210000
 
@@ -681,6 +702,27 @@ func newWellOSLoginRequest(username, password string) (*http.Request, error) {
 	return req, nil
 }
 
+func newWellOSUserInfoRequest(token string) (*http.Request, error) {
+	endpoint, err := url.Parse(wellOSUserInfoURL)
+	if err != nil {
+		return nil, err
+	}
+	query := endpoint.Query()
+	query.Set("token", token)
+	endpoint.RawQuery = query.Encode()
+
+	req, err := http.NewRequest(http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "Mozilla/5.0 well-ambient/1.0")
+	req.Header.Set("Origin", "https://wellos.westwell-lab.com")
+	req.Header.Set("Referer", "https://wellos.westwell-lab.com/")
+	req.Close = true
+	return req, nil
+}
+
 func isRetryableWellOSLoginError(err error) bool {
 	if err == nil {
 		return false
@@ -713,6 +755,63 @@ func doWellOSLoginRequest(client *http.Client, username, password string) (*http
 		return nil, retryReqErr
 	}
 	return client.Do(req)
+}
+
+func doWellOSUserInfoRequest(client *http.Client, token string) (*http.Response, error) {
+	req, err := newWellOSUserInfoRequest(token)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err == nil || !isRetryableWellOSLoginError(err) {
+		return resp, err
+	}
+	log.Printf("WellOS user info request failed once with retryable network error: %v; retrying with a fresh connection", err)
+	req, retryReqErr := newWellOSUserInfoRequest(token)
+	if retryReqErr != nil {
+		return nil, retryReqErr
+	}
+	return client.Do(req)
+}
+
+func fetchWellOSUserInfo(client *http.Client, token string) (*WellOSUserInfoData, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("missing WellOS token")
+	}
+	resp, err := wellOSUserInfoDoer(client, token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("WellOS user info failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+	}
+
+	var infoResp WellOSUserInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&infoResp); err != nil {
+		return nil, err
+	}
+	if infoResp.Code != 0 {
+		msg := strings.TrimSpace(infoResp.Msg)
+		if msg == "" {
+			msg = "WellOS user info returned non-zero code"
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	return &infoResp.Data, nil
+}
+
+func normalizeWellOSAvatarURL(avatar string) string {
+	avatar = strings.TrimSpace(avatar)
+	if avatar == "" || strings.HasPrefix(avatar, "http://") || strings.HasPrefix(avatar, "https://") {
+		return avatar
+	}
+	if strings.HasPrefix(avatar, "/") {
+		return "https://wellos.westwell-lab.com" + avatar
+	}
+	return "https://wellos.westwell-lab.com/" + avatar
 }
 
 func deriveLocalPasswordHash(password string) (string, error) {
@@ -1005,6 +1104,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	token := loginResp.Token
 	name := loginResp.Name
+
 	avatar := loginResp.Avatar
 	if avatar == "" {
 		avatar = loginResp.AvatarURL
@@ -1023,14 +1123,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 智能拼接 WellOS 头像绝对路径
-	if avatar != "" && !strings.HasPrefix(avatar, "http://") && !strings.HasPrefix(avatar, "https://") {
-		if strings.HasPrefix(avatar, "/") {
-			avatar = "https://wellos.westwell-lab.com" + avatar
-		} else {
-			avatar = "https://wellos.westwell-lab.com/" + avatar
-		}
-	}
+	avatar = normalizeWellOSAvatarURL(avatar)
 
 	if loginResp.Code != 0 || token == "" {
 		errMsg := loginResp.Msg
@@ -1054,6 +1147,28 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if dept == "" && loginResp.Data != nil {
 		dept = extractDept(loginResp.Data)
 	}
+	email := req.Username
+	if info, infoErr := fetchWellOSUserInfo(client, token); infoErr != nil {
+		log.Printf("WellOS user info refresh failed for %s: %v", req.Username, infoErr)
+	} else if info != nil {
+		if strings.TrimSpace(info.RealName) != "" {
+			name = strings.TrimSpace(info.RealName)
+		}
+		if strings.TrimSpace(info.Avatar) != "" {
+			avatar = normalizeWellOSAvatarURL(info.Avatar)
+		}
+		if strings.TrimSpace(info.DepartmentName) != "" {
+			dept = strings.TrimSpace(info.DepartmentName)
+		}
+		if strings.TrimSpace(info.Email) != "" {
+			email = strings.TrimSpace(info.Email)
+		} else if strings.TrimSpace(info.AlternativeEmail) != "" {
+			email = strings.TrimSpace(info.AlternativeEmail)
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		name = req.Username
+	}
 
 	// Create or update user in our database
 	var dbUser userdb.User
@@ -1065,7 +1180,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// New User
 		dbUser = userdb.User{
 			Username:   req.Username,
-			Email:      req.Username, // In App.svelte username prefix is email prefix, req.Username is email
+			Email:      email,
 			Name:       name,
 			Avatar:     avatar,
 			Department: dept,
@@ -1092,8 +1207,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Existing User, refresh info
-		dbUser.Name = name
-		dbUser.Avatar = avatar
+		if strings.TrimSpace(name) != "" {
+			dbUser.Name = name
+		}
+		if strings.TrimSpace(email) != "" {
+			dbUser.Email = email
+		}
+		if strings.TrimSpace(avatar) != "" {
+			dbUser.Avatar = avatar
+		}
 		if dept != "" {
 			dbUser.Department = dept
 		}
@@ -1111,9 +1233,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	groupNames, permCodes := loadUserAccessSnapshot(dbUser.ID)
 	role := roleFromGroups(groupNames)
+	sessionName := firstNonBlank(dbUser.Name, name, req.Username)
+	sessionAvatar := firstNonBlank(dbUser.Avatar, avatar)
 
 	// Generate our own JWT token (valid for 2 hours)
-	ourToken, err := GenerateJWT(req.Username, name, token, avatar, groupNames, permCodes, dbUser.Department)
+	ourToken, err := GenerateJWT(req.Username, sessionName, token, sessionAvatar, groupNames, permCodes, dbUser.Department)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1131,8 +1255,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"token":  ourToken,
 		"user": map[string]interface{}{
 			"username":    req.Username,
-			"name":        name,
-			"avatar":      avatar,
+			"name":        sessionName,
+			"avatar":      sessionAvatar,
 			"role":        role,
 			"groups":      groupNames,
 			"permissions": permCodes,

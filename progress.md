@@ -472,6 +472,26 @@
 | Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte accessibility warnings | pass |
 | Frontend type check | `pnpm --dir web check` | type check passes | passed with existing warnings, 0 errors | pass |
 
+### Phase 19: WellOS User Info Profile Refresh
+- **Status:** complete
+- Actions taken:
+  - Added `GET https://wellos.westwell-lab.com/api/user/info?token={token}` support after normal WellOS login succeeds.
+  - Used returned `realname`, `avatar`, `email`, and `department_name` to refresh local user records.
+  - Generated JWT claims and login response payloads from the refreshed avatar and department values.
+  - Left maintenance fallback and local development auth on local cached profile data only.
+  - Added a focused regression test for login profile refresh through the new WellOS user-info response.
+- Files modified:
+  - `internal/server/notification_handlers.go`
+  - `internal/server/server_test.go`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+## Latest Validation After Phase 19
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| WellOS profile refresh tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestLoginRefreshesAvatarAndDepartmentFromWellOSUserInfo|TestGetCurrentUser(ReturnsDepartment|BackfillsDepartmentFromJWT|RefreshesDepartmentFromJWT)|TestGenerateJWTIncludesDepartment' -count=1 -v` | login response, DB, and JWT use user-info avatar and department | passed | pass |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

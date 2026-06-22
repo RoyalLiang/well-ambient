@@ -163,6 +163,13 @@ Complete
 - [x] Run focused backend and frontend validation
 - **Status:** complete
 
+### Phase 19: WellOS User Info Profile Refresh
+- [x] Call the WellOS user-info endpoint after successful login
+- [x] Use `avatar`, `realname`, and `department_name` to update local user profile and JWT claims
+- [x] Preserve degraded login behavior without calling external profile APIs
+- [x] Add focused login/profile regression coverage
+- **Status:** complete
+
 ## Key Questions
 1. Which current files contain the server handlers named in the plan?
 2. Does the current data model support linking demands to AI task groups?
@@ -193,6 +200,7 @@ Complete
 | Make hours the primary deconstruction estimate unit | Operators tune task effort in hours; day values remain derived compatibility data for due-date and archive logic. |
 | Store long domain capability catalogs as archived context documents and inject compact summaries into config | Long feature inventories are better versioned/audited in docs, while runtime prompt fields should stay concise enough for stable AI behavior. |
 | Treat Jira Task as a demand in this deployment | The team uses Jira Task to record real product and development requirements, so Jira Task must enter demand scheduling rather than execution-only tracking. |
+| Fetch WellOS avatar and department from `/api/user/info` | The login response no longer carries authoritative avatar and department fields; profile refresh must use the token-backed user-info endpoint. |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
