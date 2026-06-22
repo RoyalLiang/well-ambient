@@ -97,10 +97,10 @@
   }
 
   const contextFactTypes = [
-    { value: 'architecture', label: '架构事实' },
-    { value: 'workflow', label: '交付流程' },
-    { value: 'feature_boundary', label: '能力边界' },
-    { value: 'estimation_rule', label: '估算规则' },
+    { value: 'architecture', label: '架构设计' },
+    { value: 'workflow', label: '流程设计' },
+    { value: 'feature_boundary', label: '功能边界' },
+    { value: 'estimation_rule', label: '估算口径' },
     { value: 'glossary', label: '术语口径' },
     { value: 'risk_rule', label: '风险规则' },
     { value: 'delivery_history', label: '交付样本' }
@@ -441,7 +441,7 @@
       if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
       contextFacts = normalizeContextFactList(data);
     } catch (e: any) {
-      contextFactsError = e.message || '上下文事实加载失败';
+      contextFactsError = e.message || '系统设计语料加载失败';
     } finally {
       contextFactsLoading = false;
     }
@@ -481,11 +481,11 @@
       if (!res.ok || data.success === false) {
         throw new Error(data.message || data.error || `HTTP ${res.status}`);
       }
-      contextFactSaveSuccess = editingContextFactId ? '上下文事实已更新' : '上下文事实已创建';
+      contextFactSaveSuccess = editingContextFactId ? '系统设计资料已更新' : '系统设计资料已创建';
       await fetchContextFacts();
       if (!editingContextFactId) beginCreateContextFact();
     } catch (e: any) {
-      contextFactSaveError = e.message || '上下文事实保存失败';
+      contextFactSaveError = e.message || '系统设计资料保存失败';
     } finally {
       contextFactSaving = false;
     }
@@ -584,7 +584,7 @@
         <div>
           <span class="overview-kicker font-mono">AI Deconstructor</span>
           <h4>AI 引擎配置状态摘要</h4>
-          <p>已配置后默认显示模型状态、上下文事实、健康检查和编辑入口。</p>
+          <p>已配置后默认显示模型状态、系统设计语料、健康检查和编辑入口。</p>
         </div>
         <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
       </div>
@@ -609,8 +609,8 @@
       </div>
 
       <div class="context-health-grid">
-        <span>上下文事实 {activeContextFactCount} active</span>
-        <span>上下文 tokens {totalContextFactTokens || 0}</span>
+        <span>设计语料 {activeContextFactCount} active</span>
+        <span>语料 tokens {totalContextFactTokens || 0}</span>
         <span>每日折算 {defaultWorkHoursPerDay || 8} 小时</span>
         <span>Pack 预览 {contextPackPreview ? '已生成' : '待生成'}</span>
       </div>
@@ -739,7 +739,7 @@
               <div>
                 <span class="context-kicker">Estimation</span>
                 <h4>估算折算设置</h4>
-                <p class="context-intro">系统上下文由下方事实注册表维护；这里仅保留模型请求和排期折算参数。</p>
+                <p class="context-intro">系统设计、功能边界与流程资料由“系统设计语料库”维护；这里仅保留模型请求和排期折算参数。</p>
               </div>
               <span class="context-chip">小时级估算</span>
             </div>
@@ -804,7 +804,7 @@
               <span class="summary-value font-mono">{modelName || 'gpt-4o (默认)'}</span>
             </div>
             <div class="summary-row">
-              <span class="summary-label">上下文事实注册表:</span>
+              <span class="summary-label">系统设计语料库:</span>
               <span class="summary-value">{activeContextFactCount} active · {defaultWorkHoursPerDay || 8} 小时/天</span>
             </div>
             <div class="summary-row">
@@ -832,9 +832,9 @@
     <div class="context-registry-panel">
       <div class="registry-header">
         <div>
-          <span class="context-kicker">AI Context Registry</span>
-          <h4>上下文事实注册表</h4>
-          <p>将架构、流程、能力边界和估算规则沉淀为可审计事实卡，供需求解构时组装成压缩上下文包。</p>
+          <span class="context-kicker">System Design Corpus</span>
+          <h4>系统设计语料库</h4>
+          <p>在这里维护系统架构设计、功能设计、流程设计和估算口径；后台会将资料压缩成可缓存的上下文包，供需求解构自动引用。</p>
         </div>
         <div class="registry-metrics font-mono">
           <span>{activeContextFactCount} active</span>
@@ -852,25 +852,25 @@
       <div class="registry-layout">
         <div class="registry-list-column">
           <div class="registry-toolbar">
-            <span class="registry-section-title">事实卡片</span>
+            <span class="registry-section-title">设计资料</span>
             <button type="button" on:click={fetchContextFacts} disabled={contextFactsLoading}>
               {contextFactsLoading ? '加载中' : '刷新'}
             </button>
           </div>
 
           {#if contextFactsLoading}
-            <div class="registry-skeleton" aria-label="上下文事实加载中">
+            <div class="registry-skeleton" aria-label="系统设计语料加载中">
               <span></span>
               <span></span>
               <span></span>
             </div>
           {:else if contextFacts.length === 0}
             <div class="registry-empty">
-              <strong>暂无上下文事实</strong>
-              <p>先创建一条全局架构或估算规则事实，后端就能在预览接口中返回候选上下文包。</p>
+              <strong>暂无系统设计资料</strong>
+              <p>先录入一条全局架构设计或流程设计，后端就能在预览接口中返回候选上下文包。</p>
             </div>
           {:else}
-            <div class="registry-list" role="list" aria-label="上下文事实列表">
+            <div class="registry-list" role="list" aria-label="系统设计资料列表">
               {#each contextFacts as fact (contextFactKey(fact))}
                 <button
                   type="button"
@@ -896,7 +896,7 @@
 
         <div class="registry-editor-column">
           <div class="registry-toolbar">
-            <span class="registry-section-title">{editingContextFactId ? '更新事实' : '创建事实'}</span>
+            <span class="registry-section-title">{editingContextFactId ? '更新资料' : '创建资料'}</span>
             <button type="button" on:click={beginCreateContextFact}>新建</button>
           </div>
 
@@ -909,7 +909,7 @@
 
           <div class="registry-form-grid">
             <div class="form-group-custom">
-              <span class="form-label-custom">事实类型</span>
+              <span class="form-label-custom">资料类型</span>
               <div class="context-choice-grid">
                 {#each contextFactTypes as option}
                   <button
@@ -939,7 +939,7 @@
             </div>
 
             <div class="form-group-custom">
-              <span class="form-label-custom">Scope</span>
+              <span class="form-label-custom">适用范围</span>
               <div class="context-choice-grid compact">
                 {#each contextFactScopes as option}
                   <button
@@ -954,7 +954,7 @@
             </div>
 
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-scope-id">Scope ID</label>
+              <label class="form-label-custom" for="context-fact-scope-id">范围标识</label>
               <input
                 id="context-fact-scope-id"
                 class="context-input"
@@ -980,22 +980,22 @@
             </div>
 
             <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-owner">Owner</label>
+              <label class="form-label-custom" for="context-fact-owner">维护人</label>
               <input id="context-fact-owner" class="context-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} />
             </div>
 
             <div class="form-group-custom wide">
-              <label class="form-label-custom" for="context-fact-summary">事实摘要</label>
-              <input id="context-fact-summary" class="context-input" placeholder="一句话说明这条事实的用途" bind:value={contextFactForm.summary} />
+              <label class="form-label-custom" for="context-fact-summary">资料摘要</label>
+              <input id="context-fact-summary" class="context-input" placeholder="一句话说明这份设计资料覆盖的系统范围" bind:value={contextFactForm.summary} />
             </div>
 
             <div class="form-group-custom wide">
-              <label class="form-label-custom" for="context-fact-content">事实内容</label>
+              <label class="form-label-custom" for="context-fact-content">设计内容</label>
               <textarea
                 id="context-fact-content"
                 class="context-textarea compact"
                 rows="5"
-                placeholder="写入可压缩进 Prompt 的事实，不放临时讨论和未经确认的猜测。"
+                placeholder="写入架构设计、功能边界、关键流程、依赖约束或估算规则。后台会自动计算 token、版本与上下文包命中。"
                 bind:value={contextFactForm.content}
               ></textarea>
             </div>
@@ -1015,7 +1015,7 @@
           <div class="registry-actions">
             <Button variant="ghost" on:click={beginCreateContextFact}>清空</Button>
             <Button variant="primary" loading={contextFactSaving} on:click={saveContextFact}>
-              {editingContextFactId ? '更新事实' : '创建事实'}
+              {editingContextFactId ? '更新资料' : '创建资料'}
             </Button>
           </div>
         </div>
@@ -1026,7 +1026,7 @@
           <div>
             <span class="context-kicker">Pack Preview</span>
             <h4>上下文包预览</h4>
-            <p>输入一段需求文本，预览后端将选择哪些事实进入 AI 解构上下文。</p>
+            <p>输入一段需求文本，预览后端会选择哪些系统设计资料进入 AI 解构上下文。</p>
           </div>
           <Button variant="secondary" loading={contextPreviewLoading} on:click={previewContextPack}>预览上下文包</Button>
         </div>
@@ -1079,15 +1079,15 @@
               </div>
             {:else}
               <div class="registry-empty compact">
-                <strong>预览未选中事实</strong>
-                <p>这通常表示后端接口仍在接入，或当前需求文本与可用事实没有匹配结果。</p>
+                <strong>预览未选中资料</strong>
+                <p>这通常表示后端接口仍在接入，或当前需求文本与可用设计资料没有匹配结果。</p>
               </div>
             {/each}
           </div>
         {:else}
           <div class="registry-empty compact">
             <strong>等待预览</strong>
-            <p>预览结果会展示 pack 摘要、token 占用和被选中的事实卡。</p>
+            <p>预览结果会展示 pack 摘要、token 占用和被选中的设计资料。</p>
           </div>
         {/if}
       </div>

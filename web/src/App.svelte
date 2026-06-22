@@ -5,11 +5,10 @@
   import Deconstructor from './components/Deconstructor.svelte';
   import DecisionDashboard from './components/DecisionDashboard.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
-  import KPIKanban from './components/KPIKanban.svelte';
   import DemandKanban from './components/DemandKanban.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
 
-  let activeTab = 'dashboard'; // 'dashboard' | 'demands' | 'kpi' | 'decision' | 'settings'
+  let activeTab = 'dashboard'; // 'dashboard' | 'demands' | 'decision' | 'settings'
 
   interface Alert {
     id: number;
@@ -75,14 +74,13 @@
     const tabPermissions: Record<string, string> = {
       'dashboard': 'dashboard:read',
       'demands': 'demands:read',
-      'kpi': 'kpi:read',
       'decision': 'decision:read',
       'settings': 'config:read'
     };
 
     const requiredPerm = tabPermissions[activeTab];
     if (activeTab === 'settings') {
-      if (hasPermission('config:read') || hasPermission('users:read')) {
+      if (hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')) {
         return;
       }
     } else if (requiredPerm && hasPermission(requiredPerm)) {
@@ -90,10 +88,10 @@
     }
     
     // Otherwise look for first allowed tab
-    const orderedTabs = ['dashboard', 'demands', 'kpi', 'decision', 'settings'];
+    const orderedTabs = ['dashboard', 'demands', 'decision', 'settings'];
     for (const tab of orderedTabs) {
       if (tab === 'settings') {
-        if (hasPermission('config:read') || hasPermission('users:read')) {
+        if (hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')) {
           activeTab = tab;
           return;
         }
@@ -252,6 +250,7 @@
         localStorage.setItem('auth_degraded', authDegraded ? 'true' : 'false');
         localStorage.setItem('auth_degraded_message', authDegradedMessage);
         
+        await refreshCurrentUserProfile();
         autoRedirectTab();
         
         loginUsernamePrefix = '';
@@ -395,7 +394,7 @@
       currentUserEmail = user.username || user.email || currentUserEmail;
       currentUserAvatar = user.avatar || currentUserAvatar;
       currentUserRole = user.role || currentUserRole;
-      currentUserDepartment = normalizeDepartment(user.department) || currentUserDepartment;
+      currentUserDepartment = normalizeDepartment(user.department);
       if (Array.isArray(user.permissions)) {
         currentUserPermissions = user.permissions;
       }
@@ -476,7 +475,7 @@
           localStorage.setItem('current_user_email', currentUserEmail);
         }
         const claimDepartment = normalizeDepartment(claims.department);
-        if (claimDepartment && !currentUserDepartment) {
+        if (claimDepartment && currentUserDepartment !== claimDepartment) {
           currentUserDepartment = claimDepartment;
           localStorage.setItem('current_user_department', currentUserDepartment);
         }
@@ -732,17 +731,12 @@
         📋 需求看板
       </button>
     {/if}
-    {#if hasPermission('kpi:read')}
-      <button class="tab-btn {activeTab === 'kpi' ? 'active' : ''}" on:click={() => activeTab = 'kpi'}>
-        📈 KPI绩效大盘
-      </button>
-    {/if}
     {#if hasPermission('decision:read')}
       <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
         ⚡ 决策战争室 (War Room)
       </button>
     {/if}
-    {#if hasPermission('config:read') || hasPermission('users:read')}
+    {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}
       <button class="tab-btn {activeTab === 'settings' ? 'active' : ''}" on:click={() => activeTab = 'settings'}>
         ⚙️ 系统配置
       </button>
@@ -766,8 +760,6 @@
         currentUserEmail={currentUserEmail}
         currentUserDepartment={currentUserDepartment}
       />
-    {:else if activeTab === 'kpi'}
-      <KPIKanban />
     {:else if activeTab === 'decision'}
       <DecisionDashboard />
     {:else if activeTab === 'settings'}

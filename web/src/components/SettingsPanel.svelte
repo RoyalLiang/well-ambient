@@ -6,6 +6,7 @@
   import FeishuConfig from './config/FeishuConfig.svelte';
   import JiraConfig from './config/JiraConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
+  import KPIKanban from './KPIKanban.svelte';
 
   export let currentUserRole = 'member';
   export let currentUserEmail = '';
@@ -36,7 +37,7 @@
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'offline';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'offline';
 
-  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'ai_context' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
+  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
 
   interface GlobalConfig {
     server: { host: string; port: number };
@@ -139,7 +140,21 @@
   $: selectedConfigVersion = configVersions.find(v => v.id === selectedConfigVersionID) || configVersions[0] || null;
   $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'ai'].includes(activeSection);
 
+  function canAccessSection(section: typeof activeSection) {
+    if (['gitlab', 'feishu', 'jira', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
+    if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') || currentUserPermissions.includes('config:read');
+    if (section === 'kpi') return currentUserPermissions.includes('kpi:read');
+    if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read');
+    return false;
+  }
+
+  function firstAccessibleSection(): typeof activeSection {
+    const sections: (typeof activeSection)[] = ['gitlab', 'ai_context', 'kpi', 'users'];
+    return sections.find(canAccessSection) || 'gitlab';
+  }
+
   function switchSection(section: typeof activeSection) {
+    if (!canAccessSection(section)) return;
     activeSection = section;
     saveError = '';
     saveSuccess = false;
@@ -247,8 +262,8 @@
 
   const fallbackPermissionMeta: PermissionMeta[] = [
     { code: 'ai_context:preview', name: '预览 AI 上下文包', desc: '按需求范围预览 AI 解构将使用的上下文包内容' },
-    { code: 'ai_context:read', name: '查看 AI 上下文注册表', desc: '查看用于 AI 需求解构的架构、流程、功能边界与估算规则上下文' },
-    { code: 'ai_context:write', name: '管理 AI 上下文注册表', desc: '新增、修改、停用 AI 上下文事实、文档与上下文包配置' },
+    { code: 'ai_context:read', name: '查看系统设计语料库', desc: '查看用于 AI 需求解构的架构、流程、功能边界与估算口径资料' },
+    { code: 'ai_context:write', name: '管理系统设计语料库', desc: '新增、修改、停用系统设计资料、文档与上下文包配置' },
     { code: 'authorization_audit:read', name: '查看授权决策审计', desc: '查看拒绝或高风险授权决策的审计日志' },
     { code: 'config:read', name: '查看系统集成配置', desc: '查看 GitLab、飞书、Jira 以及 AI 大模型等集成密钥及连接状态' },
     { code: 'config:write', name: '修改及测试系统配置', desc: '修改并测试 GitLab、飞书、Jira 以及 AI 大模型等核心配置参数' },
@@ -270,7 +285,7 @@
     demands: { label: '需求与交付', summary: '需求看板、创建指派和交付排期相关权限。', order: 30 },
     decision: { label: '决策视图', summary: '红区卡点诊断盘与会议大屏访问权限。', order: 40 },
     kpi: { label: '绩效分析', summary: '团队 KPI、报表预览和绩效指标权限。', order: 50 },
-    ai_context: { label: 'AI 上下文', summary: '结构化事实、上下文包预览与需求解构参考资料权限。', order: 60 },
+    ai_context: { label: '系统设计语料', summary: '系统设计资料、上下文包预览与需求解构参考资料权限。', order: 60 },
     users: { label: '成员与角色', summary: '成员、用户组、权限树和超级管理员交接权限。', order: 70 },
     policies: { label: '策略化授权', summary: 'allow/deny 策略的查看、创建、启停与解释。', order: 80 },
     authorization_audit: { label: '授权审计', summary: '拒绝、高风险授权决策和命中链路审计。', order: 90 }
@@ -1009,6 +1024,9 @@
   }
 
   onMount(() => {
+    if (!canAccessSection(activeSection)) {
+      activeSection = firstAccessibleSection();
+    }
     fetchConfig();
     fetchConfigVersions();
     fetchStatus();
@@ -1022,7 +1040,7 @@
     statusIntervalId = setInterval(fetchStatus, 5000);
 
     const handleFocus = (e: any) => {
-      if (e.detail && ['gitlab', 'feishu', 'jira', 'ai', 'ai_context'].includes(e.detail)) {
+      if (e.detail && ['gitlab', 'feishu', 'jira', 'ai', 'ai_context', 'kpi'].includes(e.detail)) {
         switchSection(e.detail);
       }
     };
@@ -1054,33 +1072,49 @@
       <span class="version-label">Category settings · {currentUserRole}</span>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-group">
-        <span class="group-title">集成设置</span>
-        <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
-          <span>🔌 GitLab 仓库</span>
-          <span class="status-indicator indicator-{gitlabStatus}"></span>
-        </button>
-        <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => switchSection('feishu')}>
-          <span>🤖 飞书消息同步</span>
-          <span class="status-indicator indicator-{feishuStatus}"></span>
-        </button>
-        <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => switchSection('jira')}>
-          <span>📝 Jira 服务关联</span>
-          <span class="status-indicator indicator-{jiraStatus}"></span>
-        </button>
-      </div>
+      {#if currentUserPermissions.includes('config:read')}
+        <div class="nav-group">
+          <span class="group-title">集成设置</span>
+          <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
+            <span>🔌 GitLab 仓库</span>
+            <span class="status-indicator indicator-{gitlabStatus}"></span>
+          </button>
+          <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => switchSection('feishu')}>
+            <span>🤖 飞书消息同步</span>
+            <span class="status-indicator indicator-{feishuStatus}"></span>
+          </button>
+          <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => switchSection('jira')}>
+            <span>📝 Jira 服务关联</span>
+            <span class="status-indicator indicator-{jiraStatus}"></span>
+          </button>
+        </div>
+      {/if}
 
-      <div class="nav-group">
-        <span class="group-title">AI 工作台</span>
-        <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
-          <span>🧠 AI 引擎配置</span>
-          <span class="status-indicator indicator-{aiStatus}"></span>
-        </button>
-        <button class="nav-item {activeSection === 'ai_context' ? 'active' : ''}" on:click={() => switchSection('ai_context')}>
-          <span>🗂️ 上下文事实</span>
-          <span class="status-indicator indicator-{currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning'}"></span>
-        </button>
-      </div>
+      {#if currentUserPermissions.includes('config:read') || currentUserPermissions.includes('ai_context:read')}
+        <div class="nav-group">
+          <span class="group-title">AI 工作台</span>
+          {#if currentUserPermissions.includes('config:read')}
+            <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
+              <span>🧠 AI 引擎配置</span>
+              <span class="status-indicator indicator-{aiStatus}"></span>
+            </button>
+          {/if}
+          <button class="nav-item {activeSection === 'ai_context' ? 'active' : ''}" on:click={() => switchSection('ai_context')}>
+            <span>🗂️ 系统设计语料库</span>
+            <span class="status-indicator indicator-{currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning'}"></span>
+          </button>
+        </div>
+      {/if}
+
+      {#if currentUserPermissions.includes('kpi:read')}
+        <div class="nav-group">
+          <span class="group-title">运营洞察</span>
+          <button class="nav-item {activeSection === 'kpi' ? 'active' : ''}" on:click={() => switchSection('kpi')}>
+            <span>📈 KPI 绩效大盘</span>
+            <span class="status-indicator indicator-online"></span>
+          </button>
+        </div>
+      {/if}
 
       {#if currentUserPermissions.includes('users:read')}
         <div class="nav-group">
@@ -1123,6 +1157,10 @@
     {:else if activeSection === 'ai_context'}
       <div class="section-card">
         <AIConfig view="context" config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} />
+      </div>
+    {:else if activeSection === 'kpi'}
+      <div class="kpi-settings-panel">
+        <KPIKanban />
       </div>
     {:else if activeSection === 'users'}
       <div class="section-card">
@@ -2059,6 +2097,11 @@
     border-radius: 12px;
     padding: 24px;
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+  }
+
+  .kpi-settings-panel {
+    min-width: 0;
+    padding: 4px 2px 24px 0;
   }
 
   .config-audit-panel {

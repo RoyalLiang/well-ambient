@@ -632,6 +632,46 @@ func TestGetCurrentUserBackfillsDepartmentFromJWT(t *testing.T) {
 	}
 }
 
+func TestGetCurrentUserRefreshesDepartmentFromJWT(t *testing.T) {
+	setupServerTestDB(t)
+	_ = superAdminToken(t, "refresh@westwell-lab.com", "Refresh User", []string{"dashboard:read"})
+	if err := db.DB.Model(&userdb.User{}).
+		Where("username = ?", "refresh@westwell-lab.com").
+		Update("department", "Legacy Ops").Error; err != nil {
+		t.Fatalf("Failed to seed legacy department: %v", err)
+	}
+	token, err := GenerateJWT(
+		"refresh@westwell-lab.com",
+		"Refresh User",
+		"mock_wellos_token",
+		"",
+		[]string{"super_admin"},
+		[]string{"dashboard:read"},
+		"AI Platform",
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate token: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9098, Host: "127.0.0.1"}}, "")
+	req, _ := http.NewRequest("GET", "/api/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/me failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var user userdb.User
+	if err := db.DB.Where("username = ?", "refresh@westwell-lab.com").First(&user).Error; err != nil {
+		t.Fatalf("User not found in DB: %v", err)
+	}
+	if user.Department != "AI Platform" {
+		t.Fatalf("User Department = %q, want refreshed department", user.Department)
+	}
+}
+
 func TestLoginFallsBackForExistingLocalUserWhenWellOSUnavailable(t *testing.T) {
 	setupServerTestDB(t)
 	seedLocalUserWithGroup(t, "offline@westwell-lab.com", "Offline User", "member", "cached-password")

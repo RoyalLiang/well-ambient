@@ -66,9 +66,15 @@
   let showAssigneeDropdown = false;
   let showRepoDropdown = false;
   let showOverrideAssigneeDropdown = false;
+  let showOverrideDatePicker = false;
   let assigneeSelectEl: HTMLElement;
   let repoSelectEl: HTMLElement;
   let overrideAssigneeSelectEl: HTMLElement;
+  let overrideDatePickerEl: HTMLElement;
+  let overrideDatePickerCursor = new Date();
+
+  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+  const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
   // 核心成员白名单
   let coreMembers = new Set([
@@ -232,6 +238,7 @@
 
   function toggleOverrideAssigneeDropdown() {
     showOverrideAssigneeDropdown = !showOverrideAssigneeDropdown;
+    showOverrideDatePicker = false;
   }
 
   function formatDateLabel(dateValue: string) {
@@ -245,6 +252,69 @@
     });
   }
 
+  function parseDateValue(value: string) {
+    if (!value) return null;
+    const [year, month, day] = value.split('-').map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day);
+  }
+
+  function toDateValue(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function toggleOverrideDatePicker() {
+    showOverrideDatePicker = !showOverrideDatePicker;
+    showOverrideAssigneeDropdown = false;
+    overrideDatePickerCursor = parseDateValue(newDueDate) || new Date();
+  }
+
+  function getOverrideCalendarDays(value: string) {
+    const base = overrideDatePickerCursor;
+    const year = base.getFullYear();
+    const month = base.getMonth();
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    const leading = (first.getDay() + 6) % 7;
+    const todayValue = toDateValue(new Date());
+    const days: { value: string; label: number; muted: boolean; today: boolean; selected: boolean }[] = [];
+
+    for (let i = leading - 1; i >= 0; i--) {
+      const date = new Date(year, month, -i);
+      const dateValue = toDateValue(date);
+      days.push({ value: dateValue, label: date.getDate(), muted: true, today: dateValue === todayValue, selected: dateValue === value });
+    }
+    for (let day = 1; day <= last.getDate(); day++) {
+      const date = new Date(year, month, day);
+      const dateValue = toDateValue(date);
+      days.push({ value: dateValue, label: day, muted: false, today: dateValue === todayValue, selected: dateValue === value });
+    }
+    while (days.length % 7 !== 0) {
+      const date = new Date(year, month, days.length - leading + 1);
+      const dateValue = toDateValue(date);
+      days.push({ value: dateValue, label: date.getDate(), muted: true, today: dateValue === todayValue, selected: dateValue === value });
+    }
+
+    return { label: `${base.getFullYear()} ${monthNames[base.getMonth()]}`, days };
+  }
+
+  function moveOverrideDateMonth(delta: number) {
+    overrideDatePickerCursor = new Date(overrideDatePickerCursor.getFullYear(), overrideDatePickerCursor.getMonth() + delta, 1);
+  }
+
+  function selectOverrideDueDate(value: string) {
+    newDueDate = value;
+    showOverrideDatePicker = false;
+  }
+
+  function clearOverrideDueDate() {
+    newDueDate = '';
+    showOverrideDatePicker = false;
+  }
+
   function handleDocumentClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (showAssigneeDropdown && assigneeSelectEl && !assigneeSelectEl.contains(target)) {
@@ -255,6 +325,9 @@
     }
     if (showOverrideAssigneeDropdown && overrideAssigneeSelectEl && !overrideAssigneeSelectEl.contains(target)) {
       showOverrideAssigneeDropdown = false;
+    }
+    if (showOverrideDatePicker && overrideDatePickerEl && !overrideDatePickerEl.contains(target)) {
+      showOverrideDatePicker = false;
     }
   }
 
@@ -655,6 +728,21 @@
               <p class="subtitle">对此任务进行调停决策，您的指令将覆盖 AI 的后台静默决策并自动同步</p>
             </div>
 
+            <div class="override-decision-strip font-mono">
+              <div>
+                <span>当前负责人</span>
+                <strong>{selectedItem.assignee || '-'}</strong>
+              </div>
+              <div>
+                <span>当前截止</span>
+                <strong>{selectedItem.due_date ? formatDateLabel(selectedItem.due_date.slice(0, 10)) : '未设置'}</strong>
+              </div>
+              <div>
+                <span>风险等级</span>
+                <strong class="risk-{selectedItem.risk_level}">{selectedItem.risk_level.toUpperCase()}</strong>
+              </div>
+            </div>
+
             <div class="override-form font-mono">
               <div class="input-row">
                 <div class="input-field">
@@ -687,15 +775,47 @@
                 </div>
                 <div class="input-field">
                   <label for="due-val">延期截止日</label>
-                  <div class="override-date-shell">
-                    <div
+                  <div class="override-date-shell" bind:this={overrideDatePickerEl}>
+                    <button
+                      id="due-val"
+                      type="button"
                       class="override-date-display {newDueDate ? 'has-value' : ''}"
-                      aria-hidden="true"
+                      on:click|stopPropagation={toggleOverrideDatePicker}
+                      aria-expanded={showOverrideDatePicker}
                     >
                       <span>{newDueDateDisplay || '选择截止日期'}</span>
                       <span class="date-input-icon"></span>
-                    </div>
-                    <input id="due-val" class="override-date-native" type="date" bind:value={newDueDate} aria-label="延期截止日" />
+                    </button>
+                    {#if showOverrideDatePicker}
+                      {@const calendar = getOverrideCalendarDays(newDueDate)}
+                      <div class="override-date-picker-panel">
+                        <div class="override-date-picker-head">
+                          <button type="button" aria-label="上个月" on:click={() => moveOverrideDateMonth(-1)}>‹</button>
+                          <strong>{calendar.label}</strong>
+                          <button type="button" aria-label="下个月" on:click={() => moveOverrideDateMonth(1)}>›</button>
+                        </div>
+                        <div class="override-date-week-grid font-mono">
+                          {#each weekdayNames as day}
+                            <span>{day}</span>
+                          {/each}
+                        </div>
+                        <div class="override-date-grid">
+                          {#each calendar.days as day}
+                            <button
+                              type="button"
+                              class="override-date-cell {day.muted ? 'muted' : ''} {day.today ? 'today' : ''} {day.selected ? 'selected' : ''}"
+                              on:click={() => selectOverrideDueDate(day.value)}
+                            >
+                              {day.label}
+                            </button>
+                          {/each}
+                        </div>
+                        <div class="override-date-picker-foot">
+                          <button type="button" on:click={() => selectOverrideDueDate(toDateValue(new Date()))}>今天</button>
+                          <button type="button" on:click={clearOverrideDueDate}>清空</button>
+                        </div>
+                      </div>
+                    {/if}
                   </div>
                 </div>
               </div>
@@ -828,6 +948,9 @@
     grid-column: 2 / span 2;
     grid-row: 2;
     min-height: 440px;
+    overflow: visible;
+    position: relative;
+    z-index: 12;
   }
 
   /* Premium Glassmorphism cards */
@@ -1384,6 +1507,49 @@
     margin: 0;
   }
 
+  .override-decision-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .override-decision-strip div {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.55);
+    background: rgba(2, 6, 23, 0.36);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+
+  .override-decision-strip span {
+    display: block;
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+
+  .override-decision-strip strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .override-decision-strip .risk-critical {
+    color: #fb7185;
+  }
+
+  .override-decision-strip .risk-warning {
+    color: #f59e0b;
+  }
+
+  .override-decision-strip .risk-safe {
+    color: #34d399;
+  }
+
   .override-form {
     display: flex;
     flex-direction: column;
@@ -1449,6 +1615,7 @@
     text-align: left;
     cursor: pointer;
     outline: none;
+    appearance: none;
     transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
   }
 
@@ -1512,15 +1679,6 @@
     font-weight: 700;
   }
 
-  .override-date-native {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
-
   .date-input-icon {
     position: relative;
     flex: 0 0 auto;
@@ -1552,6 +1710,121 @@
     background: currentColor;
     box-shadow: 5px 0 0 currentColor, 9px 0 0 currentColor;
     border-radius: 1px;
+  }
+
+  .override-date-picker-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 292px;
+    background: #0b1220;
+    border: 1px solid rgba(71, 85, 105, 0.76);
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 20px 48px rgba(2, 6, 23, 0.72);
+    z-index: 1500;
+  }
+
+  .override-date-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .override-date-picker-head strong {
+    color: #e2e8f0;
+    font-size: 0.86rem;
+  }
+
+  .override-date-picker-head button,
+  .override-date-picker-foot button,
+  .override-date-cell {
+    border: 1px solid transparent;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .override-date-picker-head button {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 1.15rem;
+    line-height: 1;
+    background: rgba(15, 23, 42, 0.78);
+    border-color: rgba(51, 65, 85, 0.7);
+  }
+
+  .override-date-picker-head button:hover,
+  .override-date-picker-foot button:hover {
+    color: #e2e8f0;
+    border-color: rgba(129, 140, 248, 0.55);
+  }
+
+  .override-date-week-grid,
+  .override-date-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .override-date-week-grid {
+    margin-bottom: 6px;
+  }
+
+  .override-date-week-grid span {
+    color: #475569;
+    font-size: 0.64rem;
+    text-align: center;
+    font-weight: 800;
+  }
+
+  .override-date-cell {
+    height: 32px;
+    border-radius: 8px;
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .override-date-cell:hover {
+    color: #f8fafc;
+    background: rgba(99, 102, 241, 0.16);
+    border-color: rgba(129, 140, 248, 0.42);
+  }
+
+  .override-date-cell.muted {
+    color: #334155;
+  }
+
+  .override-date-cell.today {
+    border-color: rgba(14, 165, 233, 0.55);
+    color: #7dd3fc;
+  }
+
+  .override-date-cell.selected {
+    background: #4f46e5;
+    color: #ffffff;
+    border-color: rgba(129, 140, 248, 0.9);
+  }
+
+  .override-date-picker-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    border-top: 1px solid rgba(51, 65, 85, 0.48);
+    padding-top: 10px;
+  }
+
+  .override-date-picker-foot button {
+    border-color: rgba(51, 65, 85, 0.62);
+    background: rgba(15, 23, 42, 0.58);
+    border-radius: 7px;
+    padding: 6px 9px;
+    font-size: 0.72rem;
   }
 
   .override-actions {

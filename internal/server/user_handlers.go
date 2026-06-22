@@ -66,7 +66,7 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 
 	headerName := r.Header.Get("x-authenticated-user-name")
 	headerAvatar := r.Header.Get("x-authenticated-user-avatar")
-	headerDept := r.Header.Get("x-authenticated-user-department")
+	headerDept := strings.TrimSpace(r.Header.Get("x-authenticated-user-department"))
 	needsSave := false
 	if u.Name == "" && headerName != "" {
 		u.Name = headerName
@@ -76,7 +76,7 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		u.Avatar = headerAvatar
 		needsSave = true
 	}
-	if isMissingDepartment(u.Department) && !isMissingDepartment(headerDept) {
+	if !isMissingDepartment(headerDept) && strings.TrimSpace(u.Department) != headerDept {
 		u.Department = headerDept
 		needsSave = true
 	}
