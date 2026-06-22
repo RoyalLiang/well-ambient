@@ -86,11 +86,12 @@
 
 排期列只展示排期状态和截止日，不再混入仓库或分支占位文案。行级 `scheduled = true` 仅表示需求同时具备开发分支和截止日；`backlog` 只是流程状态，不等同于已经完成排期。仓库、分支、MR 等内容进入“交付证据”列，缺失时不再展示“未绑定分支”“未映射仓库”这类会干扰判断的占位文本。
 
-“需求开发排期”弹窗支持可选 AI 工时评估：
+“需求开发排期”弹窗支持手动工时设置和可选 AI 工时评估：
 
 - 前端调用现有 `POST /api/deconstruct`，读取 `analysis.overall_estimated_hours`、`analysis.overall_estimated_days`、`analysis.overall_difficulty` 和 `analysis.estimate_basis`。
-- 用户确认排期后，`POST /api/tasks/schedule` 可一并提交 `estimate_hours`、`estimate_days` 和 `difficulty`，后端写入 `task_telemetries` 并标记 `estimate_source = ai_deconstruct`。
-- AI 未配置或评估失败时不阻塞普通排期，弹窗保留局部错误提示，用户仍可手工排期。
+- 弹窗始终提供 `estimate_hours`、`estimate_days` 和 `difficulty` 的手动设置入口。AI 评估只负责填入建议值，用户可继续修改或清空。
+- 用户确认排期后，`POST /api/tasks/schedule` 可一并提交 `estimate_hours`、`estimate_days`、`difficulty` 和 `estimate_source`。AI 建议保存为 `ai_deconstruct`，用户手动调整或清空保存为 `manual_adjusted`。
+- AI 未配置或评估失败时不阻塞普通排期，弹窗保留局部错误提示，用户仍可直接手工排期。
 
 性能策略：
 

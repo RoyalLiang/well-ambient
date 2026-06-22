@@ -30,11 +30,13 @@
     estimate_days?: number;
     estimate_hours?: number;
     difficulty?: string;
+    estimate_source?: string;
   }
 
   type DemandView = 'board' | 'schedule';
   type ScheduleRiskFilter = 'attention' | 'all' | 'overdue' | 'due_soon' | 'stale' | 'unscheduled' | 'safe' | 'done';
   type ScheduleSortMode = 'risk' | 'due' | 'owner';
+  type EstimateSource = '' | 'ai_deconstruct' | 'manual_adjusted';
 
   interface ScheduleSummary {
     total: number;
@@ -114,6 +116,13 @@
     { value: 'risk', label: '风险优先' },
     { value: 'due', label: '截止日' },
     { value: 'owner', label: '负责人' }
+  ];
+
+  const difficultyOptions: Array<{ value: string; label: string }> = [
+    { value: '', label: '未设置' },
+    { value: 'Low', label: '低' },
+    { value: 'Medium', label: '中' },
+    { value: 'High', label: '高' }
   ];
 
   function createEmptyScheduleSummary(): ScheduleSummary {
@@ -275,6 +284,7 @@
   let schedDifficulty = '';
   let schedEstimateBasis = '';
   let schedEstimateConfidence = 0;
+  let schedEstimateSource: EstimateSource = '';
   let scheduleEstimateLoading = false;
   let scheduleEstimateError = '';
 
@@ -353,6 +363,19 @@
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
   }
 
+  function formatEstimateSummary(hours: number, days: number) {
+    if (hours > 0) return `${formatOneDecimal(hours)} 小时`;
+    if (days > 0) return `${formatOneDecimal(days)} 天`;
+    return '未设置工时';
+  }
+
+  function normalizeScheduleEstimateSource(value?: string): EstimateSource {
+    const source = (value || '').trim().toLowerCase();
+    if (source === 'ai_deconstruct') return 'ai_deconstruct';
+    if (source === 'manual_adjusted' || source === 'manual') return 'manual_adjusted';
+    return '';
+  }
+
   function formatDifficultyLabel(value?: string) {
     switch ((value || '').trim().toLowerCase()) {
       case 'high':
@@ -372,12 +395,56 @@
     schedDifficulty = demand.difficulty || '';
     schedEstimateBasis = '';
     schedEstimateConfidence = 0;
+    schedEstimateSource = normalizeScheduleEstimateSource(demand.estimate_source) || (hasScheduleEstimate() ? 'manual_adjusted' : '');
     scheduleEstimateError = '';
     scheduleEstimateLoading = false;
   }
 
   function hasScheduleEstimate() {
     return schedEstimateHours > 0 || schedEstimateDays > 0 || !!schedDifficulty;
+  }
+
+  function readPositiveEstimateInput(event: Event): number {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function markScheduleEstimateManual() {
+    schedEstimateSource = 'manual_adjusted';
+    schedEstimateBasis = '';
+    schedEstimateConfidence = 0;
+    scheduleEstimateError = '';
+  }
+
+  function updateScheduleEstimateHours(event: Event) {
+    schedEstimateHours = readPositiveEstimateInput(event);
+    markScheduleEstimateManual();
+  }
+
+  function updateScheduleEstimateDays(event: Event) {
+    schedEstimateDays = readPositiveEstimateInput(event);
+    markScheduleEstimateManual();
+  }
+
+  function updateScheduleDifficulty(value: string) {
+    schedDifficulty = value;
+    markScheduleEstimateManual();
+  }
+
+  function clearScheduleEstimate() {
+    schedEstimateHours = 0;
+    schedEstimateDays = 0;
+    schedDifficulty = '';
+    markScheduleEstimateManual();
+  }
+
+  function getScheduleEstimateSourceLabel() {
+    if (scheduleEstimateLoading) return 'AI 评估中';
+    if (schedEstimateSource === 'ai_deconstruct') return 'AI 建议';
+    if (schedEstimateSource === 'manual_adjusted') return '手动设置';
+    if (hasScheduleEstimate()) return '历史估算';
+    return '未设置';
   }
 
   function buildScheduleEstimateText() {
@@ -782,6 +849,7 @@
       schedDifficulty = analysis.overall_difficulty || schedDifficulty;
       schedEstimateBasis = analysis.estimate_basis || '';
       schedEstimateConfidence = toNumber(analysis.confidence);
+      schedEstimateSource = 'ai_deconstruct';
     } catch (err: any) {
       scheduleEstimateError = (err.message || 'AI 工时评估失败').slice(0, 180);
     } finally {
@@ -812,7 +880,8 @@
           task_group_id: schedTaskGroupID,
           estimate_hours: schedEstimateHours,
           estimate_days: schedEstimateDays,
-          difficulty: schedDifficulty
+          difficulty: schedDifficulty,
+          estimate_source: schedEstimateSource
         })
       });
 
@@ -1640,37 +1709,77 @@
           <div class="schedule-estimate-panel">
             <div class="estimate-panel-head">
               <div>
-                <span class="brain-link-note-label font-mono">AI ESTIMATE</span>
-                <strong>工时预估</strong>
+                <span class="brain-link-note-label font-mono">EFFORT SETTING</span>
+                <strong>工时设置</strong>
+                <small>手动值优先，AI 只填入建议</small>
               </div>
-              <button
-                type="button"
-                class="estimate-ai-btn font-mono"
-                class:is-loading={scheduleEstimateLoading}
-                disabled={scheduleEstimateLoading}
-                on:click={handleEstimateScheduleEffort}
-              >
-                {scheduleEstimateLoading ? '评估中' : 'AI 评估'}
-              </button>
+              <div class="estimate-actions">
+                <button
+                  type="button"
+                  class="estimate-ai-btn font-mono"
+                  class:is-loading={scheduleEstimateLoading}
+                  disabled={scheduleEstimateLoading}
+                  on:click={handleEstimateScheduleEffort}
+                >
+                  {scheduleEstimateLoading ? '评估中' : 'AI 评估'}
+                </button>
+                <button type="button" class="estimate-clear-btn font-mono" on:click={clearScheduleEstimate}>清空</button>
+              </div>
             </div>
-            <div class="estimate-metrics">
-              <div>
-                <span>小时</span>
-                <strong>{schedEstimateHours > 0 ? formatOneDecimal(schedEstimateHours) : '-'}</strong>
-              </div>
-              <div>
-                <span>天数</span>
-                <strong>{schedEstimateDays > 0 ? formatOneDecimal(schedEstimateDays) : '-'}</strong>
-              </div>
-              <div>
+            <div class="estimate-manual-grid">
+              <label class="estimate-field" for="sched-estimate-hours">
+                <span>预估小时</span>
+                <input
+                  id="sched-estimate-hours"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  inputmode="decimal"
+                  value={schedEstimateHours > 0 ? formatOneDecimal(schedEstimateHours) : ''}
+                  placeholder="0"
+                  on:input={updateScheduleEstimateHours}
+                />
+              </label>
+              <label class="estimate-field" for="sched-estimate-days">
+                <span>预估天数</span>
+                <input
+                  id="sched-estimate-days"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  inputmode="decimal"
+                  value={schedEstimateDays > 0 ? formatOneDecimal(schedEstimateDays) : ''}
+                  placeholder="0"
+                  on:input={updateScheduleEstimateDays}
+                />
+              </label>
+              <div class="estimate-difficulty-field">
                 <span>难度</span>
-                <strong>{formatDifficultyLabel(schedDifficulty)}</strong>
+                <div class="difficulty-segment" role="group" aria-label="工时难度">
+                  {#each difficultyOptions as option}
+                    <button
+                      type="button"
+                      class:active={schedDifficulty === option.value}
+                      on:click={() => updateScheduleDifficulty(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
               </div>
+            </div>
+            <div class="estimate-source-row">
+              <span class="estimate-source-pill source-{schedEstimateSource || 'none'} font-mono">{getScheduleEstimateSourceLabel()}</span>
+              {#if hasScheduleEstimate()}
+                <span>{formatEstimateSummary(schedEstimateHours, schedEstimateDays)} / {formatDifficultyLabel(schedDifficulty)}</span>
+              {:else}
+                <span>可直接手动保存，无需先进行 AI 评估</span>
+              {/if}
             </div>
             {#if schedEstimateBasis}
               <p class="estimate-basis">{schedEstimateBasis}</p>
             {:else if !hasScheduleEstimate()}
-              <p class="estimate-basis muted">排期前可先生成一个工时基线。</p>
+              <p class="estimate-basis muted">未设置工时也可排期，后续可回到此处补充。</p>
             {/if}
             {#if schedEstimateConfidence > 0}
               <span class="estimate-confidence font-mono">CONF {Math.round(schedEstimateConfidence * 100)}%</span>
@@ -3022,6 +3131,20 @@
     font-size: 0.86rem;
   }
 
+  .estimate-panel-head small {
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.35;
+  }
+
+  .estimate-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
   .estimate-ai-btn {
     flex: 0 0 auto;
     height: 32px;
@@ -3051,34 +3174,148 @@
     cursor: wait;
   }
 
-  .estimate-metrics {
+  .estimate-clear-btn {
+    flex: 0 0 auto;
+    height: 32px;
+    border: 1px solid rgba(71, 85, 105, 0.52);
+    background: rgba(15, 23, 42, 0.62);
+    color: #94a3b8;
+    border-radius: 8px;
+    padding: 0 10px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 900;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .estimate-clear-btn:hover {
+    background: rgba(51, 65, 85, 0.48);
+    border-color: rgba(100, 116, 139, 0.7);
+    color: #e2e8f0;
+  }
+
+  .estimate-manual-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
 
-  .estimate-metrics div {
+  .estimate-field,
+  .estimate-difficulty-field {
     min-width: 0;
     background: rgba(2, 6, 23, 0.34);
     border: 1px solid rgba(51, 65, 85, 0.48);
     border-radius: 8px;
-    padding: 9px 10px;
+    padding: 8px 10px;
   }
 
-  .estimate-metrics span {
+  .estimate-difficulty-field {
+    grid-column: 1 / -1;
+  }
+
+  .estimate-field span,
+  .estimate-difficulty-field > span {
     display: block;
     color: #64748b;
     font-size: 0.62rem;
     font-weight: 800;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
 
-  .estimate-metrics strong {
+  .estimate-field input {
+    width: 100%;
+    height: 28px;
+    box-sizing: border-box;
+    border: 0;
+    outline: none;
+    background: transparent;
     color: #e2e8f0;
-    font-size: 0.82rem;
-    line-height: 1.25;
-    word-break: break-word;
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 800;
     font-variant-numeric: tabular-nums;
+  }
+
+  .estimate-field input::placeholder {
+    color: #475569;
+  }
+
+  .estimate-field input::-webkit-outer-spin-button,
+  .estimate-field input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .estimate-field input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  .difficulty-segment {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .difficulty-segment button {
+    height: 30px;
+    border: 1px solid rgba(71, 85, 105, 0.58);
+    background: rgba(15, 23, 42, 0.56);
+    color: #94a3b8;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 800;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .difficulty-segment button:hover {
+    color: #e2e8f0;
+    border-color: rgba(129, 140, 248, 0.45);
+  }
+
+  .difficulty-segment button.active {
+    color: #e0e7ff;
+    background: rgba(79, 70, 229, 0.28);
+    border-color: rgba(129, 140, 248, 0.72);
+  }
+
+  .estimate-source-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.4;
+  }
+
+  .estimate-source-row > span:last-child {
+    min-width: 0;
+    text-align: right;
+  }
+
+  .estimate-source-pill {
+    flex: 0 0 auto;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    background: rgba(15, 23, 42, 0.58);
+    color: #94a3b8;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 0.6rem;
+    font-weight: 900;
+  }
+
+  .estimate-source-pill.source-ai_deconstruct {
+    color: #7dd3fc;
+    border-color: rgba(56, 189, 248, 0.34);
+    background: rgba(14, 165, 233, 0.1);
+  }
+
+  .estimate-source-pill.source-manual_adjusted {
+    color: #c4b5fd;
+    border-color: rgba(129, 140, 248, 0.36);
+    background: rgba(99, 102, 241, 0.12);
   }
 
   .estimate-basis,

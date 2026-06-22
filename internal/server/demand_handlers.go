@@ -118,6 +118,17 @@ func firstNonBlank(values ...string) string {
 	return ""
 }
 
+func normalizeScheduleEstimateSource(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ai_deconstruct":
+		return "ai_deconstruct"
+	case "manual", "manual_adjusted":
+		return "manual_adjusted"
+	default:
+		return ""
+	}
+}
+
 func extractJIRAAssignees(jql string) []string {
 	match := regexp.MustCompile(`(?i)assignee\s+in\s*\(([^)]*)\)`).FindStringSubmatch(jql)
 	if len(match) < 2 {
@@ -423,14 +434,15 @@ func (s *Server) handleArchiveDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 type ScheduleTaskRequest struct {
-	TaskID        string  `json:"task_id"`
-	Branch        string  `json:"branch"`
-	DueDate       string  `json:"due_date"` // YYYY-MM-DD
-	Status        string  `json:"status"`   // backlog, progress, review, done
-	TaskGroupID   string  `json:"task_group_id"`
-	EstimateDays  float64 `json:"estimate_days"`
-	EstimateHours float64 `json:"estimate_hours"`
-	Difficulty    string  `json:"difficulty"`
+	TaskID         string  `json:"task_id"`
+	Branch         string  `json:"branch"`
+	DueDate        string  `json:"due_date"` // YYYY-MM-DD
+	Status         string  `json:"status"`   // backlog, progress, review, done
+	TaskGroupID    string  `json:"task_group_id"`
+	EstimateDays   float64 `json:"estimate_days"`
+	EstimateHours  float64 `json:"estimate_hours"`
+	Difficulty     string  `json:"difficulty"`
+	EstimateSource string  `json:"estimate_source"`
 }
 
 // handleScheduleTask updates the task's due date, development branch and handles notification read status
@@ -514,7 +526,12 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 		telemetry.TaskGroupID = req.TaskGroupID
 	}
 
-	if req.EstimateHours > 0 || req.EstimateDays > 0 || strings.TrimSpace(req.Difficulty) != "" {
+	estimateSource := normalizeScheduleEstimateSource(req.EstimateSource)
+	estimateRequested := estimateSource != "" || req.EstimateHours > 0 || req.EstimateDays > 0 || strings.TrimSpace(req.Difficulty) != ""
+	if estimateRequested {
+		telemetry.EstimateHours = 0
+		telemetry.EstimateDays = 0
+		telemetry.Difficulty = ""
 		if req.EstimateHours > 0 {
 			telemetry.EstimateHours = roundOneDecimal(req.EstimateHours)
 		}
@@ -524,7 +541,10 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 		if difficulty := normalizeDifficulty(req.Difficulty); difficulty != "" {
 			telemetry.Difficulty = difficulty
 		}
-		telemetry.EstimateSource = "ai_deconstruct"
+		if estimateSource == "" {
+			estimateSource = "manual_adjusted"
+		}
+		telemetry.EstimateSource = estimateSource
 	}
 
 	telemetry.LastUpdate = time.Now()

@@ -1870,8 +1870,8 @@ func TestDemandAndKPILogic(t *testing.T) {
 	if scheduledTask.Branch != "feat/demand-test-01" || scheduledTask.Status != "progress" || scheduledTask.TaskGroupID != "group-test-001" {
 		t.Errorf("Expected scheduled task changes, got %+v", scheduledTask)
 	}
-	if scheduledTask.EstimateHours != 18.4 || scheduledTask.EstimateDays != 2.3 || scheduledTask.Difficulty != "High" || scheduledTask.EstimateSource != "ai_deconstruct" {
-		t.Errorf("Expected AI estimate fields to persist, got %+v", scheduledTask)
+	if scheduledTask.EstimateHours != 18.4 || scheduledTask.EstimateDays != 2.3 || scheduledTask.Difficulty != "High" || scheduledTask.EstimateSource != "manual_adjusted" {
+		t.Errorf("Expected manual estimate fields to persist, got %+v", scheduledTask)
 	}
 
 	// Verify notification dismissed
