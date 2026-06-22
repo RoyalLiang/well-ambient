@@ -86,6 +86,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/demands", s.withPermission("demands:write", s.handleCreateDemand))
 	s.mux.HandleFunc("DELETE /api/demands", s.withAuth(s.handleDeleteDemand))
 	s.mux.HandleFunc("POST /api/demands/archive", s.withAuth(s.handleArchiveDemand))
+	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
 	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
 
 	// Protected AI Deconstructor API

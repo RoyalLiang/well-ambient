@@ -502,6 +502,158 @@ func superAdminToken(t *testing.T, username, name string, permissions []string) 
 	return token
 }
 
+func TestGetScheduleBuildsDemandTimeline(t *testing.T) {
+	setupServerTestDB(t)
+
+	token := superAdminToken(t, "pm@westwell-lab.com", "PM", []string{"demands:read"})
+	cfg := &config.Config{Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"}}
+	srv := NewServer(cfg, "")
+
+	now := time.Now()
+	overdueDue := now.AddDate(0, 0, -2)
+	soonDue := now.AddDate(0, 0, 2)
+	staleDue := now.AddDate(0, 0, 10)
+	staleUpdate := now.AddDate(0, 0, -5)
+	doneAt := now.AddDate(0, 0, -1)
+
+	users := []userdb.User{
+		{Username: "alice@westwell-lab.com", Email: "alice@westwell-lab.com", Name: "Alice", Department: "Product"},
+		{Username: "bob@westwell-lab.com", Email: "bob@westwell-lab.com", Name: "Bob", Department: "Engineering"},
+	}
+	for _, user := range users {
+		if err := db.DB.Create(&user).Error; err != nil {
+			t.Fatalf("seed user %s: %v", user.Username, err)
+		}
+	}
+
+	tasks := []db.TaskTelemetry{
+		{
+			TaskID:        "DEMAND-OVERDUE",
+			Title:         "Overdue demand",
+			Repo:          "platform-core",
+			Assignee:      "Alice",
+			CreatorDept:   "Product",
+			Branch:        "feat/overdue",
+			Status:        "progress",
+			IssueType:     "demand",
+			TaskGroupID:   "group-overdue",
+			DueDate:       &overdueDue,
+			TaskCreatedAt: now.AddDate(0, 0, -8),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "DEMAND-SOON",
+			Title:         "Due soon demand",
+			Repo:          "web",
+			Assignee:      "Bob",
+			Branch:        "feat/soon",
+			Status:        "backlog",
+			IssueType:     "demand",
+			TaskGroupID:   "group-soon",
+			DueDate:       &soonDue,
+			TaskCreatedAt: now.AddDate(0, 0, -1),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "DEMAND-UNSCHEDULED",
+			Title:         "Unscheduled demand",
+			Assignee:      "Alice",
+			Branch:        "-",
+			Status:        "backlog",
+			IssueType:     "demand",
+			TaskCreatedAt: now.AddDate(0, 0, -1),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "DEMAND-STALE",
+			Title:         "Stale demand",
+			Assignee:      "Bob",
+			Branch:        "feat/stale",
+			Status:        "progress",
+			IssueType:     "demand",
+			DueDate:       &staleDue,
+			TaskCreatedAt: now.AddDate(0, 0, -10),
+			LastUpdate:    staleUpdate,
+		},
+		{
+			TaskID:        "DEMAND-DONE",
+			Title:         "Delivered demand",
+			Assignee:      "Bob",
+			Branch:        "feat/done",
+			Status:        "done",
+			IssueType:     "demand",
+			DueDate:       &soonDue,
+			CompletedAt:   &doneAt,
+			TaskCreatedAt: now.AddDate(0, 0, -3),
+			LastUpdate:    doneAt,
+		},
+		{
+			TaskID:        "TASK-OVERDUE-1",
+			Title:         "Subtask done",
+			Assignee:      "Alice",
+			Status:        "done",
+			IssueType:     "task",
+			TaskGroupID:   "group-overdue",
+			TaskCreatedAt: now.AddDate(0, 0, -4),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "TASK-OVERDUE-2",
+			Title:         "Subtask active",
+			Assignee:      "Alice",
+			Status:        "progress",
+			IssueType:     "task",
+			TaskGroupID:   "group-overdue",
+			TaskCreatedAt: now.AddDate(0, 0, -3),
+			LastUpdate:    now,
+		},
+	}
+
+	for _, task := range tasks {
+		if err := db.DB.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %s: %v", task.TaskID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/schedule status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response ScheduleResponseDTO
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode schedule response: %v", err)
+	}
+
+	if response.Summary.Total != 5 || response.Summary.Overdue != 1 || response.Summary.DueSoon != 1 || response.Summary.Stale != 1 || response.Summary.Done != 1 {
+		t.Fatalf("unexpected schedule summary: %+v", response.Summary)
+	}
+	if len(response.Items) != 5 {
+		t.Fatalf("items length = %d, want 5", len(response.Items))
+	}
+	if response.Items[0].DemandID != "DEMAND-OVERDUE" || response.Items[0].RiskLevel != "overdue" {
+		t.Fatalf("first item should be overdue demand, got %+v", response.Items[0])
+	}
+
+	var overdue ScheduleItemDTO
+	for _, item := range response.Items {
+		if item.DemandID == "DEMAND-OVERDUE" {
+			overdue = item
+			break
+		}
+	}
+	if overdue.SubtaskTotal != 2 || overdue.SubtaskDone != 1 || overdue.SubtaskActive != 1 {
+		t.Fatalf("overdue subtask stats mismatch: %+v", overdue)
+	}
+	if overdue.Department != "Product" {
+		t.Fatalf("overdue department = %q, want Product", overdue.Department)
+	}
+}
+
 func seedLocalUserWithGroup(t *testing.T, username, name, groupName, password string) userdb.User {
 	t.Helper()
 	passwordHash := ""

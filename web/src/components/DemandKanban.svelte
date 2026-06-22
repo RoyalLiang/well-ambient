@@ -29,6 +29,88 @@
     task_group_id?: string;
   }
 
+  type DemandView = 'board' | 'schedule';
+  type ScheduleRiskFilter = 'attention' | 'all' | 'overdue' | 'due_soon' | 'stale' | 'unscheduled' | 'safe' | 'done';
+  type ScheduleSortMode = 'risk' | 'due' | 'owner';
+
+  interface ScheduleSummary {
+    total: number;
+    scheduled: number;
+    unscheduled: number;
+    in_progress: number;
+    review: number;
+    done: number;
+    overdue: number;
+    due_soon: number;
+    stale: number;
+  }
+
+  interface ScheduleItem {
+    demand_id: string;
+    title: string;
+    description: string;
+    assignee: string;
+    department: string;
+    repo: string;
+    branch: string;
+    status: string;
+    task_group_id: string;
+    due_date: string;
+    created_at: string;
+    last_update: string;
+    completed_at?: string;
+    mr_url?: string;
+    estimate_days: number;
+    estimate_hours: number;
+    difficulty: string;
+    risk_level: string;
+    risk_label: string;
+    risk_reason: string;
+    risk_rank: number;
+    days_remaining: number;
+    subtask_total: number;
+    subtask_done: number;
+    subtask_active: number;
+    subtask_review: number;
+  }
+
+  interface ScheduleResponse {
+    generated_at: string;
+    summary: ScheduleSummary;
+    items: ScheduleItem[];
+  }
+
+  const scheduleRiskFilters: Array<{ value: ScheduleRiskFilter; label: string }> = [
+    { value: 'attention', label: '需关注' },
+    { value: 'all', label: '全部' },
+    { value: 'overdue', label: '逾期' },
+    { value: 'due_soon', label: '临期' },
+    { value: 'stale', label: '滞后' },
+    { value: 'unscheduled', label: '待排期' },
+    { value: 'safe', label: '正常' },
+    { value: 'done', label: '已交付' }
+  ];
+
+  const scheduleSortModes: Array<{ value: ScheduleSortMode; label: string }> = [
+    { value: 'risk', label: '风险优先' },
+    { value: 'due', label: '截止日' },
+    { value: 'owner', label: '负责人' }
+  ];
+
+  function createEmptyScheduleSummary(): ScheduleSummary {
+    return {
+      total: 0,
+      scheduled: 0,
+      unscheduled: 0,
+      in_progress: 0,
+      review: 0,
+      done: 0,
+      overdue: 0,
+      due_soon: 0,
+      stale: 0
+    };
+  }
+
   function canManageDemand(item: Demand): boolean {
     if (hasPermission('demands:write')) return true;
     if (!item.creator) return false;
@@ -73,7 +155,7 @@
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.ok) {
-          await fetchDemands();
+          await refreshDemandWorkspace();
         } else {
           const data = await res.json();
           alert(`删除失败: ${data.message || res.statusText}`);
@@ -104,7 +186,7 @@
           body: JSON.stringify({ task_id: taskId })
         });
         if (res.ok) {
-          await fetchDemands();
+          await refreshDemandWorkspace();
         } else {
           const data = await res.json();
           alert(`归档失败: ${data.message || res.statusText}`);
@@ -125,9 +207,20 @@
   }
 
   let demands: Demand[] = [];
+  let demandsById: Map<string, Demand> = new Map();
   let users: UserOption[] = [];
   let loading = false;
   let errorMsg = '';
+  let activeDemandView: DemandView = 'board';
+  let scheduleItems: ScheduleItem[] = [];
+  let scheduleSummary: ScheduleSummary = createEmptyScheduleSummary();
+  let scheduleGeneratedAt = '';
+  let scheduleLoading = false;
+  let scheduleErrorMsg = '';
+  let scheduleSearch = '';
+  let scheduleRiskFilter: ScheduleRiskFilter = 'attention';
+  let scheduleAssigneeFilter = 'all';
+  let scheduleSortMode: ScheduleSortMode = 'risk';
 
   // Modal States
   let showCreateModal = false;
@@ -137,6 +230,7 @@
   // Dropdown States
   let showAssigneeDropdown = false;
   let showTaskGroupDropdown = false;
+  let showScheduleAssigneeDropdown = false;
   let activeDatePicker: 'new' | 'schedule' | null = null;
   let datePickerCursor = new Date();
   let taskGroups: string[] = [];
@@ -290,6 +384,100 @@
   $: scheduledDemands = demands.filter(d => d.status === 'backlog' && d.branch !== '' && d.branch !== '-');
   $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-');
   $: deliveredDemands = demands.filter(d => d.status === 'done');
+  $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
+  $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  $: filteredScheduleItems = scheduleItems
+    .filter((item) => matchesScheduleFilters(item))
+    .sort((a, b) => compareScheduleItems(a, b));
+
+  function setDemandView(view: DemandView) {
+    activeDemandView = view;
+    if (view === 'schedule') {
+      fetchSchedule();
+    }
+  }
+
+  function matchesScheduleFilters(item: ScheduleItem): boolean {
+    const query = scheduleSearch.trim().toLowerCase();
+    if (query) {
+      const haystack = [
+        item.demand_id,
+        item.title,
+        item.description,
+        item.assignee,
+        item.department,
+        item.repo,
+        item.branch,
+        item.task_group_id,
+        item.risk_label
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    if (scheduleAssigneeFilter !== 'all' && item.assignee !== scheduleAssigneeFilter) {
+      return false;
+    }
+
+    if (scheduleRiskFilter === 'attention') {
+      return item.risk_level !== 'safe' && item.risk_level !== 'done';
+    }
+    if (scheduleRiskFilter !== 'all') {
+      return item.risk_level === scheduleRiskFilter;
+    }
+    return true;
+  }
+
+  function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
+    if (scheduleSortMode === 'owner') {
+      const ownerCompare = a.assignee.localeCompare(b.assignee);
+      if (ownerCompare !== 0) return ownerCompare;
+      return a.demand_id.localeCompare(b.demand_id);
+    }
+    if (scheduleSortMode === 'due') {
+      if (a.due_date !== b.due_date) {
+        if (!a.due_date) return 1;
+        if (!b.due_date) return -1;
+        return a.due_date.localeCompare(b.due_date);
+      }
+      return b.risk_rank - a.risk_rank;
+    }
+    if (a.risk_rank !== b.risk_rank) return b.risk_rank - a.risk_rank;
+    if (a.due_date !== b.due_date) {
+      if (!a.due_date) return 1;
+      if (!b.due_date) return -1;
+      return a.due_date.localeCompare(b.due_date);
+    }
+    return a.demand_id.localeCompare(b.demand_id);
+  }
+
+  async function fetchSchedule() {
+    scheduleLoading = true;
+    scheduleErrorMsg = '';
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/schedule', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        throw new Error('获取排期表失败');
+      }
+      const data: ScheduleResponse = await res.json();
+      scheduleItems = data.items || [];
+      scheduleSummary = data.summary || createEmptyScheduleSummary();
+      scheduleGeneratedAt = data.generated_at || '';
+    } catch (err: any) {
+      scheduleErrorMsg = err.message || '获取排期表失败';
+    } finally {
+      scheduleLoading = false;
+    }
+  }
+
+  async function refreshDemandWorkspace() {
+    await fetchDemands();
+    if (activeDemandView === 'schedule') {
+      await fetchSchedule();
+    }
+  }
 
   async function fetchDemands() {
     loading = true;
@@ -370,7 +558,7 @@
         newTitle = '';
         newDescription = '';
         updateNewDueDate('');
-        await fetchDemands();
+        await refreshDemandWorkspace();
       } else {
         const err = await res.json();
         alert(`创建需求失败: ${err.message || res.statusText}`);
@@ -417,7 +605,7 @@
       if (res.ok) {
         showScheduleModal = false;
         selectedDemand = null;
-        await fetchDemands();
+        await refreshDemandWorkspace();
       } else {
         const errText = await res.text();
         alert(`排期失败: ${errText}`);
@@ -454,11 +642,59 @@
     }
   }
 
+  function getScheduleProgress(item: ScheduleItem): number {
+    if (item.subtask_total <= 0) return item.status === 'done' ? 100 : 0;
+    return Math.round((item.subtask_done / item.subtask_total) * 100);
+  }
+
+  function formatScheduleDue(item: ScheduleItem): string {
+    if (item.status === 'done') {
+      return item.completed_at ? `完成于 ${formatDateDisplay(item.completed_at.slice(0, 10))}` : '已交付';
+    }
+    if (!item.due_date) return '未设置截止日';
+    if (item.days_remaining < 0) return `逾期 ${Math.abs(item.days_remaining)} 天`;
+    if (item.days_remaining === 0) return '今天截止';
+    return `${item.days_remaining} 天后截止`;
+  }
+
+  function formatScheduleDate(value: string): string {
+    if (!value) return '-';
+    return formatDateDisplay(value.slice(0, 10));
+  }
+
+  function getScheduleStatusLabel(status: string): string {
+    switch (status) {
+      case 'backlog':
+        return '已排期';
+      case 'progress':
+        return '开发中';
+      case 'review':
+        return '评审中';
+      case 'done':
+        return '已交付';
+      default:
+        return status || '未知';
+    }
+  }
+
+  function canEditScheduleItem(item: ScheduleItem): boolean {
+    const demand = demandsById.get(item.demand_id);
+    return !!demand && (isAssignee(demand) || hasPermission('demands:write'));
+  }
+
+  function openScheduleFromItem(item: ScheduleItem) {
+    const demand = demandsById.get(item.demand_id);
+    if (demand) {
+      openScheduleModal(demand);
+    }
+  }
+
   function handleDocumentClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (!target.closest('.custom-dropdown-container')) {
       showAssigneeDropdown = false;
       showTaskGroupDropdown = false;
+      showScheduleAssigneeDropdown = false;
     }
     if (!target.closest('.date-input-shell')) {
       activeDatePicker = null;
@@ -470,7 +706,12 @@
     fetchUsers();
     document.addEventListener('click', handleDocumentClick);
     // Poll updates every 15 seconds
-    const interval = setInterval(fetchDemands, 15000);
+    const interval = setInterval(() => {
+      fetchDemands();
+      if (activeDemandView === 'schedule') {
+        fetchSchedule();
+      }
+    }, 15000);
     return () => {
       clearInterval(interval);
       document.removeEventListener('click', handleDocumentClick);
@@ -492,10 +733,210 @@
     {/if}
   </div>
 
-  {#if loading && demands.length === 0}
+  <div class="demand-viewbar">
+    <div class="view-toggle" role="tablist" aria-label="需求视图切换">
+      <button class:active={activeDemandView === 'board'} on:click={() => setDemandView('board')}>流转看板</button>
+      <button class:active={activeDemandView === 'schedule'} on:click={() => setDemandView('schedule')}>排期表</button>
+    </div>
+    <div class="viewbar-meta font-mono">
+      {#if activeDemandView === 'schedule' && scheduleGeneratedAt}
+        {scheduleGeneratedAt}
+      {:else}
+        {demands.length} active demands
+      {/if}
+    </div>
+  </div>
+
+  {#if loading && demands.length === 0 && activeDemandView === 'board'}
     <div class="state-msg">加载需求大盘中...</div>
-  {:else if errorMsg}
+  {:else if errorMsg && activeDemandView === 'board'}
     <div class="state-msg error-msg font-mono">❌ {errorMsg}</div>
+  {:else if activeDemandView === 'schedule'}
+    <div class="schedule-workbench">
+      <div class="schedule-summary-grid">
+        <div class="schedule-summary-cell">
+          <span class="summary-label font-mono">TOTAL</span>
+          <strong>{scheduleSummary.total}</strong>
+          <em>需求总量</em>
+        </div>
+        <div class="schedule-summary-cell is-blue">
+          <span class="summary-label font-mono">SCHEDULED</span>
+          <strong>{scheduleSummary.scheduled}</strong>
+          <em>已锁定排期</em>
+        </div>
+        <div class="schedule-summary-cell is-red">
+          <span class="summary-label font-mono">OVERDUE</span>
+          <strong>{scheduleSummary.overdue}</strong>
+          <em>逾期风险</em>
+        </div>
+        <div class="schedule-summary-cell is-amber">
+          <span class="summary-label font-mono">DUE SOON</span>
+          <strong>{scheduleSummary.due_soon}</strong>
+          <em>三日内到期</em>
+        </div>
+        <div class="schedule-summary-cell is-violet">
+          <span class="summary-label font-mono">STALE</span>
+          <strong>{scheduleSummary.stale}</strong>
+          <em>推进滞后</em>
+        </div>
+      </div>
+
+      <div class="schedule-control-panel">
+        <div class="schedule-search-shell">
+          <span class="search-mark"></span>
+          <input bind:value={scheduleSearch} placeholder="搜索需求、负责人、仓库、分支" />
+        </div>
+
+        <div class="schedule-filter-strip">
+          {#each scheduleRiskFilters as filter}
+            <button
+              class:active={scheduleRiskFilter === filter.value}
+              on:click={() => scheduleRiskFilter = filter.value}
+            >
+              {filter.label}
+            </button>
+          {/each}
+        </div>
+
+        <div class="schedule-assignee-menu custom-dropdown-container">
+          <button class="schedule-menu-trigger" on:click|stopPropagation={() => showScheduleAssigneeDropdown = !showScheduleAssigneeDropdown}>
+            <span>{scheduleAssigneeFilter === 'all' ? '全部负责人' : scheduleAssigneeFilter}</span>
+            <span class="arrow-icon {showScheduleAssigneeDropdown ? 'open' : ''}">▼</span>
+          </button>
+          {#if showScheduleAssigneeDropdown}
+            <div class="dropdown-options-list glass-panel">
+              <button
+                type="button"
+                class="dropdown-option-item {scheduleAssigneeFilter === 'all' ? 'selected' : ''}"
+                on:click={() => {
+                  scheduleAssigneeFilter = 'all';
+                  showScheduleAssigneeDropdown = false;
+                }}
+              >
+                全部负责人
+              </button>
+              {#each scheduleAssigneeOptions as assignee}
+                <button
+                  type="button"
+                  class="dropdown-option-item {scheduleAssigneeFilter === assignee ? 'selected' : ''}"
+                  on:click={() => {
+                    scheduleAssigneeFilter = assignee;
+                    showScheduleAssigneeDropdown = false;
+                  }}
+                >
+                  {assignee}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="schedule-sort-strip">
+          {#each scheduleSortModes as mode}
+            <button
+              class:active={scheduleSortMode === mode.value}
+              on:click={() => scheduleSortMode = mode.value}
+            >
+              {mode.label}
+            </button>
+          {/each}
+        </div>
+
+        <button class="schedule-refresh-btn font-mono" class:is-loading={scheduleLoading} on:click={fetchSchedule}>
+          刷新
+        </button>
+      </div>
+
+      {#if scheduleLoading && scheduleItems.length === 0}
+        <div class="state-msg">加载排期表中...</div>
+      {:else if scheduleErrorMsg}
+        <div class="state-msg error-msg font-mono">❌ {scheduleErrorMsg}</div>
+      {:else}
+        <div class="schedule-table-panel">
+          <div class="schedule-table-head">
+            <div>
+              <span class="eyebrow">SCHEDULE WORKTABLE</span>
+              <h3>需求排期总表</h3>
+            </div>
+            <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
+          </div>
+          <div class="schedule-table-wrapper">
+            <table class="schedule-table">
+              <thead>
+                <tr>
+                  <th>需求</th>
+                  <th>负责人</th>
+                  <th>排期</th>
+                  <th>交付窗口</th>
+                  <th>影子任务</th>
+                  <th>风险</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each filteredScheduleItems as item}
+                  {@const progress = getScheduleProgress(item)}
+                  <tr>
+                    <td class="demand-cell">
+                      <div class="demand-stack">
+                        <span class="schedule-id font-mono">#{item.demand_id}</span>
+                        <strong>{item.title}</strong>
+                        <small>{item.description || '暂无需求说明'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="owner-stack">
+                        <strong>{item.assignee}</strong>
+                        <span>{item.department}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="branch-stack">
+                        <span class="status-chip status-{item.status}">{getScheduleStatusLabel(item.status)}</span>
+                        <strong class="font-mono">{item.branch && item.branch !== '-' ? item.branch : '未绑定分支'}</strong>
+                        <span>{item.repo && item.repo !== '-' ? item.repo : '未映射仓库'}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="due-stack">
+                        <strong>{formatScheduleDue(item)}</strong>
+                        <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
+                        <small>更新 {item.last_update || '-'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="subtask-stack">
+                        <div class="subtask-meter">
+                          <span style="width: {progress}%"></span>
+                        </div>
+                        <strong>{item.subtask_done}/{item.subtask_total || 0}</strong>
+                        <small>{item.task_group_id || '未绑定任务组'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="risk-stack">
+                        <span class="schedule-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
+                        <small>{item.risk_reason}</small>
+                      </div>
+                    </td>
+                    <td>
+                      {#if canEditScheduleItem(item)}
+                        <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
+                      {:else}
+                        <span class="schedule-row-muted font-mono">READ</span>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            {#if filteredScheduleItems.length === 0}
+              <div class="schedule-empty-state font-mono">当前筛选下暂无排期数据</div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
   {:else}
     <!-- Kanban Lanes -->
     <div class="demand-kanban-board">
@@ -1063,6 +1504,429 @@
     background: #4f46e5;
     transform: translateY(-1px);
     box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+  }
+
+  .demand-viewbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: rgba(15, 23, 42, 0.38);
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    border-radius: 10px;
+    padding: 8px;
+  }
+
+  .view-toggle,
+  .schedule-filter-strip,
+  .schedule-sort-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(2, 6, 23, 0.32);
+    border: 1px solid rgba(51, 65, 85, 0.38);
+    border-radius: 8px;
+    padding: 4px;
+  }
+
+  .view-toggle button,
+  .schedule-filter-strip button,
+  .schedule-sort-strip button {
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    border-radius: 6px;
+    padding: 7px 11px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background 0.16s ease, color 0.16s ease;
+  }
+
+  .view-toggle button.active,
+  .schedule-filter-strip button.active,
+  .schedule-sort-strip button.active {
+    color: #f8fafc;
+    background: rgba(99, 102, 241, 0.48);
+  }
+
+  .viewbar-meta {
+    color: #64748b;
+    font-size: 0.68rem;
+    padding: 0 4px;
+  }
+
+  .schedule-workbench {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .schedule-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .schedule-summary-cell {
+    min-height: 92px;
+    background: rgba(10, 15, 30, 0.66);
+    border: 1px solid rgba(51, 65, 85, 0.32);
+    border-top: 3px solid rgba(100, 116, 139, 0.72);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .schedule-summary-cell.is-blue { border-top-color: #38bdf8; }
+  .schedule-summary-cell.is-red { border-top-color: #ef4444; }
+  .schedule-summary-cell.is-amber { border-top-color: #f59e0b; }
+  .schedule-summary-cell.is-violet { border-top-color: #a78bfa; }
+
+  .summary-label {
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 900;
+  }
+
+  .schedule-summary-cell strong {
+    color: #f8fafc;
+    font-size: 1.45rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .schedule-summary-cell em {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-style: normal;
+  }
+
+  .schedule-control-panel {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.25fr) minmax(300px, 2fr) minmax(150px, 0.7fr) minmax(220px, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    background: rgba(10, 15, 30, 0.6);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .schedule-search-shell {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .schedule-search-shell input {
+    width: 100%;
+    height: 38px;
+    box-sizing: border-box;
+    background: rgba(15, 23, 42, 0.74);
+    border: 1px solid rgba(71, 85, 105, 0.68);
+    border-radius: 8px;
+    color: #e2e8f0;
+    outline: none;
+    padding: 0 12px 0 34px;
+    font-size: 0.78rem;
+  }
+
+  .schedule-search-shell input:focus {
+    border-color: rgba(129, 140, 248, 0.78);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+
+  .search-mark {
+    position: absolute;
+    left: 12px;
+    width: 11px;
+    height: 11px;
+    border: 2px solid #64748b;
+    border-radius: 50%;
+  }
+
+  .search-mark::after {
+    content: "";
+    position: absolute;
+    width: 6px;
+    height: 2px;
+    right: -5px;
+    bottom: -3px;
+    background: #64748b;
+    transform: rotate(45deg);
+    border-radius: 2px;
+  }
+
+  .schedule-assignee-menu {
+    min-width: 150px;
+  }
+
+  .schedule-menu-trigger {
+    width: 100%;
+    height: 38px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(71, 85, 105, 0.68);
+    border-radius: 8px;
+    color: #cbd5e1;
+    padding: 0 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.76rem;
+    font-weight: 700;
+  }
+
+  .schedule-menu-trigger:hover {
+    color: #f8fafc;
+    border-color: rgba(129, 140, 248, 0.55);
+  }
+
+  .schedule-refresh-btn {
+    height: 38px;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    background: rgba(14, 165, 233, 0.12);
+    color: #7dd3fc;
+    border-radius: 8px;
+    padding: 0 13px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 900;
+  }
+
+  .schedule-refresh-btn:hover {
+    background: rgba(14, 165, 233, 0.2);
+  }
+
+  .schedule-refresh-btn.is-loading {
+    opacity: 0.65;
+    cursor: wait;
+  }
+
+  .schedule-table-panel {
+    background: rgba(10, 15, 30, 0.68);
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .schedule-table-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.32);
+  }
+
+  .schedule-table-head h3 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .schedule-count {
+    color: #94a3b8;
+    font-size: 0.7rem;
+  }
+
+  .schedule-table-wrapper {
+    max-height: 620px;
+    overflow: auto;
+  }
+
+  .schedule-table {
+    width: 100%;
+    min-width: 1080px;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .schedule-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #0b1220;
+    color: #64748b;
+    font-size: 0.66rem;
+    font-weight: 900;
+    text-align: left;
+    letter-spacing: 0.04em;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.48);
+  }
+
+  .schedule-table td {
+    vertical-align: top;
+    padding: 12px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.24);
+    color: #cbd5e1;
+    font-size: 0.78rem;
+  }
+
+  .schedule-table tr:hover td {
+    background: rgba(30, 41, 59, 0.22);
+  }
+
+  .demand-cell {
+    width: 28%;
+  }
+
+  .demand-stack,
+  .owner-stack,
+  .branch-stack,
+  .due-stack,
+  .subtask-stack,
+  .risk-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .demand-stack strong,
+  .branch-stack strong,
+  .due-stack strong,
+  .owner-stack strong,
+  .subtask-stack strong {
+    color: #f8fafc;
+    line-height: 1.32;
+    word-break: break-word;
+  }
+
+  .demand-stack small,
+  .branch-stack span,
+  .due-stack span,
+  .due-stack small,
+  .owner-stack span,
+  .subtask-stack small,
+  .risk-stack small {
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .schedule-id {
+    color: #818cf8;
+    font-size: 0.66rem;
+    font-weight: 900;
+  }
+
+  .status-chip {
+    width: fit-content;
+    border-radius: 5px;
+    padding: 2px 6px;
+    font-size: 0.64rem;
+    font-weight: 900;
+    color: #cbd5e1;
+    background: rgba(100, 116, 139, 0.14);
+    border: 1px solid rgba(100, 116, 139, 0.25);
+  }
+
+  .status-chip.status-progress { color: #c4b5fd; border-color: rgba(168, 85, 247, 0.34); background: rgba(168, 85, 247, 0.1); }
+  .status-chip.status-review { color: #fde68a; border-color: rgba(234, 179, 8, 0.34); background: rgba(234, 179, 8, 0.1); }
+  .status-chip.status-done { color: #86efac; border-color: rgba(16, 185, 129, 0.34); background: rgba(16, 185, 129, 0.1); }
+
+  .subtask-meter {
+    height: 6px;
+    width: 100%;
+    min-width: 80px;
+    background: rgba(51, 65, 85, 0.72);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .subtask-meter span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #38bdf8, #818cf8);
+    border-radius: inherit;
+  }
+
+  .schedule-risk-pill {
+    width: fit-content;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.68rem;
+    font-weight: 900;
+    border: 1px solid rgba(100, 116, 139, 0.28);
+    color: #cbd5e1;
+    background: rgba(100, 116, 139, 0.12);
+  }
+
+  .risk-overdue { color: #fecaca; background: rgba(239, 68, 68, 0.14); border-color: rgba(248, 113, 113, 0.4); }
+  .risk-due_soon { color: #fed7aa; background: rgba(249, 115, 22, 0.12); border-color: rgba(251, 146, 60, 0.36); }
+  .risk-stale { color: #ddd6fe; background: rgba(139, 92, 246, 0.13); border-color: rgba(167, 139, 250, 0.36); }
+  .risk-unscheduled { color: #bae6fd; background: rgba(14, 165, 233, 0.11); border-color: rgba(56, 189, 248, 0.32); }
+  .risk-safe { color: #bbf7d0; background: rgba(16, 185, 129, 0.1); border-color: rgba(74, 222, 128, 0.32); }
+  .risk-done { color: #cbd5e1; background: rgba(100, 116, 139, 0.12); border-color: rgba(100, 116, 139, 0.28); }
+
+  .schedule-row-action {
+    background: rgba(99, 102, 241, 0.14);
+    border: 1px solid rgba(129, 140, 248, 0.38);
+    color: #c4b5fd;
+    border-radius: 7px;
+    padding: 6px 10px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .schedule-row-action:hover {
+    background: #4f46e5;
+    color: #fff;
+  }
+
+  .schedule-row-muted {
+    color: #475569;
+    font-size: 0.64rem;
+    font-weight: 900;
+  }
+
+  .schedule-empty-state {
+    padding: 34px;
+    text-align: center;
+    color: #64748b;
+    border-top: 1px solid rgba(51, 65, 85, 0.3);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 1180px) {
+    .schedule-summary-grid {
+      grid-template-columns: repeat(3, minmax(130px, 1fr));
+    }
+
+    .schedule-control-panel {
+      grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.4fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .schedule-summary-grid {
+      grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+
+    .schedule-control-panel {
+      grid-template-columns: 1fr;
+    }
+
+    .schedule-filter-strip,
+    .schedule-sort-strip {
+      overflow-x: auto;
+      justify-content: flex-start;
+    }
+
+    .schedule-filter-strip button,
+    .schedule-sort-strip button,
+    .view-toggle button {
+      white-space: nowrap;
+    }
   }
 
   /* Kanban Lanes */
@@ -1788,9 +2652,14 @@
   }
 
   .dropdown-option-item {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
     padding: 8px 12px;
     color: #cbd5e1;
     font-size: 0.8rem;
+    font-family: inherit;
     cursor: pointer;
     border-radius: 6px;
     transition: all 0.15s;
