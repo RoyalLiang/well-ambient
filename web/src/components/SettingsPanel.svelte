@@ -1974,18 +1974,18 @@
 
 <style>
   .settings-container {
-    display: flex;
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
     align-items: stretch;
     gap: 32px;
     flex: 1;
+    width: 100%;
     height: 100%;
     min-height: 0;
     overflow: visible;
   }
 
   .settings-sidebar {
-    width: 250px;
-    flex-shrink: 0;
     box-sizing: border-box;
     background: #0b1329;
     border: 1px solid rgba(51, 65, 85, 0.4);
@@ -2068,7 +2068,6 @@
   }
 
   .settings-main {
-    flex-grow: 1;
     min-width: 0;
     height: 100%;
     min-height: 0;
@@ -2097,6 +2096,11 @@
     border-radius: 12px;
     padding: 24px;
     box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+  }
+
+  .settings-main > .section-card {
+    min-height: 100%;
+    box-sizing: border-box;
   }
 
   .kpi-settings-panel {
@@ -3487,6 +3491,7 @@
 
   @media (max-width: 1100px) {
     .settings-container {
+      display: flex;
       flex-direction: column;
       gap: 18px;
       height: auto;
