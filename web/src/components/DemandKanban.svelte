@@ -2065,6 +2065,7 @@
     border: 1px solid rgba(51, 65, 85, 0.34);
     border-radius: 12px;
     overflow: hidden;
+    min-width: 0;
   }
 
   .schedule-table-head {
@@ -2116,20 +2117,20 @@
 
   .schedule-table {
     width: 100%;
-    min-width: 1420px;
+    min-width: 1040px;
     border-collapse: collapse;
     table-layout: fixed;
   }
 
-  .schedule-table .col-demand { width: 300px; }
-  .schedule-table .col-owner { width: 140px; }
-  .schedule-table .col-plan { width: 150px; }
-  .schedule-table .col-effort { width: 130px; }
-  .schedule-table .col-evidence { width: 200px; }
-  .schedule-table .col-subtask { width: 140px; }
-  .schedule-table .col-risk { width: 210px; }
-  .schedule-table .col-update { width: 120px; }
-  .schedule-table .col-action { width: 90px; }
+  .schedule-table .col-demand { width: 236px; }
+  .schedule-table .col-owner { width: 96px; }
+  .schedule-table .col-plan { width: 112px; }
+  .schedule-table .col-effort { width: 84px; }
+  .schedule-table .col-evidence { width: 130px; }
+  .schedule-table .col-subtask { width: 98px; }
+  .schedule-table .col-risk { width: 146px; }
+  .schedule-table .col-update { width: 76px; }
+  .schedule-table .col-action { width: 62px; }
 
   .schedule-table th {
     position: sticky;
@@ -2141,13 +2142,13 @@
     font-weight: 900;
     text-align: left;
     letter-spacing: 0.04em;
-    padding: 10px 12px;
+    padding: 10px 8px;
     border-bottom: 1px solid rgba(71, 85, 105, 0.48);
   }
 
   .schedule-table td {
     vertical-align: top;
-    padding: 12px;
+    padding: 10px 8px;
     border-bottom: 1px solid rgba(51, 65, 85, 0.24);
     color: #cbd5e1;
     font-size: 0.78rem;
@@ -2155,6 +2156,30 @@
 
   .schedule-table tr:hover td {
     background: rgba(30, 41, 59, 0.22);
+  }
+
+  .schedule-table th:last-child,
+  .schedule-table td:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 4;
+    background: #0b1220;
+    box-shadow: -12px 0 20px rgba(2, 6, 23, 0.34);
+    padding-left: 6px;
+    padding-right: 6px;
+    text-align: center;
+  }
+
+  .schedule-table th:last-child {
+    z-index: 6;
+  }
+
+  .schedule-table td:last-child {
+    background: #0c1424;
+  }
+
+  .schedule-table tr:hover td:last-child {
+    background: #111c30;
   }
 
   .demand-cell {
@@ -2281,14 +2306,16 @@
   .risk-done { color: #cbd5e1; background: rgba(100, 116, 139, 0.12); border-color: rgba(100, 116, 139, 0.28); }
 
   .schedule-row-action {
+    width: 100%;
     background: rgba(99, 102, 241, 0.14);
     border: 1px solid rgba(129, 140, 248, 0.38);
     color: #c4b5fd;
     border-radius: 7px;
-    padding: 6px 10px;
+    padding: 6px 0;
     font-size: 0.72rem;
     font-weight: 800;
     cursor: pointer;
+    white-space: nowrap;
   }
 
   .schedule-row-action:hover {
