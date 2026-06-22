@@ -15,7 +15,7 @@
 
 权限：`demands:read`
 
-来源：基于 `task_telemetries` 一次查询聚合，不新增表结构。`issue_type = demand` 的记录作为排期主行，其它任务按 `task_group_id` 聚合为影子任务进度。
+来源：基于 `task_telemetries` 一次查询聚合，不新增表结构。`issue_type = demand` 的记录作为排期主行，包括本地录入需求和同步后的 Jira Task；其它任务按 `task_group_id` 聚合为影子任务进度。
 
 响应：
 

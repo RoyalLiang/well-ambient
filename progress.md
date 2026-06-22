@@ -442,6 +442,36 @@
 | Full server tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server` | server tests pass | blocked by sandbox loopback bind in existing `httptest.NewServer` tests | blocked |
 | Frontend type check | `pnpm check` in `web` | type check passes | failed on pre-existing `TaskKanban.svelte` and `App.svelte` errors outside touched Settings/AI/Button files | blocked |
 
+### Phase 18: Demand Creation Sources and Jira Task Demand Model
+- **Status:** complete
+- Actions taken:
+  - Applied `design-taste-frontend` guidance as an internal dense product UI repair.
+  - Added the `/api/demands/options` form metadata endpoint so demand creation can load assignees and projects from users, Jira config/JQL, historical tasks, and configured repositories.
+  - Added a project selector to the new-demand modal and kept “暂不指定项目” as the safe default for oral requirements.
+  - Replaced div-backed dropdown options with button-backed controls and removed blur/scale animation from the modal backdrop to reduce typing-time visual jitter.
+  - Changed Jira issue type mapping so Jira Task/Story/Feature/Epic-like items enter `issue_type = demand`; Bug/Defect-like items remain `bug`.
+  - Added `docs/demand-bug-lifecycle-model.md` and updated execution/schedule docs to match the new demand/bug/execution split.
+- Files modified:
+  - `internal/server/demand_handlers.go`
+  - `internal/server/jira_worker.go`
+  - `internal/server/jira_worker_test.go`
+  - `internal/server/server.go`
+  - `internal/server/server_test.go`
+  - `web/src/components/DemandKanban.svelte`
+  - `docs/demand-bug-lifecycle-model.md`
+  - `docs/execution-task-observability-mvp.md`
+  - `docs/schedule-table-mvp.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+## Latest Validation After Phase 18
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Demand/Jira focused Go tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(MapJiraStatus|MapJiraIssueType|BuildJQL|ParseJiraTime|GetDemandOptionsBuildsFormCandidates|CreateDemandUsesAuthenticatedDepartmentFallback|CreateDemandUsesRequestDepartmentFallback)' -count=1 -v` | Jira mapping, demand options, and create-demand fallbacks pass | passed | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing Svelte accessibility warnings | pass |
+| Frontend type check | `pnpm --dir web check` | type check passes | passed with existing warnings, 0 errors | pass |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

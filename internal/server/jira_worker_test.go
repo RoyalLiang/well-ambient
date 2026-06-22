@@ -42,6 +42,35 @@ func TestMapJiraStatus(t *testing.T) {
 	}
 }
 
+func TestMapJiraIssueType(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"Task", "demand"},
+		{"任务", "demand"},
+		{"Story", "demand"},
+		{"需求", "demand"},
+		{"Feature", "demand"},
+		{"Epic", "demand"},
+		{"Bug", "bug"},
+		{"缺陷", "bug"},
+		{"故障", "bug"},
+		{"Defect", "bug"},
+		{"unknown", "demand"},
+		{"", "demand"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			actual := mapJiraIssueType(tc.input)
+			if actual != tc.expected {
+				t.Errorf("mapJiraIssueType(%q) = %q; want %q", tc.input, actual, tc.expected)
+			}
+		})
+	}
+}
+
 func TestBuildJQL(t *testing.T) {
 	tests := []struct {
 		name     string

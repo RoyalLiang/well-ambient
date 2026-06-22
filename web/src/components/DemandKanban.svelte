@@ -80,6 +80,11 @@
     items: ScheduleItem[];
   }
 
+  interface DemandOptionsResponse {
+    assignees: string[];
+    projects: string[];
+  }
+
   const scheduleRiskFilters: Array<{ value: ScheduleRiskFilter; label: string }> = [
     { value: 'attention', label: '需关注' },
     { value: 'all', label: '全部' },
@@ -209,6 +214,8 @@
   let demands: Demand[] = [];
   let demandsById: Map<string, Demand> = new Map();
   let users: UserOption[] = [];
+  let demandOptionAssignees: string[] = [];
+  let demandOptionProjects: string[] = [];
   let loading = false;
   let errorMsg = '';
   let activeDemandView: DemandView = 'board';
@@ -229,6 +236,7 @@
 
   // Dropdown States
   let showAssigneeDropdown = false;
+  let showProjectDropdown = false;
   let showTaskGroupDropdown = false;
   let showScheduleAssigneeDropdown = false;
   let activeDatePicker: 'new' | 'schedule' | null = null;
@@ -239,6 +247,7 @@
   let newTitle = '';
   let newDescription = '';
   let newAssignee = '';
+  let newRepo = '-';
   let newDueDate = '';
   let newDueDateDisplay = '';
 
@@ -302,6 +311,40 @@
   function displayRepo(repo?: string) {
     if (!repo || repo === '-' || repo === 'unassigned') return 'AI 尚未映射仓库';
     return repo;
+  }
+
+  function displayProjectOption(project: string) {
+    return project === '-' ? '暂不指定项目' : project;
+  }
+
+  function addFormOption(options: Set<string>, value?: string) {
+    const cleaned = (value || '').trim();
+    if (!cleaned || cleaned === '-' || cleaned === '未指派' || cleaned === 'unassigned') return;
+    options.add(cleaned);
+  }
+
+  function sortedFormOptions(options: Set<string>) {
+    return Array.from(options).sort((a, b) => a.localeCompare(b));
+  }
+
+  function buildCreateAssigneeOptions() {
+    const options = new Set<string>();
+    demandOptionAssignees.forEach((name) => addFormOption(options, name));
+    users.forEach((user) => addFormOption(options, user.name || user.username));
+    demands.forEach((demand) => addFormOption(options, demand.assignee));
+    allSubTasks.forEach((task) => addFormOption(options, task.assignee));
+    scheduleItems.forEach((item) => addFormOption(options, item.assignee));
+    addFormOption(options, currentUserName || currentUserEmail);
+    return sortedFormOptions(options);
+  }
+
+  function buildCreateProjectOptions() {
+    const options = new Set<string>();
+    demandOptionProjects.forEach((project) => addFormOption(options, project));
+    demands.forEach((demand) => addFormOption(options, demand.repo));
+    allSubTasks.forEach((task) => addFormOption(options, task.repo));
+    scheduleItems.forEach((item) => addFormOption(options, item.repo));
+    return ['-', ...sortedFormOptions(options)];
   }
 
   function updateNewDueDate(value: string) {
@@ -385,10 +428,15 @@
   $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-');
   $: deliveredDemands = demands.filter(d => d.status === 'done');
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
+  $: createAssigneeOptions = buildCreateAssigneeOptions();
+  $: createProjectOptions = buildCreateProjectOptions();
   $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   $: filteredScheduleItems = scheduleItems
     .filter((item) => matchesScheduleFilters(item))
     .sort((a, b) => compareScheduleItems(a, b));
+  $: if (!newAssignee && createAssigneeOptions.length > 0) {
+    newAssignee = createAssigneeOptions[0];
+  }
 
   function setDemandView(view: DemandView) {
     activeDemandView = view;
@@ -520,13 +568,41 @@
       });
       if (res.ok) {
         users = await res.json();
-        if (users.length > 0 && !newAssignee) {
-          newAssignee = users[0].name; // Default to first user's name
-        }
       }
     } catch (e) {
       console.error('Failed to fetch users:', e);
     }
+  }
+
+  async function fetchDemandOptions() {
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/demands/options', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data: DemandOptionsResponse = await res.json();
+        demandOptionAssignees = data.assignees || [];
+        demandOptionProjects = data.projects || [];
+      }
+    } catch (e) {
+      console.error('Failed to fetch demand options:', e);
+    }
+  }
+
+  function openCreateDemandModal() {
+    showCreateModal = true;
+    showAssigneeDropdown = false;
+    showProjectDropdown = false;
+    activeDatePicker = null;
+    fetchDemandOptions();
+  }
+
+  function closeCreateDemandModal() {
+    showCreateModal = false;
+    showAssigneeDropdown = false;
+    showProjectDropdown = false;
+    activeDatePicker = null;
   }
 
   async function handleCreateDemand() {
@@ -548,15 +624,16 @@
           description: newDescription,
           assignee: newAssignee,
           due_date: newDueDate,
-          repo: '',
+          repo: newRepo === '-' ? '' : newRepo,
           creator_dept: normalizeDepartment(currentUserDepartment)
         })
       });
 
       if (res.ok) {
-        showCreateModal = false;
+        closeCreateDemandModal();
         newTitle = '';
         newDescription = '';
+        newRepo = '-';
         updateNewDueDate('');
         await refreshDemandWorkspace();
       } else {
@@ -693,6 +770,7 @@
     const target = e.target as HTMLElement;
     if (!target.closest('.custom-dropdown-container')) {
       showAssigneeDropdown = false;
+      showProjectDropdown = false;
       showTaskGroupDropdown = false;
       showScheduleAssigneeDropdown = false;
     }
@@ -704,6 +782,7 @@
   onMount(() => {
     fetchDemands();
     fetchUsers();
+    fetchDemandOptions();
     document.addEventListener('click', handleDocumentClick);
     // Poll updates every 15 seconds
     const interval = setInterval(() => {
@@ -727,7 +806,7 @@
     </div>
 
     {#if hasPermission('demands:write')}
-      <button class="add-demand-btn font-mono" on:click={() => showCreateModal = true}>
+      <button class="add-demand-btn font-mono" on:click={openCreateDemandModal}>
         ➕ 录入新需求
       </button>
     {/if}
@@ -1223,11 +1302,11 @@
 
   <!-- Create Demand Modal -->
   {#if showCreateModal}
-    <div class="modal-backdrop" on:click={() => showCreateModal = false}>
-      <div class="modal-content glass-panel" on:click|stopPropagation>
+    <div class="modal-backdrop" on:click={closeCreateDemandModal}>
+      <div class="modal-content demand-create-modal glass-panel" on:click|stopPropagation>
         <div class="modal-header">
           <h3>📋 录入新产品需求</h3>
-          <button class="close-btn" on:click={() => showCreateModal = false}>&times;</button>
+          <button class="close-btn" on:click={closeCreateDemandModal}>&times;</button>
         </div>
         
         <div class="form-body">
@@ -1242,28 +1321,64 @@
           </div>
 
           <div class="form-group">
+            <label for="demand-project">所属项目 / 仓库</label>
+            <div class="custom-dropdown-container" id="demand-project-container">
+              <button
+                type="button"
+                class="dropdown-trigger"
+                on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
+              >
+                <span>{displayProjectOption(newRepo)}</span>
+                <span class="arrow-icon {showProjectDropdown ? 'open' : ''}">▼</span>
+              </button>
+              {#if showProjectDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  {#each createProjectOptions as project}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {newRepo === project ? 'selected' : ''}"
+                      on:click={() => {
+                        newRepo = project;
+                        showProjectDropdown = false;
+                      }}
+                    >
+                      {displayProjectOption(project)}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+            <span class="field-hint">用于后续排期、代码证据和需求归属聚合；口头需求可先暂不指定。</span>
+          </div>
+
+          <div class="form-group">
             <label for="demand-assignee">指派负责人 <span class="text-rose">*</span></label>
             <div class="custom-dropdown-container" id="demand-assignee-container">
-              <div 
+              <button
+                type="button"
                 class="dropdown-trigger" 
                 on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
               >
                 <span>{newAssignee || '请选择负责人'}</span>
                 <span class="arrow-icon {showAssigneeDropdown ? 'open' : ''}">▼</span>
-              </div>
+              </button>
               {#if showAssigneeDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  {#each users as u}
-                    <div 
-                      class="dropdown-option-item {newAssignee === u.name ? 'selected' : ''}"
+                  {#each createAssigneeOptions as assignee}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {newAssignee === assignee ? 'selected' : ''}"
                       on:click={() => {
-                        newAssignee = u.name;
+                        newAssignee = assignee;
                         showAssigneeDropdown = false;
                       }}
                     >
-                      {u.name}
-                    </div>
+                      {assignee}
+                    </button>
                   {/each}
+                  {#if createAssigneeOptions.length === 0}
+                    <div class="dropdown-empty">暂无负责人候选</div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -1309,7 +1424,7 @@
         </div>
 
         <div class="modal-footer">
-          <button class="cancel-btn font-mono" on:click={() => showCreateModal = false}>取消</button>
+          <button class="cancel-btn font-mono" on:click={closeCreateDemandModal}>取消</button>
           <button class="submit-btn font-mono" on:click={handleCreateDemand}>指派需求</button>
         </div>
       </div>
@@ -2178,10 +2293,14 @@
     width: 100%;
     height: 100%;
     background: rgba(2, 6, 23, 0.7);
-    backdrop-filter: blur(4px);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow-y: auto;
+    padding: 24px 16px;
+    box-sizing: border-box;
     z-index: 1000;
   }
 
@@ -2191,7 +2310,13 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-    animation: zoomIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: zoomIn 0.16s ease-out;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+
+  .demand-create-modal {
+    max-width: 560px;
   }
 
   .modal-header {
@@ -2241,6 +2366,8 @@
 
   .form-group input[type="text"],
   .form-group textarea {
+    width: 100%;
+    box-sizing: border-box;
     background: rgba(15, 23, 42, 0.6);
     border: 1px solid rgba(129, 140, 248, 0.2);
     border-radius: 8px;
@@ -2248,7 +2375,8 @@
     color: #e2e8f0;
     font-size: 0.8rem;
     outline: none;
-    transition: all 0.2s;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+    transform: translateZ(0);
   }
 
   .form-group input:focus,
@@ -2266,6 +2394,12 @@
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  .field-hint {
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.45;
   }
 
   /* Card Actions & Icon Buttons */
@@ -2588,8 +2722,8 @@
   }
 
   @keyframes zoomIn {
-    from { transform: scale(0.95); opacity: 0; }
-    to { transform: scale(1); opacity: 1; }
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   /* Custom Dropdown Styling */
@@ -2599,6 +2733,8 @@
   }
 
   .dropdown-trigger {
+    width: 100%;
+    box-sizing: border-box;
     background: rgba(15, 23, 42, 0.6);
     border: 1px solid rgba(129, 140, 248, 0.2);
     border-radius: 8px;
@@ -2609,7 +2745,16 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all 0.2s;
+    font-family: inherit;
+    text-align: left;
+    transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .dropdown-trigger span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .dropdown-trigger:hover {
@@ -2662,7 +2807,7 @@
     font-family: inherit;
     cursor: pointer;
     border-radius: 6px;
-    transition: all 0.15s;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   .dropdown-option-item:hover {
@@ -2674,6 +2819,13 @@
     background: rgba(99, 102, 241, 0.4);
     color: #ffffff;
     font-weight: 600;
+  }
+
+  .dropdown-empty {
+    padding: 10px 12px;
+    color: #64748b;
+    font-size: 0.78rem;
+    text-align: center;
   }
 
   /* Confirm Modal Specifics */

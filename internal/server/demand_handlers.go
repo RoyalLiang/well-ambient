@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"well-ambient/internal/db"
@@ -22,9 +24,133 @@ type CreateDemandRequest struct {
 	CreatorDept string `json:"creator_dept"`
 }
 
+type DemandOptionsResponse struct {
+	Assignees []string `json:"assignees"`
+	Projects  []string `json:"projects"`
+}
+
 func isMissingDepartment(dept string) bool {
 	dept = strings.TrimSpace(dept)
 	return dept == "" || dept == "未分配" || dept == "无部门"
+}
+
+// handleGetDemandOptions returns low-risk form metadata for demand creation.
+func (s *Server) handleGetDemandOptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	assignees := make(map[string]string)
+	projects := make(map[string]string)
+	addDemandOption(assignees, r.Header.Get("x-authenticated-user-name"))
+	addDemandOption(assignees, r.Header.Get("x-authenticated-user-id"))
+
+	var users []userdb.User
+	if err := db.DB.Order("name asc, username asc").Find(&users).Error; err == nil {
+		for _, u := range users {
+			addDemandOption(assignees, firstNonBlank(u.Name, u.Username, u.Email))
+		}
+	}
+
+	var tasks []db.TaskTelemetry
+	if err := db.DB.Select("assignee", "repo").Find(&tasks).Error; err == nil {
+		for _, task := range tasks {
+			addDemandOption(assignees, task.Assignee)
+			addDemandOption(projects, task.Repo)
+		}
+	}
+
+	if s.config != nil {
+		for _, repo := range s.config.GitLab.Repos {
+			addDemandOption(projects, firstNonBlank(repo.Name, repo.Path, repo.ProjectID))
+		}
+		for _, project := range s.config.Jira.SyncProjects {
+			addDemandOption(projects, project)
+		}
+		for _, user := range s.config.Jira.SyncUsers {
+			addDemandOption(assignees, user)
+		}
+		for _, user := range extractJIRAAssignees(s.config.Jira.CustomJQL) {
+			addDemandOption(assignees, user)
+		}
+		for _, project := range extractJIRAProjects(s.config.Jira.CustomJQL) {
+			addDemandOption(projects, project)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(DemandOptionsResponse{
+		Assignees: sortedDemandOptions(assignees),
+		Projects:  sortedDemandOptions(projects),
+	})
+}
+
+func addDemandOption(options map[string]string, value string) {
+	value = strings.TrimSpace(strings.Trim(value, `"'`))
+	if value == "" || value == "-" || value == "未指派" || value == "unassigned" {
+		return
+	}
+	key := strings.ToLower(value)
+	if _, exists := options[key]; !exists {
+		options[key] = value
+	}
+}
+
+func sortedDemandOptions(options map[string]string) []string {
+	values := make([]string, 0, len(options))
+	for _, value := range options {
+		values = append(values, value)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		return strings.ToLower(values[i]) < strings.ToLower(values[j])
+	})
+	return values
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func extractJIRAAssignees(jql string) []string {
+	match := regexp.MustCompile(`(?i)assignee\s+in\s*\(([^)]*)\)`).FindStringSubmatch(jql)
+	if len(match) < 2 {
+		return nil
+	}
+	return splitJIRAListValues(match[1])
+}
+
+func extractJIRAProjects(jql string) []string {
+	inMatch := regexp.MustCompile(`(?i)project\s+in\s*\(([^)]*)\)`).FindStringSubmatch(jql)
+	if len(inMatch) >= 2 {
+		return splitJIRAListValues(inMatch[1])
+	}
+	eqMatch := regexp.MustCompile(`(?i)project\s*=\s*("[^"]+"|'[^']+'|[A-Za-z0-9_.-]+)`).FindStringSubmatch(jql)
+	if len(eqMatch) >= 2 {
+		project := strings.TrimSpace(strings.Trim(eqMatch[1], `"'`))
+		if project != "" {
+			return []string{project}
+		}
+	}
+	return nil
+}
+
+func splitJIRAListValues(raw string) []string {
+	rawValues := strings.Split(raw, ",")
+	values := make([]string, 0, len(rawValues))
+	for _, rawValue := range rawValues {
+		value := strings.TrimSpace(strings.Trim(rawValue, `"'`))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 // handleCreateDemand creates a new demand item, generates notification and syncs to markdown

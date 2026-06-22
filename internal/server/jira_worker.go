@@ -62,11 +62,7 @@ func (s *Server) syncJiraTasks() {
 		}
 
 		jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
-		rawType := strings.ToLower(strings.TrimSpace(issue.Fields.IssueType.Name))
-		issueType := "task"
-		if rawType == "bug" || rawType == "缺陷" || rawType == "故障" || rawType == "defect" {
-			issueType = "bug"
-		}
+		issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
 		createdTime := parseJiraTime(issue.Fields.Created)
 
 		// Check if task exists in SQLite DB
@@ -180,11 +176,7 @@ func (s *Server) syncJiraTasks() {
 				}
 
 				jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
-				rawType := strings.ToLower(strings.TrimSpace(issue.Fields.IssueType.Name))
-				issueType := "task"
-				if rawType == "bug" || rawType == "缺陷" || rawType == "故障" || rawType == "defect" {
-					issueType = "bug"
-				}
+				issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
 
 				var existing db.TaskTelemetry
 				if err := db.DB.Where("task_id = ?", issue.Key).First(&existing).Error; err == nil {
@@ -236,6 +228,21 @@ func mapJiraStatus(jiraStatus string) string {
 		return "done"
 	default:
 		return "backlog"
+	}
+}
+
+// mapJiraIssueType converts Jira issue types into the app's planning model.
+// In this deployment Jira Task/Story-like items are real demands; AI-generated
+// shadow work remains `task` when it enters through the deconstruction import.
+func mapJiraIssueType(jiraIssueType string) string {
+	s := strings.ToLower(strings.TrimSpace(jiraIssueType))
+	switch s {
+	case "bug", "缺陷", "故障", "defect":
+		return "bug"
+	case "task", "任务", "story", "故事", "requirement", "需求", "feature", "epic":
+		return "demand"
+	default:
+		return "demand"
 	}
 }
 

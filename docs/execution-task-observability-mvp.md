@@ -1,28 +1,33 @@
-# Jira Task 执行观测 MVP
+# 执行任务与缺陷观测 MVP
 
 ## 目标
 
-Jira `Task` 和 `Bug` 不应该自动进入需求池排期。它们更像需求落地过程中的执行证据：谁在做、有没有分支、有没有 commit、MR 是否合并、Jira 状态是否回写、最终结果能不能回流到父级需求。
+在当前团队的 Jira 使用方式里，Jira `Task` 实际承载的是需求，因此应该进入需求池和排期表。执行观测 MVP 的目标随之调整为：追踪需求拆解后的影子开发任务、缺陷修复任务，以及它们产生的代码证据。
 
 执行观测 MVP 用来把这些执行任务放进独立视图，帮助 PM、研发负责人和需求负责人判断：
 
-- Jira Task 是否绑定到一个真实需求。
+- 影子开发任务或缺陷是否绑定到一个真实需求。
 - 任务是否已经产生代码证据。
 - MR 合并、Jira 状态、需求排期之间是否出现断层。
 - 哪些完成任务缺少证据，哪些活跃任务已经停滞。
 
-这套链路的边界是：需求池和排期表只承载 `issue_type = demand` 的主需求；`task` 和 `bug` 进入执行追踪，不直接污染需求排期。
+这套链路的边界是：需求池和排期表承载 `issue_type = demand` 的主需求，其中 Jira `Task`、`Story`、`Feature`、`Epic` 和本地口头需求都会归入需求；`task` 用于 AI 解构后的影子开发任务；`bug` 用于缺陷流转和缺陷修复证据。
 
 ## 数据边界
 
 执行观测复用现有 `task_telemetries` 和 `git_commit_logs`。
 
-- `task_telemetries.issue_type = demand`：作为父级需求，只用于通过 `task_group_id` 建立绑定关系。
-- `task_telemetries.issue_type in (task, bug)`：作为执行任务，进入执行追踪视图。
+- `task_telemetries.issue_type = demand`：作为父级需求，进入需求池、排期表和迭代治理。Jira `Task` 在本部署中会同步为 `demand`。
+- `task_telemetries.issue_type = task`：作为 AI 解构或人工拆解后的执行任务，进入执行追踪视图。
+- `task_telemetries.issue_type = bug`：作为缺陷，保留缺陷属性，进入执行追踪和缺陷治理，不和需求吞并。
 - `git_commit_logs`：作为执行证据，按 `task_id` 汇总 commit、MR、merge 事件。
 - 用户表：用于补充负责人部门，让问题能按组织维度排查。
 
-Jira 同步器继续把无法识别为需求的普通 Jira 任务同步为 `task`，缺陷同步为 `bug`。是否能排期不由 Jira 类型决定，而由是否被建模为需求决定。
+Jira 同步器的类型映射如下：
+
+- Jira `Task`、`Story`、`Feature`、`Epic`、`Requirement`、`需求`、`任务` -> `demand`
+- Jira `Bug`、`Defect`、`缺陷`、`故障` -> `bug`
+- AI 解构导入的子任务 -> `task`
 
 ## 接口契约
 
@@ -108,7 +113,7 @@ Jira 同步器继续把无法识别为需求的普通 Jira 任务同步为 `task
 - 控制区：关键词搜索、风险筛选、负责人筛选、刷新。
 - 表格区：任务、归属需求、执行证据、结果状态、风险判断、最近活动。
 
-表格优先展示“证据链”和“回流关系”，而不是只展示 Jira 状态。这样可以看见 Task 的开发结果，也能避免 Task 被误当成需求排进需求池。
+表格优先展示“证据链”和“回流关系”，而不是只展示 Jira 状态。这样可以看见影子任务与缺陷的开发结果，同时让 Jira Task 作为需求进入排期治理。
 
 ## 性能策略
 
@@ -121,6 +126,6 @@ Jira 同步器继续把无法识别为需求的普通 Jira 任务同步为 `task
 
 - 把 `risk_level in (high, medium)` 接入通知中心，形成延期预警和状态不一致提醒。
 - 增加 Jira Epic、Parent、Link 解析，自动补齐 `task_group_id` 绑定。
-- 为 Jira Issue Type 增加配置映射，让团队自行定义哪些类型是需求、哪些类型是执行任务。
+- 为 Jira Issue Type 增加配置映射，让团队自行定义哪些类型是需求、哪些类型是执行任务或缺陷。
 - 对接 GitLab pipeline、reviewer、deployment 结果，形成从需求到上线的完整证据链。
 - 在需求排期表中增加“执行异常数”，从需求视角反查相关 Task/Bug 的风险。

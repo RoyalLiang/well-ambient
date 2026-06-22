@@ -84,6 +84,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/kpi/report-preview", s.withPermission("kpi:read", s.handleGetKPIReportPreview))
 
 	// Protected Demand & Schedule APIs
+	s.mux.HandleFunc("GET /api/demands/options", s.withPermission("demands:write", s.handleGetDemandOptions))
 	s.mux.HandleFunc("POST /api/demands", s.withPermission("demands:write", s.handleCreateDemand))
 	s.mux.HandleFunc("DELETE /api/demands", s.withAuth(s.handleDeleteDemand))
 	s.mux.HandleFunc("POST /api/demands/archive", s.withAuth(s.handleArchiveDemand))

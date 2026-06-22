@@ -64,6 +64,9 @@
 - Settings now treats AI engine configuration and AI context facts as separate admin tabs. This prevents the context registry from being perceived as part of provider/model setup.
 - The visual permission matrix should not be maintained as a fixed table. The new Settings permission view fetches the live permission catalog from `/api/permissions`, derives branches by permission namespace, and renders vertical permission nodes so future seeded permissions appear without adding columns by hand.
 - Policy authorization is easier to operate when it follows the sentence model "who can do what, where, and why". Templates, segmented subject/scope controls, permission action chips, and a priority stepper reduce the raw native form surface.
+- The latest demand creation issue is a source aggregation problem: the modal needs candidates from users, Jira config/JQL, historical tasks, current user, and configured projects, not only `/api/users`.
+- In this deployment Jira `Task` is a demand, not an execution-only task. The code should map Jira Task/Story/Feature/Epic-like issue types to `issue_type = demand`, while Bug/Defect-like issue types remain `bug`.
+- Execution tracking remains useful after that change, but its scope becomes AI shadow tasks, manually split execution tasks, and Bug development evidence, not Jira Task demand intake.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -100,6 +103,7 @@
 | Source permission tree data from the backend permission catalog | Permission growth should be driven by seeded `permissions` data rather than a hard-coded frontend matrix. |
 | Keep AI context facts in their own Settings tab | The context registry is an input layer for demand deconstruction, while AI engine config is provider/model connectivity. |
 | Replace policy raw selects with guided controls | Admins need fewer fragile fields and more visible policy intent before saving allow/deny rules. |
+| Map Jira Task-like issue types to demands | The team's Jira Task items are real requirements that need scheduling, iteration planning, and delivery tracking. |
 
 ## Issues Encountered
 | Issue | Resolution |

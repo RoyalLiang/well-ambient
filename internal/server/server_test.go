@@ -1180,6 +1180,79 @@ func TestCreateDemandUsesAuthenticatedDepartmentFallback(t *testing.T) {
 	}
 }
 
+func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
+	setupServerTestDB(t)
+
+	token := superAdminToken(t, "pm-options@westwell-lab.com", "PM Options", []string{"demands:write"})
+	extraUsers := []userdb.User{
+		{Username: "alice.options@westwell-lab.com", Email: "alice.options@westwell-lab.com", Name: "Alice Options", Department: "Product"},
+		{Username: "bob.options@westwell-lab.com", Email: "bob.options@westwell-lab.com", Name: "Bob Options", Department: "Engineering"},
+	}
+	for _, u := range extraUsers {
+		if err := db.DB.Create(&u).Error; err != nil {
+			t.Fatalf("seed user %s: %v", u.Username, err)
+		}
+	}
+	if err := db.DB.Create(&db.TaskTelemetry{
+		TaskID:     "DEMAND-OPTIONS",
+		Title:      "Existing options source",
+		Repo:       "legacy-web",
+		Assignee:   "Task Owner",
+		Status:     "backlog",
+		IssueType:  "demand",
+		LastUpdate: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("seed task telemetry: %v", err)
+	}
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9097, Host: "127.0.0.1"},
+		GitLab: config.GitLabConfig{Repos: []config.RepoMapping{
+			{Name: "platform-core", Path: "group/platform-core", ProjectID: "42"},
+		}},
+		Jira: config.JiraConfig{
+			SyncProjects: []string{"CFG"},
+			SyncUsers:    []string{"Jira Owner"},
+			CustomJQL:    `project in (OPS, "APP-X") AND assignee in ("JQL Owner", middle.q)`,
+		},
+	}
+	srv := NewServer(cfg, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/demands/options", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/demands/options failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var response DemandOptionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode demand options response: %v", err)
+	}
+
+	for _, want := range []string{"Alice Options", "Bob Options", "Task Owner", "Jira Owner", "JQL Owner"} {
+		if !stringSliceContains(response.Assignees, want) {
+			t.Fatalf("assignees missing %q: %+v", want, response.Assignees)
+		}
+	}
+	for _, want := range []string{"platform-core", "legacy-web", "CFG", "OPS", "APP-X"} {
+		if !stringSliceContains(response.Projects, want) {
+			t.Fatalf("projects missing %q: %+v", want, response.Projects)
+		}
+	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCreateDemandUsesRequestDepartmentFallback(t *testing.T) {
 	setupServerTestDB(t)
 	useTempKanbanFile(t)

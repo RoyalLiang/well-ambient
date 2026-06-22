@@ -155,6 +155,14 @@ Complete
 - [x] Run frontend build and targeted backend validation
 - **Status:** complete
 
+### Phase 18: Demand Creation Sources And Jira Task Demand Model
+- [x] Keep the new-demand modal stable while typing and add a project selector
+- [x] Expand demand assignee/project candidates beyond the current logged-in user
+- [x] Treat Jira `Task` as a schedulable demand while keeping `Bug` in the defect flow
+- [x] Update the demand/bug lifecycle design documentation
+- [x] Run focused backend and frontend validation
+- **Status:** complete
+
 ## Key Questions
 1. Which current files contain the server handlers named in the plan?
 2. Does the current data model support linking demands to AI task groups?
@@ -184,6 +192,7 @@ Complete
 | Configure AI project context instead of relying on implicit model knowledge | Architecture, workflow, implemented capabilities, and estimation rules must be first-class prompt inputs to reduce estimate drift. |
 | Make hours the primary deconstruction estimate unit | Operators tune task effort in hours; day values remain derived compatibility data for due-date and archive logic. |
 | Store long domain capability catalogs as archived context documents and inject compact summaries into config | Long feature inventories are better versioned/audited in docs, while runtime prompt fields should stay concise enough for stable AI behavior. |
+| Treat Jira Task as a demand in this deployment | The team uses Jira Task to record real product and development requirements, so Jira Task must enter demand scheduling rather than execution-only tracking. |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
