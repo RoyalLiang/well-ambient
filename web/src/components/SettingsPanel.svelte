@@ -2072,7 +2072,12 @@
     height: 100%;
     min-height: 0;
     overflow-y: auto;
-    padding-right: 6px;
+    background: #0f172a;
+    border: 1px solid rgba(51, 65, 85, 0.4);
+    border-radius: 12px;
+    padding: 24px 18px 24px 24px;
+    box-sizing: border-box;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
     overscroll-behavior: contain;
   }
 
@@ -2091,16 +2096,11 @@
   }
 
   .section-card {
-    background: #0f172a;
-    border: 1px solid rgba(51, 65, 85, 0.4);
-    border-radius: 12px;
-    padding: 24px;
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
-  }
-
-  .settings-main > .section-card {
-    min-height: 100%;
-    box-sizing: border-box;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
   }
 
   .kpi-settings-panel {
@@ -3509,7 +3509,7 @@
     .settings-main {
       height: auto;
       overflow: visible;
-      padding-right: 0;
+      padding: 16px;
     }
 
     .sidebar-nav {
