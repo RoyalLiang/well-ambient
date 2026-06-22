@@ -51,6 +51,7 @@ func (s *Server) routes() {
 	// Protected Task and Log Queries
 	s.mux.HandleFunc("GET /api/tasks", s.withAuth(s.handleGetTasks))
 	s.mux.HandleFunc("GET /api/tasks/commits", s.withAuth(s.handleGetTaskCommits))
+	s.mux.HandleFunc("GET /api/execution/tasks", s.withPermission("dashboard:read", s.handleGetExecutionTasks))
 	s.mux.HandleFunc("GET /api/logs", s.withAuth(s.handleGetLogs))
 
 	// Protected Config APIs

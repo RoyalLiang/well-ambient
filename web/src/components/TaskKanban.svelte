@@ -36,10 +36,97 @@
     task_group_id?: string;
   }
 
+  type TaskView = 'status' | 'personnel' | 'execution';
+  type ExecutionRiskFilter = 'attention' | 'all' | 'high' | 'medium' | 'safe' | 'done';
+
+  interface ExecutionSummary {
+    total: number;
+    active: number;
+    done: number;
+    bound: number;
+    orphan: number;
+    with_evidence: number;
+    missing_evidence: number;
+    stale: number;
+    mismatch: number;
+    high_risk: number;
+  }
+
+  interface ExecutionTaskItem {
+    task_id: string;
+    title: string;
+    issue_type: string;
+    assignee: string;
+    department: string;
+    repo: string;
+    branch: string;
+    status: string;
+    task_group_id: string;
+    parent_demand_id?: string;
+    parent_demand?: string;
+    created_at: string;
+    last_update: string;
+    last_evidence_at?: string;
+    last_commit: string;
+    mr_url?: string;
+    mr_iid?: number;
+    commit_count: number;
+    mr_count: number;
+    merged_mr_count: number;
+    evidence_score: number;
+    risk_level: string;
+    risk_label: string;
+    risk_reason: string;
+    risk_rank: number;
+    result_state: string;
+    result_label: string;
+    active_days: number;
+    evidence_age_hours: number;
+    risk_tags: string[];
+  }
+
+  interface ExecutionTasksResponse {
+    generated_at: string;
+    summary: ExecutionSummary;
+    items: ExecutionTaskItem[];
+  }
+
+  const executionRiskFilters: Array<{ value: ExecutionRiskFilter; label: string }> = [
+    { value: 'attention', label: '需关注' },
+    { value: 'all', label: '全部' },
+    { value: 'high', label: '高风险' },
+    { value: 'medium', label: '中风险' },
+    { value: 'safe', label: '正常' },
+    { value: 'done', label: '已闭环' }
+  ];
+
+  function emptyExecutionSummary(): ExecutionSummary {
+    return {
+      total: 0,
+      active: 0,
+      done: 0,
+      bound: 0,
+      orphan: 0,
+      with_evidence: 0,
+      missing_evidence: 0,
+      stale: 0,
+      mismatch: 0,
+      high_risk: 0
+    };
+  }
+
   let allTasks: Task[] = [];
   let selectedProject = 'all';
   let selectedAssignee = 'all';
-  let currentView = 'status';
+  let currentView: TaskView = 'status';
+  let executionItems: ExecutionTaskItem[] = [];
+  let executionSummary: ExecutionSummary = emptyExecutionSummary();
+  let executionGeneratedAt = '';
+  let executionLoading = false;
+  let executionErrorMsg = '';
+  let executionSearch = '';
+  let executionRiskFilter: ExecutionRiskFilter = 'attention';
+  let executionAssigneeFilter = 'all';
 
   let collapsedAssignees: Record<string, boolean> = {};
   let userToggledAssignees: Record<string, boolean> = {};
@@ -120,6 +207,7 @@
 
   let showProjectDropdown = false;
   let showAssigneeDropdown = false;
+  let showExecutionAssigneeDropdown = false;
   let projectSelectEl: HTMLElement;
   let assigneeSelectEl: HTMLElement;
 
@@ -150,6 +238,9 @@
     }
     if (showAssigneeDropdown && assigneeSelectEl && !assigneeSelectEl.contains(target)) {
       showAssigneeDropdown = false;
+    }
+    if (!target.closest('.execution-assignee-select')) {
+      showExecutionAssigneeDropdown = false;
     }
   }
 
@@ -200,7 +291,7 @@
       if (!t.assignee) return null;
       if (isCoreMember(t.assignee)) return t.assignee;
       return "外部协同";
-    }).filter(Boolean)))
+    }).filter((ass): ass is string => Boolean(ass))))
   ];
 
   // Reactive filtered tasks
@@ -236,6 +327,10 @@
   $: inProgress = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'progress');
   $: inReview = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'review');
   $: done = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'done');
+  $: executionAssigneeOptions = ['all', ...Array.from(new Set(executionItems.map(item => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b))];
+  $: filteredExecutionItems = executionItems
+    .filter(item => matchesExecutionFilters(item))
+    .sort((a, b) => compareExecutionItems(a, b));
 
   $: viewAssignees = (selectedAssignee === 'all'
     ? [
@@ -282,6 +377,73 @@
         if (timeB === 0) return -1;
         return timeA - timeB; // Longest-running first
       });
+  }
+
+  function setTaskView(view: TaskView) {
+    currentView = view;
+    if (view === 'execution') {
+      fetchExecutionTasks();
+    }
+  }
+
+  function matchesExecutionFilters(item: ExecutionTaskItem): boolean {
+    const query = executionSearch.trim().toLowerCase();
+    if (query) {
+      const haystack = [
+        item.task_id,
+        item.title,
+        item.issue_type,
+        item.assignee,
+        item.department,
+        item.repo,
+        item.branch,
+        item.parent_demand_id,
+        item.parent_demand,
+        item.risk_label,
+        item.result_label
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+
+    if (executionAssigneeFilter !== 'all' && item.assignee !== executionAssigneeFilter) {
+      return false;
+    }
+
+    if (executionRiskFilter === 'attention') {
+      return item.risk_level !== 'safe' && item.risk_level !== 'done';
+    }
+    if (executionRiskFilter !== 'all') {
+      return item.risk_level === executionRiskFilter;
+    }
+    return true;
+  }
+
+  function compareExecutionItems(a: ExecutionTaskItem, b: ExecutionTaskItem): number {
+    if (a.risk_rank !== b.risk_rank) return b.risk_rank - a.risk_rank;
+    if (a.last_evidence_at !== b.last_evidence_at) {
+      if (!a.last_evidence_at) return 1;
+      if (!b.last_evidence_at) return -1;
+      return b.last_evidence_at.localeCompare(a.last_evidence_at);
+    }
+    return a.task_id.localeCompare(b.task_id);
+  }
+
+  async function fetchExecutionTasks() {
+    executionLoading = true;
+    executionErrorMsg = '';
+    try {
+      const res = await fetch('/api/execution/tasks');
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data: ExecutionTasksResponse = await res.json();
+      executionItems = data.items || [];
+      executionSummary = data.summary || emptyExecutionSummary();
+      executionGeneratedAt = data.generated_at || '';
+    } catch (e: any) {
+      console.error('Failed to fetch execution tasks:', e);
+      executionErrorMsg = e.message || '获取执行追踪失败';
+    } finally {
+      executionLoading = false;
+    }
   }
 
   function getDelayDays(taskCreatedAt: string, status: string): number {
@@ -461,6 +623,18 @@
     return allTasks.find(t => t.issueType === 'demand' && t.taskGroupId === taskGroupId);
   }
 
+  function hasParentDemand(taskGroupId?: string): boolean {
+    return Boolean(getParentDemand(taskGroupId));
+  }
+
+  function getParentDemandId(taskGroupId?: string): string {
+    return getParentDemand(taskGroupId)?.id || '';
+  }
+
+  function getParentDemandTitle(taskGroupId?: string): string {
+    return getParentDemand(taskGroupId)?.title || '';
+  }
+
   async function fetchTasks() {
     try {
       const res = await fetch('/api/tasks');
@@ -480,7 +654,12 @@
   onMount(() => {
     fetchTasks();
     fetchConfig();
-    intervalId = setInterval(fetchTasks, 5000);
+    intervalId = setInterval(() => {
+      fetchTasks();
+      if (currentView === 'execution') {
+        fetchExecutionTasks();
+      }
+    }, 5000);
     document.addEventListener('click', handleDocumentClick);
   });
 
@@ -501,11 +680,14 @@
     <div class="header-right-filters">
       <!-- View Toggle -->
       <div class="view-toggle">
-        <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => currentView = 'status'}>
-          📊 状态视图
+        <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => setTaskView('status')}>
+          状态视图
         </button>
-        <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => currentView = 'personnel'}>
-          👤 人员视图
+        <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => setTaskView('personnel')}>
+          人员视图
+        </button>
+        <button class="toggle-btn {currentView === 'execution' ? 'active' : ''}" on:click={() => setTaskView('execution')}>
+          执行追踪
         </button>
       </div>
 
@@ -559,7 +741,7 @@
           class="shadow-shortcut-btn {selectedAssignee === '外部协同' ? 'active' : ''}"
           on:click={() => {
             selectedAssignee = '外部协同';
-            if (currentView === 'assignee') {
+            if (currentView === 'personnel') {
               collapsedAssignees['外部协同'] = false; // 确保展开
               collapsedAssignees = { ...collapsedAssignees };
               setTimeout(() => {
@@ -615,7 +797,178 @@
     </div>
   </div>
 
-  {#if currentView === 'status'}
+  {#if currentView === 'execution'}
+    <div class="execution-workbench">
+      <div class="execution-summary-grid">
+        <div class="execution-summary-cell">
+          <span class="summary-kicker font-mono">TOTAL</span>
+          <strong>{executionSummary.total}</strong>
+          <em>执行任务</em>
+        </div>
+        <div class="execution-summary-cell is-red">
+          <span class="summary-kicker font-mono">HIGH RISK</span>
+          <strong>{executionSummary.high_risk}</strong>
+          <em>高风险</em>
+        </div>
+        <div class="execution-summary-cell is-amber">
+          <span class="summary-kicker font-mono">ORPHAN</span>
+          <strong>{executionSummary.orphan}</strong>
+          <em>未绑定需求</em>
+        </div>
+        <div class="execution-summary-cell is-blue">
+          <span class="summary-kicker font-mono">EVIDENCE</span>
+          <strong>{executionSummary.with_evidence}</strong>
+          <em>有代码证据</em>
+        </div>
+        <div class="execution-summary-cell is-violet">
+          <span class="summary-kicker font-mono">MISMATCH</span>
+          <strong>{executionSummary.mismatch}</strong>
+          <em>状态不一致</em>
+        </div>
+      </div>
+
+      <div class="execution-control-panel">
+        <div class="execution-search-shell">
+          <span class="execution-search-mark"></span>
+          <input bind:value={executionSearch} placeholder="搜索 Jira Key、任务、负责人、分支、需求" />
+        </div>
+
+        <div class="execution-risk-strip">
+          {#each executionRiskFilters as filter}
+            <button
+              class:active={executionRiskFilter === filter.value}
+              on:click={() => executionRiskFilter = filter.value}
+            >
+              {filter.label}
+            </button>
+          {/each}
+        </div>
+
+        <div class="custom-select-container execution-assignee-select">
+          <button class="custom-select-trigger" on:click={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown} aria-label="执行负责人筛选">
+            <span class="trigger-label">{executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}</span>
+            <span class="select-arrow">{showExecutionAssigneeDropdown ? '▲' : '▼'}</span>
+          </button>
+          {#if showExecutionAssigneeDropdown}
+            <div class="custom-select-options">
+              {#each executionAssigneeOptions as assignee}
+                <button
+                  class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
+                  on:click={() => {
+                    executionAssigneeFilter = assignee;
+                    showExecutionAssigneeDropdown = false;
+                  }}
+                >
+                  {assignee === 'all' ? '全部负责人' : assignee}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <button class="execution-refresh-btn font-mono" class:is-loading={executionLoading} on:click={fetchExecutionTasks}>
+          刷新
+        </button>
+      </div>
+
+      {#if executionLoading && executionItems.length === 0}
+        <div class="execution-state">正在加载执行追踪...</div>
+      {:else if executionErrorMsg}
+        <div class="execution-state error">{executionErrorMsg}</div>
+      {:else}
+        <div class="execution-table-panel">
+          <div class="execution-table-head">
+            <div>
+              <span class="summary-kicker font-mono">EXECUTION OBSERVABILITY</span>
+              <h3>Jira Task 开发结果追踪</h3>
+            </div>
+            <span class="execution-count font-mono">{filteredExecutionItems.length} / {executionItems.length} · {executionGeneratedAt || '未同步'}</span>
+          </div>
+
+          <div class="execution-table-wrapper">
+            <table class="execution-table">
+              <thead>
+                <tr>
+                  <th>任务</th>
+                  <th>归属需求</th>
+                  <th>执行证据</th>
+                  <th>结果状态</th>
+                  <th>风险判断</th>
+                  <th>最近活动</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each filteredExecutionItems as item}
+                  <tr>
+                    <td>
+                      <div class="exec-task-stack">
+                        <div class="exec-id-row">
+                          <span class="exec-task-id font-mono">{item.task_id}</span>
+                          <span class="exec-type-badge type-{item.issue_type}">{item.issue_type === 'bug' ? 'Bug' : 'Task'}</span>
+                          {#if jiraBaseUrl && item.task_id && !item.task_id.startsWith('TASK-')}
+                            <a href="{jiraBaseUrl}/browse/{item.task_id}" target="_blank" rel="noopener noreferrer" class="exec-link">Jira</a>
+                          {/if}
+                        </div>
+                        <strong>{item.title}</strong>
+                        <small>{item.assignee} / {item.department || '未分配部门'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      {#if item.parent_demand_id}
+                        <div class="exec-demand-stack">
+                          <span class="bound-pill">已绑定</span>
+                          <strong class="font-mono">#{item.parent_demand_id}</strong>
+                          <small>{item.parent_demand}</small>
+                        </div>
+                      {:else}
+                        <div class="exec-demand-stack">
+                          <span class="orphan-pill">未绑定</span>
+                          <small>不会回流需求排期进度</small>
+                        </div>
+                      {/if}
+                    </td>
+                    <td>
+                      <div class="exec-evidence-stack">
+                        <div class="evidence-score">
+                          <span style="width: {item.evidence_score}%"></span>
+                        </div>
+                        <strong>{item.evidence_score}%</strong>
+                        <small>Commit {item.commit_count} · MR {item.mr_count} · Merge {item.merged_mr_count}</small>
+                        {#if item.mr_url}
+                          <a href={item.mr_url} target="_blank" rel="noopener noreferrer" class="exec-mr-link">!{item.mr_iid || 'MR'}</a>
+                        {/if}
+                      </div>
+                    </td>
+                    <td>
+                      <div class="exec-result-stack">
+                        <span class="result-pill result-{item.result_state}">{item.result_label}</span>
+                        <small>{item.status} · {item.branch || '未绑定分支'}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="exec-risk-stack">
+                        <span class="exec-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
+                        <small>{item.risk_reason}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="exec-activity-stack">
+                        <strong>{item.last_evidence_at || item.last_update || '-'}</strong>
+                        <small>{item.active_days} 天活跃周期 · 证据 {item.evidence_age_hours}h</small>
+                      </div>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            {#if filteredExecutionItems.length === 0}
+              <div class="execution-empty font-mono">当前筛选下暂无执行任务</div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {:else if currentView === 'status'}
     <div class="kanban-grid">
       <!-- Backlog -->
       <div class="column">
@@ -973,12 +1326,11 @@
         <span class="label">所属项目:</span>
         <span class="value badge-project">{getProjectName(selectedTask.id)}</span>
       </div>
-      {#if getParentDemand(selectedTask.taskGroupId)}
-        {@const parentDemand = getParentDemand(selectedTask.taskGroupId)}
+      {#if hasParentDemand(selectedTask.taskGroupId)}
         <div class="details-row">
           <span class="label">关联需求:</span>
           <span class="value parent-demand-detail font-mono">
-            📋 #{parentDemand.id} <span class="title-sub">{parentDemand.title}</span>
+            📋 #{getParentDemandId(selectedTask.taskGroupId)} <span class="title-sub">{getParentDemandTitle(selectedTask.taskGroupId)}</span>
           </span>
         </div>
       {/if}
@@ -1088,6 +1440,425 @@
 
   .kanban-section {
     margin-bottom: 32px;
+  }
+
+  .execution-workbench {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .execution-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(130px, 1fr));
+    gap: 10px;
+  }
+
+  .execution-summary-cell {
+    min-height: 88px;
+    background: rgba(10, 15, 30, 0.66);
+    border: 1px solid rgba(51, 65, 85, 0.32);
+    border-top: 3px solid rgba(100, 116, 139, 0.72);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .execution-summary-cell.is-red { border-top-color: #ef4444; }
+  .execution-summary-cell.is-amber { border-top-color: #f59e0b; }
+  .execution-summary-cell.is-blue { border-top-color: #38bdf8; }
+  .execution-summary-cell.is-violet { border-top-color: #a78bfa; }
+
+  .summary-kicker {
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+  }
+
+  .execution-summary-cell strong {
+    color: #f8fafc;
+    font-size: 1.45rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .execution-summary-cell em {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-style: normal;
+  }
+
+  .execution-control-panel {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.1fr) minmax(300px, 1.6fr) minmax(150px, 0.7fr) auto;
+    align-items: center;
+    gap: 10px;
+    background: rgba(10, 15, 30, 0.6);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .execution-search-shell {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .execution-search-shell input {
+    width: 100%;
+    height: 38px;
+    box-sizing: border-box;
+    background: rgba(15, 23, 42, 0.74);
+    border: 1px solid rgba(71, 85, 105, 0.68);
+    border-radius: 8px;
+    color: #e2e8f0;
+    outline: none;
+    padding: 0 12px 0 34px;
+    font-size: 0.78rem;
+  }
+
+  .execution-search-shell input:focus {
+    border-color: rgba(129, 140, 248, 0.78);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+
+  .execution-search-mark {
+    position: absolute;
+    left: 12px;
+    width: 11px;
+    height: 11px;
+    border: 2px solid #64748b;
+    border-radius: 50%;
+  }
+
+  .execution-search-mark::after {
+    content: "";
+    position: absolute;
+    width: 6px;
+    height: 2px;
+    right: -5px;
+    bottom: -3px;
+    background: #64748b;
+    transform: rotate(45deg);
+    border-radius: 2px;
+  }
+
+  .execution-risk-strip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(2, 6, 23, 0.32);
+    border: 1px solid rgba(51, 65, 85, 0.38);
+    border-radius: 8px;
+    padding: 4px;
+    overflow-x: auto;
+  }
+
+  .execution-risk-strip button {
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    border-radius: 6px;
+    padding: 7px 11px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background 0.16s ease, color 0.16s ease;
+    white-space: nowrap;
+  }
+
+  .execution-risk-strip button.active {
+    color: #f8fafc;
+    background: rgba(99, 102, 241, 0.48);
+  }
+
+  .execution-refresh-btn {
+    height: 38px;
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    background: rgba(14, 165, 233, 0.12);
+    color: #7dd3fc;
+    border-radius: 8px;
+    padding: 0 13px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 900;
+  }
+
+  .execution-refresh-btn:hover {
+    background: rgba(14, 165, 233, 0.2);
+  }
+
+  .execution-refresh-btn.is-loading {
+    opacity: 0.65;
+    cursor: wait;
+  }
+
+  .execution-state {
+    padding: 70px 0;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.85rem;
+  }
+
+  .execution-state.error {
+    color: #f87171;
+  }
+
+  .execution-table-panel {
+    background: rgba(10, 15, 30, 0.68);
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .execution-table-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.32);
+  }
+
+  .execution-table-head h3 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1rem;
+  }
+
+  .execution-count {
+    color: #94a3b8;
+    font-size: 0.7rem;
+  }
+
+  .execution-table-wrapper {
+    max-height: 620px;
+    overflow: auto;
+  }
+
+  .execution-table {
+    width: 100%;
+    min-width: 1120px;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .execution-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #0b1220;
+    color: #64748b;
+    font-size: 0.66rem;
+    font-weight: 900;
+    text-align: left;
+    letter-spacing: 0.04em;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.48);
+  }
+
+  .execution-table td {
+    vertical-align: top;
+    padding: 12px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.24);
+    color: #cbd5e1;
+    font-size: 0.78rem;
+  }
+
+  .execution-table tr:hover td {
+    background: rgba(30, 41, 59, 0.22);
+  }
+
+  .exec-task-stack,
+  .exec-demand-stack,
+  .exec-evidence-stack,
+  .exec-result-stack,
+  .exec-risk-stack,
+  .exec-activity-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .exec-task-stack strong,
+  .exec-demand-stack strong,
+  .exec-evidence-stack strong,
+  .exec-activity-stack strong {
+    color: #f8fafc;
+    line-height: 1.32;
+    word-break: break-word;
+  }
+
+  .exec-task-stack small,
+  .exec-demand-stack small,
+  .exec-evidence-stack small,
+  .exec-result-stack small,
+  .exec-risk-stack small,
+  .exec-activity-stack small {
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .exec-id-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .exec-task-id {
+    color: #818cf8;
+    font-size: 0.66rem;
+    font-weight: 900;
+  }
+
+  .exec-type-badge,
+  .bound-pill,
+  .orphan-pill,
+  .result-pill,
+  .exec-risk-pill {
+    width: fit-content;
+    border-radius: 6px;
+    padding: 3px 7px;
+    font-size: 0.66rem;
+    font-weight: 900;
+    border: 1px solid rgba(100, 116, 139, 0.28);
+    color: #cbd5e1;
+    background: rgba(100, 116, 139, 0.12);
+  }
+
+  .exec-type-badge.type-bug {
+    color: #fecaca;
+    border-color: rgba(248, 113, 113, 0.35);
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .exec-type-badge.type-task {
+    color: #bfdbfe;
+    border-color: rgba(96, 165, 250, 0.35);
+    background: rgba(59, 130, 246, 0.12);
+  }
+
+  .exec-link,
+  .exec-mr-link {
+    color: #7dd3fc;
+    text-decoration: none;
+    font-size: 0.68rem;
+    font-weight: 800;
+  }
+
+  .exec-link:hover,
+  .exec-mr-link:hover {
+    text-decoration: underline;
+  }
+
+  .bound-pill {
+    color: #bbf7d0;
+    border-color: rgba(74, 222, 128, 0.32);
+    background: rgba(16, 185, 129, 0.1);
+  }
+
+  .orphan-pill {
+    color: #fed7aa;
+    border-color: rgba(251, 146, 60, 0.36);
+    background: rgba(249, 115, 22, 0.12);
+  }
+
+  .evidence-score {
+    height: 6px;
+    width: 100%;
+    min-width: 80px;
+    background: rgba(51, 65, 85, 0.72);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+
+  .evidence-score span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #38bdf8, #818cf8);
+    border-radius: inherit;
+  }
+
+  .result-merged_done,
+  .result-jira_done {
+    color: #bbf7d0;
+    border-color: rgba(74, 222, 128, 0.32);
+    background: rgba(16, 185, 129, 0.1);
+  }
+
+  .result-merged_waiting_jira {
+    color: #fecaca;
+    border-color: rgba(248, 113, 113, 0.4);
+    background: rgba(239, 68, 68, 0.14);
+  }
+
+  .result-mr_active {
+    color: #fde68a;
+    border-color: rgba(234, 179, 8, 0.34);
+    background: rgba(234, 179, 8, 0.1);
+  }
+
+  .result-coding {
+    color: #bae6fd;
+    border-color: rgba(56, 189, 248, 0.32);
+    background: rgba(14, 165, 233, 0.11);
+  }
+
+  .risk-high {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(248, 113, 113, 0.4);
+  }
+
+  .risk-medium {
+    color: #fed7aa;
+    background: rgba(249, 115, 22, 0.12);
+    border-color: rgba(251, 146, 60, 0.36);
+  }
+
+  .risk-safe {
+    color: #bbf7d0;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: rgba(74, 222, 128, 0.32);
+  }
+
+  .risk-done {
+    color: #cbd5e1;
+    background: rgba(100, 116, 139, 0.12);
+    border-color: rgba(100, 116, 139, 0.28);
+  }
+
+  .execution-empty {
+    padding: 34px;
+    text-align: center;
+    color: #64748b;
+    border-top: 1px solid rgba(51, 65, 85, 0.3);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 1180px) {
+    .execution-summary-grid {
+      grid-template-columns: repeat(3, minmax(130px, 1fr));
+    }
+
+    .execution-control-panel {
+      grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.4fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .execution-summary-grid,
+    .execution-control-panel {
+      grid-template-columns: 1fr;
+    }
   }
 
   .section-header {

@@ -119,16 +119,11 @@
     }
     
     init = init || {};
-    init.headers = init.headers || {};
-    
-    if (init.headers instanceof Headers) {
-      if (jwtToken) {
-        init.headers.set('Authorization', `Bearer ${jwtToken}`);
-      }
-    } else {
-      if (jwtToken) {
-        init.headers['Authorization'] = `Bearer ${jwtToken}`;
-      }
+
+    if (jwtToken) {
+      const headers = new Headers(init.headers);
+      headers.set('Authorization', `Bearer ${jwtToken}`);
+      init.headers = headers;
     }
     
     try {

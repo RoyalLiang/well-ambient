@@ -654,6 +654,148 @@ func TestGetScheduleBuildsDemandTimeline(t *testing.T) {
 	}
 }
 
+func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
+	setupServerTestDB(t)
+
+	token := superAdminToken(t, "observer@westwell-lab.com", "Observer", []string{"dashboard:read"})
+	cfg := &config.Config{Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"}}
+	srv := NewServer(cfg, "")
+
+	now := time.Now()
+	staleUpdate := now.AddDate(0, 0, -5)
+	doneAt := now.AddDate(0, 0, -1)
+
+	users := []userdb.User{
+		{Username: "alice.exec@westwell-lab.com", Email: "alice.exec@westwell-lab.com", Name: "Alice", Department: "Engineering"},
+		{Username: "bob.exec@westwell-lab.com", Email: "bob.exec@westwell-lab.com", Name: "Bob", Department: "QA"},
+	}
+	for _, user := range users {
+		if err := db.DB.Create(&user).Error; err != nil {
+			t.Fatalf("seed user %s: %v", user.Username, err)
+		}
+	}
+
+	tasks := []db.TaskTelemetry{
+		{
+			TaskID:        "DEMAND-EXEC",
+			Title:         "Execution parent demand",
+			Assignee:      "Alice",
+			Status:        "progress",
+			IssueType:     "demand",
+			TaskGroupID:   "group-exec",
+			TaskCreatedAt: now.AddDate(0, 0, -7),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "JIRA-101",
+			Title:         "Bound task with commit",
+			Repo:          "platform-core",
+			Assignee:      "Alice",
+			Branch:        "feat/JIRA-101",
+			Status:        "progress",
+			IssueType:     "task",
+			TaskGroupID:   "group-exec",
+			TaskCreatedAt: now.AddDate(0, 0, -2),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "JIRA-102",
+			Title:         "Done without evidence",
+			Assignee:      "Bob",
+			Status:        "done",
+			IssueType:     "task",
+			CompletedAt:   &doneAt,
+			TaskCreatedAt: now.AddDate(0, 0, -3),
+			LastUpdate:    doneAt,
+		},
+		{
+			TaskID:        "JIRA-103",
+			Title:         "Merged but Jira still active",
+			Assignee:      "Alice",
+			Branch:        "feat/JIRA-103",
+			Status:        "review",
+			IssueType:     "task",
+			TaskCreatedAt: now.AddDate(0, 0, -4),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "JIRA-104",
+			Title:         "Stale orphan task",
+			Assignee:      "Bob",
+			Branch:        "feat/JIRA-104",
+			Status:        "progress",
+			IssueType:     "task",
+			TaskCreatedAt: now.AddDate(0, 0, -8),
+			LastUpdate:    staleUpdate,
+		},
+		{
+			TaskID:        "BUG-105",
+			Title:         "Bug with evidence",
+			Assignee:      "Bob",
+			Branch:        "fix/BUG-105",
+			Status:        "progress",
+			IssueType:     "bug",
+			TaskCreatedAt: now.AddDate(0, 0, -1),
+			LastUpdate:    now,
+		},
+	}
+	for _, task := range tasks {
+		if err := db.DB.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %s: %v", task.TaskID, err)
+		}
+	}
+
+	logs := []db.GitCommitLog{
+		{TaskID: "JIRA-101", Repo: "platform-core", Branch: "feat/JIRA-101", CommitID: "abc123", Message: "JIRA-101 implementation", Author: "Alice", Action: "git_push", CreatedAt: now},
+		{TaskID: "JIRA-103", Repo: "platform-core", Branch: "feat/JIRA-103", MrIID: 42, MrURL: "https://gitlab/mr/42", Message: "JIRA-103 MR", Author: "Alice", Action: "mr_merge", CreatedAt: now},
+		{TaskID: "BUG-105", Repo: "platform-core", Branch: "fix/BUG-105", CommitID: "def456", Message: "BUG-105 fix", Author: "Bob", Action: "git_push", CreatedAt: now},
+	}
+	for _, logRow := range logs {
+		if err := db.DB.Create(&logRow).Error; err != nil {
+			t.Fatalf("seed git log for %s: %v", logRow.TaskID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/execution/tasks", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/execution/tasks status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response ExecutionTasksResponseDTO
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode execution response: %v", err)
+	}
+
+	if response.Summary.Total != 5 || response.Summary.Bound != 1 || response.Summary.Orphan != 4 || response.Summary.HighRisk != 2 {
+		t.Fatalf("unexpected execution summary: %+v", response.Summary)
+	}
+
+	byID := make(map[string]ExecutionTaskItemDTO)
+	for _, item := range response.Items {
+		byID[item.TaskID] = item
+	}
+
+	if byID["JIRA-101"].ParentDemandID != "DEMAND-EXEC" || byID["JIRA-101"].EvidenceScore == 0 {
+		t.Fatalf("bound task evidence mismatch: %+v", byID["JIRA-101"])
+	}
+	if byID["JIRA-102"].RiskLabel != "完成无证据" || byID["JIRA-102"].RiskLevel != "high" {
+		t.Fatalf("done without evidence risk mismatch: %+v", byID["JIRA-102"])
+	}
+	if byID["JIRA-103"].RiskLabel != "状态不一致" || byID["JIRA-103"].ResultState != "merged_waiting_jira" {
+		t.Fatalf("merged mismatch risk mismatch: %+v", byID["JIRA-103"])
+	}
+	if byID["JIRA-104"].RiskLabel != "推进停滞" {
+		t.Fatalf("stale task risk mismatch: %+v", byID["JIRA-104"])
+	}
+	if byID["BUG-105"].IssueType != "bug" || byID["BUG-105"].EvidenceScore == 0 {
+		t.Fatalf("bug evidence mismatch: %+v", byID["BUG-105"])
+	}
+}
+
 func seedLocalUserWithGroup(t *testing.T, username, name, groupName, password string) userdb.User {
 	t.Helper()
 	passwordHash := ""
