@@ -727,17 +727,26 @@ func TestGetScheduleBuildsDemandTimeline(t *testing.T) {
 	}
 
 	var overdue ScheduleItemDTO
+	var unscheduled ScheduleItemDTO
 	for _, item := range response.Items {
 		if item.DemandID == "DEMAND-OVERDUE" {
 			overdue = item
-			break
 		}
+		if item.DemandID == "DEMAND-UNSCHEDULED" {
+			unscheduled = item
+		}
+	}
+	if !overdue.Scheduled {
+		t.Fatalf("overdue demand should be marked scheduled: %+v", overdue)
 	}
 	if overdue.SubtaskTotal != 2 || overdue.SubtaskDone != 1 || overdue.SubtaskActive != 1 {
 		t.Fatalf("overdue subtask stats mismatch: %+v", overdue)
 	}
 	if overdue.Department != "Product" {
 		t.Fatalf("overdue department = %q, want Product", overdue.Department)
+	}
+	if unscheduled.Scheduled {
+		t.Fatalf("unscheduled demand should not be marked scheduled: %+v", unscheduled)
 	}
 }
 
@@ -1713,6 +1722,8 @@ func TestImportTasksRejectsUnknownDemand(t *testing.T) {
 }
 
 func TestDemandAndKPILogic(t *testing.T) {
+	setupServerTestDB(t)
+
 	// Setup a clean memory DB context (TestServerEndpoints might have set it up, but let's make sure it has groups/perms)
 	var count int64
 	db.DB.Model(&userdb.UserGroup{}).Count(&count)
@@ -1833,12 +1844,15 @@ func TestDemandAndKPILogic(t *testing.T) {
 	// 3. Test POST /api/tasks/schedule
 	// Bob signs in and schedules the task
 	bobToken, _ := GenerateJWT("bob@westwell-lab.com", "Bob", "mock_bob_token", "", []string{"member"}, []string{})
-	schedReq := map[string]string{
-		"task_id":       taskID,
-		"branch":        "feat/demand-test-01",
-		"due_date":      "2026-06-29",
-		"status":        "progress",
-		"task_group_id": "group-test-001",
+	schedReq := map[string]interface{}{
+		"task_id":        taskID,
+		"branch":         "feat/demand-test-01",
+		"due_date":       "2026-06-29",
+		"status":         "progress",
+		"task_group_id":  "group-test-001",
+		"estimate_hours": 18.4,
+		"estimate_days":  2.3,
+		"difficulty":     "High",
 	}
 	schedBody, _ := json.Marshal(schedReq)
 	req, _ = http.NewRequest("POST", "/api/tasks/schedule", bytes.NewBuffer(schedBody))
@@ -1855,6 +1869,9 @@ func TestDemandAndKPILogic(t *testing.T) {
 	db.DB.Where("task_id = ?", taskID).First(&scheduledTask)
 	if scheduledTask.Branch != "feat/demand-test-01" || scheduledTask.Status != "progress" || scheduledTask.TaskGroupID != "group-test-001" {
 		t.Errorf("Expected scheduled task changes, got %+v", scheduledTask)
+	}
+	if scheduledTask.EstimateHours != 18.4 || scheduledTask.EstimateDays != 2.3 || scheduledTask.Difficulty != "High" || scheduledTask.EstimateSource != "ai_deconstruct" {
+		t.Errorf("Expected AI estimate fields to persist, got %+v", scheduledTask)
 	}
 
 	// Verify notification dismissed

@@ -423,11 +423,14 @@ func (s *Server) handleArchiveDemand(w http.ResponseWriter, r *http.Request) {
 }
 
 type ScheduleTaskRequest struct {
-	TaskID      string `json:"task_id"`
-	Branch      string `json:"branch"`
-	DueDate     string `json:"due_date"` // YYYY-MM-DD
-	Status      string `json:"status"`   // backlog, progress, review, done
-	TaskGroupID string `json:"task_group_id"`
+	TaskID        string  `json:"task_id"`
+	Branch        string  `json:"branch"`
+	DueDate       string  `json:"due_date"` // YYYY-MM-DD
+	Status        string  `json:"status"`   // backlog, progress, review, done
+	TaskGroupID   string  `json:"task_group_id"`
+	EstimateDays  float64 `json:"estimate_days"`
+	EstimateHours float64 `json:"estimate_hours"`
+	Difficulty    string  `json:"difficulty"`
 }
 
 // handleScheduleTask updates the task's due date, development branch and handles notification read status
@@ -509,6 +512,19 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 		telemetry.TaskGroupID = ""
 	} else if req.TaskGroupID != "" {
 		telemetry.TaskGroupID = req.TaskGroupID
+	}
+
+	if req.EstimateHours > 0 || req.EstimateDays > 0 || strings.TrimSpace(req.Difficulty) != "" {
+		if req.EstimateHours > 0 {
+			telemetry.EstimateHours = roundOneDecimal(req.EstimateHours)
+		}
+		if req.EstimateDays > 0 {
+			telemetry.EstimateDays = roundOneDecimal(req.EstimateDays)
+		}
+		if difficulty := normalizeDifficulty(req.Difficulty); difficulty != "" {
+			telemetry.Difficulty = difficulty
+		}
+		telemetry.EstimateSource = "ai_deconstruct"
 	}
 
 	telemetry.LastUpdate = time.Now()

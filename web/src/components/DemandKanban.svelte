@@ -27,6 +27,9 @@
     completed_at?: string;
     due_date?: string;
     task_group_id?: string;
+    estimate_days?: number;
+    estimate_hours?: number;
+    difficulty?: string;
   }
 
   type DemandView = 'board' | 'schedule';
@@ -55,6 +58,7 @@
     branch: string;
     status: string;
     task_group_id: string;
+    scheduled: boolean;
     due_date: string;
     created_at: string;
     last_update: string;
@@ -83,6 +87,16 @@
   interface DemandOptionsResponse {
     assignees: string[];
     projects: string[];
+  }
+
+  interface DeconstructEstimateResponse {
+    analysis?: {
+      overall_estimated_days?: number;
+      overall_estimated_hours?: number;
+      overall_difficulty?: string;
+      estimate_basis?: string;
+      confidence?: number;
+    };
   }
 
   const scheduleRiskFilters: Array<{ value: ScheduleRiskFilter; label: string }> = [
@@ -256,6 +270,13 @@
   let schedDueDate = '';
   let schedDueDateDisplay = '';
   let schedTaskGroupID = '-';
+  let schedEstimateHours = 0;
+  let schedEstimateDays = 0;
+  let schedDifficulty = '';
+  let schedEstimateBasis = '';
+  let schedEstimateConfidence = 0;
+  let scheduleEstimateLoading = false;
+  let scheduleEstimateError = '';
 
   const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
   const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
@@ -311,6 +332,67 @@
   function displayRepo(repo?: string) {
     if (!repo || repo === '-' || repo === 'unassigned') return 'AI 尚未映射仓库';
     return repo;
+  }
+
+  function hasScheduleValue(value?: string) {
+    const cleaned = (value || '').trim();
+    return !!cleaned && cleaned !== '-' && cleaned !== 'unassigned';
+  }
+
+  function isDemandFullyScheduled(demand: Demand) {
+    return hasScheduleValue(demand.branch) && !!demand.due_date;
+  }
+
+  function toNumber(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function formatOneDecimal(value: number) {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  }
+
+  function formatDifficultyLabel(value?: string) {
+    switch ((value || '').trim().toLowerCase()) {
+      case 'high':
+        return '高难度';
+      case 'medium':
+        return '中难度';
+      case 'low':
+        return '低难度';
+      default:
+        return '难度待评估';
+    }
+  }
+
+  function resetScheduleEstimateFromDemand(demand: Demand) {
+    schedEstimateHours = toNumber(demand.estimate_hours);
+    schedEstimateDays = toNumber(demand.estimate_days);
+    schedDifficulty = demand.difficulty || '';
+    schedEstimateBasis = '';
+    schedEstimateConfidence = 0;
+    scheduleEstimateError = '';
+    scheduleEstimateLoading = false;
+  }
+
+  function hasScheduleEstimate() {
+    return schedEstimateHours > 0 || schedEstimateDays > 0 || !!schedDifficulty;
+  }
+
+  function buildScheduleEstimateText() {
+    if (!selectedDemand) return '';
+    return [
+      `需求ID：${selectedDemand.task_id}`,
+      `需求标题：${selectedDemand.title}`,
+      `需求描述：${selectedDemand.description || '暂无补充描述'}`,
+      `负责人：${selectedDemand.assignee || '未指定'}`,
+      `所属项目/仓库：${displayRepo(selectedDemand.repo)}`,
+      `计划分支：${schedBranch || '尚未填写'}`,
+      `计划截止日：${schedDueDate || '尚未设置'}`,
+      `任务组：${schedTaskGroupID || getEffectiveTaskGroupId(selectedDemand)}`,
+      '请仅围绕该需求给出整体工时、天数、难度、估算依据和主要排期风险。'
+    ].join('\n');
   }
 
   function displayProjectOption(project: string) {
@@ -423,8 +505,8 @@
   }
 
   // Columns helper
-  $: pendingDemands = demands.filter(d => d.status !== 'done' && (d.branch === '' || d.branch === '-'));
-  $: scheduledDemands = demands.filter(d => d.status === 'backlog' && d.branch !== '' && d.branch !== '-');
+  $: pendingDemands = demands.filter(d => d.status !== 'done' && (d.status === 'backlog' ? !isDemandFullyScheduled(d) : !hasScheduleValue(d.branch)));
+  $: scheduledDemands = demands.filter(d => d.status === 'backlog' && isDemandFullyScheduled(d));
   $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-');
   $: deliveredDemands = demands.filter(d => d.status === 'done');
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
@@ -651,8 +733,60 @@
     schedBranch = demand.branch === '-' ? '' : demand.branch;
     updateSchedDueDate(demand.due_date ? demand.due_date.slice(0, 10) : '');
     schedTaskGroupID = getEffectiveTaskGroupId(demand);
+    resetScheduleEstimateFromDemand(demand);
     activeDatePicker = null;
     showScheduleModal = true;
+  }
+
+  function closeScheduleModal() {
+    showScheduleModal = false;
+    selectedDemand = null;
+    activeDatePicker = null;
+    showTaskGroupDropdown = false;
+    scheduleEstimateLoading = false;
+  }
+
+  async function handleEstimateScheduleEffort() {
+    if (!selectedDemand) return;
+    scheduleEstimateLoading = true;
+    scheduleEstimateError = '';
+    schedEstimateBasis = '';
+    const token = localStorage.getItem('jwt_token');
+
+    try {
+      const res = await fetch('/api/deconstruct', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ text: buildScheduleEstimateText() })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || 'AI 工时评估失败');
+      }
+
+      const data: DeconstructEstimateResponse = await res.json();
+      const analysis = data.analysis || {};
+      const hours = toNumber(analysis.overall_estimated_hours);
+      const days = toNumber(analysis.overall_estimated_days);
+
+      if (hours <= 0 && days <= 0) {
+        throw new Error('AI 未返回有效工时估算');
+      }
+
+      schedEstimateHours = hours;
+      schedEstimateDays = days;
+      schedDifficulty = analysis.overall_difficulty || schedDifficulty;
+      schedEstimateBasis = analysis.estimate_basis || '';
+      schedEstimateConfidence = toNumber(analysis.confidence);
+    } catch (err: any) {
+      scheduleEstimateError = (err.message || 'AI 工时评估失败').slice(0, 180);
+    } finally {
+      scheduleEstimateLoading = false;
+    }
   }
 
   async function handleSaveSchedule() {
@@ -675,13 +809,15 @@
           branch: schedBranch,
           due_date: schedDueDate,
           status: 'backlog', // Scheduled demands go to backlog in kanban
-          task_group_id: schedTaskGroupID
+          task_group_id: schedTaskGroupID,
+          estimate_hours: schedEstimateHours,
+          estimate_days: schedEstimateDays,
+          difficulty: schedDifficulty
         })
       });
 
       if (res.ok) {
-        showScheduleModal = false;
-        selectedDemand = null;
+        closeScheduleModal();
         await refreshDemandWorkspace();
       } else {
         const errText = await res.text();
@@ -739,10 +875,17 @@
     return formatDateDisplay(value.slice(0, 10));
   }
 
-  function getScheduleStatusLabel(status: string): string {
-    switch (status) {
+  function isScheduleItemScheduled(item: ScheduleItem): boolean {
+    return item.scheduled || (hasScheduleValue(item.branch) && !!item.due_date);
+  }
+
+  function getScheduleStatusLabel(item: ScheduleItem): string {
+    switch (item.status) {
       case 'backlog':
-        return '已排期';
+        if (isScheduleItemScheduled(item)) return '已排期';
+        if (hasScheduleValue(item.branch) && !item.due_date) return '缺截止日';
+        if (!hasScheduleValue(item.branch) && item.due_date) return '缺开发入口';
+        return '待排期';
       case 'progress':
         return '开发中';
       case 'review':
@@ -750,8 +893,25 @@
       case 'done':
         return '已交付';
       default:
-        return status || '未知';
+        return item.status || '未知';
     }
+  }
+
+  function getScheduleStatusClass(item: ScheduleItem): string {
+    if (item.status === 'progress' || item.status === 'review' || item.status === 'done') return item.status;
+    if (isScheduleItemScheduled(item)) return 'scheduled';
+    if (hasScheduleValue(item.branch) || item.due_date) return 'partial';
+    return 'unscheduled';
+  }
+
+  function formatScheduleEffort(item: ScheduleItem): string {
+    if (item.estimate_hours > 0) return `${formatOneDecimal(item.estimate_hours)} 小时`;
+    if (item.estimate_days > 0) return `${formatOneDecimal(item.estimate_days)} 天`;
+    return '待 AI 评估';
+  }
+
+  function hasDeliveryEvidence(item: ScheduleItem): boolean {
+    return hasScheduleValue(item.branch) || hasScheduleValue(item.repo) || !!item.mr_url;
   }
 
   function canEditScheduleItem(item: ScheduleItem): boolean {
@@ -941,14 +1101,27 @@
           </div>
           <div class="schedule-table-wrapper">
             <table class="schedule-table">
+              <colgroup>
+                <col class="col-demand" />
+                <col class="col-owner" />
+                <col class="col-plan" />
+                <col class="col-effort" />
+                <col class="col-evidence" />
+                <col class="col-subtask" />
+                <col class="col-risk" />
+                <col class="col-update" />
+                <col class="col-action" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>需求</th>
                   <th>负责人</th>
                   <th>排期</th>
-                  <th>交付窗口</th>
+                  <th>工时</th>
+                  <th>交付证据</th>
                   <th>影子任务</th>
                   <th>风险</th>
+                  <th>更新时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -970,17 +1143,32 @@
                       </div>
                     </td>
                     <td>
-                      <div class="branch-stack">
-                        <span class="status-chip status-{item.status}">{getScheduleStatusLabel(item.status)}</span>
-                        <strong class="font-mono">{item.branch && item.branch !== '-' ? item.branch : '未绑定分支'}</strong>
-                        <span>{item.repo && item.repo !== '-' ? item.repo : '未映射仓库'}</span>
+                      <div class="plan-stack">
+                        <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
+                        <strong>{formatScheduleDue(item)}</strong>
+                        <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
                       </div>
                     </td>
                     <td>
-                      <div class="due-stack">
-                        <strong>{formatScheduleDue(item)}</strong>
-                        <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
-                        <small>更新 {item.last_update || '-'}</small>
+                      <div class="effort-stack">
+                        <strong>{formatScheduleEffort(item)}</strong>
+                        <span>{formatDifficultyLabel(item.difficulty)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="evidence-stack">
+                        {#if hasScheduleValue(item.branch)}
+                          <strong class="font-mono">{item.branch}</strong>
+                        {/if}
+                        {#if hasScheduleValue(item.repo)}
+                          <span>{item.repo}</span>
+                        {/if}
+                        {#if item.mr_url}
+                          <a href={item.mr_url} target="_blank" rel="noreferrer">MR 证据</a>
+                        {/if}
+                        {#if !hasDeliveryEvidence(item)}
+                          <span class="evidence-empty">待开发证据</span>
+                        {/if}
                       </div>
                     </td>
                     <td>
@@ -996,6 +1184,12 @@
                       <div class="risk-stack">
                         <span class="schedule-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
                         <small>{item.risk_reason}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="updated-stack">
+                        <strong class="font-mono">{formatScheduleDate(item.last_update)}</strong>
+                        <span>{item.last_update || '-'}</span>
                       </div>
                     </td>
                     <td>
@@ -1433,15 +1627,58 @@
 
   <!-- Schedule Demand Modal -->
   {#if showScheduleModal && selectedDemand}
-    <div class="modal-backdrop" on:click={() => showScheduleModal = false}>
-      <div class="modal-content glass-panel" on:click|stopPropagation>
+    <div class="modal-backdrop" on:click={closeScheduleModal}>
+      <div class="modal-content schedule-modal" on:click|stopPropagation>
         <div class="modal-header">
           <h3>⚡ 需求开发排期: #{selectedDemand.task_id}</h3>
-          <button class="close-btn" on:click={() => showScheduleModal = false}>&times;</button>
+          <button class="close-btn" on:click={closeScheduleModal}>&times;</button>
         </div>
 
         <div class="form-body">
           <p class="demand-brief font-mono">标题: {selectedDemand.title}</p>
+
+          <div class="schedule-estimate-panel">
+            <div class="estimate-panel-head">
+              <div>
+                <span class="brain-link-note-label font-mono">AI ESTIMATE</span>
+                <strong>工时预估</strong>
+              </div>
+              <button
+                type="button"
+                class="estimate-ai-btn font-mono"
+                class:is-loading={scheduleEstimateLoading}
+                disabled={scheduleEstimateLoading}
+                on:click={handleEstimateScheduleEffort}
+              >
+                {scheduleEstimateLoading ? '评估中' : 'AI 评估'}
+              </button>
+            </div>
+            <div class="estimate-metrics">
+              <div>
+                <span>小时</span>
+                <strong>{schedEstimateHours > 0 ? formatOneDecimal(schedEstimateHours) : '-'}</strong>
+              </div>
+              <div>
+                <span>天数</span>
+                <strong>{schedEstimateDays > 0 ? formatOneDecimal(schedEstimateDays) : '-'}</strong>
+              </div>
+              <div>
+                <span>难度</span>
+                <strong>{formatDifficultyLabel(schedDifficulty)}</strong>
+              </div>
+            </div>
+            {#if schedEstimateBasis}
+              <p class="estimate-basis">{schedEstimateBasis}</p>
+            {:else if !hasScheduleEstimate()}
+              <p class="estimate-basis muted">排期前可先生成一个工时基线。</p>
+            {/if}
+            {#if schedEstimateConfidence > 0}
+              <span class="estimate-confidence font-mono">CONF {Math.round(schedEstimateConfidence * 100)}%</span>
+            {/if}
+            {#if scheduleEstimateError}
+              <p class="estimate-error">{scheduleEstimateError}</p>
+            {/if}
+          </div>
           
           <div class="form-group">
             <label for="sched-branch">关联开发分支 <span class="text-rose">*</span></label>
@@ -1530,7 +1767,7 @@
         </div>
 
         <div class="modal-footer">
-          <button class="cancel-btn font-mono" on:click={() => showScheduleModal = false}>取消</button>
+          <button class="cancel-btn font-mono" on:click={closeScheduleModal}>取消</button>
           <button class="submit-btn font-mono" on:click={handleSaveSchedule}>确认排期</button>
         </div>
       </div>
@@ -1853,14 +2090,46 @@
   .schedule-table-wrapper {
     max-height: 620px;
     overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(129, 140, 248, 0.62) rgba(15, 23, 42, 0.72);
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.72);
+    border-radius: 999px;
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(129, 140, 248, 0.82), rgba(56, 189, 248, 0.58));
+    border: 2px solid rgba(15, 23, 42, 0.72);
+    border-radius: 999px;
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-corner {
+    background: rgba(15, 23, 42, 0.72);
   }
 
   .schedule-table {
     width: 100%;
-    min-width: 1080px;
+    min-width: 1420px;
     border-collapse: collapse;
     table-layout: fixed;
   }
+
+  .schedule-table .col-demand { width: 300px; }
+  .schedule-table .col-owner { width: 140px; }
+  .schedule-table .col-plan { width: 150px; }
+  .schedule-table .col-effort { width: 130px; }
+  .schedule-table .col-evidence { width: 200px; }
+  .schedule-table .col-subtask { width: 140px; }
+  .schedule-table .col-risk { width: 210px; }
+  .schedule-table .col-update { width: 120px; }
+  .schedule-table .col-action { width: 90px; }
 
   .schedule-table th {
     position: sticky;
@@ -1894,10 +2163,12 @@
 
   .demand-stack,
   .owner-stack,
-  .branch-stack,
-  .due-stack,
+  .plan-stack,
+  .effort-stack,
+  .evidence-stack,
   .subtask-stack,
-  .risk-stack {
+  .risk-stack,
+  .updated-stack {
     display: flex;
     flex-direction: column;
     gap: 5px;
@@ -1905,8 +2176,10 @@
   }
 
   .demand-stack strong,
-  .branch-stack strong,
-  .due-stack strong,
+  .plan-stack strong,
+  .effort-stack strong,
+  .evidence-stack strong,
+  .updated-stack strong,
   .owner-stack strong,
   .subtask-stack strong {
     color: #f8fafc;
@@ -1915,9 +2188,10 @@
   }
 
   .demand-stack small,
-  .branch-stack span,
-  .due-stack span,
-  .due-stack small,
+  .plan-stack span,
+  .effort-stack span,
+  .evidence-stack span,
+  .updated-stack span,
   .owner-stack span,
   .subtask-stack small,
   .risk-stack small {
@@ -1925,6 +2199,27 @@
     font-size: 0.68rem;
     line-height: 1.4;
     word-break: break-word;
+  }
+
+  .evidence-stack a {
+    color: #7dd3fc;
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-decoration: none;
+    width: fit-content;
+  }
+
+  .evidence-stack a:hover {
+    color: #bae6fd;
+  }
+
+  .evidence-empty {
+    width: fit-content;
+    color: #64748b !important;
+    background: rgba(51, 65, 85, 0.26);
+    border: 1px solid rgba(71, 85, 105, 0.32);
+    border-radius: 6px;
+    padding: 3px 7px;
   }
 
   .schedule-id {
@@ -1944,6 +2239,9 @@
     border: 1px solid rgba(100, 116, 139, 0.25);
   }
 
+  .status-chip.status-scheduled { color: #bfdbfe; border-color: rgba(59, 130, 246, 0.36); background: rgba(59, 130, 246, 0.12); }
+  .status-chip.status-unscheduled { color: #fed7aa; border-color: rgba(249, 115, 22, 0.36); background: rgba(249, 115, 22, 0.12); }
+  .status-chip.status-partial { color: #fde68a; border-color: rgba(234, 179, 8, 0.36); background: rgba(234, 179, 8, 0.12); }
   .status-chip.status-progress { color: #c4b5fd; border-color: rgba(168, 85, 247, 0.34); background: rgba(168, 85, 247, 0.1); }
   .status-chip.status-review { color: #fde68a; border-color: rgba(234, 179, 8, 0.34); background: rgba(234, 179, 8, 0.1); }
   .status-chip.status-done { color: #86efac; border-color: rgba(16, 185, 129, 0.34); background: rgba(16, 185, 129, 0.1); }
@@ -2302,14 +2600,21 @@
     padding: 24px 16px;
     box-sizing: border-box;
     z-index: 1000;
+    scrollbar-gutter: stable;
   }
 
   .modal-content {
     width: 100%;
     max-width: 520px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 20px;
+    background: #0b1220;
+    border: 1px solid rgba(71, 85, 105, 0.68);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 24px 72px rgba(2, 6, 23, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.04);
     animation: zoomIn 0.16s ease-out;
     transform: translateZ(0);
     backface-visibility: hidden;
@@ -2317,6 +2622,11 @@
 
   .demand-create-modal {
     max-width: 560px;
+  }
+
+  .schedule-modal {
+    max-width: 580px;
+    overflow: visible;
   }
 
   .modal-header {
@@ -2437,6 +2747,8 @@
     align-items: center;
     min-height: 40px;
     z-index: 5;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .date-input-display {
@@ -2520,12 +2832,18 @@
     top: calc(100% + 8px);
     left: 0;
     width: 292px;
+    max-width: min(292px, calc(100vw - 48px));
+    box-sizing: border-box;
     background: #0b1220;
     border: 1px solid rgba(71, 85, 105, 0.76);
     border-radius: 12px;
     padding: 12px;
     box-shadow: 0 20px 48px rgba(2, 6, 23, 0.72);
     z-index: 1400;
+  }
+
+  .schedule-modal .date-picker-panel {
+    width: min(292px, 100%);
   }
 
   .date-picker-head {
@@ -2645,6 +2963,127 @@
     color: #94a3b8;
     font-size: 0.72rem;
     line-height: 1.45;
+  }
+
+  .schedule-estimate-panel {
+    position: relative;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(99, 102, 241, 0.24);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .estimate-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .estimate-panel-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .estimate-panel-head strong {
+    color: #f8fafc;
+    font-size: 0.86rem;
+  }
+
+  .estimate-ai-btn {
+    flex: 0 0 auto;
+    height: 32px;
+    border: 1px solid rgba(56, 189, 248, 0.38);
+    background: rgba(14, 165, 233, 0.12);
+    color: #7dd3fc;
+    border-radius: 8px;
+    padding: 0 12px;
+    cursor: pointer;
+    font-size: 0.68rem;
+    font-weight: 900;
+    transition: background 0.16s ease, border-color 0.16s ease, transform 0.1s ease;
+  }
+
+  .estimate-ai-btn:hover:not(:disabled) {
+    background: rgba(14, 165, 233, 0.2);
+    border-color: rgba(125, 211, 252, 0.58);
+  }
+
+  .estimate-ai-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .estimate-ai-btn:disabled,
+  .estimate-ai-btn.is-loading {
+    opacity: 0.66;
+    cursor: wait;
+  }
+
+  .estimate-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .estimate-metrics div {
+    min-width: 0;
+    background: rgba(2, 6, 23, 0.34);
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-radius: 8px;
+    padding: 9px 10px;
+  }
+
+  .estimate-metrics span {
+    display: block;
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+
+  .estimate-metrics strong {
+    color: #e2e8f0;
+    font-size: 0.82rem;
+    line-height: 1.25;
+    word-break: break-word;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .estimate-basis,
+  .estimate-error {
+    margin: 0;
+    font-size: 0.7rem;
+    line-height: 1.5;
+  }
+
+  .estimate-basis {
+    color: #94a3b8;
+  }
+
+  .estimate-basis.muted {
+    color: #64748b;
+  }
+
+  .estimate-error {
+    color: #fecaca;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(248, 113, 113, 0.28);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+
+  .estimate-confidence {
+    position: absolute;
+    right: 12px;
+    bottom: 10px;
+    color: #475569;
+    font-size: 0.6rem;
+    font-weight: 900;
   }
 
   .brain-link-note-label {

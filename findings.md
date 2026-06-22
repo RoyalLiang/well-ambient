@@ -68,6 +68,9 @@
 - In this deployment Jira `Task` is a demand, not an execution-only task. The code should map Jira Task/Story/Feature/Epic-like issue types to `issue_type = demand`, while Bug/Defect-like issue types remain `bug`.
 - Execution tracking remains useful after that change, but its scope becomes AI shadow tasks, manually split execution tasks, and Bug development evidence, not Jira Task demand intake.
 - WellOS login no longer provides the authoritative avatar and department fields directly. After login succeeds, the backend must call `GET /api/user/info?token={token}` and use `data.avatar`, `data.realname`, and `data.department_name`.
+- Demand schedule rows must distinguish workflow status from schedule completeness. `backlog` can mean a demand is waiting or planned, but it is not proof of schedule unless the row has both a development branch and a due date.
+- The schedule table should keep schedule status, effort estimate, delivery evidence, risk, and update time in separate columns. Mixing branch/repo placeholders into the schedule column makes unscheduled work look scheduled.
+- AI effort estimation can reuse the existing `/api/deconstruct` contract for the scheduling MVP. The schedule modal should treat it as an optional estimate baseline and persist the selected overall hours/days/difficulty only when the user confirms scheduling.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -106,6 +109,8 @@
 | Replace policy raw selects with guided controls | Admins need fewer fragile fields and more visible policy intent before saving allow/deny rules. |
 | Map Jira Task-like issue types to demands | The team's Jira Task items are real requirements that need scheduling, iteration planning, and delivery tracking. |
 | Keep user-info refresh best-effort after successful auth | A temporary user-info failure should not reject a valid WellOS login, but successful responses must refresh DB, JWT, and frontend payload profile fields. |
+| Use row-level `scheduled` for schedule table truth | A boolean contract avoids frontends and future pages reinterpreting `backlog` as “已排期” without branch and due-date evidence. |
+| Keep AI schedule estimation optional | AI configuration failures should not block a normal schedule edit; the estimate is useful context and persisted telemetry, not a mandatory gate. |
 
 ## Issues Encountered
 | Issue | Resolution |

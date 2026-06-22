@@ -44,6 +44,7 @@
       "branch": "feat/department-sync",
       "status": "progress",
       "task_group_id": "brain-demand-001",
+      "scheduled": true,
       "due_date": "2026-06-30",
       "created_at": "2026-06-20 09:20",
       "last_update": "2026-06-22 10:20",
@@ -81,14 +82,22 @@
 
 - 指标带：需求总量、已排期、逾期、临期、推进滞后。
 - 控制区：关键词搜索、风险筛选、负责人筛选、排序、刷新。
-- 表格区：需求、负责人、排期、交付窗口、影子任务、风险、操作。
+- 表格区：需求、负责人、排期、工时、交付证据、影子任务、风险、更新时间、操作。
+
+排期列只展示排期状态和截止日，不再混入仓库或分支占位文案。行级 `scheduled = true` 仅表示需求同时具备开发分支和截止日；`backlog` 只是流程状态，不等同于已经完成排期。仓库、分支、MR 等内容进入“交付证据”列，缺失时不再展示“未绑定分支”“未映射仓库”这类会干扰判断的占位文本。
+
+“需求开发排期”弹窗支持可选 AI 工时评估：
+
+- 前端调用现有 `POST /api/deconstruct`，读取 `analysis.overall_estimated_hours`、`analysis.overall_estimated_days`、`analysis.overall_difficulty` 和 `analysis.estimate_basis`。
+- 用户确认排期后，`POST /api/tasks/schedule` 可一并提交 `estimate_hours`、`estimate_days` 和 `difficulty`，后端写入 `task_telemetries` 并标记 `estimate_source = ai_deconstruct`。
+- AI 未配置或评估失败时不阻塞普通排期，弹窗保留局部错误提示，用户仍可手工排期。
 
 性能策略：
 
 - 表格消费 `/api/schedule` 的紧凑 DTO，不再从全量任务记录临时推断风险。
 - 筛选和排序在已加载数组上完成，避免频繁请求后端。
 - 页面轮询保持 15 秒；仅当用户停留在排期表时同步刷新排期接口。
-- 表格使用固定列宽和内部滚动，避免需求量增长后撑破页面布局。
+- 表格使用固定列宽、内部滚动和统一暗色滚动条，避免需求量增长后撑破页面布局或泄露浏览器原生滚动条样式。
 
 ## 后续扩展
 

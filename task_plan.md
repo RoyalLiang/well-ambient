@@ -10,6 +10,12 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Add httptest-backed GitLab API regression tests
 - [x] Run targeted Go validation
 
+## Current Task Addendum: Demand Schedule Table Polish
+- [x] Fix native-looking schedule table scrollbars
+- [x] Make the demand scheduling modal opaque and layout-stable
+- [x] Add optional AI effort estimation to the scheduling flow
+- [x] Split schedule, delivery evidence, and update time into clear table columns
+
 ## Current Phase
 Complete
 
@@ -170,6 +176,14 @@ Complete
 - [x] Add focused login/profile regression coverage
 - **Status:** complete
 
+### Phase 20: Demand Schedule Table And Effort Estimate Polish
+- [x] Add row-level `scheduled` to `/api/schedule` so the UI does not infer real scheduling from `backlog`
+- [x] Persist optional AI estimate hours, days, and difficulty through `/api/tasks/schedule`
+- [x] Split schedule table columns into schedule, effort, delivery evidence, and update time
+- [x] Restyle schedule table scrollbars and the scheduling modal/date picker surface
+- [x] Update the schedule MVP documentation and add focused regression assertions
+- **Status:** complete
+
 ## Key Questions
 1. Which current files contain the server handlers named in the plan?
 2. Does the current data model support linking demands to AI task groups?
@@ -201,6 +215,7 @@ Complete
 | Store long domain capability catalogs as archived context documents and inject compact summaries into config | Long feature inventories are better versioned/audited in docs, while runtime prompt fields should stay concise enough for stable AI behavior. |
 | Treat Jira Task as a demand in this deployment | The team uses Jira Task to record real product and development requirements, so Jira Task must enter demand scheduling rather than execution-only tracking. |
 | Fetch WellOS avatar and department from `/api/user/info` | The login response no longer carries authoritative avatar and department fields; profile refresh must use the token-backed user-info endpoint. |
+| Treat `backlog` as workflow state, not proof of schedule | A demand is only truly scheduled when it has both a development branch and a due date; delivery evidence and update time should live in separate columns. |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

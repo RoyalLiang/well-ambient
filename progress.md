@@ -492,6 +492,33 @@
 |------|-------|----------|--------|--------|
 | WellOS profile refresh tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestLoginRefreshesAvatarAndDepartmentFromWellOSUserInfo|TestGetCurrentUser(ReturnsDepartment|BackfillsDepartmentFromJWT|RefreshesDepartmentFromJWT)|TestGenerateJWTIncludesDepartment' -count=1 -v` | login response, DB, and JWT use user-info avatar and department | passed | pass |
 
+### Phase 20: Demand Schedule Table and Effort Estimate Polish
+- **Status:** complete
+- Actions taken:
+  - Added row-level `scheduled` to the schedule DTO so UI truth is not inferred from workflow status.
+  - Extended schedule saving to persist optional AI estimate hours, days, and difficulty.
+  - Split the schedule table into schedule, effort, delivery evidence, risk, and update time columns.
+  - Removed branch/repo placeholder text from the schedule column and added styled internal scrollbars.
+  - Reworked the scheduling modal into an opaque dark-system surface with a layout-stable custom calendar and optional AI effort panel.
+  - Updated `docs/schedule-table-mvp.md` with the schedule truth and AI estimate contract.
+- Files modified:
+  - `internal/server/demand_handlers.go`
+  - `internal/server/schedule_handlers.go`
+  - `internal/server/server_test.go`
+  - `web/src/components/DemandKanban.svelte`
+  - `docs/schedule-table-mvp.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+
+## Latest Validation After Phase 20
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Schedule focused Go tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestGetScheduleBuildsDemandTimeline|TestDemandAndKPILogic' -count=1 -v` | schedule DTO and schedule save estimate fields pass | passed | pass |
+| Frontend type check | `pnpm --dir web check` | Svelte/TS has 0 errors | passed with existing warnings | pass |
+| Frontend production build | `pnpm --dir web build` | production build succeeds | passed with existing warnings | pass |
+| Diff hygiene | `git diff --check` | no whitespace errors | passed | pass |
+
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|

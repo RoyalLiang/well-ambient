@@ -39,6 +39,7 @@ type ScheduleItemDTO struct {
 	Branch        string  `json:"branch"`
 	Status        string  `json:"status"`
 	TaskGroupID   string  `json:"task_group_id"`
+	Scheduled     bool    `json:"scheduled"`
 	DueDate       string  `json:"due_date"`
 	CreatedAt     string  `json:"created_at"`
 	LastUpdate    string  `json:"last_update"`
@@ -150,6 +151,7 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			Branch:        strings.TrimSpace(demand.Branch),
 			Status:        strings.ToLower(strings.TrimSpace(demand.Status)),
 			TaskGroupID:   groupID,
+			Scheduled:     isDemandScheduled(demand),
 			DueDate:       formatOptionalDate(demand.DueDate),
 			CreatedAt:     formatDateTime(demand.TaskCreatedAt),
 			LastUpdate:    formatDateTime(scheduleActivityTime(demand)),
