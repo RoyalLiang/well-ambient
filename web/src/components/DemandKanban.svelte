@@ -2895,7 +2895,7 @@
 
   .schedule-modal {
     max-width: 580px;
-    overflow-x: hidden;
+    overflow: visible;
   }
 
   .modal-header {
@@ -3112,12 +3112,6 @@
     box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.18);
   }
 
-  .schedule-modal .date-input-shell {
-    flex-direction: column;
-    align-items: stretch;
-    min-height: 0;
-  }
-
   .date-picker-panel {
     position: absolute;
     top: calc(100% + 8px);
@@ -3134,10 +3128,10 @@
   }
 
   .schedule-modal .date-picker-panel {
-    position: static;
-    width: 100%;
-    max-width: none;
-    margin-top: 8px;
+    position: absolute;
+    width: min(292px, 100%);
+    max-width: 100%;
+    margin-top: 0;
     box-shadow: 0 16px 36px rgba(2, 6, 23, 0.46);
   }
 
