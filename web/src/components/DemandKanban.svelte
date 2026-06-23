@@ -265,8 +265,7 @@
   let showAssigneeDropdown = false;
   let showProjectDropdown = false;
   let showScheduleAssigneeDropdown = false;
-  let editingAssigneeTaskID = '';
-  let reassigningTaskID = '';
+  let showScheduleDifficultyDropdown = false;
   let activeDatePicker: 'new' | 'schedule' | null = null;
   let datePickerCursor = new Date();
   let jiraBaseUrl = '';
@@ -416,17 +415,19 @@
 
   function updateScheduleDifficulty(value: string) {
     schedDifficulty = value;
+    showScheduleDifficultyDropdown = false;
     markScheduleEstimateManual();
   }
 
-  function updateScheduleDifficultyFromSelect(event: Event) {
-    updateScheduleDifficulty((event.currentTarget as HTMLSelectElement).value);
+  function getScheduleDifficultyLabel() {
+    return difficultyOptions.find((option) => option.value === schedDifficulty)?.label || '未设置';
   }
 
   function clearScheduleEstimate() {
     schedEstimateHours = 0;
     schedEstimateDays = 0;
     schedDifficulty = '';
+    showScheduleDifficultyDropdown = false;
     markScheduleEstimateManual();
   }
 
@@ -798,6 +799,7 @@
     schedTaskGroupID = getEffectiveTaskGroupId(demand);
     resetScheduleEstimateFromDemand(demand);
     activeDatePicker = null;
+    showScheduleDifficultyDropdown = false;
     showScheduleModal = true;
   }
 
@@ -805,6 +807,7 @@
     showScheduleModal = false;
     selectedDemand = null;
     activeDatePicker = null;
+    showScheduleDifficultyDropdown = false;
     scheduleEstimateLoading = false;
   }
 
@@ -829,53 +832,6 @@
   function getJiraIssueUrl(taskId: string) {
     if (!jiraBaseUrl || !taskId || taskId.startsWith('DEMAND-')) return '';
     return `${jiraBaseUrl}/browse/${taskId}`;
-  }
-
-  function getAssigneeOptionsForDemand(demand: Demand) {
-    const options = new Set<string>(createAssigneeOptions);
-    addFormOption(options, demand.assignee);
-    return sortedFormOptions(options);
-  }
-
-  async function openAssigneeEditor(demand: Demand) {
-    editingAssigneeTaskID = editingAssigneeTaskID === demand.task_id ? '' : demand.task_id;
-    if (editingAssigneeTaskID) {
-      await fetchDemandOptions();
-    }
-  }
-
-  async function reassignDemand(demand: Demand, assignee: string) {
-    if (!assignee || assignee === demand.assignee || reassigningTaskID) {
-      editingAssigneeTaskID = '';
-      return;
-    }
-    reassigningTaskID = demand.task_id;
-    const token = localStorage.getItem('jwt_token');
-
-    try {
-      const res = await fetch('/api/demands/reassign', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          task_id: demand.task_id,
-          assignee
-        })
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || '负责人更新失败');
-      }
-
-      await refreshDemandWorkspace();
-      editingAssigneeTaskID = '';
-    } catch (err: any) {
-      alert(err.message || '负责人更新失败');
-    } finally {
-      reassigningTaskID = '';
-    }
   }
 
   async function handleEstimateScheduleEffort() {
@@ -1060,8 +1016,8 @@
       showProjectDropdown = false;
       showScheduleAssigneeDropdown = false;
     }
-    if (!target.closest('.assignee-edit-container')) {
-      editingAssigneeTaskID = '';
+    if (!target.closest('.difficulty-select-shell')) {
+      showScheduleDifficultyDropdown = false;
     }
     if (!target.closest('.date-input-shell')) {
       activeDatePicker = null;
@@ -1376,30 +1332,7 @@
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <div class="assignee-edit-container" on:click|stopPropagation>
-                    {#if canManageDemand(item)}
-                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
-                        <span>👤 {item.assignee}</span>
-                        <span class="assignee-caret">▼</span>
-                      </button>
-                      {#if editingAssigneeTaskID === item.task_id}
-                        <div class="assignee-edit-options">
-                          {#each getAssigneeOptionsForDemand(item) as assignee}
-                            <button
-                              type="button"
-                              class:selected={assignee === item.assignee}
-                              disabled={reassigningTaskID === item.task_id}
-                              on:click={() => reassignDemand(item, assignee)}
-                            >
-                              {assignee}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    {:else}
-                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
-                    {/if}
-                  </div>
+                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1479,30 +1412,7 @@
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <div class="assignee-edit-container" on:click|stopPropagation>
-                    {#if canManageDemand(item)}
-                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
-                        <span>👤 {item.assignee}</span>
-                        <span class="assignee-caret">▼</span>
-                      </button>
-                      {#if editingAssigneeTaskID === item.task_id}
-                        <div class="assignee-edit-options">
-                          {#each getAssigneeOptionsForDemand(item) as assignee}
-                            <button
-                              type="button"
-                              class:selected={assignee === item.assignee}
-                              disabled={reassigningTaskID === item.task_id}
-                              on:click={() => reassignDemand(item, assignee)}
-                            >
-                              {assignee}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    {:else}
-                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
-                    {/if}
-                  </div>
+                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1584,30 +1494,7 @@
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <div class="assignee-edit-container" on:click|stopPropagation>
-                    {#if canManageDemand(item)}
-                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
-                        <span>👤 {item.assignee}</span>
-                        <span class="assignee-caret">▼</span>
-                      </button>
-                      {#if editingAssigneeTaskID === item.task_id}
-                        <div class="assignee-edit-options">
-                          {#each getAssigneeOptionsForDemand(item) as assignee}
-                            <button
-                              type="button"
-                              class:selected={assignee === item.assignee}
-                              disabled={reassigningTaskID === item.task_id}
-                              on:click={() => reassignDemand(item, assignee)}
-                            >
-                              {assignee}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    {:else}
-                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
-                    {/if}
-                  </div>
+                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1684,30 +1571,7 @@
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <div class="assignee-edit-container" on:click|stopPropagation>
-                    {#if canManageDemand(item)}
-                      <button class="assignee-badge assignee-edit-trigger font-mono text-muted" on:click={() => openAssigneeEditor(item)}>
-                        <span>👤 {item.assignee}</span>
-                        <span class="assignee-caret">▼</span>
-                      </button>
-                      {#if editingAssigneeTaskID === item.task_id}
-                        <div class="assignee-edit-options">
-                          {#each getAssigneeOptionsForDemand(item) as assignee}
-                            <button
-                              type="button"
-                              class:selected={assignee === item.assignee}
-                              disabled={reassigningTaskID === item.task_id}
-                              on:click={() => reassignDemand(item, assignee)}
-                            >
-                              {assignee}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                    {:else}
-                      <span class="assignee-badge font-mono text-muted">👤 {item.assignee}</span>
-                    {/if}
-                  </div>
+                  <span class="assignee-badge font-mono text-muted">👤 {item.assignee}</span>
                 </div>
               </div>
               <h5 class="line-through">{item.title}</h5>
@@ -1947,19 +1811,35 @@
                   on:input={updateScheduleEstimateDays}
                 />
               </label>
-              <div class="estimate-difficulty-field">
-                <label for="sched-difficulty">难度</label>
-                <select
+              <div class="estimate-difficulty-field difficulty-select-shell">
+                <span id="sched-difficulty-label">难度</span>
+                <button
                   id="sched-difficulty"
-                  class="difficulty-select"
-                  value={schedDifficulty}
-                  on:change={updateScheduleDifficultyFromSelect}
-                  aria-label="工时难度"
+                  type="button"
+                  class="difficulty-trigger {schedDifficulty ? 'has-value' : ''}"
+                  on:click|stopPropagation={() => showScheduleDifficultyDropdown = !showScheduleDifficultyDropdown}
+                  aria-haspopup="listbox"
+                  aria-expanded={showScheduleDifficultyDropdown}
+                  aria-labelledby="sched-difficulty-label"
                 >
-                  {#each difficultyOptions as option}
-                    <option value={option.value}>{option.label}</option>
-                  {/each}
-                </select>
+                  <span>{getScheduleDifficultyLabel()}</span>
+                  <span class="difficulty-caret">▼</span>
+                </button>
+                {#if showScheduleDifficultyDropdown}
+                  <div class="difficulty-options" role="listbox" aria-labelledby="sched-difficulty-label">
+                    {#each difficultyOptions as option}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={schedDifficulty === option.value}
+                        class:selected={schedDifficulty === option.value}
+                        on:click|stopPropagation={() => updateScheduleDifficulty(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             </div>
             {#if scheduleEstimateError}
@@ -2825,86 +2705,17 @@
   }
 
   .assignee-badge {
+    display: inline-flex;
+    align-items: center;
+    max-width: 132px;
     background: rgba(99, 102, 241, 0.12);
     color: #818cf8;
     padding: 2px 6px;
     border-radius: 4px;
-  }
-
-  .assignee-edit-container {
-    position: relative;
-    min-width: 0;
-  }
-
-  .assignee-edit-trigger {
-    border: 1px solid rgba(99, 102, 241, 0.22);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    max-width: 128px;
     line-height: 1.25;
-  }
-
-  .assignee-edit-trigger span:first-child {
-    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .assignee-edit-trigger:hover {
-    color: #c4b5fd;
-    border-color: rgba(129, 140, 248, 0.55);
-    background: rgba(99, 102, 241, 0.18);
-  }
-
-  .assignee-caret {
-    color: #64748b;
-    font-size: 0.5rem;
-  }
-
-  .assignee-edit-options {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 1300;
-    width: max-content;
-    min-width: 140px;
-    max-width: 220px;
-    max-height: 190px;
-    overflow-y: auto;
-    background: #0f172a;
-    border: 1px solid rgba(129, 140, 248, 0.28);
-    border-radius: 8px;
-    padding: 4px;
-    box-shadow: 0 18px 36px rgba(2, 6, 23, 0.62);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
-  }
-
-  .assignee-edit-options button {
-    width: 100%;
-    border: none;
-    background: transparent;
-    color: #cbd5e1;
-    border-radius: 5px;
-    padding: 7px 9px;
-    font-size: 0.74rem;
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
-
-  .assignee-edit-options button:hover,
-  .assignee-edit-options button.selected {
-    background: rgba(99, 102, 241, 0.18);
-    color: #ffffff;
-  }
-
-  .assignee-edit-options button:disabled {
-    opacity: 0.55;
-    cursor: wait;
   }
 
   .demand-card h5 {
@@ -3052,11 +2863,10 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow-y: auto;
+    overflow: hidden;
     padding: 24px 16px;
     box-sizing: border-box;
     z-index: 1000;
-    scrollbar-gutter: stable;
   }
 
   .modal-content {
@@ -3074,6 +2884,9 @@
     animation: zoomIn 0.16s ease-out;
     transform: translateZ(0);
     backface-visibility: hidden;
+    max-height: calc(100dvh - 48px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .demand-create-modal {
@@ -3082,7 +2895,7 @@
 
   .schedule-modal {
     max-width: 580px;
-    overflow: visible;
+    overflow-x: hidden;
   }
 
   .modal-header {
@@ -3299,6 +3112,12 @@
     box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.18);
   }
 
+  .schedule-modal .date-input-shell {
+    flex-direction: column;
+    align-items: stretch;
+    min-height: 0;
+  }
+
   .date-picker-panel {
     position: absolute;
     top: calc(100% + 8px);
@@ -3315,7 +3134,11 @@
   }
 
   .schedule-modal .date-picker-panel {
-    width: min(292px, 100%);
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 8px;
+    box-shadow: 0 16px 36px rgba(2, 6, 23, 0.46);
   }
 
   .date-picker-head {
@@ -3531,8 +3354,12 @@
     gap: 6px;
   }
 
+  .estimate-difficulty-field {
+    position: relative;
+  }
+
   .estimate-field span,
-  .estimate-difficulty-field > label {
+  .estimate-difficulty-field > span:first-child {
     display: inline-flex;
     color: #64748b;
     font-size: 0.62rem;
@@ -3541,7 +3368,7 @@
   }
 
   .estimate-field input,
-  .difficulty-select {
+  .difficulty-trigger {
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
@@ -3556,6 +3383,7 @@
     font-size: 0.82rem;
     font-weight: 800;
     font-variant-numeric: tabular-nums;
+    text-align: left;
     transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
   }
 
@@ -3563,30 +3391,66 @@
     padding: 0 8px;
   }
 
-  .difficulty-select {
+  .difficulty-trigger {
     cursor: pointer;
-    padding: 0 30px 0 10px;
-    appearance: none;
-    background-image:
-      linear-gradient(45deg, transparent 50%, #94a3b8 50%),
-      linear-gradient(135deg, #94a3b8 50%, transparent 50%),
-      linear-gradient(180deg, rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.28));
-    background-position:
-      calc(100% - 15px) 14px,
-      calc(100% - 10px) 14px,
-      0 0;
-    background-size:
-      5px 5px,
-      5px 5px,
-      100% 100%;
-    background-repeat: no-repeat;
+    padding: 0 9px 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: #94a3b8;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.62), rgba(2, 6, 23, 0.24));
+  }
+
+  .difficulty-trigger.has-value {
+    color: #e2e8f0;
+  }
+
+  .difficulty-caret {
+    color: #64748b;
+    font-size: 0.58rem;
+    line-height: 1;
   }
 
   .estimate-field input:focus,
-  .difficulty-select:focus {
+  .difficulty-trigger:focus {
     border-color: rgba(129, 140, 248, 0.78);
     background-color: rgba(15, 23, 42, 0.66);
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.14);
+  }
+
+  .difficulty-options {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 1500;
+    width: min(136px, 100%);
+    box-sizing: border-box;
+    padding: 4px;
+    background: #0b1220;
+    border: 1px solid rgba(71, 85, 105, 0.74);
+    border-radius: 9px;
+    box-shadow: 0 18px 42px rgba(2, 6, 23, 0.62);
+  }
+
+  .difficulty-options button {
+    width: 100%;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #94a3b8;
+    padding: 7px 8px;
+    text-align: left;
+    font: inherit;
+    font-size: 0.76rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .difficulty-options button:hover,
+  .difficulty-options button.selected {
+    color: #ffffff;
+    background: rgba(99, 102, 241, 0.18);
   }
 
   .estimate-field input::placeholder {

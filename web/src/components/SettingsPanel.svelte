@@ -2007,25 +2007,28 @@
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
     align-items: stretch;
-    gap: 32px;
+    gap: 28px;
     flex: 1;
     width: 100%;
     height: 100%;
-    min-height: 0;
-    overflow: visible;
+    min-height: 620px;
+    overflow: hidden;
   }
 
   .settings-sidebar {
     box-sizing: border-box;
-    background: #0b1329;
-    border: 1px solid rgba(51, 65, 85, 0.4);
+    background: linear-gradient(180deg, rgba(11, 19, 41, 0.98), rgba(8, 13, 28, 0.98));
+    border: 1px solid rgba(71, 85, 105, 0.46);
     border-radius: 12px;
     padding: 20px;
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
     align-self: stretch;
+    height: 100%;
     min-height: 0;
+    max-height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .sidebar-header {
@@ -2052,7 +2055,21 @@
     display: flex;
     flex-direction: column;
     gap: 0;
+    flex: 1 1 auto;
     min-height: 0;
+    overflow-y: auto;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(71, 85, 105, 0.7) transparent;
+  }
+
+  .sidebar-nav::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .sidebar-nav::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.68);
+    border-radius: 999px;
   }
 
   .nav-group {
@@ -2101,8 +2118,11 @@
     min-width: 0;
     height: 100%;
     min-height: 0;
-    overflow-y: auto;
-    padding-right: 6px;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding-right: 0;
     box-sizing: border-box;
     overscroll-behavior: contain;
   }
@@ -2122,11 +2142,32 @@
   }
 
   .section-card {
-    background: #0f172a;
-    border: 1px solid rgba(51, 65, 85, 0.4);
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(10, 16, 31, 0.98));
+    border: 1px solid rgba(71, 85, 105, 0.46);
     border-radius: 12px;
     padding: 24px;
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 18px 48px -34px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(71, 85, 105, 0.72) rgba(15, 23, 42, 0.28);
+  }
+
+  .section-card::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .section-card::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.72);
+    border-radius: 999px;
+  }
+
+  .section-card::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.36);
+    border-radius: 999px;
   }
 
   .kpi-settings-panel {
@@ -3554,12 +3595,14 @@
       flex-direction: column;
       gap: 18px;
       height: auto;
+      min-height: 0;
       overflow: visible;
     }
 
     .settings-sidebar {
       width: auto;
       position: static;
+      height: auto;
       max-height: none;
       overflow: visible;
       align-self: stretch;
@@ -3567,14 +3610,24 @@
 
     .settings-main {
       height: auto;
+      max-height: none;
       overflow: visible;
       padding-right: 0;
+    }
+
+    .section-card {
+      height: auto;
+      min-height: 0;
+      overflow: visible;
     }
 
     .sidebar-nav {
       display: flex;
       flex-direction: column;
       gap: 0;
+      flex: none;
+      overflow: visible;
+      padding-right: 0;
     }
 
     .nav-group {
