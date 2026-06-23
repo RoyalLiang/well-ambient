@@ -249,6 +249,18 @@
   let scheduleLoading = false;
   let scheduleErrorMsg = '';
   let scheduleSearch = '';
+  let scheduleSearchInput = '';
+  let scheduleSearchDebounceTimer: any;
+  $: {
+    clearTimeout(scheduleSearchDebounceTimer);
+    scheduleSearchDebounceTimer = setTimeout(() => {
+      scheduleSearch = scheduleSearchInput;
+    }, 250);
+  }
+
+  let projectSearchText = '';
+  let assigneeSearchText = '';
+  let scheduleAssigneeSearchText = '';
   let scheduleRiskFilter: ScheduleRiskFilter = 'attention';
   let scheduleAssigneeFilter = 'all';
   let scheduleSortMode: ScheduleSortMode = 'risk';
@@ -582,6 +594,9 @@
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
+  $: if (!showProjectDropdown) projectSearchText = '';
+  $: if (!showAssigneeDropdown) assigneeSearchText = '';
+  $: if (!showScheduleAssigneeDropdown) scheduleAssigneeSearchText = '';
   $: {
     const shouldLock = showCreateModal || showScheduleModal || showConfirmModal || showDemandDetailsModal;
     if (shouldLock && !manualModalScrollLocked) {
@@ -603,18 +618,19 @@
   function matchesScheduleFilters(item: ScheduleItem): boolean {
     const query = scheduleSearch.trim().toLowerCase();
     if (query) {
-      const haystack = [
-        item.demand_id,
-        item.title,
-        item.description,
-        item.assignee,
-        item.department,
-        item.repo,
-        item.branch,
-        item.task_group_id,
-        item.risk_label
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(query)) return false;
+      const idMatch = item.demand_id && item.demand_id.toLowerCase().includes(query);
+      const titleMatch = item.title && item.title.toLowerCase().includes(query);
+      const descMatch = item.description && item.description.toLowerCase().includes(query);
+      const assigneeMatch = item.assignee && item.assignee.toLowerCase().includes(query);
+      const deptMatch = item.department && item.department.toLowerCase().includes(query);
+      const repoMatch = item.repo && item.repo.toLowerCase().includes(query);
+      const branchMatch = item.branch && item.branch.toLowerCase().includes(query);
+      const groupMatch = item.task_group_id && item.task_group_id.toLowerCase().includes(query);
+      const riskMatch = item.risk_label && item.risk_label.toLowerCase().includes(query);
+      
+      if (!idMatch && !titleMatch && !descMatch && !assigneeMatch && !deptMatch && !repoMatch && !branchMatch && !groupMatch && !riskMatch) {
+        return false;
+      }
     }
 
     if (scheduleAssigneeFilter !== 'all' && item.assignee !== scheduleAssigneeFilter) {
@@ -1130,7 +1146,7 @@
       <div class="schedule-control-panel">
         <div class="schedule-search-shell">
           <span class="search-mark"></span>
-          <input bind:value={scheduleSearch} placeholder="搜索需求、负责人、仓库、分支" />
+          <input bind:value={scheduleSearchInput} placeholder="搜索需求、负责人、仓库、分支" />
         </div>
 
         <div class="schedule-filter-strip">
@@ -1151,6 +1167,14 @@
           </button>
           {#if showScheduleAssigneeDropdown}
             <div class="dropdown-options-list glass-panel">
+              <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                <input 
+                  type="text" 
+                  placeholder="搜索负责人..." 
+                  class="dropdown-search-input font-mono"
+                  bind:value={scheduleAssigneeSearchText}
+                />
+              </div>
               <button
                 type="button"
                 class="dropdown-option-item {scheduleAssigneeFilter === 'all' ? 'selected' : ''}"
@@ -1161,7 +1185,7 @@
               >
                 全部负责人
               </button>
-              {#each scheduleAssigneeOptions as assignee}
+              {#each scheduleAssigneeOptions.filter(name => !scheduleAssigneeSearchText || name.toLowerCase().includes(scheduleAssigneeSearchText.toLowerCase())) as assignee}
                 <button
                   type="button"
                   class="dropdown-option-item {scheduleAssigneeFilter === assignee ? 'selected' : ''}"
@@ -1670,7 +1694,15 @@
               </button>
               {#if showProjectDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  {#each createProjectOptions as project}
+                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                    <input 
+                      type="text" 
+                      placeholder="搜索项目..." 
+                      class="dropdown-search-input font-mono"
+                      bind:value={projectSearchText}
+                    />
+                  </div>
+                  {#each createProjectOptions.filter(proj => !projectSearchText || displayProjectOption(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
                     <button
                       type="button"
                       class="dropdown-option-item {newRepo === project ? 'selected' : ''}"
@@ -1704,7 +1736,15 @@
               </button>
               {#if showAssigneeDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  {#each createAssigneeOptions as assignee}
+                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                    <input 
+                      type="text" 
+                      placeholder="搜索负责人..." 
+                      class="dropdown-search-input font-mono"
+                      bind:value={assigneeSearchText}
+                    />
+                  </div>
+                  {#each createAssigneeOptions.filter(name => !assigneeSearchText || name.toLowerCase().includes(assigneeSearchText.toLowerCase())) as assignee}
                     <button
                       type="button"
                       class="dropdown-option-item {newAssignee === assignee ? 'selected' : ''}"
@@ -4128,5 +4168,28 @@
   @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+  }
+  .dropdown-search-wrapper {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: sticky;
+    top: 0;
+    background: rgba(30, 30, 30, 0.95);
+    z-index: 10;
+  }
+  .dropdown-search-input {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #fff;
+    font-size: 12px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .dropdown-search-input:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(0, 0, 0, 0.5);
   }
 </style>

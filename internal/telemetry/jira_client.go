@@ -37,6 +37,7 @@ type JiraIssue struct {
 }
 
 type JiraSearchResponse struct {
+	Total  int         `json:"total"`
 	Issues []JiraIssue `json:"issues"`
 }
 
@@ -86,29 +87,43 @@ func (jc *JiraClient) newRequest(method, path string, body io.Reader) (*http.Req
 }
 
 func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
-	path := fmt.Sprintf("/rest/api/2/search?jql=%s", url.QueryEscape(jql))
-	req, err := jc.newRequest("GET", path, nil)
-	if err != nil {
-		return nil, err
+	var allIssues []JiraIssue
+	startAt := 0
+	maxResults := 50
+
+	for {
+		path := fmt.Sprintf("/rest/api/2/search?jql=%s&startAt=%d&maxResults=%d", url.QueryEscape(jql), startAt, maxResults)
+		req, err := jc.newRequest("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err := jc.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("Jira search failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		var res JiraSearchResponse
+		err = json.NewDecoder(resp.Body).Decode(&res)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		allIssues = append(allIssues, res.Issues...)
+		if len(allIssues) >= res.Total || len(res.Issues) == 0 {
+			break
+		}
+		startAt += len(res.Issues)
 	}
 
-	resp, err := jc.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Jira search failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var res JiraSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, err
-	}
-
-	return res.Issues, nil
+	return allIssues, nil
 }
 
 func (jc *JiraClient) GetTransitions(issueKey string) ([]JiraTransition, error) {

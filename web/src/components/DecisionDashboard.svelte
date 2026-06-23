@@ -73,6 +73,12 @@
   let overrideDatePickerEl: HTMLElement;
   let overrideDatePickerCursor = new Date();
 
+  let assigneeSearchText = '';
+  let projectSearchText = '';
+
+  $: if (!showAssigneeDropdown) assigneeSearchText = '';
+  $: if (!showRepoDropdown) projectSearchText = '';
+
   const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
   const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -625,7 +631,15 @@
               </button>
               {#if showAssigneeDropdown}
                 <div class="custom-select-options">
-                  {#each assigneesList as name}
+                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                    <input 
+                      type="text" 
+                      placeholder="搜索负责人..." 
+                      class="dropdown-search-input font-mono"
+                      bind:value={assigneeSearchText}
+                    />
+                  </div>
+                  {#each assigneesList.filter(name => name === 'all' || !assigneeSearchText || name.toLowerCase().includes(assigneeSearchText.toLowerCase())) as name}
                     <button 
                       class="custom-option {selectedAssignee === name ? 'active' : ''}" 
                       on:click={() => selectAssignee(name)}
@@ -649,7 +663,15 @@
               </button>
               {#if showRepoDropdown}
                 <div class="custom-select-options">
-                  {#each projectList as r}
+                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                    <input 
+                      type="text" 
+                      placeholder="搜索项目..." 
+                      class="dropdown-search-input font-mono"
+                      bind:value={projectSearchText}
+                    />
+                  </div>
+                  {#each projectList.filter(r => r === 'all' || !projectSearchText || r.toLowerCase().includes(projectSearchText.toLowerCase())) as r}
                     <button 
                       class="custom-option {selectedRepo === r ? 'active' : ''}" 
                       on:click={() => selectRepo(r)}
@@ -2239,5 +2261,28 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+  .dropdown-search-wrapper {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: sticky;
+    top: 0;
+    background: rgba(30, 30, 30, 0.95);
+    z-index: 10;
+  }
+  .dropdown-search-input {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #fff;
+    font-size: 12px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .dropdown-search-input:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(0, 0, 0, 0.5);
   }
 </style>

@@ -211,6 +211,14 @@
   let projectSelectEl: HTMLElement;
   let assigneeSelectEl: HTMLElement;
 
+  let projectSearchText = '';
+  let assigneeSearchText = '';
+  let execAssigneeSearchText = '';
+
+  $: if (!showProjectDropdown) projectSearchText = '';
+  $: if (!showAssigneeDropdown) assigneeSearchText = '';
+  $: if (!showExecutionAssigneeDropdown) execAssigneeSearchText = '';
+
   function toggleProjectDropdown() {
     showProjectDropdown = !showProjectDropdown;
     if (showProjectDropdown) showAssigneeDropdown = false;
@@ -715,7 +723,15 @@
         </button>
         {#if showProjectDropdown}
           <div class="custom-select-options">
-            {#each projectOptions as proj}
+            <div class="dropdown-search-wrapper" on:click|stopPropagation>
+              <input 
+                type="text" 
+                placeholder="搜索项目..." 
+                class="dropdown-search-input font-mono"
+                bind:value={projectSearchText}
+              />
+            </div>
+            {#each projectOptions.filter(proj => proj === 'all' || !projectSearchText || proj.toLowerCase().includes(projectSearchText.toLowerCase())) as proj}
               <button 
                 class="custom-option {selectedProject === proj ? 'active' : ''}" 
                 on:click={() => selectProject(proj)}
@@ -736,7 +752,15 @@
         </button>
         {#if showAssigneeDropdown}
           <div class="custom-select-options">
-            {#each assigneeOptions as ass}
+            <div class="dropdown-search-wrapper" on:click|stopPropagation>
+              <input 
+                type="text" 
+                placeholder="搜索经办人..." 
+                class="dropdown-search-input font-mono"
+                bind:value={assigneeSearchText}
+              />
+            </div>
+            {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
               <button 
                 class="custom-option {selectedAssignee === ass ? 'active' : ''}" 
                 on:click={() => selectAssignee(ass)}
@@ -864,7 +888,15 @@
           </button>
           {#if showExecutionAssigneeDropdown}
             <div class="custom-select-options">
-              {#each executionAssigneeOptions as assignee}
+              <div class="dropdown-search-wrapper" on:click|stopPropagation>
+                <input 
+                  type="text" 
+                  placeholder="搜索负责人..." 
+                  class="dropdown-search-input font-mono"
+                  bind:value={execAssigneeSearchText}
+                />
+              </div>
+              {#each executionAssigneeOptions.filter(ass => ass === 'all' || !execAssigneeSearchText || ass.toLowerCase().includes(execAssigneeSearchText.toLowerCase())) as assignee}
                 <button
                   class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
                   on:click={() => {
@@ -3183,5 +3215,28 @@
   .parent-demand-detail .title-sub {
     color: #e2e8f0;
     font-weight: normal;
+  }
+  .dropdown-search-wrapper {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: sticky;
+    top: 0;
+    background: rgba(30, 30, 30, 0.95);
+    z-index: 10;
+  }
+  .dropdown-search-input {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 4px 8px;
+    color: #fff;
+    font-size: 12px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .dropdown-search-input:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+    background: rgba(0, 0, 0, 0.5);
   }
 </style>
