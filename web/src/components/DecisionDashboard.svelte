@@ -1706,11 +1706,11 @@
     content: "";
     position: absolute;
     left: 4px;
-    bottom: 4px;
+    top: 8px;
     width: 2px;
     height: 2px;
     background: currentColor;
-    box-shadow: 4px 0 0 currentColor, 8px 0 0 currentColor;
+    box-shadow: 5px 0 0 currentColor, 0 4px 0 currentColor, 5px 4px 0 currentColor;
     border-radius: 1px;
   }
 

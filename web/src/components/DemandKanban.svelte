@@ -412,6 +412,10 @@
     markScheduleEstimateManual();
   }
 
+  function updateScheduleDifficultyFromSelect(event: Event) {
+    updateScheduleDifficulty((event.currentTarget as HTMLSelectElement).value);
+  }
+
   function clearScheduleEstimate() {
     schedEstimateHours = 0;
     schedEstimateDays = 0;
@@ -1705,18 +1709,18 @@
                 />
               </label>
               <div class="estimate-difficulty-field">
-                <span>难度</span>
-                <div class="difficulty-segment" role="group" aria-label="工时难度">
+                <label for="sched-difficulty">难度</label>
+                <select
+                  id="sched-difficulty"
+                  class="difficulty-select"
+                  value={schedDifficulty}
+                  on:change={updateScheduleDifficultyFromSelect}
+                  aria-label="工时难度"
+                >
                   {#each difficultyOptions as option}
-                    <button
-                      type="button"
-                      class:active={schedDifficulty === option.value}
-                      on:click={() => updateScheduleDifficulty(option.value)}
-                    >
-                      {option.label}
-                    </button>
+                    <option value={option.value}>{option.label}</option>
                   {/each}
-                </div>
+                </select>
               </div>
             </div>
             {#if scheduleEstimateError}
@@ -2842,11 +2846,11 @@
     content: "";
     position: absolute;
     left: 4px;
-    bottom: 4px;
+    top: 8px;
     width: 2px;
     height: 2px;
     background: currentColor;
-    box-shadow: 4px 0 0 currentColor, 8px 0 0 currentColor;
+    box-shadow: 5px 0 0 currentColor, 0 4px 0 currentColor, 5px 4px 0 currentColor;
     border-radius: 1px;
   }
 
@@ -2990,10 +2994,10 @@
     background: rgba(15, 23, 42, 0.72);
     border: 1px solid rgba(99, 102, 241, 0.24);
     border-radius: 10px;
-    padding: 12px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 
   .estimate-panel-head {
@@ -3001,6 +3005,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
   .estimate-panel-head > div {
@@ -3019,7 +3024,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 8px;
   }
 
@@ -3074,45 +3079,72 @@
 
   .estimate-manual-grid {
     display: grid;
-    grid-template-columns: minmax(90px, 0.76fr) minmax(90px, 0.76fr) minmax(220px, 1.5fr);
-    gap: 8px;
-    align-items: stretch;
+    grid-template-columns: minmax(96px, 0.74fr) minmax(96px, 0.74fr) minmax(136px, 1fr);
+    gap: 12px;
+    align-items: end;
   }
 
   .estimate-field,
   .estimate-difficulty-field {
     min-width: 0;
-    background: rgba(2, 6, 23, 0.34);
-    border: 1px solid rgba(51, 65, 85, 0.48);
-    border-radius: 8px;
-    padding: 8px 10px;
-  }
-
-  .estimate-difficulty-field {
-    grid-column: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .estimate-field span,
-  .estimate-difficulty-field > span {
+  .estimate-difficulty-field > label {
     display: block;
     color: #64748b;
     font-size: 0.62rem;
     font-weight: 800;
-    margin-bottom: 6px;
+  }
+
+  .estimate-field input,
+  .difficulty-select {
+    width: 100%;
+    height: 34px;
+    box-sizing: border-box;
+    border: 1px solid rgba(71, 85, 105, 0.58);
+    border-radius: 8px;
+    outline: none;
+    background: rgba(2, 6, 23, 0.28);
+    color: #e2e8f0;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
   }
 
   .estimate-field input {
-    width: 100%;
-    height: 28px;
-    box-sizing: border-box;
-    border: 0;
-    outline: none;
-    background: transparent;
-    color: #e2e8f0;
-    font: inherit;
-    font-size: 0.86rem;
-    font-weight: 800;
-    font-variant-numeric: tabular-nums;
+    padding: 0 10px;
+  }
+
+  .difficulty-select {
+    cursor: pointer;
+    padding: 0 30px 0 10px;
+    appearance: none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, #94a3b8 50%),
+      linear-gradient(135deg, #94a3b8 50%, transparent 50%),
+      linear-gradient(180deg, rgba(2, 6, 23, 0.28), rgba(2, 6, 23, 0.28));
+    background-position:
+      calc(100% - 15px) 14px,
+      calc(100% - 10px) 14px,
+      0 0;
+    background-size:
+      5px 5px,
+      5px 5px,
+      100% 100%;
+    background-repeat: no-repeat;
+  }
+
+  .estimate-field input:focus,
+  .difficulty-select:focus {
+    border-color: rgba(129, 140, 248, 0.78);
+    background-color: rgba(15, 23, 42, 0.66);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.14);
   }
 
   .estimate-field input::placeholder {
@@ -3128,35 +3160,6 @@
   .estimate-field input[type="number"] {
     appearance: textfield;
     -moz-appearance: textfield;
-  }
-
-  .difficulty-segment {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
-  }
-
-  .difficulty-segment button {
-    height: 30px;
-    border: 1px solid rgba(71, 85, 105, 0.58);
-    background: rgba(15, 23, 42, 0.56);
-    color: #94a3b8;
-    border-radius: 7px;
-    cursor: pointer;
-    font-size: 0.72rem;
-    font-weight: 800;
-    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-  }
-
-  .difficulty-segment button:hover {
-    color: #e2e8f0;
-    border-color: rgba(129, 140, 248, 0.45);
-  }
-
-  .difficulty-segment button.active {
-    color: #e0e7ff;
-    background: rgba(79, 70, 229, 0.28);
-    border-color: rgba(129, 140, 248, 0.72);
   }
 
   .estimate-error {
@@ -3191,13 +3194,11 @@
 
   @media (max-width: 760px) {
     .estimate-panel-head {
-      align-items: flex-start;
-      flex-direction: column;
+      align-items: center;
     }
 
     .estimate-actions {
-      justify-content: flex-start;
-      width: 100%;
+      justify-content: flex-end;
     }
 
     .estimate-manual-grid {
