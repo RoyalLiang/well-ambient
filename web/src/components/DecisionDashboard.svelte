@@ -624,21 +624,19 @@
           <div class="filter-group select-group">
             <span class="filter-label-inline">负责人:</span>
             <div class="custom-select-container" bind:this={assigneeSelectEl} style={showAssigneeDropdown ? 'z-index: 30;' : 'z-index: 20;'}>
-              <button class="custom-select-trigger" on:click={toggleAssigneeDropdown} aria-label="负责人筛选">
+              <div class="custom-select-trigger combobox-trigger">
                 <span class="filter-icon">👤</span>
-                <span class="trigger-label">{selectedAssignee === 'all' ? '全部' : selectedAssignee}</span>
+                <input 
+                  type="text" 
+                  class="combobox-trigger-input"
+                  placeholder={selectedAssignee === 'all' ? '全部' : selectedAssignee}
+                  bind:value={assigneeSearchText}
+                  on:focus|stopPropagation={() => showAssigneeDropdown = true}
+                />
                 <span class="select-arrow">{showAssigneeDropdown ? '▲' : '▼'}</span>
-              </button>
+              </div>
               {#if showAssigneeDropdown}
                 <div class="custom-select-options">
-                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                    <input 
-                      type="text" 
-                      placeholder="搜索负责人..." 
-                      class="dropdown-search-input font-mono"
-                      bind:value={assigneeSearchText}
-                    />
-                  </div>
                   {#each assigneesList.filter(name => name === 'all' || !assigneeSearchText || name.toLowerCase().includes(assigneeSearchText.toLowerCase())) as name}
                     <button 
                       class="custom-option {selectedAssignee === name ? 'active' : ''}" 
@@ -656,21 +654,19 @@
           <div class="filter-group select-group">
             <span class="filter-label-inline">项目:</span>
             <div class="custom-select-container" bind:this={repoSelectEl} style={showRepoDropdown ? 'z-index: 30;' : 'z-index: 20;'}>
-              <button class="custom-select-trigger" on:click={toggleRepoDropdown} aria-label="项目筛选">
+              <div class="custom-select-trigger combobox-trigger">
                 <span class="filter-icon">📁</span>
-                <span class="trigger-label">{selectedRepo === 'all' ? '全部' : selectedRepo}</span>
+                <input 
+                  type="text" 
+                  class="combobox-trigger-input"
+                  placeholder={selectedRepo === 'all' ? '全部' : selectedRepo}
+                  bind:value={projectSearchText}
+                  on:focus|stopPropagation={() => showRepoDropdown = true}
+                />
                 <span class="select-arrow">{showRepoDropdown ? '▲' : '▼'}</span>
-              </button>
+              </div>
               {#if showRepoDropdown}
                 <div class="custom-select-options">
-                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                    <input 
-                      type="text" 
-                      placeholder="搜索项目..." 
-                      class="dropdown-search-input font-mono"
-                      bind:value={projectSearchText}
-                    />
-                  </div>
                   {#each projectList.filter(r => r === 'all' || !projectSearchText || r.toLowerCase().includes(projectSearchText.toLowerCase())) as r}
                     <button 
                       class="custom-option {selectedRepo === r ? 'active' : ''}" 
@@ -2262,27 +2258,22 @@
       transform: translateY(0);
     }
   }
-  .dropdown-search-wrapper {
-    padding: 6px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    position: sticky;
-    top: 0;
-    background: rgba(30, 30, 30, 0.95);
-    z-index: 10;
+  .combobox-trigger {
+    cursor: text !important;
   }
-  .dropdown-search-input {
-    width: 100%;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #fff;
-    font-size: 12px;
-    outline: none;
-    transition: all 0.2s;
+  .combobox-trigger-input {
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    color: #cbd5e1 !important;
+    font-size: 0.8rem;
+    font-family: inherit;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 90px;
   }
-  .dropdown-search-input:focus {
-    border-color: rgba(255, 255, 255, 0.4);
-    background: rgba(0, 0, 0, 0.5);
+  .combobox-trigger-input::placeholder {
+    color: #cbd5e1 !important;
+    opacity: 1;
   }
 </style>

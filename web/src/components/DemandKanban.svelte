@@ -1161,20 +1161,18 @@
         </div>
 
         <div class="schedule-assignee-menu custom-dropdown-container">
-          <button class="schedule-menu-trigger" on:click|stopPropagation={() => showScheduleAssigneeDropdown = !showScheduleAssigneeDropdown}>
-            <span>{scheduleAssigneeFilter === 'all' ? '全部负责人' : scheduleAssigneeFilter}</span>
+          <div class="combobox-trigger-wrapper">
+            <input
+              type="text"
+              class="dropdown-trigger-input schedule-trigger-override"
+              placeholder={scheduleAssigneeFilter === 'all' ? '全部负责人' : scheduleAssigneeFilter}
+              bind:value={scheduleAssigneeSearchText}
+              on:focus|stopPropagation={() => showScheduleAssigneeDropdown = true}
+            />
             <span class="arrow-icon {showScheduleAssigneeDropdown ? 'open' : ''}">▼</span>
-          </button>
+          </div>
           {#if showScheduleAssigneeDropdown}
             <div class="dropdown-options-list glass-panel">
-              <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                <input 
-                  type="text" 
-                  placeholder="搜索负责人..." 
-                  class="dropdown-search-input font-mono"
-                  bind:value={scheduleAssigneeSearchText}
-                />
-              </div>
               <button
                 type="button"
                 class="dropdown-option-item {scheduleAssigneeFilter === 'all' ? 'selected' : ''}"
@@ -1684,24 +1682,18 @@
           <div class="form-group">
             <label for="demand-project">所属项目 / 仓库</label>
             <div class="custom-dropdown-container" id="demand-project-container">
-              <button
-                type="button"
-                class="dropdown-trigger"
-                on:click|stopPropagation={toggleProjectDropdown}
-              >
-                <span>{displayProjectOption(newRepo)}</span>
+              <div class="combobox-trigger-wrapper">
+                <input
+                  type="text"
+                  class="dropdown-trigger-input"
+                  placeholder={displayProjectOption(newRepo)}
+                  bind:value={projectSearchText}
+                  on:focus|stopPropagation={() => showProjectDropdown = true}
+                />
                 <span class="arrow-icon {showProjectDropdown ? 'open' : ''}">▼</span>
-              </button>
+              </div>
               {#if showProjectDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                    <input 
-                      type="text" 
-                      placeholder="搜索项目..." 
-                      class="dropdown-search-input font-mono"
-                      bind:value={projectSearchText}
-                    />
-                  </div>
                   {#each createProjectOptions.filter(proj => !projectSearchText || displayProjectOption(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
                     <button
                       type="button"
@@ -1726,24 +1718,18 @@
           <div class="form-group">
             <label for="demand-assignee">指派负责人 <span class="text-rose">*</span></label>
             <div class="custom-dropdown-container" id="demand-assignee-container">
-              <button
-                type="button"
-                class="dropdown-trigger" 
-                on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
-              >
-                <span>{newAssignee || '请选择负责人'}</span>
+              <div class="combobox-trigger-wrapper">
+                <input
+                  type="text"
+                  class="dropdown-trigger-input"
+                  placeholder={newAssignee || '请选择负责人'}
+                  bind:value={assigneeSearchText}
+                  on:focus|stopPropagation={() => showAssigneeDropdown = true}
+                />
                 <span class="arrow-icon {showAssigneeDropdown ? 'open' : ''}">▼</span>
-              </button>
+              </div>
               {#if showAssigneeDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                    <input 
-                      type="text" 
-                      placeholder="搜索负责人..." 
-                      class="dropdown-search-input font-mono"
-                      bind:value={assigneeSearchText}
-                    />
-                  </div>
                   {#each createAssigneeOptions.filter(name => !assigneeSearchText || name.toLowerCase().includes(assigneeSearchText.toLowerCase())) as assignee}
                     <button
                       type="button"
@@ -4169,27 +4155,57 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
   }
-  .dropdown-search-wrapper {
-    padding: 6px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    position: sticky;
-    top: 0;
-    background: rgba(30, 30, 30, 0.95);
-    z-index: 10;
-  }
-  .dropdown-search-input {
+  .combobox-trigger-wrapper {
+    position: relative;
     width: 100%;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #fff;
-    font-size: 12px;
-    outline: none;
-    transition: all 0.2s;
   }
-  .dropdown-search-input:focus {
-    border-color: rgba(255, 255, 255, 0.4);
-    background: rgba(0, 0, 0, 0.5);
+  .combobox-trigger-wrapper .dropdown-trigger-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(129, 140, 248, 0.2);
+    border-radius: 8px;
+    padding: 10px 30px 10px 12px;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    cursor: text;
+    font-family: inherit;
+    text-align: left;
+    transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+    outline: none;
+  }
+  .combobox-trigger-wrapper .schedule-trigger-override {
+    height: 38px;
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(71, 85, 105, 0.68);
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: #cbd5e1;
+  }
+  .combobox-trigger-wrapper .dropdown-trigger-input::placeholder {
+    color: #cbd5e1;
+    opacity: 1;
+  }
+  .combobox-trigger-wrapper .dropdown-trigger-input:hover {
+    border-color: rgba(99, 102, 241, 0.4);
+    background: rgba(15, 23, 42, 0.8);
+  }
+  .combobox-trigger-wrapper .dropdown-trigger-input:focus {
+    border-color: rgba(99, 102, 241, 0.5);
+    background: rgba(15, 23, 42, 0.8);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+  .combobox-trigger-wrapper .arrow-icon {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.6rem;
+    color: #64748b;
+    transition: transform 0.2s;
+    pointer-events: none;
+  }
+  .combobox-trigger-wrapper .arrow-icon.open {
+    transform: translateY(-50%) rotate(180deg);
   }
 </style>

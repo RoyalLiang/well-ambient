@@ -716,21 +716,19 @@
       
       <!-- Project Filter -->
       <div class="custom-select-container" bind:this={projectSelectEl}>
-        <button class="custom-select-trigger" on:click={toggleProjectDropdown} aria-label="项目筛选">
+        <div class="custom-select-trigger combobox-trigger">
           <span class="filter-icon">📁</span>
-          <span class="trigger-label">{selectedProject === 'all' ? '全部项目' : selectedProject}</span>
+          <input 
+            type="text" 
+            class="combobox-trigger-input"
+            placeholder={selectedProject === 'all' ? '全部项目' : selectedProject}
+            bind:value={projectSearchText}
+            on:focus|stopPropagation={() => showProjectDropdown = true}
+          />
           <span class="select-arrow">{showProjectDropdown ? '▲' : '▼'}</span>
-        </button>
+        </div>
         {#if showProjectDropdown}
           <div class="custom-select-options">
-            <div class="dropdown-search-wrapper" on:click|stopPropagation>
-              <input 
-                type="text" 
-                placeholder="搜索项目..." 
-                class="dropdown-search-input font-mono"
-                bind:value={projectSearchText}
-              />
-            </div>
             {#each projectOptions.filter(proj => proj === 'all' || !projectSearchText || proj.toLowerCase().includes(projectSearchText.toLowerCase())) as proj}
               <button 
                 class="custom-option {selectedProject === proj ? 'active' : ''}" 
@@ -745,21 +743,19 @@
 
       <!-- Assignee Filter -->
       <div class="custom-select-container" bind:this={assigneeSelectEl}>
-        <button class="custom-select-trigger" on:click={toggleAssigneeDropdown} aria-label="经办人筛选">
+        <div class="custom-select-trigger combobox-trigger">
           <span class="filter-icon">👤</span>
-          <span class="trigger-label">{selectedAssignee === 'all' ? '全部经办人' : selectedAssignee}</span>
+          <input 
+            type="text" 
+            class="combobox-trigger-input"
+            placeholder={selectedAssignee === 'all' ? '全部经办人' : selectedAssignee}
+            bind:value={assigneeSearchText}
+            on:focus|stopPropagation={() => showAssigneeDropdown = true}
+          />
           <span class="select-arrow">{showAssigneeDropdown ? '▲' : '▼'}</span>
-        </button>
+        </div>
         {#if showAssigneeDropdown}
           <div class="custom-select-options">
-            <div class="dropdown-search-wrapper" on:click|stopPropagation>
-              <input 
-                type="text" 
-                placeholder="搜索经办人..." 
-                class="dropdown-search-input font-mono"
-                bind:value={assigneeSearchText}
-              />
-            </div>
             {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
               <button 
                 class="custom-option {selectedAssignee === ass ? 'active' : ''}" 
@@ -882,20 +878,18 @@
         </div>
 
         <div class="custom-select-container execution-assignee-select">
-          <button class="custom-select-trigger" on:click={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown} aria-label="执行负责人筛选">
-            <span class="trigger-label">{executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}</span>
+          <div class="custom-select-trigger combobox-trigger">
+            <input 
+              type="text" 
+              class="combobox-trigger-input"
+              placeholder={executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}
+              bind:value={execAssigneeSearchText}
+              on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
+            />
             <span class="select-arrow">{showExecutionAssigneeDropdown ? '▲' : '▼'}</span>
-          </button>
+          </div>
           {#if showExecutionAssigneeDropdown}
             <div class="custom-select-options">
-              <div class="dropdown-search-wrapper" on:click|stopPropagation>
-                <input 
-                  type="text" 
-                  placeholder="搜索负责人..." 
-                  class="dropdown-search-input font-mono"
-                  bind:value={execAssigneeSearchText}
-                />
-              </div>
               {#each executionAssigneeOptions.filter(ass => ass === 'all' || !execAssigneeSearchText || ass.toLowerCase().includes(execAssigneeSearchText.toLowerCase())) as assignee}
                 <button
                   class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
@@ -3216,27 +3210,22 @@
     color: #e2e8f0;
     font-weight: normal;
   }
-  .dropdown-search-wrapper {
-    padding: 6px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    position: sticky;
-    top: 0;
-    background: rgba(30, 30, 30, 0.95);
-    z-index: 10;
+  .combobox-trigger {
+    cursor: text !important;
   }
-  .dropdown-search-input {
-    width: 100%;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #fff;
-    font-size: 12px;
-    outline: none;
-    transition: all 0.2s;
+  .combobox-trigger-input {
+    background: transparent !important;
+    border: none !important;
+    outline: none !important;
+    color: #cbd5e1 !important;
+    font-size: 0.8rem;
+    font-family: inherit;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 90px;
   }
-  .dropdown-search-input:focus {
-    border-color: rgba(255, 255, 255, 0.4);
-    background: rgba(0, 0, 0, 0.5);
+  .combobox-trigger-input::placeholder {
+    color: #cbd5e1 !important;
+    opacity: 1;
   }
 </style>
