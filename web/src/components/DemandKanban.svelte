@@ -260,11 +260,9 @@
   // Dropdown States
   let showAssigneeDropdown = false;
   let showProjectDropdown = false;
-  let showTaskGroupDropdown = false;
   let showScheduleAssigneeDropdown = false;
   let activeDatePicker: 'new' | 'schedule' | null = null;
   let datePickerCursor = new Date();
-  let taskGroups: string[] = [];
 
   // Create Form Fields
   let newTitle = '';
@@ -275,15 +273,12 @@
   let newDueDateDisplay = '';
 
   // Schedule Form Fields
-  let schedBranch = '';
   let schedDueDate = '';
   let schedDueDateDisplay = '';
   let schedTaskGroupID = '-';
   let schedEstimateHours = 0;
   let schedEstimateDays = 0;
   let schedDifficulty = '';
-  let schedEstimateBasis = '';
-  let schedEstimateConfidence = 0;
   let schedEstimateSource: EstimateSource = '';
   let scheduleEstimateLoading = false;
   let scheduleEstimateError = '';
@@ -330,18 +325,13 @@
     return `排期将创建 ${groupId}`;
   }
 
-  function getScheduleTaskGroupOptions() {
-    const options = new Set<string>();
-    if (hasTaskGroup(schedTaskGroupID)) options.add(schedTaskGroupID);
-    taskGroups.forEach(groupId => {
-      if (hasTaskGroup(groupId)) options.add(groupId);
-    });
-    return Array.from(options);
-  }
-
   function displayRepo(repo?: string) {
     if (!repo || repo === '-' || repo === 'unassigned') return 'AI 尚未映射仓库';
     return repo;
+  }
+
+  function detectedScheduleBranch(demand?: Demand | null) {
+    return hasScheduleValue(demand?.branch) ? (demand?.branch || '') : '';
   }
 
   function hasScheduleValue(value?: string) {
@@ -361,12 +351,6 @@
   function formatOneDecimal(value: number) {
     if (!Number.isFinite(value) || value <= 0) return '';
     return Number.isInteger(value) ? String(value) : value.toFixed(1);
-  }
-
-  function formatEstimateSummary(hours: number, days: number) {
-    if (hours > 0) return `${formatOneDecimal(hours)} 小时`;
-    if (days > 0) return `${formatOneDecimal(days)} 天`;
-    return '未设置工时';
   }
 
   function normalizeScheduleEstimateSource(value?: string): EstimateSource {
@@ -393,8 +377,6 @@
     schedEstimateHours = toNumber(demand.estimate_hours);
     schedEstimateDays = toNumber(demand.estimate_days);
     schedDifficulty = demand.difficulty || '';
-    schedEstimateBasis = '';
-    schedEstimateConfidence = 0;
     schedEstimateSource = normalizeScheduleEstimateSource(demand.estimate_source) || (hasScheduleEstimate() ? 'manual_adjusted' : '');
     scheduleEstimateError = '';
     scheduleEstimateLoading = false;
@@ -412,8 +394,6 @@
 
   function markScheduleEstimateManual() {
     schedEstimateSource = 'manual_adjusted';
-    schedEstimateBasis = '';
-    schedEstimateConfidence = 0;
     scheduleEstimateError = '';
   }
 
@@ -439,14 +419,6 @@
     markScheduleEstimateManual();
   }
 
-  function getScheduleEstimateSourceLabel() {
-    if (scheduleEstimateLoading) return 'AI 评估中';
-    if (schedEstimateSource === 'ai_deconstruct') return 'AI 建议';
-    if (schedEstimateSource === 'manual_adjusted') return '手动设置';
-    if (hasScheduleEstimate()) return '历史估算';
-    return '未设置';
-  }
-
   function buildScheduleEstimateText() {
     if (!selectedDemand) return '';
     return [
@@ -455,7 +427,7 @@
       `需求描述：${selectedDemand.description || '暂无补充描述'}`,
       `负责人：${selectedDemand.assignee || '未指定'}`,
       `所属项目/仓库：${displayRepo(selectedDemand.repo)}`,
-      `计划分支：${schedBranch || '尚未填写'}`,
+      `开发分支：${detectedScheduleBranch(selectedDemand) || '由提交自动检测'}`,
       `计划截止日：${schedDueDate || '尚未设置'}`,
       `任务组：${schedTaskGroupID || getEffectiveTaskGroupId(selectedDemand)}`,
       '请仅围绕该需求给出整体工时、天数、难度、估算依据和主要排期风险。'
@@ -690,15 +662,6 @@
         demands = (data || []).filter((t: any) => t.issue_type === 'demand' && t.status !== 'archived');
         // Extract all sub tasks
         allSubTasks = (data || []).filter((t: any) => t.issue_type !== 'demand' && t.status !== 'archived');
-        
-        // Extract unique, non-empty task_group_id values
-        const groupsSet = new Set<string>();
-        (data || []).forEach((t: any) => {
-          if (t.task_group_id && t.task_group_id !== '-' && t.task_group_id !== '') {
-            groupsSet.add(t.task_group_id);
-          }
-        });
-        taskGroups = Array.from(groupsSet);
       } else {
         throw new Error('获取需求数据失败');
       }
@@ -797,7 +760,6 @@
 
   function openScheduleModal(demand: Demand) {
     selectedDemand = demand;
-    schedBranch = demand.branch === '-' ? '' : demand.branch;
     updateSchedDueDate(demand.due_date ? demand.due_date.slice(0, 10) : '');
     schedTaskGroupID = getEffectiveTaskGroupId(demand);
     resetScheduleEstimateFromDemand(demand);
@@ -809,7 +771,6 @@
     showScheduleModal = false;
     selectedDemand = null;
     activeDatePicker = null;
-    showTaskGroupDropdown = false;
     scheduleEstimateLoading = false;
   }
 
@@ -817,7 +778,6 @@
     if (!selectedDemand) return;
     scheduleEstimateLoading = true;
     scheduleEstimateError = '';
-    schedEstimateBasis = '';
     const token = localStorage.getItem('jwt_token');
 
     try {
@@ -847,8 +807,6 @@
       schedEstimateHours = hours;
       schedEstimateDays = days;
       schedDifficulty = analysis.overall_difficulty || schedDifficulty;
-      schedEstimateBasis = analysis.estimate_basis || '';
-      schedEstimateConfidence = toNumber(analysis.confidence);
       schedEstimateSource = 'ai_deconstruct';
     } catch (err: any) {
       scheduleEstimateError = (err.message || 'AI 工时评估失败').slice(0, 180);
@@ -859,10 +817,6 @@
 
   async function handleSaveSchedule() {
     if (!selectedDemand) return;
-    if (!schedBranch.trim()) {
-      alert('排期必须填写关联的分支名称');
-      return;
-    }
 
     const token = localStorage.getItem('jwt_token');
     try {
@@ -874,7 +828,7 @@
         },
         body: JSON.stringify({
           task_id: selectedDemand.task_id,
-          branch: schedBranch,
+          branch: detectedScheduleBranch(selectedDemand),
           due_date: schedDueDate,
           status: 'backlog', // Scheduled demands go to backlog in kanban
           task_group_id: schedTaskGroupID,
@@ -1000,7 +954,6 @@
     if (!target.closest('.custom-dropdown-container')) {
       showAssigneeDropdown = false;
       showProjectDropdown = false;
-      showTaskGroupDropdown = false;
       showScheduleAssigneeDropdown = false;
     }
     if (!target.closest('.date-input-shell')) {
@@ -1709,9 +1662,7 @@
           <div class="schedule-estimate-panel">
             <div class="estimate-panel-head">
               <div>
-                <span class="brain-link-note-label font-mono">EFFORT SETTING</span>
                 <strong>工时设置</strong>
-                <small>手动值优先，AI 只填入建议</small>
               </div>
               <div class="estimate-actions">
                 <button
@@ -1768,31 +1719,9 @@
                 </div>
               </div>
             </div>
-            <div class="estimate-source-row">
-              <span class="estimate-source-pill source-{schedEstimateSource || 'none'} font-mono">{getScheduleEstimateSourceLabel()}</span>
-              {#if hasScheduleEstimate()}
-                <span>{formatEstimateSummary(schedEstimateHours, schedEstimateDays)} / {formatDifficultyLabel(schedDifficulty)}</span>
-              {:else}
-                <span>可直接手动保存，无需先进行 AI 评估</span>
-              {/if}
-            </div>
-            {#if schedEstimateBasis}
-              <p class="estimate-basis">{schedEstimateBasis}</p>
-            {:else if !hasScheduleEstimate()}
-              <p class="estimate-basis muted">未设置工时也可排期，后续可回到此处补充。</p>
-            {/if}
-            {#if schedEstimateConfidence > 0}
-              <span class="estimate-confidence font-mono">CONF {Math.round(schedEstimateConfidence * 100)}%</span>
-            {/if}
             {#if scheduleEstimateError}
               <p class="estimate-error">{scheduleEstimateError}</p>
             {/if}
-          </div>
-          
-          <div class="form-group">
-            <label for="sched-branch">关联开发分支 <span class="text-rose">*</span></label>
-            <input type="text" id="sched-branch" bind:value={schedBranch} placeholder="例如：feat/demand-department-field" />
-            <span class="help-text">⚠️ 关联分支后，当您向该分支提交 commit 时，系统将自动进行卡点诊断和进度追溯。</span>
           </div>
 
           <div class="form-group">
@@ -1835,42 +1764,8 @@
 
           <div class="form-group">
             <label for="sched-task-group">关联 AI 解构任务组</label>
-            <div class="brain-link-note">
-              <span class="brain-link-note-label font-mono">BRAIN LINK</span>
-              <span>排期会把该需求绑定到此任务组，后续 AI 需求解构同步影子任务时会复用同一组。</span>
-            </div>
-            <div class="custom-dropdown-container" id="sched-task-group-container">
-              <div 
-                class="dropdown-trigger" 
-                on:click|stopPropagation={() => showTaskGroupDropdown = !showTaskGroupDropdown}
-              >
-                <span>{schedTaskGroupID === '-' ? '不关联任务组' : schedTaskGroupID}</span>
-                <span class="arrow-icon {showTaskGroupDropdown ? 'open' : ''}">▼</span>
-              </div>
-              {#if showTaskGroupDropdown}
-                <div class="dropdown-options-list glass-panel">
-                  <div 
-                    class="dropdown-option-item {schedTaskGroupID === '-' ? 'selected' : ''}"
-                    on:click={() => {
-                      schedTaskGroupID = '-';
-                      showTaskGroupDropdown = false;
-                    }}
-                  >
-                    不关联任务组
-                  </div>
-                  {#each getScheduleTaskGroupOptions() as gId}
-                    <div 
-                      class="dropdown-option-item {schedTaskGroupID === gId ? 'selected' : ''}"
-                      on:click={() => {
-                        schedTaskGroupID = gId;
-                        showTaskGroupDropdown = false;
-                      }}
-                    >
-                      {gId}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
+            <div class="group-lock-field font-mono" id="sched-task-group">
+              <span>{schedTaskGroupID}</span>
             </div>
           </div>
         </div>
@@ -2923,6 +2818,7 @@
   .date-input-icon {
     position: relative;
     flex: 0 0 auto;
+    box-sizing: border-box;
     width: 16px;
     height: 16px;
     color: #818cf8;
@@ -2930,6 +2826,7 @@
     border-radius: 4px;
     pointer-events: none;
     background: rgba(30, 41, 59, 0.5);
+    overflow: hidden;
   }
 
   .date-input-icon::before {
@@ -2944,12 +2841,12 @@
   .date-input-icon::after {
     content: "";
     position: absolute;
-    left: 3px;
-    bottom: 3px;
-    width: 3px;
-    height: 3px;
+    left: 4px;
+    bottom: 4px;
+    width: 2px;
+    height: 2px;
     background: currentColor;
-    box-shadow: 5px 0 0 currentColor, 10px 0 0 currentColor;
+    box-shadow: 4px 0 0 currentColor, 8px 0 0 currentColor;
     border-radius: 1px;
   }
 
@@ -3088,19 +2985,6 @@
     border-color: rgba(129, 140, 248, 0.55);
   }
 
-  .brain-link-note {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    background: rgba(14, 165, 233, 0.08);
-    border: 1px solid rgba(14, 165, 233, 0.22);
-    border-radius: 8px;
-    padding: 9px 10px;
-    color: #94a3b8;
-    font-size: 0.72rem;
-    line-height: 1.45;
-  }
-
   .schedule-estimate-panel {
     position: relative;
     background: rgba(15, 23, 42, 0.72);
@@ -3129,12 +3013,6 @@
   .estimate-panel-head strong {
     color: #f8fafc;
     font-size: 0.86rem;
-  }
-
-  .estimate-panel-head small {
-    color: #64748b;
-    font-size: 0.68rem;
-    line-height: 1.35;
   }
 
   .estimate-actions {
@@ -3196,8 +3074,9 @@
 
   .estimate-manual-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(90px, 0.76fr) minmax(90px, 0.76fr) minmax(220px, 1.5fr);
     gap: 8px;
+    align-items: stretch;
   }
 
   .estimate-field,
@@ -3210,7 +3089,7 @@
   }
 
   .estimate-difficulty-field {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .estimate-field span,
@@ -3280,60 +3159,10 @@
     border-color: rgba(129, 140, 248, 0.72);
   }
 
-  .estimate-source-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    color: #64748b;
-    font-size: 0.68rem;
-    line-height: 1.4;
-  }
-
-  .estimate-source-row > span:last-child {
-    min-width: 0;
-    text-align: right;
-  }
-
-  .estimate-source-pill {
-    flex: 0 0 auto;
-    border: 1px solid rgba(71, 85, 105, 0.5);
-    background: rgba(15, 23, 42, 0.58);
-    color: #94a3b8;
-    border-radius: 999px;
-    padding: 3px 8px;
-    font-size: 0.6rem;
-    font-weight: 900;
-  }
-
-  .estimate-source-pill.source-ai_deconstruct {
-    color: #7dd3fc;
-    border-color: rgba(56, 189, 248, 0.34);
-    background: rgba(14, 165, 233, 0.1);
-  }
-
-  .estimate-source-pill.source-manual_adjusted {
-    color: #c4b5fd;
-    border-color: rgba(129, 140, 248, 0.36);
-    background: rgba(99, 102, 241, 0.12);
-  }
-
-  .estimate-basis,
   .estimate-error {
     margin: 0;
     font-size: 0.7rem;
     line-height: 1.5;
-  }
-
-  .estimate-basis {
-    color: #94a3b8;
-  }
-
-  .estimate-basis.muted {
-    color: #64748b;
-  }
-
-  .estimate-error {
     color: #fecaca;
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(248, 113, 113, 0.28);
@@ -3341,20 +3170,39 @@
     padding: 8px 10px;
   }
 
-  .estimate-confidence {
-    position: absolute;
-    right: 12px;
-    bottom: 10px;
-    color: #475569;
-    font-size: 0.6rem;
-    font-weight: 900;
+  .group-lock-field {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(15, 23, 42, 0.56);
+    border: 1px solid rgba(71, 85, 105, 0.46);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    overflow: hidden;
   }
 
-  .brain-link-note-label {
-    color: #38bdf8;
-    font-size: 0.62rem;
-    font-weight: 900;
-    letter-spacing: 0.07em;
+  .group-lock-field span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 760px) {
+    .estimate-panel-head {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .estimate-actions {
+      justify-content: flex-start;
+      width: 100%;
+    }
+
+    .estimate-manual-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .help-text {

@@ -1682,6 +1682,7 @@
   .date-input-icon {
     position: relative;
     flex: 0 0 auto;
+    box-sizing: border-box;
     width: 15px;
     height: 15px;
     color: #818cf8;
@@ -1689,6 +1690,7 @@
     border-radius: 4px;
     pointer-events: none;
     background: rgba(30, 41, 59, 0.5);
+    overflow: hidden;
   }
 
   .date-input-icon::before {
@@ -1703,12 +1705,12 @@
   .date-input-icon::after {
     content: "";
     position: absolute;
-    left: 3px;
-    bottom: 3px;
-    width: 3px;
-    height: 3px;
+    left: 4px;
+    bottom: 4px;
+    width: 2px;
+    height: 2px;
     background: currentColor;
-    box-shadow: 5px 0 0 currentColor, 9px 0 0 currentColor;
+    box-shadow: 4px 0 0 currentColor, 8px 0 0 currentColor;
     border-radius: 1px;
   }
 
