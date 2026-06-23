@@ -29,6 +29,10 @@ type JiraIssue struct {
 		Status struct {
 			Name string `json:"name"`
 		} `json:"status"`
+		Project struct {
+			Key  string `json:"key"`
+			Name string `json:"name"`
+		} `json:"project"`
 	} `json:"fields"`
 }
 

@@ -288,6 +288,7 @@
   let schedEstimateSource: EstimateSource = '';
   let scheduleEstimateLoading = false;
   let scheduleEstimateError = '';
+  const estimateHoursPerDay = 8;
 
   const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
   const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
@@ -381,7 +382,7 @@
 
   function resetScheduleEstimateFromDemand(demand: Demand) {
     schedEstimateHours = toNumber(demand.estimate_hours);
-    schedEstimateDays = toNumber(demand.estimate_days);
+    schedEstimateDays = estimateDaysFromHours(schedEstimateHours, toNumber(demand.estimate_days));
     schedDifficulty = demand.difficulty || '';
     schedEstimateSource = normalizeScheduleEstimateSource(demand.estimate_source) || (hasScheduleEstimate() ? 'manual_adjusted' : '');
     scheduleEstimateError = '';
@@ -398,6 +399,13 @@
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   }
 
+  function estimateDaysFromHours(hours: number, fallbackDays = 0): number {
+    if (hours > 0) {
+      return Math.round((hours / estimateHoursPerDay) * 10) / 10;
+    }
+    return fallbackDays > 0 ? Math.round(fallbackDays * 10) / 10 : 0;
+  }
+
   function markScheduleEstimateManual() {
     schedEstimateSource = 'manual_adjusted';
     scheduleEstimateError = '';
@@ -405,11 +413,7 @@
 
   function updateScheduleEstimateHours(event: Event) {
     schedEstimateHours = readPositiveEstimateInput(event);
-    markScheduleEstimateManual();
-  }
-
-  function updateScheduleEstimateDays(event: Event) {
-    schedEstimateDays = readPositiveEstimateInput(event);
+    schedEstimateDays = estimateDaysFromHours(schedEstimateHours);
     markScheduleEstimateManual();
   }
 
@@ -478,6 +482,13 @@
     allSubTasks.forEach((task) => addFormOption(options, task.repo));
     scheduleItems.forEach((item) => addFormOption(options, item.repo));
     return ['-', ...sortedFormOptions(options)];
+  }
+
+  async function toggleProjectDropdown() {
+    showProjectDropdown = !showProjectDropdown;
+    if (showProjectDropdown && createProjectOptions.length <= 1) {
+      await fetchDemandOptions();
+    }
   }
 
   function updateNewDueDate(value: string) {
@@ -857,15 +868,18 @@
 
       const data: DeconstructEstimateResponse = await res.json();
       const analysis = data.analysis || {};
-      const hours = toNumber(analysis.overall_estimated_hours);
+      let hours = toNumber(analysis.overall_estimated_hours);
       const days = toNumber(analysis.overall_estimated_days);
 
       if (hours <= 0 && days <= 0) {
         throw new Error('AI 未返回有效工时估算');
       }
+      if (hours <= 0 && days > 0) {
+        hours = Math.round(days * estimateHoursPerDay * 10) / 10;
+      }
 
       schedEstimateHours = hours;
-      schedEstimateDays = days;
+      schedEstimateDays = estimateDaysFromHours(hours, days);
       schedDifficulty = analysis.overall_difficulty || schedDifficulty;
       schedEstimateSource = 'ai_deconstruct';
     } catch (err: any) {
@@ -1649,7 +1663,7 @@
               <button
                 type="button"
                 class="dropdown-trigger"
-                on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
+                on:click|stopPropagation={toggleProjectDropdown}
               >
                 <span>{displayProjectOption(newRepo)}</span>
                 <span class="arrow-icon {showProjectDropdown ? 'open' : ''}">▼</span>
@@ -1668,6 +1682,9 @@
                       {displayProjectOption(project)}
                     </button>
                   {/each}
+                  {#if createProjectOptions.length <= 1}
+                    <div class="dropdown-empty">暂无项目候选，请先配置 GitLab/Jira 项目或等待 Jira 同步。</div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -1798,19 +1815,10 @@
                   on:input={updateScheduleEstimateHours}
                 />
               </label>
-              <label class="estimate-field" for="sched-estimate-days">
-                <span>预估天数</span>
-                <input
-                  id="sched-estimate-days"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  inputmode="decimal"
-                  value={schedEstimateDays > 0 ? formatOneDecimal(schedEstimateDays) : ''}
-                  placeholder="0"
-                  on:input={updateScheduleEstimateDays}
-                />
-              </label>
+              <div class="estimate-reference-field" aria-live="polite">
+                <span>折算天数</span>
+                <strong>{schedEstimateDays > 0 ? `${formatOneDecimal(schedEstimateDays)} 天` : '待计算'}</strong>
+              </div>
               <div class="estimate-difficulty-field difficulty-select-shell">
                 <span id="sched-difficulty-label">难度</span>
                 <button
@@ -3340,6 +3348,7 @@
   }
 
   .estimate-field,
+  .estimate-reference-field,
   .estimate-difficulty-field {
     min-width: 0;
     display: flex;
@@ -3353,6 +3362,7 @@
   }
 
   .estimate-field span,
+  .estimate-reference-field span,
   .estimate-difficulty-field > span:first-child {
     display: inline-flex;
     color: #64748b;
@@ -3362,6 +3372,7 @@
   }
 
   .estimate-field input,
+  .estimate-reference-field strong,
   .difficulty-trigger {
     flex: 1 1 auto;
     min-width: 0;
@@ -3379,6 +3390,15 @@
     font-variant-numeric: tabular-nums;
     text-align: left;
     transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  }
+
+  .estimate-reference-field strong {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 8px;
+    color: #cbd5e1;
+    font-weight: 900;
+    background: rgba(15, 23, 42, 0.38);
   }
 
   .estimate-field input {
@@ -3463,6 +3483,9 @@
   }
 
   .estimate-error {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
     margin: 0;
     font-size: 0.7rem;
     line-height: 1.5;
@@ -3471,6 +3494,9 @@
     border: 1px solid rgba(248, 113, 113, 0.28);
     border-radius: 8px;
     padding: 8px 10px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: pre-wrap;
   }
 
   .group-lock-field {

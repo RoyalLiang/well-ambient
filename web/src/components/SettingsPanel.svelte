@@ -421,10 +421,17 @@
   let groupDeletingName = '';
   let showDeleteGroupModal = false;
   let deleteGroupTarget: Group | null = null;
+  let showRemoveMembershipModal = false;
+  let removeMembershipTarget: { username: string; membership: UserMembership } | null = null;
+  let removingMembership = false;
+  let removeMembershipError = '';
+  let settingsSidebarEl: HTMLElement | null = null;
+  let settingsSidebarHeight = 0;
+  let settingsSidebarResizeObserver: ResizeObserver | null = null;
   let manualModalScrollLocked = false;
 
   $: {
-    const shouldLock = showAddMembershipModal || showTransferModal || showCreateGroupModal || showDeleteGroupModal;
+    const shouldLock = showAddMembershipModal || showTransferModal || showCreateGroupModal || showDeleteGroupModal || showRemoveMembershipModal;
     if (shouldLock && !manualModalScrollLocked) {
       lockBodyScroll();
       manualModalScrollLocked = true;
@@ -876,8 +883,28 @@
     }
   }
 
-  async function removeMembership(username: string, membership: UserMembership) {
-    if (!confirm(`确定要移除该用户属于「${membership.group_display_name} (${membership.scope === 'global' ? '全局' : '仓库:' + membership.scope_id})」的权限角色吗？`)) return;
+  function membershipScopeLabel(membership: UserMembership) {
+    return membership.scope === 'global' ? '全局' : `仓库: ${membership.scope_id}`;
+  }
+
+  function requestRemoveMembership(username: string, membership: UserMembership) {
+    removeMembershipTarget = { username, membership };
+    removeMembershipError = '';
+    showRemoveMembershipModal = true;
+  }
+
+  function closeRemoveMembershipModal() {
+    if (removingMembership) return;
+    showRemoveMembershipModal = false;
+    removeMembershipTarget = null;
+    removeMembershipError = '';
+  }
+
+  async function confirmRemoveMembership() {
+    if (!removeMembershipTarget) return;
+    const { username, membership } = removeMembershipTarget;
+    removeMembershipError = '';
+    removingMembership = true;
     try {
       const res = await fetch('/api/users/groups', {
         method: 'POST',
@@ -890,14 +917,19 @@
           action: 'remove'
         })
       });
+      const data = await readResponsePayload(res);
       if (res.ok) {
-        fetchUsers();
+        showRemoveMembershipModal = false;
+        removeMembershipTarget = null;
+        await fetchUsers();
+        await fetchAuditLogs();
       } else {
-        const data = await res.json();
-        alert(data.message || '移除失败');
+        removeMembershipError = data.message || data.error || '移除失败';
       }
     } catch (e: any) {
-      alert('请求失败: ' + e.message);
+      removeMembershipError = '请求失败: ' + e.message;
+    } finally {
+      removingMembership = false;
     }
   }
 
@@ -1073,11 +1105,24 @@
       }
       await fetchConfigVersions(true);
     };
+    const updateSettingsSidebarHeight = () => {
+      settingsSidebarHeight = settingsSidebarEl?.offsetHeight || 0;
+    };
+
+    updateSettingsSidebarHeight();
+    if (settingsSidebarEl && typeof ResizeObserver !== 'undefined') {
+      settingsSidebarResizeObserver = new ResizeObserver(updateSettingsSidebarHeight);
+      settingsSidebarResizeObserver.observe(settingsSidebarEl);
+    }
     window.addEventListener('focus-settings-section', handleFocus);
     window.addEventListener('config-updated', handleConfigUpdated);
+    window.addEventListener('resize', updateSettingsSidebarHeight);
     return () => {
       window.removeEventListener('focus-settings-section', handleFocus);
       window.removeEventListener('config-updated', handleConfigUpdated);
+      window.removeEventListener('resize', updateSettingsSidebarHeight);
+      settingsSidebarResizeObserver?.disconnect();
+      settingsSidebarResizeObserver = null;
       if (statusIntervalId) {
         clearInterval(statusIntervalId);
       }
@@ -1094,7 +1139,7 @@
 
 <div class="settings-container">
   <!-- Left Category Navigation Sidebar -->
-  <aside class="settings-sidebar font-mono">
+  <aside class="settings-sidebar font-mono" bind:this={settingsSidebarEl}>
     <div class="sidebar-header">
       <h3>⚙️ 系统设置</h3>
       <span class="version-label">Category settings · {currentUserRole}</span>
@@ -1165,7 +1210,7 @@
   </aside>
 
   <!-- Right Section Panel -->
-  <main class="settings-main">
+  <main class="settings-main" style={settingsSidebarHeight > 0 ? `--settings-sidebar-height: ${settingsSidebarHeight}px;` : ''}>
     {#if activeSection === 'gitlab'}
       <div class="section-card">
         <GitLabConfig config={globalConfig.gitlab} lastUpdated={sectionLastUpdated('gitlab')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
@@ -1232,7 +1277,7 @@
                             {membership.scope === 'global' ? '🌎 全局' : `📂 ${membership.scope_id}`}
                           </span>
                           {#if currentUserPermissions.includes('users:write') && membership.group_name !== 'super_admin'}
-                            <button class="remove-membership-btn" on:click={() => removeMembership(user.username, membership)} title="移除组身份">&times;</button>
+                            <button class="remove-membership-btn" on:click={() => requestRemoveMembership(user.username, membership)} title="移除组身份">&times;</button>
                           {/if}
                         </div>
                       {:else}
@@ -1877,6 +1922,55 @@
   </div>
 {/if}
 
+{#if showRemoveMembershipModal && removeMembershipTarget}
+  <div class="modal-overlay">
+    <div class="modal-card remove-membership-modal" role="dialog" aria-modal="true" aria-labelledby="remove-membership-title">
+      <div class="modal-header delete-modal-header">
+        <div>
+          <span class="danger-kicker font-mono">Remove membership</span>
+          <h3 id="remove-membership-title">移除成员用户组</h3>
+        </div>
+        <button
+          class="close-modal-btn"
+          aria-label="关闭移除成员用户组确认弹窗"
+          on:click={closeRemoveMembershipModal}
+          disabled={removingMembership}
+        >
+          &times;
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="delete-target-card">
+          <div>
+            <span class="group-title-label badge-{removeMembershipTarget.membership.group_name}">
+              {removeMembershipTarget.membership.group_display_name}
+            </span>
+            <p class="font-mono">{removeMembershipTarget.username}</p>
+          </div>
+          <div class="delete-target-stats">
+            <strong class="font-mono">{membershipScopeLabel(removeMembershipTarget.membership)}</strong>
+            <small>scope</small>
+          </div>
+        </div>
+        <p class="delete-confirm-copy">
+          移除后，该成员将不再拥有此用户组在当前作用域下的权限。该操作不会删除成员账号。
+        </p>
+        {#if removeMembershipError}
+          <div class="error-banner">{removeMembershipError}</div>
+        {/if}
+      </div>
+      <div class="modal-footer">
+        <Button variant="ghost" on:click={closeRemoveMembershipModal} disabled={removingMembership}>
+          取消
+        </Button>
+        <Button variant="danger" on:click={confirmRemoveMembership} loading={removingMembership}>
+          确认移除
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <!-- Modal 2: Transfer Super Admin -->
 {#if showTransferModal}
   <div class="modal-overlay">
@@ -2006,13 +2100,13 @@
   .settings-container {
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
-    align-items: stretch;
+    align-items: start;
     gap: 28px;
     flex: 1;
     width: 100%;
-    height: 100%;
-    min-height: 620px;
-    overflow: hidden;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
   }
 
   .settings-sidebar {
@@ -2022,13 +2116,13 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    align-self: stretch;
-    height: 100%;
+    align-self: start;
+    height: auto;
     min-height: 0;
-    max-height: 100%;
+    max-height: none;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .sidebar-header {
@@ -2055,21 +2149,10 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    flex: 1 1 auto;
+    flex: none;
     min-height: 0;
-    overflow-y: auto;
-    padding-right: 2px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(71, 85, 105, 0.7) transparent;
-  }
-
-  .sidebar-nav::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .sidebar-nav::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.68);
-    border-radius: 999px;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .nav-group {
@@ -2116,9 +2199,9 @@
 
   .settings-main {
     min-width: 0;
-    height: 100%;
+    height: var(--settings-sidebar-height, auto);
     min-height: 0;
-    max-height: 100%;
+    max-height: var(--settings-sidebar-height, none);
     display: flex;
     flex-direction: column;
     overflow: hidden;

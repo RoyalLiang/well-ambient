@@ -64,6 +64,7 @@ func (s *Server) syncJiraTasks() {
 		jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
 		issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
 		createdTime := parseJiraTime(issue.Fields.Created)
+		jiraProject := formatJiraProjectLabel(issue.Fields.Project.Key, issue.Fields.Project.Name)
 
 		// Check if task exists in SQLite DB
 		var existing db.TaskTelemetry
@@ -73,7 +74,7 @@ func (s *Server) syncJiraTasks() {
 			newTelemetry := db.TaskTelemetry{
 				TaskID:        issue.Key,
 				Title:         issue.Fields.Summary,
-				Repo:          "-",
+				Repo:          firstNonBlank(jiraProject, "-"),
 				Assignee:      assigneeName,
 				Branch:        "-",
 				LastCommit:    "-",
@@ -111,6 +112,11 @@ func (s *Server) syncJiraTasks() {
 
 			if existing.IssueType != issueType {
 				existing.IssueType = issueType
+				hasChanges = true
+			}
+
+			if jiraProject != "" && existing.Repo != jiraProject {
+				existing.Repo = jiraProject
 				hasChanges = true
 			}
 
@@ -181,6 +187,7 @@ func (s *Server) syncJiraTasks() {
 
 				jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
 				issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
+				jiraProject := formatJiraProjectLabel(issue.Fields.Project.Key, issue.Fields.Project.Name)
 
 				var existing db.TaskTelemetry
 				if err := db.DB.Where("task_id = ?", issue.Key).First(&existing).Error; err == nil {
@@ -202,6 +209,10 @@ func (s *Server) syncJiraTasks() {
 						existing.IssueType = issueType
 						hasChanges = true
 					}
+					if jiraProject != "" && existing.Repo != jiraProject {
+						existing.Repo = jiraProject
+						hasChanges = true
+					}
 					if existing.Status != jiraMappedStatus && time.Since(existing.LastUpdate) > 15*time.Second {
 						log.Printf("Jira sync keep-alive: status of %s aligned from %s -> %s", issue.Key, existing.Status, jiraMappedStatus)
 						existing.Status = jiraMappedStatus
@@ -220,6 +231,18 @@ func (s *Server) syncJiraTasks() {
 			}
 		}
 	}
+}
+
+func formatJiraProjectLabel(key, name string) string {
+	key = strings.TrimSpace(key)
+	name = strings.TrimSpace(name)
+	if key == "" {
+		return name
+	}
+	if name == "" || strings.EqualFold(name, key) {
+		return key
+	}
+	return fmt.Sprintf("%s (%s)", name, key)
 }
 
 // mapJiraStatus maps general Jira issue statuses to our 4 Kanban stages
