@@ -5,6 +5,7 @@
 - Planned areas: confirmation modal styling, WellOS department extraction, select dropdown truncation, AI deconstruction to demand association, demand card shadow task progress, targeted tests/builds.
 - Follow-up requirements: require `taste-skill` for frontend UI work, explain/deepen demand scheduling and AI deconstruction binding, fix user department display, and fix the native-looking new-demand due-date style.
 - Current extension requirement: generate a concrete landing plan from the architecture recommendations and use self-agents to land GitLab/Jira integration, KPI report preview, and AI deconstruction expansion in bounded implementation tracks.
+- Current task addendum: compact the work-summary effort/AI-evaluation controls, optimize the config version audit/rollback surface, lock background scroll under modals, repair assignee/Jira/detail interactions across decision and demand boards, and make demand/task/bug status transitions feel seamless with strongest-brain recommendation guidance.
 
 ## Research Findings
 - Git status shows the repository contents are currently untracked; avoid treating that as disposable state.
@@ -71,6 +72,12 @@
 - Demand schedule rows must distinguish workflow status from schedule completeness. `backlog` can mean a demand is waiting or planned, but it is not proof of schedule unless the row has both a development branch and a due date.
 - The schedule table should keep schedule status, effort estimate, delivery evidence, risk, and update time in separate columns. Mixing branch/repo placeholders into the schedule column makes unscheduled work look scheduled.
 - AI effort estimation can reuse the existing `/api/deconstruct` contract for the scheduling MVP. The schedule modal should treat it as an optional estimate baseline and persist the selected overall hours/days/difficulty only when the user confirms scheduling.
+- Current code already contains partial fixes for this task: `modalScrollLock.ts`, scroll locking in shared Modal, DemandKanban and SettingsPanel manual modal locks, compact schedule effort controls, demand assignee editing UI, and a page-filtered config-version audit panel.
+- Demand and Task boards currently fetch Jira base URL through `/api/config`, which requires `config:read`; normal demand/task users can therefore lose the Jira direct-link affordance even when Jira is configured.
+- Demand assignee editing can fail for creators/assignees who are allowed to call `/api/demands/reassign` but cannot call `/api/demands/options`, because that route currently requires `demands:write` and the dropdown then only contains the current assignee.
+- Agenda decision reassignment writes `TaskTelemetry`, decision logs, and kanban markdown, but Jira sync later unconditionally restores the Jira assignee. This explains the user-visible "success but no effect" behavior after a background sync.
+- The config version audit panel now filters by section, but selection can still point at a version from another section and the two-column diff layout consumes too much height on integration pages.
+- Final Phase 21 fix: expose only Jira `base_url` through authenticated `/api/jira/link-config`, allow authenticated demand users to load assignee/project options, preserve recent local assignee override logs from Jira sync for 24 hours, compact the schedule estimate strip, make config-version audit section-specific and lower height, and use card-level detail fallback on demand cards.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -111,6 +118,8 @@
 | Keep user-info refresh best-effort after successful auth | A temporary user-info failure should not reject a valid WellOS login, but successful responses must refresh DB, JWT, and frontend payload profile fields. |
 | Use row-level `scheduled` for schedule table truth | A boolean contract avoids frontends and future pages reinterpreting `backlog` as “已排期” without branch and due-date evidence. |
 | Keep AI schedule estimation optional | AI configuration failures should not block a normal schedule edit; the estimate is useful context and persisted telemetry, not a mandatory gate. |
+| Preserve local manual assignee overrides from Jira sync for 24 hours | A decision-panel reassignment should visibly take effect immediately, while still allowing Jira to become authoritative again after the handoff window if no matching Jira update arrives. |
+| Expose Jira link metadata through a non-secret authenticated endpoint | Demand/task users need to open Jira issues, but should not require full `config:read` access or receive integration tokens. |
 
 ## Issues Encountered
 | Issue | Resolution |

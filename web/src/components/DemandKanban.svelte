@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
 
   export let currentUserPermissions: string[] = [];
   export let currentUserName: string = '';
@@ -255,14 +256,20 @@
   // Modal States
   let showCreateModal = false;
   let showScheduleModal = false;
+  let showDemandDetailsModal = false;
   let selectedDemand: Demand | null = null;
+  let detailDemand: Demand | null = null;
+  let manualModalScrollLocked = false;
 
   // Dropdown States
   let showAssigneeDropdown = false;
   let showProjectDropdown = false;
   let showScheduleAssigneeDropdown = false;
+  let editingAssigneeTaskID = '';
+  let reassigningTaskID = '';
   let activeDatePicker: 'new' | 'schedule' | null = null;
   let datePickerCursor = new Date();
+  let jiraBaseUrl = '';
 
   // Create Form Fields
   let newTitle = '';
@@ -556,11 +563,22 @@
   $: createAssigneeOptions = buildCreateAssigneeOptions();
   $: createProjectOptions = buildCreateProjectOptions();
   $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
   $: filteredScheduleItems = scheduleItems
     .filter((item) => matchesScheduleFilters(item))
     .sort((a, b) => compareScheduleItems(a, b));
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
+  }
+  $: {
+    const shouldLock = showCreateModal || showScheduleModal || showConfirmModal || showDemandDetailsModal;
+    if (shouldLock && !manualModalScrollLocked) {
+      lockBodyScroll();
+      manualModalScrollLocked = true;
+    } else if (!shouldLock && manualModalScrollLocked) {
+      unlockBodyScroll();
+      manualModalScrollLocked = false;
+    }
   }
 
   function setDemandView(view: DemandView) {
@@ -706,6 +724,18 @@
     }
   }
 
+  async function fetchJiraConfig() {
+    try {
+      const res = await fetch('/api/jira/link-config');
+      if (res.ok) {
+        const data = await res.json();
+        jiraBaseUrl = data?.base_url ? data.base_url.replace(/\/+$/, '') : '';
+      }
+    } catch (e) {
+      console.error('Failed to fetch Jira link config:', e);
+    }
+  }
+
   function openCreateDemandModal() {
     showCreateModal = true;
     showAssigneeDropdown = false;
@@ -776,6 +806,76 @@
     selectedDemand = null;
     activeDatePicker = null;
     scheduleEstimateLoading = false;
+  }
+
+  function openDemandDetails(demand: Demand) {
+    detailDemand = demand;
+    showDemandDetailsModal = true;
+  }
+
+  function handleDemandCardKeydown(event: KeyboardEvent, demand: Demand) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openDemandDetails(demand);
+    }
+  }
+
+  function closeDemandDetails() {
+    showDemandDetailsModal = false;
+    detailDemand = null;
+  }
+
+  function getJiraIssueUrl(taskId: string) {
+    if (!jiraBaseUrl || !taskId || taskId.startsWith('DEMAND-')) return '';
+    return `${jiraBaseUrl}/browse/${taskId}`;
+  }
+
+  function getAssigneeOptionsForDemand(demand: Demand) {
+    const options = new Set<string>(createAssigneeOptions);
+    addFormOption(options, demand.assignee);
+    return sortedFormOptions(options);
+  }
+
+  async function openAssigneeEditor(demand: Demand) {
+    editingAssigneeTaskID = editingAssigneeTaskID === demand.task_id ? '' : demand.task_id;
+    if (editingAssigneeTaskID) {
+      await fetchDemandOptions();
+    }
+  }
+
+  async function reassignDemand(demand: Demand, assignee: string) {
+    if (!assignee || assignee === demand.assignee || reassigningTaskID) {
+      editingAssigneeTaskID = '';
+      return;
+    }
+    reassigningTaskID = demand.task_id;
+    const token = localStorage.getItem('jwt_token');
+
+    try {
+      const res = await fetch('/api/demands/reassign', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          task_id: demand.task_id,
+          assignee
+        })
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || '负责人更新失败');
+      }
+
+      await refreshDemandWorkspace();
+      editingAssigneeTaskID = '';
+    } catch (err: any) {
+      alert(err.message || '负责人更新失败');
+    } finally {
+      reassigningTaskID = '';
+    }
   }
 
   async function handleEstimateScheduleEffort() {
@@ -960,6 +1060,9 @@
       showProjectDropdown = false;
       showScheduleAssigneeDropdown = false;
     }
+    if (!target.closest('.assignee-edit-container')) {
+      editingAssigneeTaskID = '';
+    }
     if (!target.closest('.date-input-shell')) {
       activeDatePicker = null;
     }
@@ -969,6 +1072,7 @@
     fetchDemands();
     fetchUsers();
     fetchDemandOptions();
+    fetchJiraConfig();
     document.addEventListener('click', handleDocumentClick);
     // Poll updates every 15 seconds
     const interval = setInterval(() => {
@@ -981,6 +1085,13 @@
       clearInterval(interval);
       document.removeEventListener('click', handleDocumentClick);
     };
+  });
+
+  onDestroy(() => {
+    if (manualModalScrollLocked) {
+      unlockBodyScroll();
+      manualModalScrollLocked = false;
+    }
   });
 </script>
 
@@ -1248,15 +1359,47 @@
         </div>
         <div class="lane-cards">
           {#each pendingDemands as item}
-            <div class="demand-card border-orange-dim">
+            <div class="demand-card border-orange-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
-                <span class="demand-id font-mono">#{item.task_id}</span>
+                {#if getJiraIssueUrl(item.task_id)}
+                  <a class="demand-id demand-id-button jira-id-link font-mono" href={getJiraIssueUrl(item.task_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                    #{item.task_id}
+                  </a>
+                {:else}
+                  <button class="demand-id demand-id-button font-mono" on:click|stopPropagation={() => openDemandDetails(item)}>
+                    #{item.task_id}
+                  </button>
+                {/if}
                 <div class="card-actions">
+                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                  <div class="assignee-edit-container" on:click|stopPropagation>
+                    {#if canManageDemand(item)}
+                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
+                        <span>👤 {item.assignee}</span>
+                        <span class="assignee-caret">▼</span>
+                      </button>
+                      {#if editingAssigneeTaskID === item.task_id}
+                        <div class="assignee-edit-options">
+                          {#each getAssigneeOptionsForDemand(item) as assignee}
+                            <button
+                              type="button"
+                              class:selected={assignee === item.assignee}
+                              disabled={reassigningTaskID === item.task_id}
+                              on:click={() => reassignDemand(item, assignee)}
+                            >
+                              {assignee}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    {:else}
+                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                    {/if}
+                  </div>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1297,7 +1440,7 @@
               <div class="card-bottom">
                 <span class="brain-link-badge font-mono">{getBrainBindingState(item)}</span>
                 {#if isAssignee(item) || hasPermission('demands:write')}
-                  <button class="action-btn schedule-btn" on:click={() => openScheduleModal(item)}>
+                  <button class="action-btn schedule-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
                     ⚡ 排期
                   </button>
                 {/if}
@@ -1319,15 +1462,47 @@
         <div class="lane-cards">
           {#each scheduledDemands as item}
             {@const dueInfo = getDueStatus(item.due_date)}
-            <div class="demand-card border-blue-dim">
+            <div class="demand-card border-blue-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
-                <span class="demand-id font-mono">#{item.task_id}</span>
+                {#if getJiraIssueUrl(item.task_id)}
+                  <a class="demand-id demand-id-button jira-id-link font-mono" href={getJiraIssueUrl(item.task_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                    #{item.task_id}
+                  </a>
+                {:else}
+                  <button class="demand-id demand-id-button font-mono" on:click|stopPropagation={() => openDemandDetails(item)}>
+                    #{item.task_id}
+                  </button>
+                {/if}
                 <div class="card-actions">
+                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                  <div class="assignee-edit-container" on:click|stopPropagation>
+                    {#if canManageDemand(item)}
+                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
+                        <span>👤 {item.assignee}</span>
+                        <span class="assignee-caret">▼</span>
+                      </button>
+                      {#if editingAssigneeTaskID === item.task_id}
+                        <div class="assignee-edit-options">
+                          {#each getAssigneeOptionsForDemand(item) as assignee}
+                            <button
+                              type="button"
+                              class:selected={assignee === item.assignee}
+                              disabled={reassigningTaskID === item.task_id}
+                              on:click={() => reassignDemand(item, assignee)}
+                            >
+                              {assignee}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    {:else}
+                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                    {/if}
+                  </div>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1370,7 +1545,7 @@
               <div class="card-bottom">
                 <span class="due-badge {dueInfo.className} font-mono">{dueInfo.text}</span>
                 {#if isAssignee(item) || hasPermission('demands:write')}
-                  <button class="edit-sched-btn" on:click={() => openScheduleModal(item)}>
+                  <button class="edit-sched-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
                     ⚙️
                   </button>
                 {/if}
@@ -1392,15 +1567,47 @@
         <div class="lane-cards">
           {#each inProgressDemands as item}
             {@const dueInfo = getDueStatus(item.due_date)}
-            <div class="demand-card border-purple-dim">
+            <div class="demand-card border-purple-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
-                <span class="demand-id font-mono">#{item.task_id}</span>
+                {#if getJiraIssueUrl(item.task_id)}
+                  <a class="demand-id demand-id-button jira-id-link font-mono" href={getJiraIssueUrl(item.task_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                    #{item.task_id}
+                  </a>
+                {:else}
+                  <button class="demand-id demand-id-button font-mono" on:click|stopPropagation={() => openDemandDetails(item)}>
+                    #{item.task_id}
+                  </button>
+                {/if}
                 <div class="card-actions">
+                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                  <div class="assignee-edit-container" on:click|stopPropagation>
+                    {#if canManageDemand(item)}
+                      <button class="assignee-badge assignee-edit-trigger font-mono" on:click={() => openAssigneeEditor(item)}>
+                        <span>👤 {item.assignee}</span>
+                        <span class="assignee-caret">▼</span>
+                      </button>
+                      {#if editingAssigneeTaskID === item.task_id}
+                        <div class="assignee-edit-options">
+                          {#each getAssigneeOptionsForDemand(item) as assignee}
+                            <button
+                              type="button"
+                              class:selected={assignee === item.assignee}
+                              disabled={reassigningTaskID === item.task_id}
+                              on:click={() => reassignDemand(item, assignee)}
+                            >
+                              {assignee}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    {:else}
+                      <span class="assignee-badge font-mono">👤 {item.assignee}</span>
+                    {/if}
+                  </div>
                 </div>
               </div>
               <h5>{item.title}</h5>
@@ -1460,15 +1667,47 @@
         </div>
         <div class="lane-cards">
           {#each deliveredDemands as item}
-            <div class="demand-card border-green-dim card-done">
+            <div class="demand-card border-green-dim card-done" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
-                <span class="demand-id font-mono">#{item.task_id}</span>
+                {#if getJiraIssueUrl(item.task_id)}
+                  <a class="demand-id demand-id-button jira-id-link font-mono" href={getJiraIssueUrl(item.task_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                    #{item.task_id}
+                  </a>
+                {:else}
+                  <button class="demand-id demand-id-button font-mono" on:click|stopPropagation={() => openDemandDetails(item)}>
+                    #{item.task_id}
+                  </button>
+                {/if}
                 <div class="card-actions">
+                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
                   {/if}
-                  <span class="assignee-badge font-mono text-muted">👤 {item.assignee}</span>
+                  <div class="assignee-edit-container" on:click|stopPropagation>
+                    {#if canManageDemand(item)}
+                      <button class="assignee-badge assignee-edit-trigger font-mono text-muted" on:click={() => openAssigneeEditor(item)}>
+                        <span>👤 {item.assignee}</span>
+                        <span class="assignee-caret">▼</span>
+                      </button>
+                      {#if editingAssigneeTaskID === item.task_id}
+                        <div class="assignee-edit-options">
+                          {#each getAssigneeOptionsForDemand(item) as assignee}
+                            <button
+                              type="button"
+                              class:selected={assignee === item.assignee}
+                              disabled={reassigningTaskID === item.task_id}
+                              on:click={() => reassignDemand(item, assignee)}
+                            >
+                              {assignee}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    {:else}
+                      <span class="assignee-badge font-mono text-muted">👤 {item.assignee}</span>
+                    {/if}
+                  </div>
                 </div>
               </div>
               <h5 class="line-through">{item.title}</h5>
@@ -1666,7 +1905,7 @@
           <div class="schedule-estimate-panel">
             <div class="estimate-panel-head">
               <div>
-                <strong>工时设置</strong>
+                <strong>工时设置汇总</strong>
               </div>
               <div class="estimate-actions">
                 <button
@@ -1777,6 +2016,82 @@
         <div class="modal-footer">
           <button class="cancel-btn font-mono" on:click={closeScheduleModal}>取消</button>
           <button class="submit-btn font-mono" on:click={handleSaveSchedule}>确认排期</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Demand Details Modal -->
+  {#if showDemandDetailsModal && detailDemand}
+    <div class="modal-backdrop" on:click={closeDemandDetails}>
+      <div class="modal-content detail-modal" on:click|stopPropagation>
+        <div class="modal-header">
+          <h3>需求详情: #{detailDemand.task_id}</h3>
+          <button class="close-btn" on:click={closeDemandDetails} aria-label="关闭详情弹窗">&times;</button>
+        </div>
+
+        <div class="detail-body">
+          <div class="detail-title-block">
+            <span class="detail-id font-mono">#{detailDemand.task_id}</span>
+            <strong>{detailDemand.title}</strong>
+            <p>{detailDemand.description || '暂无需求说明'}</p>
+          </div>
+
+          <div class="detail-facts-grid">
+            <div>
+              <span>负责人</span>
+              <strong>{detailDemand.assignee || '未指派'}</strong>
+            </div>
+            <div>
+              <span>流转状态</span>
+              <strong>{detailDemand.status || '-'}</strong>
+            </div>
+            <div>
+              <span>截止日期</span>
+              <strong>{detailDemand.due_date ? formatDateDisplay(detailDemand.due_date.slice(0, 10)) : '未排期'}</strong>
+            </div>
+            <div>
+              <span>提单人</span>
+              <strong>{detailDemand.creator || '系统'}</strong>
+            </div>
+            <div>
+              <span>所属部门</span>
+              <strong>{detailDemand.creator_dept || '无部门'}</strong>
+            </div>
+            <div>
+              <span>任务组</span>
+              <strong>{detailDemand.task_group_id || getEffectiveTaskGroupId(detailDemand)}</strong>
+            </div>
+          </div>
+
+          <div class="detail-link-row">
+            {#if getJiraIssueUrl(detailDemand.task_id)}
+              <a href={getJiraIssueUrl(detailDemand.task_id)} target="_blank" rel="noopener noreferrer">打开 Jira</a>
+            {/if}
+            {#if canManageDemand(detailDemand)}
+              <button type="button" on:click={() => { closeDemandDetails(); openScheduleModal(detailDemand); }}>调整排期</button>
+            {/if}
+          </div>
+
+          <div class="detail-subtasks">
+            <div class="detail-section-title">
+              <span>影子任务</span>
+              <strong>{detailSubtasks.length}</strong>
+            </div>
+            {#if detailSubtasks.length > 0}
+              <div class="detail-subtask-list">
+                {#each detailSubtasks as sub}
+                  <div class="detail-subtask-row">
+                    <span class="status-dot {sub.status}"></span>
+                    <strong>{sub.title}</strong>
+                    <em>{sub.assignee || '未指派'} · {sub.status || '-'}</em>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="detail-empty">尚未导入 AI 影子任务。</div>
+            {/if}
+          </div>
         </div>
       </div>
     </div>
@@ -2449,12 +2764,18 @@
     flex-direction: column;
     gap: 10px;
     transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
   }
 
   .demand-card:hover {
     background: rgba(51, 65, 85, 0.3);
     border-color: rgba(99, 102, 241, 0.3);
     transform: translateY(-2px);
+  }
+
+  .demand-card:focus-visible {
+    outline: 2px solid rgba(129, 140, 248, 0.7);
+    outline-offset: 3px;
   }
 
   .border-orange-dim { border-top: 3px solid #f97316; }
@@ -2479,11 +2800,111 @@
     font-weight: 700;
   }
 
+  .demand-id-button {
+    border: 1px solid rgba(99, 102, 241, 0.24);
+    background: rgba(99, 102, 241, 0.1);
+    color: #a5b4fc;
+    border-radius: 5px;
+    padding: 3px 7px;
+    cursor: pointer;
+    text-decoration: none;
+    line-height: 1.1;
+    font-size: 0.66rem;
+  }
+
+  .demand-id-button:hover {
+    color: #ffffff;
+    border-color: rgba(129, 140, 248, 0.58);
+    background: rgba(99, 102, 241, 0.22);
+  }
+
+  .jira-id-link {
+    color: #7dd3fc;
+    border-color: rgba(56, 189, 248, 0.34);
+    background: rgba(14, 165, 233, 0.1);
+  }
+
   .assignee-badge {
     background: rgba(99, 102, 241, 0.12);
     color: #818cf8;
     padding: 2px 6px;
     border-radius: 4px;
+  }
+
+  .assignee-edit-container {
+    position: relative;
+    min-width: 0;
+  }
+
+  .assignee-edit-trigger {
+    border: 1px solid rgba(99, 102, 241, 0.22);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 128px;
+    line-height: 1.25;
+  }
+
+  .assignee-edit-trigger span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .assignee-edit-trigger:hover {
+    color: #c4b5fd;
+    border-color: rgba(129, 140, 248, 0.55);
+    background: rgba(99, 102, 241, 0.18);
+  }
+
+  .assignee-caret {
+    color: #64748b;
+    font-size: 0.5rem;
+  }
+
+  .assignee-edit-options {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 1300;
+    width: max-content;
+    min-width: 140px;
+    max-width: 220px;
+    max-height: 190px;
+    overflow-y: auto;
+    background: #0f172a;
+    border: 1px solid rgba(129, 140, 248, 0.28);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 18px 36px rgba(2, 6, 23, 0.62);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
+  }
+
+  .assignee-edit-options button {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: #cbd5e1;
+    border-radius: 5px;
+    padding: 7px 9px;
+    font-size: 0.74rem;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .assignee-edit-options button:hover,
+  .assignee-edit-options button.selected {
+    background: rgba(99, 102, 241, 0.18);
+    color: #ffffff;
+  }
+
+  .assignee-edit-options button:disabled {
+    opacity: 0.55;
+    cursor: wait;
   }
 
   .demand-card h5 {
@@ -2767,6 +3188,20 @@
     justify-content: center;
   }
 
+  .detail-action-btn {
+    color: #94a3b8;
+    border: 1px solid rgba(71, 85, 105, 0.38);
+    border-radius: 5px;
+    padding: 2px 6px;
+    font-size: 0.64rem;
+    opacity: 0.72;
+  }
+
+  .detail-action-btn:hover {
+    color: #e2e8f0;
+    border-color: rgba(129, 140, 248, 0.45);
+  }
+
   .icon-action-btn:hover {
     opacity: 1;
     transform: scale(1.15);
@@ -2991,39 +3426,42 @@
 
   .schedule-estimate-panel {
     position: relative;
-    background: rgba(15, 23, 42, 0.72);
-    border: 1px solid rgba(99, 102, 241, 0.24);
-    border-radius: 10px;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    border-top: 1px solid rgba(51, 65, 85, 0.38);
+    border-bottom: 1px solid rgba(51, 65, 85, 0.28);
+    padding: 8px 0;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
   }
 
   .estimate-panel-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
+    justify-content: flex-start;
+    flex-direction: row;
+    gap: 10px;
+    min-width: 0;
   }
 
   .estimate-panel-head > div {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
     min-width: 0;
   }
 
   .estimate-panel-head strong {
     color: #f8fafc;
-    font-size: 0.86rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
   }
 
   .estimate-actions {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     flex-wrap: nowrap;
     gap: 8px;
   }
@@ -3079,8 +3517,8 @@
 
   .estimate-manual-grid {
     display: grid;
-    grid-template-columns: minmax(96px, 0.74fr) minmax(96px, 0.74fr) minmax(136px, 1fr);
-    gap: 12px;
+    grid-template-columns: minmax(76px, 0.62fr) minmax(76px, 0.62fr) minmax(104px, 0.76fr);
+    gap: 8px;
     align-items: end;
   }
 
@@ -3088,27 +3526,31 @@
   .estimate-difficulty-field {
     min-width: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
     gap: 6px;
   }
 
   .estimate-field span,
   .estimate-difficulty-field > label {
-    display: block;
+    display: inline-flex;
     color: #64748b;
     font-size: 0.62rem;
     font-weight: 800;
+    white-space: nowrap;
   }
 
   .estimate-field input,
   .difficulty-select {
+    flex: 1 1 auto;
+    min-width: 0;
     width: 100%;
-    height: 34px;
+    height: 32px;
     box-sizing: border-box;
     border: 1px solid rgba(71, 85, 105, 0.58);
     border-radius: 8px;
     outline: none;
-    background: rgba(2, 6, 23, 0.28);
+    background: rgba(2, 6, 23, 0.18);
     color: #e2e8f0;
     font: inherit;
     font-size: 0.82rem;
@@ -3118,7 +3560,7 @@
   }
 
   .estimate-field input {
-    padding: 0 10px;
+    padding: 0 8px;
   }
 
   .difficulty-select {
@@ -3192,16 +3634,194 @@
     white-space: nowrap;
   }
 
+  .detail-modal {
+    max-width: 640px;
+  }
+
+  .detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .detail-title-block {
+    border-bottom: 1px solid rgba(51, 65, 85, 0.36);
+    padding-bottom: 14px;
+  }
+
+  .detail-id {
+    display: inline-flex;
+    width: fit-content;
+    color: #7dd3fc;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: rgba(14, 165, 233, 0.08);
+    border-radius: 5px;
+    padding: 3px 7px;
+    font-size: 0.66rem;
+    font-weight: 900;
+    margin-bottom: 8px;
+  }
+
+  .detail-title-block strong {
+    display: block;
+    color: #f8fafc;
+    font-size: 1rem;
+    line-height: 1.45;
+  }
+
+  .detail-title-block p {
+    margin: 8px 0 0;
+    color: #94a3b8;
+    font-size: 0.82rem;
+    line-height: 1.55;
+  }
+
+  .detail-facts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .detail-facts-grid div {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.38);
+    background: rgba(15, 23, 42, 0.44);
+    border-radius: 8px;
+    padding: 9px 10px;
+  }
+
+  .detail-facts-grid span,
+  .detail-section-title span {
+    display: block;
+    color: #64748b;
+    font-size: 0.64rem;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+
+  .detail-facts-grid strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-link-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .detail-link-row a,
+  .detail-link-row button {
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    background: rgba(99, 102, 241, 0.12);
+    color: #c4b5fd;
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    text-decoration: none;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .detail-link-row a:hover,
+  .detail-link-row button:hover {
+    background: rgba(99, 102, 241, 0.24);
+    color: #ffffff;
+  }
+
+  .detail-subtasks {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .detail-section-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .detail-section-title span {
+    margin-bottom: 0;
+  }
+
+  .detail-section-title strong {
+    color: #cbd5e1;
+    font-size: 0.78rem;
+  }
+
+  .detail-subtask-list {
+    max-height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
+  }
+
+  .detail-subtask-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    border: 1px solid rgba(51, 65, 85, 0.32);
+    border-radius: 7px;
+    padding: 8px 10px;
+    background: rgba(2, 6, 23, 0.24);
+  }
+
+  .detail-subtask-row strong {
+    color: #e2e8f0;
+    font-size: 0.76rem;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-subtask-row em {
+    color: #64748b;
+    font-size: 0.68rem;
+    font-style: normal;
+    white-space: nowrap;
+  }
+
+  .detail-empty {
+    border: 1px dashed rgba(51, 65, 85, 0.42);
+    border-radius: 8px;
+    color: #64748b;
+    padding: 14px;
+    text-align: center;
+    font-size: 0.78rem;
+  }
+
   @media (max-width: 760px) {
     .estimate-panel-head {
-      align-items: center;
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 8px;
     }
 
     .estimate-actions {
-      justify-content: flex-end;
+      justify-content: flex-start;
+    }
+
+    .schedule-estimate-panel {
+      grid-template-columns: 1fr;
     }
 
     .estimate-manual-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .detail-facts-grid,
+    .detail-subtask-row {
       grid-template-columns: 1fr;
     }
   }

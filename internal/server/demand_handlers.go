@@ -24,6 +24,11 @@ type CreateDemandRequest struct {
 	CreatorDept string `json:"creator_dept"`
 }
 
+type ReassignDemandRequest struct {
+	TaskID   string `json:"task_id"`
+	Assignee string `json:"assignee"`
+}
+
 type DemandOptionsResponse struct {
 	Assignees []string `json:"assignees"`
 	Projects  []string `json:"projects"`
@@ -430,6 +435,94 @@ func (s *Server) handleArchiveDemand(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "success",
 		"message": "Demand archived successfully",
+	})
+}
+
+// handleReassignDemand changes a demand owner and keeps the markdown kanban in sync.
+func (s *Server) handleReassignDemand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	actorUsername := r.Header.Get("x-authenticated-user-id")
+	actorName := r.Header.Get("x-authenticated-user-name")
+	if actorName == "" {
+		actorName = actorUsername
+	}
+
+	var req ReassignDemandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	req.TaskID = strings.TrimSpace(req.TaskID)
+	req.Assignee = strings.TrimSpace(req.Assignee)
+	if req.TaskID == "" || req.Assignee == "" {
+		http.Error(w, "task_id and assignee are required", http.StatusBadRequest)
+		return
+	}
+
+	var telemetry db.TaskTelemetry
+	if err := db.DB.Where("task_id = ?", req.TaskID).First(&telemetry).Error; err != nil {
+		http.Error(w, "Task not found", http.StatusNotFound)
+		return
+	}
+	if telemetry.IssueType != "demand" {
+		http.Error(w, "Only demand owners can be changed from this endpoint", http.StatusBadRequest)
+		return
+	}
+
+	isAdmin := s.checkIsAdmin(actorUsername)
+	isCreator := strings.EqualFold(telemetry.Creator, actorUsername) ||
+		strings.Contains(strings.ToLower(actorUsername), strings.ToLower(telemetry.Creator))
+	isAssignee := strings.EqualFold(telemetry.Assignee, actorName) ||
+		strings.EqualFold(telemetry.Assignee, actorUsername) ||
+		strings.Contains(strings.ToLower(actorUsername), strings.ToLower(telemetry.Assignee))
+	if !isAdmin && !isCreator && !isAssignee {
+		http.Error(w, "Access Denied: Only creator, assignee, or managers can reassign this demand", http.StatusForbidden)
+		return
+	}
+
+	oldAssignee := telemetry.Assignee
+	telemetry.Assignee = req.Assignee
+	telemetry.LastUpdate = time.Now()
+	decisionLog := fmt.Sprintf("[%s] %s 调整需求负责人：从 [%s] 转派给 [%s]。",
+		telemetry.LastUpdate.Format("2006-01-02 15:04:05"), actorName, oldAssignee, telemetry.Assignee)
+	if telemetry.DecisionLogs != "" {
+		telemetry.DecisionLogs += "\n" + decisionLog
+	} else {
+		telemetry.DecisionLogs = decisionLog
+	}
+
+	if err := db.DB.Save(&telemetry).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to reassign demand: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if err := kanban.SyncTaskToKanban(&telemetry); err != nil {
+		log.Printf("Failed to sync reassigned demand %s to kanban file: %v", telemetry.TaskID, err)
+	}
+
+	notif := db.Notification{
+		Type:      "demand_reassigned",
+		TaskID:    telemetry.TaskID,
+		Title:     "📋 需求负责人已调整",
+		Message:   fmt.Sprintf("需求 %s 已转派给您: %s。", telemetry.TaskID, telemetry.Title),
+		Assignee:  telemetry.Assignee,
+		CreatedAt: time.Now(),
+	}
+	db.DB.Create(&notif)
+	BroadcastNotifications()
+
+	userdb.RecordAuditLog(db.DB, actorUsername, "demand_reassign", "demand", telemetry.TaskID,
+		fmt.Sprintf("将需求 %s 负责人从 %s 调整为 %s", telemetry.TaskID, oldAssignee, telemetry.Assignee), r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":       "success",
+		"message":      "Demand reassigned successfully",
+		"updated_task": telemetry,
 	})
 }
 

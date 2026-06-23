@@ -1340,6 +1340,131 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 	}
 }
 
+func TestGetDemandOptionsAllowsAuthenticatedDemandReader(t *testing.T) {
+	setupServerTestDB(t)
+
+	token, err := GenerateJWT("reader@westwell-lab.com", "Demand Reader", "mock_wellos_token", "", []string{"member"}, []string{"demands:read"})
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := db.DB.Create(&userdb.User{
+		Username: "reader-candidate@westwell-lab.com",
+		Email:    "reader-candidate@westwell-lab.com",
+		Name:     "Reader Candidate",
+	}).Error; err != nil {
+		t.Fatalf("seed candidate user: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9108, Host: "127.0.0.1"}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/demands/options", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/demands/options status = %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var response DemandOptionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode demand options response: %v", err)
+	}
+	if !stringSliceContains(response.Assignees, "Reader Candidate") {
+		t.Fatalf("expected authenticated reader to receive assignee candidates, got %+v", response.Assignees)
+	}
+}
+
+func TestGetJiraLinkConfigDoesNotRequireConfigRead(t *testing.T) {
+	setupServerTestDB(t)
+
+	token, err := GenerateJWT("demand-reader@westwell-lab.com", "Demand Reader", "mock_wellos_token", "", []string{"member"}, []string{"demands:read"})
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	srv := NewServer(&config.Config{
+		Server: config.ServerConfig{Port: 9109, Host: "127.0.0.1"},
+		Jira: config.JiraConfig{
+			Enabled: true,
+			BaseURL: "https://jira.example.com/",
+		},
+	}, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/jira/link-config", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/jira/link-config status = %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var response jiraLinkConfigResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode Jira link config response: %v", err)
+	}
+	if !response.Enabled || response.BaseURL != "https://jira.example.com" {
+		t.Fatalf("unexpected Jira link config: %+v", response)
+	}
+}
+
+func TestReassignDemandUpdatesDBAndKanban(t *testing.T) {
+	setupServerTestDB(t)
+	useTempKanbanFile(t)
+	token := superAdminToken(t, "pm-reassign@westwell-lab.com", "PM Reassign", []string{"demands:write"})
+	now := time.Now()
+
+	demand := db.TaskTelemetry{
+		TaskID:        "DEMAND-REASSIGN",
+		Title:         "Reassignable demand",
+		Repo:          "platform-core",
+		Assignee:      "Alice",
+		Branch:        "-",
+		LastCommit:    "-",
+		Status:        "backlog",
+		IssueType:     "demand",
+		TaskCreatedAt: now,
+		LastUpdate:    now,
+	}
+	if err := db.DB.Create(&demand).Error; err != nil {
+		t.Fatalf("seed demand: %v", err)
+	}
+	if err := kanban.SyncTaskToKanban(&demand); err != nil {
+		t.Fatalf("seed kanban: %v", err)
+	}
+
+	payload := map[string]string{
+		"task_id":  "DEMAND-REASSIGN",
+		"assignee": "Bob",
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", "/api/demands/reassign", bytes.NewBuffer(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9104, Host: "127.0.0.1"}}, "")
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST /api/demands/reassign failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var updated db.TaskTelemetry
+	if err := db.DB.Where("task_id = ?", "DEMAND-REASSIGN").First(&updated).Error; err != nil {
+		t.Fatalf("updated demand not found: %v", err)
+	}
+	if updated.Assignee != "Bob" {
+		t.Fatalf("Assignee = %q, want Bob", updated.Assignee)
+	}
+
+	kanbanContent, err := os.ReadFile(kanban.KanbanFilePath)
+	if err != nil {
+		t.Fatalf("read kanban file: %v", err)
+	}
+	if !strings.Contains(string(kanbanContent), "| DEMAND-REASSIGN | Reassignable demand | platform-core | Bob | - | - |") {
+		t.Fatalf("kanban file did not include reassigned owner:\n%s", string(kanbanContent))
+	}
+}
+
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

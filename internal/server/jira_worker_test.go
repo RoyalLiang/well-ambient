@@ -2,7 +2,9 @@ package server
 
 import (
 	"testing"
+	"time"
 	"well-ambient/internal/config"
+	"well-ambient/internal/db"
 )
 
 func TestMapJiraStatus(t *testing.T) {
@@ -177,6 +179,65 @@ func TestParseJiraTime(t *testing.T) {
 			utcStr := parsed.UTC().Format("2006-01-02 15:04:05")
 			if utcStr != tc.expected {
 				t.Errorf("parseJiraTime(%q) = %q (UTC); want %q (UTC)", tc.input, utcStr, tc.expected)
+			}
+		})
+	}
+}
+
+func TestShouldPreserveLocalAssignee(t *testing.T) {
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		task     db.TaskTelemetry
+		incoming string
+		want     bool
+	}{
+		{
+			name: "recent decision reassignment",
+			task: db.TaskTelemetry{
+				Assignee:     "Bob",
+				LastUpdate:   now.Add(-2 * time.Hour),
+				DecisionLogs: "[2026-06-23 10:00:00] PM 调停干预：将指派人从 [Alice] 转派给 [Bob]。",
+			},
+			incoming: "Alice",
+			want:     true,
+		},
+		{
+			name: "stale decision can be refreshed from Jira",
+			task: db.TaskTelemetry{
+				Assignee:     "Bob",
+				LastUpdate:   now.Add(-25 * time.Hour),
+				DecisionLogs: "[2026-06-22 10:00:00] PM 调停干预：将指派人从 [Alice] 转派给 [Bob]。",
+			},
+			incoming: "Alice",
+			want:     false,
+		},
+		{
+			name: "no decision log follows Jira",
+			task: db.TaskTelemetry{
+				Assignee:   "Bob",
+				LastUpdate: now.Add(-2 * time.Hour),
+			},
+			incoming: "Alice",
+			want:     false,
+		},
+		{
+			name: "same assignee is not protected",
+			task: db.TaskTelemetry{
+				Assignee:     "Bob",
+				LastUpdate:   now.Add(-2 * time.Hour),
+				DecisionLogs: "调整需求负责人：从 [Alice] 转派给 [Bob]。",
+			},
+			incoming: "Bob",
+			want:     false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldPreserveLocalAssignee(tc.task, tc.incoming, now)
+			if got != tc.want {
+				t.Fatalf("shouldPreserveLocalAssignee() = %v, want %v", got, tc.want)
 			}
 		})
 	}

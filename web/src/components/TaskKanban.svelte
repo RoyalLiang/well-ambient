@@ -575,6 +575,18 @@
 
   let jiraBaseUrl = '';
 
+  async function fetchJiraLinkConfig() {
+    try {
+      const res = await fetch('/api/jira/link-config');
+      if (res.ok) {
+        const data = await res.json();
+        jiraBaseUrl = data?.base_url ? data.base_url.replace(/\/+$/, '') : '';
+      }
+    } catch (e) {
+      console.error('Failed to fetch Jira link config:', e);
+    }
+  }
+
   async function fetchConfig() {
     try {
       const res = await fetch('/api/config');
@@ -654,6 +666,7 @@
   onMount(() => {
     fetchTasks();
     fetchConfig();
+    fetchJiraLinkConfig();
     intervalId = setInterval(() => {
       fetchTasks();
       if (currentView === 'execution') {

@@ -7,6 +7,7 @@
   import JiraConfig from './config/JiraConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
   import KPIKanban from './KPIKanban.svelte';
+  import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
 
   export let currentUserRole = 'member';
   export let currentUserEmail = '';
@@ -137,8 +138,11 @@
   let configVersionError = '';
   let rollbackLoadingID: number | null = null;
 
-  $: selectedConfigVersion = configVersions.find(v => v.id === selectedConfigVersionID) || configVersions[0] || null;
   $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'ai'].includes(activeSection);
+  $: visibleConfigVersions = isIntegrationSection
+    ? configVersions.filter(v => configVersionTouchesSection(v, activeSection)).slice(0, 8)
+    : configVersions;
+  $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
   function canAccessSection(section: typeof activeSection) {
     if (['gitlab', 'feishu', 'jira', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
@@ -417,6 +421,18 @@
   let groupDeletingName = '';
   let showDeleteGroupModal = false;
   let deleteGroupTarget: Group | null = null;
+  let manualModalScrollLocked = false;
+
+  $: {
+    const shouldLock = showAddMembershipModal || showTransferModal || showCreateGroupModal || showDeleteGroupModal;
+    if (shouldLock && !manualModalScrollLocked) {
+      lockBodyScroll();
+      manualModalScrollLocked = true;
+    } else if (!shouldLock && manualModalScrollLocked) {
+      unlockBodyScroll();
+      manualModalScrollLocked = false;
+    }
+  }
 
   async function fetchConfig() {
     try {
@@ -445,8 +461,13 @@
   }
 
   function sectionLastUpdated(section: string) {
-    const version = configVersions.find(v => (v.changed_sections || []).includes(section) || v.source === 'bootstrap-file');
+    const version = configVersions.find(v => (v.changed_sections || []).includes(section));
     return version?.created_at || '';
+  }
+
+  function configVersionTouchesSection(version: ConfigVersion, section: string) {
+    const sections = version.changed_sections || [];
+    return sections.includes(section);
   }
 
   function formatDateTime(value: string) {
@@ -1061,6 +1082,13 @@
         clearInterval(statusIntervalId);
       }
     };
+  });
+
+  onDestroy(() => {
+    if (manualModalScrollLocked) {
+      unlockBodyScroll();
+      manualModalScrollLocked = false;
+    }
   });
 </script>
 
@@ -1719,7 +1747,7 @@
         <div class="config-audit-header">
           <div>
             <span class="audit-kicker font-mono">Versioned Config</span>
-            <h3>配置版本审计与回滚</h3>
+            <h3>配置版本审计与回滚 <em>{activeSection}</em></h3>
           </div>
           <Button size="small" variant="ghost" on:click={() => fetchConfigVersions()}>刷新记录</Button>
         </div>
@@ -1730,10 +1758,12 @@
 
         {#if configVersions.length === 0}
           <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
+        {:else if visibleConfigVersions.length === 0}
+          <div class="empty-version-state">当前配置页暂无独立版本记录。</div>
         {:else}
           <div class="version-layout">
             <div class="version-list" role="list" aria-label="配置版本">
-              {#each configVersions as version}
+              {#each visibleConfigVersions as version}
                 <button
                   type="button"
                   class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
@@ -2105,12 +2135,11 @@
   }
 
   .config-audit-panel {
-    margin-top: 18px;
-    background: #0b1329;
-    border: 1px solid rgba(51, 65, 85, 0.45);
+    margin-top: 12px;
+    background: rgba(11, 19, 41, 0.72);
+    border: 1px solid rgba(51, 65, 85, 0.36);
     border-radius: 10px;
-    padding: 18px;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22);
+    padding: 12px;
   }
 
   .policy-workbench,
@@ -2536,12 +2565,12 @@
 
   .config-audit-header {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: 16px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
-    padding-bottom: 14px;
-    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    padding-bottom: 10px;
+    margin-bottom: 10px;
   }
 
   .audit-kicker {
@@ -2555,7 +2584,15 @@
   .config-audit-header h3 {
     margin: 4px 0 0 0;
     color: #f8fafc;
-    font-size: 1rem;
+    font-size: 0.92rem;
+  }
+
+  .config-audit-header h3 em {
+    margin-left: 6px;
+    color: #64748b;
+    font-size: 0.72rem;
+    font-style: normal;
+    font-weight: 700;
   }
 
   .config-version-error,
@@ -2584,39 +2621,43 @@
 
   .version-layout {
     display: grid;
-    grid-template-columns: 240px minmax(0, 1fr);
-    gap: 14px;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.35fr);
+    gap: 8px;
   }
 
   .version-list {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 360px;
-    overflow-y: auto;
-    padding-right: 4px;
+    align-items: stretch;
+    gap: 6px;
+    max-height: 108px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 4px 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.28) rgba(15, 23, 42, 0.36);
   }
 
   .version-list::-webkit-scrollbar {
-    width: 8px;
+    height: 8px;
   }
 
   .version-list::-webkit-scrollbar-track {
-    background: rgba(15, 23, 42, 0.55);
+    background: rgba(15, 23, 42, 0.36);
     border-radius: 999px;
   }
 
   .version-list::-webkit-scrollbar-thumb {
-    background: rgba(100, 116, 139, 0.65);
+    background: rgba(99, 102, 241, 0.38);
     border-radius: 999px;
   }
 
   .version-item {
+    flex: 0 0 132px;
     border: 1px solid rgba(51, 65, 85, 0.48);
     background: rgba(15, 23, 42, 0.56);
     color: #cbd5e1;
     border-radius: 8px;
-    padding: 10px;
+    padding: 7px 8px;
     text-align: left;
     cursor: pointer;
     display: flex;
@@ -2632,7 +2673,7 @@
 
   .version-title {
     color: #f8fafc;
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     font-weight: 800;
   }
 
@@ -2645,10 +2686,10 @@
 
   .version-detail {
     min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.48);
-    background: rgba(15, 23, 42, 0.38);
+    border: 1px solid rgba(51, 65, 85, 0.36);
+    background: rgba(15, 23, 42, 0.24);
     border-radius: 8px;
-    padding: 12px;
+    padding: 8px;
   }
 
   .version-detail-header {
@@ -2656,7 +2697,7 @@
     justify-content: space-between;
     gap: 12px;
     align-items: flex-start;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
 
   .version-detail-header p {
@@ -2675,13 +2716,35 @@
   .diff-table {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    max-height: 122px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.22) transparent;
+  }
+
+  .diff-table::-webkit-scrollbar,
+  .diff-value::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  .diff-table::-webkit-scrollbar-track,
+  .diff-value::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.24);
+    border-radius: 999px;
+  }
+
+  .diff-table::-webkit-scrollbar-thumb,
+  .diff-value::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 999px;
   }
 
   .diff-row {
     display: grid;
-    grid-template-columns: 160px minmax(0, 1fr) 18px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: 120px minmax(0, 1fr) 14px minmax(0, 1fr);
+    gap: 6px;
     align-items: start;
     border-bottom: 1px solid rgba(51, 65, 85, 0.34);
     padding-bottom: 8px;
@@ -2701,7 +2764,7 @@
   .diff-value {
     color: #94a3b8;
     font-size: 0.72rem;
-    max-height: 80px;
+    max-height: 48px;
     overflow: auto;
     overflow-wrap: anywhere;
     white-space: pre-wrap;

@@ -3,6 +3,15 @@
 ## Goal
 Inspect the repository against the provided implementation plan and apply the needed fixes that fit the current codebase, including the follow-up fixes for frontend skill rules, department display, demand scheduling date styling, and AI deconstruction binding.
 
+## Current Task Addendum: Board Cohesion, Audit Panel, And Modal Lock Polish
+- [x] Inspect demand/task/bug/decision board components and shared state flow
+- [x] Compact the effort summary and AI evaluation controls
+- [x] Reduce and restyle the config version audit/rollback surface
+- [x] Add or centralize modal background scroll locking
+- [x] Fix assignee changes, Jira links, and detail actions on demand/decision boards
+- [x] Improve seamless requirement/task/bug status transition feedback and strongest-brain guidance
+- [x] Run focused validation, then stage and commit intentional changes
+
 ## Current Task Addendum: GitLab Webhook Ensure/Status MVP
 - [x] Inspect existing GitLab/Jira integration and route patterns
 - [x] Add GitLab project webhook ensure/status backend capability
@@ -17,7 +26,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Complete
+Phase 21: Board Cohesion, Audit Panel, And Modal Lock Polish
 
 ## Phases
 
@@ -182,6 +191,17 @@ Complete
 - [x] Split schedule table columns into schedule, effort, delivery evidence, and update time
 - [x] Restyle schedule table scrollbars and the scheduling modal/date picker surface
 - [x] Update the schedule MVP documentation and add focused regression assertions
+- **Status:** complete
+
+### Phase 21: Board Cohesion, Audit Panel, And Modal Lock Polish
+- [x] Use the required `design-taste-frontend` guidance as a constrained internal-dashboard repair
+- [x] Locate the current work summary, audit/rollback, decision board, demand board, and modal implementations
+- [x] Implement compact effort-summary controls and custom difficulty select
+- [x] Make config version audit page-specific, compact, and non-native-scrollbar styled
+- [x] Ensure open modals/dialogs lock background scrolling across pages
+- [x] Fix assignee mutation propagation and demand board action click targets
+- [x] Add cohesive status-transition UX and strongest-brain recommendation dimensions
+- [x] Run focused frontend/backend validation and commit intentional changes
 - **Status:** complete
 
 ## Key Questions

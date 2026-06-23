@@ -56,6 +56,7 @@ func (s *Server) routes() {
 
 	// Protected Config APIs
 	s.mux.HandleFunc("GET /api/config", s.withPermission("config:read", s.handleGetConfig))
+	s.mux.HandleFunc("GET /api/jira/link-config", s.withAuth(s.handleGetJiraLinkConfig))
 	s.mux.HandleFunc("POST /api/config", s.withPermission("config:write", s.handleSaveConfig))
 	s.mux.HandleFunc("POST /api/config/test", s.withPermission("config:write", s.handleTestConnection))
 	s.mux.HandleFunc("GET /api/config/versions", s.withPermission("config:read", s.handleListConfigVersions))
@@ -84,10 +85,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/kpi/report-preview", s.withPermission("kpi:read", s.handleGetKPIReportPreview))
 
 	// Protected Demand & Schedule APIs
-	s.mux.HandleFunc("GET /api/demands/options", s.withPermission("demands:write", s.handleGetDemandOptions))
+	s.mux.HandleFunc("GET /api/demands/options", s.withAuth(s.handleGetDemandOptions))
 	s.mux.HandleFunc("POST /api/demands", s.withPermission("demands:write", s.handleCreateDemand))
 	s.mux.HandleFunc("DELETE /api/demands", s.withAuth(s.handleDeleteDemand))
 	s.mux.HandleFunc("POST /api/demands/archive", s.withAuth(s.handleArchiveDemand))
+	s.mux.HandleFunc("POST /api/demands/reassign", s.withAuth(s.handleReassignDemand))
 	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
 	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
 

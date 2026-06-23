@@ -101,8 +101,12 @@ func (s *Server) syncJiraTasks() {
 			}
 
 			if existing.Assignee != assigneeName {
-				existing.Assignee = assigneeName
-				hasChanges = true
+				if shouldPreserveLocalAssignee(existing, assigneeName, time.Now()) {
+					log.Printf("Jira sync: preserving local assignee override for %s (%s), ignoring Jira assignee %s", issue.Key, existing.Assignee, assigneeName)
+				} else {
+					existing.Assignee = assigneeName
+					hasChanges = true
+				}
 			}
 
 			if existing.IssueType != issueType {
@@ -182,9 +186,13 @@ func (s *Server) syncJiraTasks() {
 				if err := db.DB.Where("task_id = ?", issue.Key).First(&existing).Error; err == nil {
 					hasChanges := false
 					if existing.Assignee != assigneeName {
-						log.Printf("Jira sync keep-alive: assignee of %s corrected from %s -> %s (even if out of configuration range)", issue.Key, existing.Assignee, assigneeName)
-						existing.Assignee = assigneeName
-						hasChanges = true
+						if shouldPreserveLocalAssignee(existing, assigneeName, time.Now()) {
+							log.Printf("Jira sync keep-alive: preserving local assignee override for %s (%s), ignoring Jira assignee %s", issue.Key, existing.Assignee, assigneeName)
+						} else {
+							log.Printf("Jira sync keep-alive: assignee of %s corrected from %s -> %s (even if out of configuration range)", issue.Key, existing.Assignee, assigneeName)
+							existing.Assignee = assigneeName
+							hasChanges = true
+						}
 					}
 					if existing.Title != issue.Fields.Summary {
 						existing.Title = issue.Fields.Summary
@@ -244,6 +252,26 @@ func mapJiraIssueType(jiraIssueType string) string {
 	default:
 		return "demand"
 	}
+}
+
+func shouldPreserveLocalAssignee(task db.TaskTelemetry, incomingAssignee string, now time.Time) bool {
+	current := strings.TrimSpace(task.Assignee)
+	incoming := strings.TrimSpace(incomingAssignee)
+	if current == "" || strings.EqualFold(current, incoming) {
+		return false
+	}
+	if task.LastUpdate.IsZero() || now.Sub(task.LastUpdate) > 24*time.Hour {
+		return false
+	}
+
+	logs := strings.TrimSpace(task.DecisionLogs)
+	if logs == "" {
+		return false
+	}
+
+	return strings.Contains(logs, "转派") ||
+		strings.Contains(logs, "调整需求负责人") ||
+		strings.Contains(logs, "调停干预")
 }
 
 // buildJQL constructs a JQL query string from the Jira sync configuration

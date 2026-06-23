@@ -26,6 +26,30 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type jiraLinkConfigResponse struct {
+	Enabled bool   `json:"enabled"`
+	BaseURL string `json:"base_url"`
+}
+
+// handleGetJiraLinkConfig exposes only the non-secret Jira link metadata used by boards.
+func (s *Server) handleGetJiraLinkConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	response := jiraLinkConfigResponse{}
+	if s.config != nil {
+		response.Enabled = s.config.Jira.Enabled
+		response.BaseURL = strings.TrimRight(strings.TrimSpace(s.config.Jira.BaseURL), "/")
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding Jira link config: %v", err)
+	}
+}
+
 // handleSaveConfig updates the server configuration and saves it to disk
 func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

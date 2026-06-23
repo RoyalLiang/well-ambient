@@ -8,13 +8,14 @@ import (
 	"strings"
 	"time"
 	"well-ambient/internal/db"
+	"well-ambient/internal/kanban"
 )
 
 // DecisionRequest holds the payload for saving a meeting decision
 type DecisionRequest struct {
-	TaskID   string `json:"task_id"`
-	Action   string `json:"action"` // reassign, suspend, reschedule
-	Payload  struct {
+	TaskID  string `json:"task_id"`
+	Action  string `json:"action"` // reassign, suspend, reschedule
+	Payload struct {
 		Assignee string `json:"assignee"`
 		DueDate  string `json:"due_date"`
 		Note     string `json:"note"`
@@ -154,6 +155,9 @@ func HandlePostAgendaDecision(w http.ResponseWriter, r *http.Request) {
 	if err := db.DB.Save(&task).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to save task: %v", err), http.StatusInternalServerError)
 		return
+	}
+	if err := kanban.SyncTaskToKanban(&task); err != nil {
+		log.Printf("Agenda decision sync failed for task %s: %v", task.TaskID, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

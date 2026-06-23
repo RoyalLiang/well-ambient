@@ -1,23 +1,6 @@
-<script context="module" lang="ts">
-  let activeModalsCount = 0;
-
-  function registerModalOpen() {
-    activeModalsCount++;
-    if (typeof document !== 'undefined') {
-      document.body.style.overflow = 'hidden';
-    }
-  }
-
-  function registerModalClose() {
-    activeModalsCount--;
-    if (activeModalsCount <= 0 && typeof document !== 'undefined') {
-      document.body.style.overflow = '';
-    }
-  }
-</script>
-
 <script lang="ts">
   import { createEventDispatcher, onDestroy } from 'svelte';
+  import { lockBodyScroll, unlockBodyScroll } from '../../lib/modalScrollLock';
   const dispatch = createEventDispatcher();
 
   export let show = false;
@@ -51,17 +34,17 @@
   $: {
     if (show && !isCurrentlyShown) {
       isCurrentlyShown = true;
-      registerModalOpen();
+      lockBodyScroll();
     } else if (!show && isCurrentlyShown) {
       isCurrentlyShown = false;
-      registerModalClose();
+      unlockBodyScroll();
     }
   }
 
   onDestroy(() => {
     if (isCurrentlyShown) {
       isCurrentlyShown = false;
-      registerModalClose();
+      unlockBodyScroll();
     }
   });
 </script>

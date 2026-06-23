@@ -451,6 +451,36 @@
     }
   }
 
+  function getBrainFlowSignals(item: AgendaItem): Array<{ label: string; value: string; tone: 'safe' | 'warn' | 'danger' | 'info' }> {
+    const staleHours = item.telemetry_snippet.last_update
+      ? Math.max(0, Math.round((Date.now() - new Date(item.telemetry_snippet.last_update).getTime()) / 36e5))
+      : 0;
+    const dueText = item.due_date ? formatDateLabel(item.due_date.slice(0, 10)) : '未设置';
+    return [
+      { label: '事实证据', value: item.telemetry_snippet.branch ? '有分支证据' : '缺少开发入口', tone: item.telemetry_snippet.branch ? 'safe' : 'warn' },
+      { label: '静默时长', value: staleHours > 0 ? `${staleHours}h 未更新` : '等待首个事件', tone: staleHours > 48 ? 'danger' : staleHours > 24 ? 'warn' : 'info' },
+      { label: 'Jira/看板', value: item.status.toUpperCase(), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
+      { label: '截止压力', value: dueText, tone: item.risk_type === 'overdue' ? 'danger' : 'info' },
+      { label: '负责人负载', value: item.assignee || '未指派', tone: item.assignee ? 'safe' : 'warn' },
+      { label: '验收/回滚', value: item.issue_type === 'bug' ? '优先补复现与回归' : '拆范围或补验收口径', tone: 'info' }
+    ];
+  }
+
+  function getBrainFlowSuggestion(item: AgendaItem): string {
+    if (item.risk_type === 'no_commit_48h') {
+      return '建议先确认阻塞事实，再执行转派或结对协作；保留原负责人上下文，新增协助人承接下一次提交证据。';
+    }
+    if (item.risk_type === 'overdue') {
+      return item.issue_type === 'bug'
+        ? '建议把缺陷切成“复现、定位、修复、回归”四段，先锁定复现负责人和当天回归窗口。'
+        : '建议拆分交付范围，将可独立验收部分继续推进，争议范围进入下一轮影子任务。';
+    }
+    if (item.risk_type === 'potential_conflict') {
+      return '建议指定主合入人，先做分支同步和冲突预检，再进入 Review，避免看板状态早于代码事实。';
+    }
+    return '建议保持后台自动同步，只有在事实缺口、负责人变更、延期或验收风险出现时打断人工。';
+  }
+
   onMount(() => {
     fetchAgenda();
     fetchConfig();
@@ -713,6 +743,22 @@
             <div class="impact-box font-mono">
               <span class="impact-title">⚠️ AI 影响链条仿真 (Impact Simulation)</span>
               <p class="impact-desc">{aiPlan.impact}</p>
+            </div>
+
+            <div class="brain-flow-box">
+              <div class="brain-flow-head">
+                <span class="font-mono">最强大脑流转建议</span>
+                <strong>{selectedItem.risk_type === 'none' ? '静默托管' : '需要干预'}</strong>
+              </div>
+              <div class="brain-flow-grid font-mono">
+                {#each getBrainFlowSignals(selectedItem) as signal}
+                  <div class="brain-signal signal-{signal.tone}">
+                    <span>{signal.label}</span>
+                    <strong>{signal.value}</strong>
+                  </div>
+                {/each}
+              </div>
+              <p>{getBrainFlowSuggestion(selectedItem)}</p>
             </div>
           </div>
 
@@ -1456,6 +1502,77 @@
     font-size: 0.75rem;
     color: #cbd5e1;
     line-height: 1.4;
+  }
+
+  .brain-flow-box {
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.26);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .brain-flow-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .brain-flow-head span {
+    color: #94a3b8;
+    font-size: 0.7rem;
+    font-weight: 800;
+  }
+
+  .brain-flow-head strong {
+    color: #7dd3fc;
+    font-size: 0.72rem;
+  }
+
+  .brain-flow-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .brain-signal {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.38);
+    background: rgba(15, 23, 42, 0.42);
+    border-radius: 7px;
+    padding: 7px 8px;
+  }
+
+  .brain-signal span {
+    display: block;
+    color: #64748b;
+    font-size: 0.6rem;
+    margin-bottom: 4px;
+  }
+
+  .brain-signal strong {
+    display: block;
+    color: #cbd5e1;
+    font-size: 0.68rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brain-signal.signal-safe strong { color: #86efac; }
+  .brain-signal.signal-warn strong { color: #fbbf24; }
+  .brain-signal.signal-danger strong { color: #fb7185; }
+  .brain-signal.signal-info strong { color: #93c5fd; }
+
+  .brain-flow-box p {
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 0.74rem;
+    line-height: 1.45;
   }
 
   /* Intervention Form Controls */

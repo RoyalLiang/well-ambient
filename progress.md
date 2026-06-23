@@ -1,5 +1,49 @@
 # Progress Log
 
+## Session: 2026-06-23
+
+### Phase 21: Board Cohesion, Audit Panel, And Modal Lock Polish
+- **Status:** complete
+- **Started:** 2026-06-23
+- Actions taken:
+  - Resumed after context compaction and reread the active planning files.
+  - Read the required `design-taste-frontend` guidance and applied it as an internal-dashboard repair constraint.
+  - Added the current six-part task addendum to `task_plan.md` and `findings.md`.
+  - Added a non-secret Jira link-config endpoint so demand/task users can open Jira without `config:read`.
+  - Allowed authenticated demand users to load reassignment candidates and protected recent manual assignee overrides from Jira sync rollback.
+  - Compacted the schedule effort summary, made difficulty a dropdown, and reduced the config-version audit panel height with section-specific filtering.
+  - Confirmed modal scroll locking covers shared Modal, Demand modals, and Settings modals.
+  - Made demand cards keyboard/click accessible for details while preserving Jira/direct action click targets.
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `internal/server/config_handlers.go`
+  - `internal/server/server.go`
+  - `internal/server/jira_worker.go`
+  - `internal/server/jira_worker_test.go`
+  - `internal/server/server_test.go`
+  - `internal/agenda/handlers.go`
+  - `internal/agenda/handlers_test.go`
+  - `internal/server/demand_handlers.go`
+  - `web/src/lib/modalScrollLock.ts`
+  - `web/src/components/shared/Modal.svelte`
+  - `web/src/components/DemandKanban.svelte`
+  - `web/src/components/TaskKanban.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+  - `web/src/components/DecisionDashboard.svelte`
+
+## Latest Validation After Phase 21
+| Test | Input | Expected | Actual | Status |
+|------|-------|----------|--------|--------|
+| Targeted reassignment/Jira metadata tests | `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server ./internal/agenda -run 'TestShouldPreserveLocalAssignee|TestGetDemandOptions|TestGetJiraLinkConfig|TestPostAgendaDecisionReassignSyncsKanban' -count=1` | targeted backend behavior passes | passed | pass |
+| Frontend production build | `pnpm build` in `web` | Vite build succeeds | passed with existing Svelte a11y warnings | pass |
+
+## Latest Error Log
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-23 | Svelte build failed because `{@const detailSubtasks...}` was not an immediate child of an allowed block | 1 | Replaced the inline const with a reactive `detailSubtasks` value before rerunning the build successfully |
+
 ## Session: 2026-06-20
 
 ### GitLab/Jira Integration Worker A: Webhook Ensure/Status MVP
