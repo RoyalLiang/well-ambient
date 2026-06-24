@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { slide } from 'svelte/transition';
   import Modal from './shared/Modal.svelte';
+  import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
 
   interface Task {
     id: string;
@@ -479,22 +480,12 @@
 
   let selectedTaskCommits: any[] = [];
   let loadingCommits = false;
+  let activeTelemetryTaskId = '';
+  let isTelemetryDrawerOpen = false;
 
   async function openDetails(task: Task) {
     selectedTask = task;
     showDetails = true;
-    loadingCommits = true;
-    selectedTaskCommits = [];
-    try {
-      const res = await fetch(`/api/tasks/commits?task_id=${task.id}`);
-      if (res.ok) {
-        selectedTaskCommits = await res.json();
-      }
-    } catch (e) {
-      console.error('Failed to fetch commits:', e);
-    } finally {
-      loadingCommits = false;
-    }
   }
 
   function getProjectName(id: string): string {
@@ -934,6 +925,7 @@
                   <th>结果状态</th>
                   <th>风险判断</th>
                   <th>最近活动</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -995,6 +987,12 @@
                         <strong>{item.last_evidence_at || item.last_update || '-'}</strong>
                         <small>{item.active_days} 天活跃周期 · 证据 {item.evidence_age_hours}h</small>
                       </div>
+                    </td>
+                    <td>
+                      <button class="exec-action-btn font-mono" on:click={() => {
+                        activeTelemetryTaskId = item.task_id;
+                        isTelemetryDrawerOpen = true;
+                      }}>代码轨迹</button>
                     </td>
                   </tr>
                 {/each}
@@ -1400,49 +1398,15 @@
       </div>
       
       <div class="divider"></div>
-      <div class="section-title">Git Telemetry 提交时序与多模块轨迹</div>
-      
-      {#if loadingCommits}
-        <div class="loading-commits">
-          <span class="spinner"></span> 正在拉取最新的 Git 遥测明细...
-        </div>
-      {:else if selectedTaskCommits.length > 0}
-        <div class="commit-timeline">
-          {#each selectedTaskCommits as log}
-            <div class="timeline-item">
-              <div class="timeline-badge-container">
-                <span class="timeline-badge badge-{log.action}">{log.action === 'git_push' ? 'Push' : 'MR'}</span>
-                <span class="timeline-time font-mono">{formatTimeBrief(log.created_at)}</span>
-              </div>
-              <div class="timeline-content">
-                <div class="timeline-meta">
-                  <span class="meta-repo">📁 {log.repo}</span>
-                  <span class="meta-branch">🌿 {log.branch}</span>
-                  {#if log.commit_id}
-                    <span class="meta-hash font-mono" title="Commit Hash">{log.commit_id.substring(0, 8)}</span>
-                  {/if}
-                </div>
-                <div class="timeline-body font-mono">
-                  {#if log.mr_url}
-                    <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-timeline-link">
-                      !{log.mr_iid}: {log.message}
-                    </a>
-                  {:else}
-                    {log.message}
-                  {/if}
-                </div>
-                <div class="timeline-footer">
-                  <span>👤 提交人: {log.author}</span>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty-commits-info">
-          ℹ️ 该任务目前处于 Jira 状态，暂无关联的代码提交 (Git Telemetry) 记录。
-        </div>
-      {/if}
+      <div class="telemetry-decoupled-section">
+        <span class="decoupled-title font-mono">GIT TELEMETRY EVIDENCE</span>
+        <button class="view-telemetry-drawer-btn font-mono" on:click={() => {
+          activeTelemetryTaskId = selectedTask ? selectedTask.id : '';
+          isTelemetryDrawerOpen = true;
+        }}>
+          🛰️ 展开代码提交轨迹与 MR 证据
+        </button>
+      </div>
       
       <div class="details-row">
         <span class="label">系统最后同步:</span>
@@ -1451,6 +1415,8 @@
     </div>
   </Modal>
 {/if}
+
+<CommitTelemetryPanel taskID={activeTelemetryTaskId} isOpen={isTelemetryDrawerOpen} onClose={() => isTelemetryDrawerOpen = false} />
 
 <style>
   .active-days-badge {
@@ -3227,5 +3193,50 @@
   .combobox-trigger-input::placeholder {
     color: #cbd5e1 !important;
     opacity: 1;
+  }
+
+  /* Decoupled Git Telemetry styles */
+  .telemetry-decoupled-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 0;
+  }
+  .decoupled-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #38bdf8;
+    letter-spacing: 0.05em;
+  }
+  .view-telemetry-drawer-btn {
+    background: rgba(56, 189, 248, 0.1);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    width: 100%;
+    text-align: center;
+  }
+  .view-telemetry-drawer-btn:hover {
+    background: rgba(56, 189, 248, 0.2);
+    color: #f1f5f9;
+  }
+  .exec-action-btn {
+    background: rgba(30, 41, 59, 0.6);
+    color: #cbd5e1;
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .exec-action-btn:hover {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.4);
   }
 </style>

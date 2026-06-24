@@ -93,6 +93,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
 	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
 
+	// Protected Project Configs & Brain Scores
+	s.mux.HandleFunc("GET /api/projects/config", s.withAuth(s.handleGetProjectConfigs))
+	s.mux.HandleFunc("POST /api/projects/config", s.withPermission("config:write", s.handleSaveProjectConfig))
+	s.mux.HandleFunc("GET /api/projects/scores", s.withAuth(s.handleGetProjectScores))
+	s.mux.HandleFunc("POST /api/projects/scores/calculate", s.withPermission("config:write", s.handleCalculateProjectScores))
+
 	// Protected AI Deconstructor API
 	s.mux.HandleFunc("POST /api/deconstruct", s.withAuth(s.handleDeconstruct))
 	s.mux.HandleFunc("POST /api/tasks/import", s.withAuth(s.handleImportTasks))

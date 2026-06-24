@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { slide } from 'svelte/transition';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
+  import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
 
   export let currentUserPermissions: string[] = [];
   export let currentUserName: string = '';
@@ -80,6 +82,8 @@
     subtask_active: number;
     subtask_review: number;
     issue_type: string;
+    project_key?: string;
+    project_priority?: string;
   }
 
   interface ScheduleResponse {
@@ -269,6 +273,77 @@
   let scheduleAssigneeFilter = 'all';
   let scheduleSortMode: ScheduleSortMode = 'risk';
   let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
+
+  let projectScores: any[] = [];
+  let selectedScoreProject = '';
+  let projectScoresLoading = false;
+  let showScorerConsole = false;
+  let projectConfigs: any[] = [];
+  let activeTelemetryTaskId = '';
+  let isTelemetryDrawerOpen = false;
+
+  let scheduleScrollTop = 0;
+  let scheduleContainerHeight = 550;
+  let scheduleContainerEl: HTMLDivElement;
+  const scheduleItemHeight = 76;
+
+  $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
+  $: scheduleEndIndex = Math.min(filteredScheduleItems.length, Math.ceil((scheduleScrollTop + scheduleContainerHeight) / scheduleItemHeight) + 2);
+  $: visibleScheduleItems = filteredScheduleItems.slice(scheduleStartIndex, scheduleEndIndex);
+  $: scheduleTopPadding = scheduleStartIndex * scheduleItemHeight;
+  $: scheduleBottomPadding = (filteredScheduleItems.length - scheduleEndIndex) * scheduleItemHeight;
+
+  function handleScheduleScroll(e: Event) {
+    scheduleScrollTop = (e.target as HTMLDivElement).scrollTop;
+  }
+
+  $: if (scheduleSearch || scheduleTypeFilter || scheduleAssigneeFilter || scheduleRiskFilter) {
+    if (scheduleContainerEl) {
+      scheduleContainerEl.scrollTop = 0;
+      scheduleScrollTop = 0;
+    }
+  }
+
+  function getProjectPriority(taskID: string): string {
+    if (!taskID) return 'P1';
+    const idx = taskID.indexOf('-');
+    if (idx <= 0) return 'P1';
+    const key = taskID.substring(0, idx).toUpperCase();
+    const config = projectConfigs.find(c => c.project_key === key);
+    return config ? config.base_priority : 'P1';
+  }
+
+  function getPriorityWeight(p?: string): number {
+    if (p === 'P0') return 300;
+    if (p === 'P1') return 200;
+    if (p === 'P2') return 100;
+    return 200; // default P1
+  }
+
+  function compareDemandsByPriority(a: any, b: any): number {
+    const priorityA = getProjectPriority(a.task_id);
+    const priorityB = getProjectPriority(b.task_id);
+    const weightA = getPriorityWeight(priorityA);
+    const weightB = getPriorityWeight(priorityB);
+    if (weightA !== weightB) {
+      return weightB - weightA;
+    }
+    return a.task_id.localeCompare(b.task_id);
+  }
+
+  async function fetchProjectConfigs() {
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/projects/config', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        projectConfigs = await res.json();
+      }
+    } catch (err) {
+      console.error('Failed to fetch project configs:', err);
+    }
+  }
 
   // Modal States
   let showCreateModal = false;
@@ -587,10 +662,10 @@
   }
 
   // Columns helper
-  $: pendingDemands = demands.filter(d => d.status !== 'done' && (d.status === 'backlog' ? !isDemandFullyScheduled(d) : !hasScheduleValue(d.branch)));
-  $: scheduledDemands = demands.filter(d => d.status === 'backlog' && isDemandFullyScheduled(d));
-  $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-');
-  $: deliveredDemands = demands.filter(d => d.status === 'done');
+  $: pendingDemands = demands.filter(d => d.status !== 'done' && (d.status === 'backlog' ? !isDemandFullyScheduled(d) : !hasScheduleValue(d.branch))).sort((a, b) => compareDemandsByPriority(a, b));
+  $: scheduledDemands = demands.filter(d => d.status === 'backlog' && isDemandFullyScheduled(d)).sort((a, b) => compareDemandsByPriority(a, b));
+  $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-').sort((a, b) => compareDemandsByPriority(a, b));
+  $: deliveredDemands = demands.filter(d => d.status === 'done').sort((a, b) => compareDemandsByPriority(a, b));
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
   $: createAssigneeOptions = buildCreateAssigneeOptions();
   $: createProjectOptions = buildCreateProjectOptions();
@@ -654,6 +729,14 @@
   }
 
   function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
+    // 1. Project Priority weight takes precedence
+    const priorityA = a.project_priority || getProjectPriority(a.demand_id);
+    const priorityB = b.project_priority || getProjectPriority(b.demand_id);
+    const weightA = getPriorityWeight(priorityA);
+    const weightB = getPriorityWeight(priorityB);
+    if (weightA !== weightB) return weightB - weightA;
+
+    // 2. Fallback to existing sort modes
     if (scheduleSortMode === 'owner') {
       const ownerCompare = a.assignee.localeCompare(b.assignee);
       if (ownerCompare !== 0) return ownerCompare;
@@ -676,11 +759,40 @@
     return a.demand_id.localeCompare(b.demand_id);
   }
 
+  async function fetchProjectScores() {
+    projectScoresLoading = true;
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/projects/scores', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        projectScores = await res.json();
+        if (projectScores.length > 0 && !selectedScoreProject) {
+          selectedScoreProject = projectScores[0].project_key;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch project scores:', err);
+    } finally {
+      projectScoresLoading = false;
+    }
+  }
+
+  function getScoreColorClass(score: number): string {
+    if (score >= 90) return 'score-excellent';
+    if (score >= 70) return 'score-good';
+    return 'score-risk';
+  }
+
   async function fetchSchedule() {
     scheduleLoading = true;
     scheduleErrorMsg = '';
     const token = localStorage.getItem('jwt_token');
     try {
+      fetchProjectScores(); // 联动获取打分数据
+      fetchProjectConfigs(); // 联动获取项目配置数据
+
       const res = await fetch('/api/schedule', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -1116,6 +1228,7 @@
     fetchUsers();
     fetchDemandOptions();
     fetchJiraConfig();
+    fetchProjectConfigs();
     document.addEventListener('click', handleDocumentClick);
     // Poll updates every 15 seconds
     const interval = setInterval(() => {
@@ -1172,6 +1285,112 @@
     <div class="state-msg error-msg font-mono">❌ {errorMsg}</div>
   {:else if activeDemandView === 'schedule'}
     <div class="schedule-workbench">
+      
+      <!-- 🧠 大脑项目健康遥测控制台入口 -->
+      <div class="brain-console-wrapper">
+        <button 
+          class="brain-toggle-btn font-mono" 
+          class:is-active={showScorerConsole} 
+          on:click={() => {
+            showScorerConsole = !showScorerConsole;
+            if (showScorerConsole && projectScores.length === 0) {
+              fetchProjectScores();
+            }
+          }}
+        >
+          {showScorerConsole ? '🧠 收起大脑项目健康遥测' : '🧠 展开大脑项目健康遥测与决策诊断'}
+        </button>
+
+        {#if showScorerConsole}
+          {@const activeScore = projectScores.find(p => p.project_key === selectedScoreProject)}
+          <div class="brain-console-card glass-panel" transition:slide>
+            {#if projectScoresLoading}
+              <div class="brain-loading font-mono">大脑遥测分析中...</div>
+            {:else if projectScores.length === 0}
+              <div class="brain-empty font-mono">暂无项目打分遥测数据，请录入任务后刷新。</div>
+            {:else}
+              <div class="brain-console-layout">
+                <!-- 项目选择侧栏 -->
+                <div class="brain-project-list">
+                  <span class="console-section-label">遥测项目</span>
+                  {#each projectScores as p}
+                    <button 
+                      class="brain-proj-btn" 
+                      class:active={selectedScoreProject === p.project_key}
+                      on:click={() => selectedScoreProject = p.project_key}
+                    >
+                      <span class="proj-key font-mono">{p.project_key}</span>
+                      <strong class="proj-score font-mono {getScoreColorClass(p.compound_score)}">{p.compound_score}分</strong>
+                    </button>
+                  {/each}
+                </div>
+
+                {#if activeScore}
+                  <!-- 分数圆环与主诊断 -->
+                  <div class="brain-health-core">
+                    <div class="radial-score-box">
+                      <div class="radial-ring {getScoreColorClass(activeScore.compound_score)}">
+                        <span class="radial-score font-mono">{activeScore.compound_score}</span>
+                        <span class="radial-label font-mono">PHDI健康度</span>
+                      </div>
+                    </div>
+                    <div class="diagnostic-bubble font-mono">
+                      <span class="bubble-title">🧠 大脑风控诊断意见</span>
+                      <p>{activeScore.diagnostic}</p>
+                    </div>
+                  </div>
+
+                  <!-- 细分维度雷达刻度条 -->
+                  <div class="brain-dimension-board">
+                    <span class="console-section-label">多维健康度诊断</span>
+                    
+                    <div class="dimension-row">
+                      <div class="dim-label">
+                        <span>进度排期健康 (SH)</span>
+                        <strong class="font-mono">{activeScore.schedule_health_score}</strong>
+                      </div>
+                      <div class="dim-bar-bg">
+                        <span class="dim-bar-fill is-blue" style="width: {activeScore.schedule_health_score}%"></span>
+                      </div>
+                    </div>
+
+                    <div class="dimension-row">
+                      <div class="dim-label">
+                        <span>代码与工程质量 (EQ)</span>
+                        <strong class="font-mono">{activeScore.engineering_quality}</strong>
+                      </div>
+                      <div class="dim-bar-bg">
+                        <span class="dim-bar-fill is-emerald" style="width: {activeScore.engineering_quality}%"></span>
+                      </div>
+                    </div>
+
+                    <div class="dimension-row">
+                      <div class="dim-label">
+                        <span>指派与协同效率 (CE)</span>
+                        <strong class="font-mono">{activeScore.collaboration_effic}</strong>
+                      </div>
+                      <div class="dim-bar-bg">
+                        <span class="dim-bar-fill is-amber" style="width: {activeScore.collaboration_effic}%"></span>
+                      </div>
+                    </div>
+
+                    <div class="dimension-row">
+                      <div class="dim-label">
+                        <span>稳定性与缺陷控制 (SI)</span>
+                        <strong class="font-mono">{activeScore.stability_index}</strong>
+                      </div>
+                      <div class="dim-bar-bg">
+                        <span class="dim-bar-fill is-rose" style="width: {activeScore.stability_index}%"></span>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
       <div class="schedule-summary-grid">
         <div class="schedule-summary-cell">
           <span class="summary-label font-mono">TOTAL</span>
@@ -1311,7 +1530,7 @@
             </div>
             <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
           </div>
-          <div class="schedule-table-wrapper">
+          <div class="schedule-table-wrapper" style="max-height: 600px; overflow-y: auto;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl}>
             <table class="schedule-table">
               <colgroup>
                 <col class="col-demand" />
@@ -1336,8 +1555,10 @@
                 </tr>
               </thead>
               <tbody>
-                {#each filteredScheduleItems as item (item.demand_id)}
+                <tr style="height: {scheduleTopPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleTopPadding}px;"></td></tr>
+                {#each visibleScheduleItems as item (item.demand_id)}
                   {@const progress = getScheduleProgress(item)}
+                  {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
                   <tr>
                     <td class="demand-cell">
                       <div class="demand-stack">
@@ -1353,6 +1574,9 @@
                             </a>
                           {:else}
                             <span class="schedule-id font-mono">#{item.demand_id}</span>
+                          {/if}
+                          {#if priority}
+                            <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
                           {/if}
                         </div>
                         <strong>{item.title}</strong>
@@ -1400,14 +1624,19 @@
                       </div>
                     </td>
                     <td>
-                      {#if canEditScheduleItem(item)}
-                        <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
-                      {:else}
-                        <span class="schedule-row-muted font-mono">READ</span>
-                      {/if}
+                      <div class="schedule-actions-cell">
+                        {#if canEditScheduleItem(item)}
+                          <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
+                        {/if}
+                        <button class="schedule-row-action is-telemetry font-mono" on:click|stopPropagation={() => {
+                          activeTelemetryTaskId = item.demand_id;
+                          isTelemetryDrawerOpen = true;
+                        }}>轨迹</button>
+                      </div>
                     </td>
                   </tr>
                 {/each}
+                <tr style="height: {scheduleBottomPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleBottomPadding}px;"></td></tr>
               </tbody>
             </table>
             {#if filteredScheduleItems.length === 0}
@@ -1429,6 +1658,7 @@
         </div>
         <div class="lane-cards">
           {#each pendingDemands as item}
+            {@const priority = getProjectPriority(item.task_id)}
             <div class="demand-card border-orange-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
                 {#if getJiraIssueUrl(item.task_id)}
@@ -1440,8 +1670,12 @@
                     #{item.task_id}
                   </button>
                 {/if}
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <div class="card-actions">
                   <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
+                  <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
@@ -1509,6 +1743,7 @@
         <div class="lane-cards">
           {#each scheduledDemands as item}
             {@const dueInfo = getDueStatus(item.due_date)}
+            {@const priority = getProjectPriority(item.task_id)}
             <div class="demand-card border-blue-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
                 {#if getJiraIssueUrl(item.task_id)}
@@ -1520,8 +1755,12 @@
                     #{item.task_id}
                   </button>
                 {/if}
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <div class="card-actions">
                   <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
+                  <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
@@ -1591,6 +1830,7 @@
         <div class="lane-cards">
           {#each inProgressDemands as item}
             {@const dueInfo = getDueStatus(item.due_date)}
+            {@const priority = getProjectPriority(item.task_id)}
             <div class="demand-card border-purple-dim" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
                 {#if getJiraIssueUrl(item.task_id)}
@@ -1602,8 +1842,12 @@
                     #{item.task_id}
                   </button>
                 {/if}
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <div class="card-actions">
                   <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
+                  <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
@@ -1673,6 +1917,7 @@
         </div>
         <div class="lane-cards">
           {#each deliveredDemands as item}
+            {@const priority = getProjectPriority(item.task_id)}
             <div class="demand-card border-green-dim card-done" role="button" tabindex="0" on:click={() => openDemandDetails(item)} on:keydown={(event) => handleDemandCardKeydown(event, item)}>
               <div class="card-top">
                 {#if getJiraIssueUrl(item.task_id)}
@@ -1684,8 +1929,12 @@
                     #{item.task_id}
                   </button>
                 {/if}
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <div class="card-actions">
                   <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
+                  <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
                     <button class="icon-action-btn" title="物理删除" on:click|stopPropagation={() => handleDeleteDemand(item.task_id)}>🗑️</button>
@@ -2175,9 +2424,41 @@
       </div>
     </div>
   {/if}
+  
+  <CommitTelemetryPanel taskID={activeTelemetryTaskId} isOpen={isTelemetryDrawerOpen} onClose={() => isTelemetryDrawerOpen = false} />
 </div>
 
 <style>
+  .priority-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    font-family: monospace;
+    margin-left: 6px;
+  }
+
+  .priority-badge.p-p0 {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.2);
+  }
+
+  .priority-badge.p-p1 {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
+  }
+
+  .priority-badge.p-p2 {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
   .demand-dashboard {
     display: flex;
     flex-direction: column;
@@ -2703,6 +2984,23 @@
 
   .schedule-row-action:hover {
     background: #4f46e5;
+    color: #fff;
+  }
+
+  .schedule-actions-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .schedule-row-action.is-telemetry {
+    background: rgba(14, 165, 233, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: #7dd3fc;
+  }
+
+  .schedule-row-action.is-telemetry:hover {
+    background: #0284c7;
     color: #fff;
   }
 
@@ -4401,5 +4699,232 @@
   .assignee-disabled-tip {
     font-size: 0.7rem;
     color: #64748b;
+  }
+
+  /* 大脑健康遥测控制台样式 */
+  .brain-console-wrapper {
+    margin-bottom: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .brain-toggle-btn {
+    align-self: flex-start;
+    background: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(129, 140, 248, 0.3);
+    color: #c7d2fe;
+    font-size: 0.74rem;
+    font-weight: 800;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .brain-toggle-btn:hover {
+    background: rgba(99, 102, 241, 0.24);
+    border-color: rgba(129, 140, 248, 0.5);
+    color: #ffffff;
+  }
+  .brain-toggle-btn.is-active {
+    background: rgba(99, 102, 241, 0.38);
+    border-color: rgba(129, 140, 248, 0.6);
+  }
+  .brain-console-card {
+    background: rgba(10, 15, 30, 0.7);
+    border: 1px solid rgba(51, 65, 85, 0.45);
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 8px 32px rgba(2, 6, 23, 0.4);
+  }
+  .brain-loading, .brain-empty {
+    text-align: center;
+    color: #64748b;
+    padding: 20px 0;
+    font-size: 0.8rem;
+  }
+  .brain-console-layout {
+    display: grid;
+    grid-template-columns: 180px 2.2fr 1.8fr;
+    gap: 20px;
+  }
+  .console-section-label {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 800;
+    color: #64748b;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  
+  /* 项目选择列表 */
+  .brain-project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-right: 1px solid rgba(51, 65, 85, 0.3);
+    padding-right: 15px;
+  }
+  .brain-proj-btn {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(30, 41, 59, 0.3);
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #e2e8f0;
+    cursor: pointer;
+    transition: all 0.16s ease;
+    text-align: left;
+  }
+  .brain-proj-btn:hover {
+    background: rgba(30, 41, 59, 0.6);
+    border-color: rgba(99, 102, 241, 0.3);
+  }
+  .brain-proj-btn.active {
+    background: rgba(99, 102, 241, 0.18);
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+  }
+  .proj-key {
+    font-size: 0.8rem;
+    font-weight: 800;
+  }
+  .proj-score {
+    font-size: 0.76rem;
+    font-weight: 800;
+  }
+
+  /* 环形分数与诊断 */
+  .brain-health-core {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    border-right: 1px solid rgba(51, 65, 85, 0.3);
+    padding-right: 15px;
+  }
+  .radial-score-box {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  .radial-ring {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border: 4px solid rgba(51, 65, 85, 0.3);
+    box-shadow: 0 0 15px rgba(2, 6, 23, 0.3);
+  }
+  .radial-ring.score-excellent {
+    border-color: rgba(16, 185, 129, 0.4);
+    background: rgba(16, 185, 129, 0.08);
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+  }
+  .radial-ring.score-excellent .radial-score {
+    color: #34d399;
+  }
+  .radial-ring.score-good {
+    border-color: rgba(245, 158, 11, 0.4);
+    background: rgba(245, 158, 11, 0.08);
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+  }
+  .radial-ring.score-good .radial-score {
+    color: #fbbf24;
+  }
+  .radial-ring.score-risk {
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.15);
+  }
+  .radial-ring.score-risk .radial-score {
+    color: #f87171;
+  }
+  
+  .radial-score {
+    font-size: 1.8rem;
+    font-weight: 900;
+    line-height: 1;
+  }
+  .radial-label {
+    font-size: 0.58rem;
+    color: #64748b;
+    margin-top: 4px;
+    letter-spacing: 0.05em;
+  }
+
+  .diagnostic-bubble {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .bubble-title {
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: #c7d2fe;
+  }
+  .diagnostic-bubble p {
+    margin: 0;
+    font-size: 0.74rem;
+    color: #94a3b8;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  /* 维度打分刻度条 */
+  .brain-dimension-board {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dimension-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .dim-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.74rem;
+    color: #e2e8f0;
+  }
+  .dim-label strong {
+    color: #f1f5f9;
+  }
+  .dim-bar-bg {
+    width: 100%;
+    height: 6px;
+    background: rgba(30, 41, 59, 0.6);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .dim-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+  .dim-bar-fill.is-blue { background: #38bdf8; }
+  .dim-bar-fill.is-emerald { background: #34d399; }
+  .dim-bar-fill.is-amber { background: #fbbf24; }
+  .dim-bar-fill.is-rose { background: #f87171; }
+
+  /* 评分样式分类色值 */
+  .score-excellent {
+    color: #34d399 !important;
+  }
+  .score-good {
+    color: #fbbf24 !important;
+  }
+  .score-risk {
+    color: #f87171 !important;
   }
 </style>

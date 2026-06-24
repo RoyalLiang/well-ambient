@@ -5,6 +5,7 @@
   import GitLabConfig from './config/GitLabConfig.svelte';
   import FeishuConfig from './config/FeishuConfig.svelte';
   import JiraConfig from './config/JiraConfig.svelte';
+  import ProjectConfig from './config/ProjectConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
   import KPIKanban from './KPIKanban.svelte';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
@@ -38,7 +39,7 @@
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'offline';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'offline';
 
-  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
+  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
 
   interface GlobalConfig {
     server: { host: string; port: number };
@@ -138,14 +139,14 @@
   let configVersionError = '';
   let rollbackLoadingID: number | null = null;
 
-  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'ai'].includes(activeSection);
+  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(activeSection);
   $: visibleConfigVersions = isIntegrationSection
     ? configVersions.filter(v => configVersionTouchesSection(v, activeSection)).slice(0, 8)
     : configVersions;
   $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
   function canAccessSection(section: typeof activeSection) {
-    if (['gitlab', 'feishu', 'jira', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
+    if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
     if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') || currentUserPermissions.includes('config:read');
     if (section === 'kpi') return currentUserPermissions.includes('kpi:read');
     if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read');
@@ -1093,7 +1094,7 @@
     statusIntervalId = setInterval(fetchStatus, 5000);
 
     const handleFocus = (e: any) => {
-      if (e.detail && ['gitlab', 'feishu', 'jira', 'ai', 'ai_context', 'kpi'].includes(e.detail)) {
+      if (e.detail && ['gitlab', 'feishu', 'jira', 'projects', 'ai', 'ai_context', 'kpi'].includes(e.detail)) {
         switchSection(e.detail);
       }
     };
@@ -1160,6 +1161,10 @@
             <span>📝 Jira 服务关联</span>
             <span class="status-indicator indicator-{jiraStatus}"></span>
           </button>
+          <button class="nav-item {activeSection === 'projects' ? 'active' : ''}" on:click={() => switchSection('projects')}>
+            <span>📝 项目优先级与集成</span>
+            <span class="status-indicator indicator-online"></span>
+          </button>
         </div>
       {/if}
 
@@ -1222,6 +1227,10 @@
     {:else if activeSection === 'jira'}
       <div class="section-card">
         <JiraConfig config={globalConfig.jira} lastUpdated={sectionLastUpdated('jira')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
+      </div>
+    {:else if activeSection === 'projects'}
+      <div class="section-card">
+        <ProjectConfig lastUpdated={sectionLastUpdated('projects')} />
       </div>
     {:else if activeSection === 'ai'}
       <div class="section-card">

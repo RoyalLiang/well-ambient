@@ -58,6 +58,8 @@ type ScheduleItemDTO struct {
 	SubtaskActive int     `json:"subtask_active"`
 	SubtaskReview int     `json:"subtask_review"`
 	IssueType     string  `json:"issue_type"`
+	ProjectKey      string  `json:"project_key"`
+	ProjectPriority string  `json:"project_priority"`
 }
 
 type scheduleSubtaskStats struct {
@@ -131,6 +133,15 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 		subtasksByGroup[groupID] = stats
 	}
 
+	var projConfigs []db.ProjectConfig
+	if err := db.DB.Find(&projConfigs).Error; err != nil {
+		// fallback silently
+	}
+	projPriorityMap := make(map[string]string)
+	for _, pc := range projConfigs {
+		projPriorityMap[strings.ToUpper(pc.ProjectKey)] = pc.BasePriority
+	}
+
 	items := make([]ScheduleItemDTO, 0, len(demands))
 	summary := ScheduleSummaryDTO{Total: len(demands)}
 	for _, demand := range demands {
@@ -149,35 +160,47 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			issueTypeNormalized = "bug"
 		}
 
+		projKey := ""
+		idx := strings.Index(demand.TaskID, "-")
+		if idx > 0 {
+			projKey = strings.ToUpper(demand.TaskID[:idx])
+		}
+		projPriority := "P1" // default
+		if p, ok := projPriorityMap[projKey]; ok {
+			projPriority = p
+		}
+
 		item := ScheduleItemDTO{
-			DemandID:      strings.TrimSpace(demand.TaskID),
-			Title:         strings.TrimSpace(demand.Title),
-			Description:   strings.TrimSpace(demand.Description),
-			Assignee:      normalizeAssignee(demand.Assignee),
-			Department:    department,
-			Repo:          strings.TrimSpace(demand.Repo),
-			Branch:        strings.TrimSpace(demand.Branch),
-			Status:        strings.ToLower(strings.TrimSpace(demand.Status)),
-			TaskGroupID:   groupID,
-			Scheduled:     isDemandScheduled(demand),
-			DueDate:       formatOptionalDate(demand.DueDate),
-			CreatedAt:     formatDateTime(demand.TaskCreatedAt),
-			LastUpdate:    formatDateTime(scheduleActivityTime(demand)),
-			CompletedAt:   formatOptionalDate(demand.CompletedAt),
-			MRURL:         strings.TrimSpace(demand.MrURL),
-			EstimateDays:  roundOneDecimal(demand.EstimateDays),
-			EstimateHours: roundOneDecimal(demand.EstimateHours),
-			Difficulty:    strings.TrimSpace(demand.Difficulty),
-			RiskLevel:     risk.Level,
-			RiskLabel:     risk.Label,
-			RiskReason:    risk.Reason,
-			RiskRank:      risk.Rank,
-			DaysRemaining: risk.DaysRemaining,
-			SubtaskTotal:  stats.Total,
-			SubtaskDone:   stats.Done,
-			SubtaskActive: stats.Active,
-			SubtaskReview: stats.Review,
-			IssueType:     issueTypeNormalized,
+			DemandID:        strings.TrimSpace(demand.TaskID),
+			Title:           strings.TrimSpace(demand.Title),
+			Description:     strings.TrimSpace(demand.Description),
+			Assignee:        normalizeAssignee(demand.Assignee),
+			Department:      department,
+			Repo:            strings.TrimSpace(demand.Repo),
+			Branch:          strings.TrimSpace(demand.Branch),
+			Status:          strings.ToLower(strings.TrimSpace(demand.Status)),
+			TaskGroupID:     groupID,
+			Scheduled:       isDemandScheduled(demand),
+			DueDate:         formatOptionalDate(demand.DueDate),
+			CreatedAt:       formatDateTime(demand.TaskCreatedAt),
+			LastUpdate:      formatDateTime(scheduleActivityTime(demand)),
+			CompletedAt:     formatOptionalDate(demand.CompletedAt),
+			MRURL:           strings.TrimSpace(demand.MrURL),
+			EstimateDays:    roundOneDecimal(demand.EstimateDays),
+			EstimateHours:   roundOneDecimal(demand.EstimateHours),
+			Difficulty:      strings.TrimSpace(demand.Difficulty),
+			RiskLevel:       risk.Level,
+			RiskLabel:       risk.Label,
+			RiskReason:      risk.Reason,
+			RiskRank:        risk.Rank,
+			DaysRemaining:   risk.DaysRemaining,
+			SubtaskTotal:    stats.Total,
+			SubtaskDone:     stats.Done,
+			SubtaskActive:   stats.Active,
+			SubtaskReview:   stats.Review,
+			IssueType:       issueTypeNormalized,
+			ProjectKey:      projKey,
+			ProjectPriority: projPriority,
 		}
 		items = append(items, item)
 		accumulateScheduleSummary(&summary, demand, risk)

@@ -211,6 +211,32 @@ type UserNotificationState struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// ProjectConfig stores the config and base priority of a project
+type ProjectConfig struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	ProjectName  string    `gorm:"uniqueIndex" json:"project_name"`
+	ProjectKey   string    `gorm:"uniqueIndex;column:project_key" json:"project_key"` // e.g. "HIT"
+	GitReposJSON string    `gorm:"type:text" json:"git_repos_json"`
+	BasePriority string    `json:"base_priority"` // P0, P1, P2
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ProjectScore stores the computed health score history
+type ProjectScore struct {
+	ID                  uint      `gorm:"primaryKey" json:"id"`
+	ProjectKey          string    `gorm:"index" json:"project_key"`
+	ProjectName         string    `json:"project_name"`
+	ScheduleHealthScore float64   `json:"schedule_health_score"` // SH
+	EngineeringQuality  float64   `json:"engineering_quality"`   // EQ
+	CollaborationEffic  float64   `json:"collaboration_effic"`   // CE
+	StabilityIndex      float64   `json:"stability_index"`       // SI
+	CompoundScore       float64   `json:"compound_score"`        // PHDI
+	Diagnostic          string    `gorm:"type:text" json:"diagnostic"`
+	SnapshotDate        string    `gorm:"index" json:"snapshot_date"`
+	CreatedAt           time.Time `json:"created_at"`
+}
+
 // InitDB initializes the SQLite connection and runs auto-migrations
 func InitDB(dbPath string) error {
 	var err error
@@ -241,6 +267,8 @@ func InitDB(dbPath string) error {
 		&userdb.AuthorizationPolicy{},
 		&userdb.AuthorizationAuditLog{},
 		&userdb.AuditLog{},
+		&ProjectConfig{},
+		&ProjectScore{},
 	)
 	if err != nil {
 		return err
