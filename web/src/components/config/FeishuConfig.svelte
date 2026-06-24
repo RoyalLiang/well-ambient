@@ -273,7 +273,6 @@
           <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
-          <span class="status-indicator indicator-{enabled ? 'online' : 'warning'}"></span>
           <Switch id="feishu-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
         </div>
       </div>

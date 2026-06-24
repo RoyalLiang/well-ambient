@@ -1215,7 +1215,7 @@
   </aside>
 
   <!-- Right Section Panel -->
-  <main class="settings-main" style={settingsSidebarHeight > 0 ? `--settings-sidebar-height: ${settingsSidebarHeight}px;` : ''}>
+  <main class="settings-main">
     {#if activeSection === 'gitlab'}
       <div class="section-card">
         <GitLabConfig config={globalConfig.gitlab} lastUpdated={sectionLastUpdated('gitlab')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
@@ -2109,13 +2109,15 @@
   .settings-container {
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
-    align-items: start;
+    align-items: stretch;
     gap: 28px;
     flex: 1;
     width: 100%;
-    height: auto;
+    height: 100%;
     min-height: 0;
-    overflow: visible;
+    overflow: hidden;
+    padding-bottom: 24px;
+    box-sizing: border-box;
   }
 
   .settings-sidebar {
@@ -2208,9 +2210,9 @@
 
   .settings-main {
     min-width: 0;
-    height: var(--settings-sidebar-height, auto);
+    height: 100%;
     min-height: 0;
-    max-height: var(--settings-sidebar-height, none);
+    max-height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
