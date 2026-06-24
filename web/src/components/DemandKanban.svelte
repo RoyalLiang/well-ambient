@@ -615,22 +615,21 @@
     }
   }
 
-  function matchesScheduleFilters(item: ScheduleItem): boolean {
+  function matchesScheduleFilters(item: any): boolean {
     const query = scheduleSearch.trim().toLowerCase();
     if (query) {
-      const idMatch = item.demand_id && item.demand_id.toLowerCase().includes(query);
-      const titleMatch = item.title && item.title.toLowerCase().includes(query);
-      const descMatch = item.description && item.description.toLowerCase().includes(query);
-      const assigneeMatch = item.assignee && item.assignee.toLowerCase().includes(query);
-      const deptMatch = item.department && item.department.toLowerCase().includes(query);
-      const repoMatch = item.repo && item.repo.toLowerCase().includes(query);
-      const branchMatch = item.branch && item.branch.toLowerCase().includes(query);
-      const groupMatch = item.task_group_id && item.task_group_id.toLowerCase().includes(query);
-      const riskMatch = item.risk_label && item.risk_label.toLowerCase().includes(query);
+      const match = 
+        (item._lowerID && item._lowerID.includes(query)) ||
+        (item._lowerTitle && item._lowerTitle.includes(query)) ||
+        (item._lowerAssignee && item._lowerAssignee.includes(query)) ||
+        (item._lowerDept && item._lowerDept.includes(query)) ||
+        (item._lowerRepo && item._lowerRepo.includes(query)) ||
+        (item._lowerBranch && item._lowerBranch.includes(query)) ||
+        (item._lowerGroupId && item._lowerGroupId.includes(query)) ||
+        (item._lowerRiskLabel && item._lowerRiskLabel.includes(query)) ||
+        (item._lowerDesc && item._lowerDesc.includes(query));
       
-      if (!idMatch && !titleMatch && !descMatch && !assigneeMatch && !deptMatch && !repoMatch && !branchMatch && !groupMatch && !riskMatch) {
-        return false;
-      }
+      if (!match) return false;
     }
 
     if (scheduleAssigneeFilter !== 'all' && item.assignee !== scheduleAssigneeFilter) {
@@ -681,7 +680,19 @@
         throw new Error('获取排期表失败');
       }
       const data: ScheduleResponse = await res.json();
-      scheduleItems = data.items || [];
+      const rawItems = data.items || [];
+      scheduleItems = rawItems.map((item: any) => ({
+        ...item,
+        _lowerID: (item.demand_id || '').toLowerCase(),
+        _lowerTitle: (item.title || '').toLowerCase(),
+        _lowerDesc: (item.description || '').toLowerCase(),
+        _lowerAssignee: (item.assignee || '').toLowerCase(),
+        _lowerDept: (item.department || '').toLowerCase(),
+        _lowerRepo: (item.repo || '').toLowerCase(),
+        _lowerBranch: (item.branch || '').toLowerCase(),
+        _lowerGroupId: (item.task_group_id || '').toLowerCase(),
+        _lowerRiskLabel: (item.risk_label || '').toLowerCase(),
+      }));
       scheduleSummary = data.summary || createEmptyScheduleSummary();
       scheduleGeneratedAt = data.generated_at || '';
     } catch (err: any) {
@@ -1983,7 +1994,7 @@
               <a href={getJiraIssueUrl(detailDemand.task_id)} target="_blank" rel="noopener noreferrer">打开 Jira</a>
             {/if}
             {#if canManageDemand(detailDemand)}
-              <button type="button" on:click={() => { closeDemandDetails(); openScheduleModal(detailDemand); }}>调整排期</button>
+              <button type="button" on:click={() => { if (detailDemand) { closeDemandDetails(); openScheduleModal(detailDemand); } }}>调整排期</button>
             {/if}
           </div>
 
