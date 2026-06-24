@@ -273,7 +273,7 @@
           <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
-          <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+          <span class="status-indicator indicator-{enabled ? 'online' : 'warning'}"></span>
           <Switch id="feishu-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
         </div>
       </div>
@@ -708,12 +708,31 @@
   }
 
   .overview-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    background: rgba(15, 23, 42, 0.25);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 6px;
+    padding: 0 16px;
+    margin-top: 10px;
   }
 
-  .overview-row,
+  .overview-row {
+    min-width: 0;
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.2);
+    background: none;
+    border-radius: 0;
+    gap: 16px;
+  }
+  .overview-row:last-child {
+    border-bottom: none;
+  }
+
   .credential-collapsed {
     min-width: 0;
     background: rgba(15, 23, 42, 0.52);
@@ -722,20 +741,25 @@
     padding: 12px;
   }
 
-  .overview-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .overview-row span {
+    color: #94a3b8;
+    font-size: 0.8rem;
+    font-weight: 500;
   }
 
-  .overview-row span,
+  .overview-row strong {
+    color: #f8fafc;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: right;
+  }
+
   .credential-collapsed span {
     color: #64748b;
     font-size: 0.72rem;
     font-weight: 700;
   }
 
-  .overview-row strong,
   .credential-collapsed strong {
     color: #e2e8f0;
     font-size: 0.86rem;
@@ -952,5 +976,19 @@
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+  .status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .indicator-online {
+    background-color: #10b981;
+    box-shadow: 0 0 8px #10b981;
+  }
+  .indicator-warning {
+    background-color: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
   }
 </style>

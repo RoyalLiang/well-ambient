@@ -814,20 +814,20 @@
 
   .summary-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 12px;
   }
 
   .summary-card {
     background: rgba(10, 15, 30, 0.7);
-    border: 1px solid rgba(51, 65, 85, 0.35);
-    border-radius: 16px;
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 8px;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    padding: 18px;
+    padding: 12px 14px;
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
     transition: all 0.3s;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
   }
@@ -844,7 +844,7 @@
   .mr-glow:hover { border-color: rgba(45, 212, 191, 0.4); box-shadow: 0 8px 24px rgba(45, 212, 191, 0.12); }
 
   .card-icon {
-    font-size: 1.7rem;
+    font-size: 1.35rem;
   }
 
   .card-info {
@@ -854,13 +854,13 @@
   }
 
   .card-label {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: #64748b;
     font-weight: 700;
   }
 
   .card-val {
-    font-size: 1.7rem;
+    font-size: 1.35rem;
     font-weight: 800;
     line-height: 1;
   }

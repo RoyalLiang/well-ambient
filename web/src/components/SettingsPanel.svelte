@@ -32,23 +32,23 @@
   }
 
   // Reactive connection status computations for navigation indicators
-  $: gitlabStatus = globalConfig.gitlab.base_url ? serverStatus : 'offline';
-  $: feishuStatus = !globalConfig.feishu.app_id 
-    ? 'offline' 
-    : ((globalConfig.feishu.bot?.enabled || globalConfig.feishu.bitable?.enabled) ? 'online' : 'warning');
-  $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'offline';
-  $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'offline';
+  $: gitlabStatus = globalConfig.gitlab?.enabled ? 'online' : 'warning';
+  $: feishuStatus = globalConfig.feishu?.enabled ? 'online' : 'warning';
+  $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'warning';
+  $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'warning';
 
   let activeSection: 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
 
   interface GlobalConfig {
     server: { host: string; port: number };
     gitlab: {
+      enabled?: boolean;
       base_url: string;
       secret_token: string;
       repos: Array<{ name: string; path: string; project_id: string }>;
     };
     feishu: {
+      enabled?: boolean;
       app_id: string;
       app_secret: string;
       bot: { enabled: boolean; chat_group: string };
@@ -2264,7 +2264,10 @@
 
   .kpi-settings-panel {
     min-width: 0;
-    padding: 4px 2px 24px 0;
+    height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 4px 12px 24px 0;
   }
 
   .config-audit-panel {
