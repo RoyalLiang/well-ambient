@@ -1,12 +1,17 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
+
   export let checked = false;
   export let label = '';
   export let disabled = false;
   export let id = '';
 
+  const dispatch = createEventDispatcher();
+
   function toggle() {
     if (!disabled) {
       checked = !checked;
+      dispatch('change', checked);
     }
   }
 

@@ -2127,13 +2127,27 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    align-self: start;
-    height: auto;
+    height: 100%;
     min-height: 0;
-    max-height: none;
+    max-height: 100%;
     display: flex;
     flex-direction: column;
-    overflow: visible;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(71, 85, 105, 0.72) rgba(15, 23, 42, 0.28);
+  }
+
+  .settings-sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .settings-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(71, 85, 105, 0.6);
+    border-radius: 999px;
+  }
+
+  .settings-sidebar::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .sidebar-header {
