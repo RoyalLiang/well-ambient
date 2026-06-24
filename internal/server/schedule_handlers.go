@@ -57,6 +57,7 @@ type ScheduleItemDTO struct {
 	SubtaskDone   int     `json:"subtask_done"`
 	SubtaskActive int     `json:"subtask_active"`
 	SubtaskReview int     `json:"subtask_review"`
+	IssueType     string  `json:"issue_type"`
 }
 
 type scheduleSubtaskStats struct {
@@ -107,7 +108,8 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 		if isArchivedTask(task) {
 			continue
 		}
-		if normalizeIssueType(task.IssueType) == "demand" {
+		issueType := normalizeIssueType(task.IssueType)
+		if issueType == "demand" || issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect" {
 			demands = append(demands, task)
 			continue
 		}
@@ -141,6 +143,12 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			department = normalizeDepartment(demand.CreatorDept)
 		}
 
+		issueTypeNormalized := "demand"
+		rawT := strings.ToLower(strings.TrimSpace(demand.IssueType))
+		if rawT == "bug" || rawT == "缺陷" || rawT == "故障" || rawT == "defect" {
+			issueTypeNormalized = "bug"
+		}
+
 		item := ScheduleItemDTO{
 			DemandID:      strings.TrimSpace(demand.TaskID),
 			Title:         strings.TrimSpace(demand.Title),
@@ -169,6 +177,7 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			SubtaskDone:   stats.Done,
 			SubtaskActive: stats.Active,
 			SubtaskReview: stats.Review,
+			IssueType:     issueTypeNormalized,
 		}
 		items = append(items, item)
 		accumulateScheduleSummary(&summary, demand, risk)

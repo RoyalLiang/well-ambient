@@ -79,6 +79,7 @@
     subtask_done: number;
     subtask_active: number;
     subtask_review: number;
+    issue_type: string;
   }
 
   interface ScheduleResponse {
@@ -251,11 +252,14 @@
   let scheduleSearch = '';
   let scheduleSearchInput = '';
   let scheduleSearchDebounceTimer: any;
-  $: {
+
+  function handleScheduleSearch(event: Event) {
+    const inputVal = (event.target as HTMLInputElement).value;
+    scheduleSearchInput = inputVal;
     clearTimeout(scheduleSearchDebounceTimer);
     scheduleSearchDebounceTimer = setTimeout(() => {
-      scheduleSearch = scheduleSearchInput;
-    }, 350);
+      scheduleSearch = inputVal;
+    }, 200);
   }
 
   let projectSearchText = '';
@@ -264,6 +268,7 @@
   let scheduleRiskFilter: ScheduleRiskFilter = 'attention';
   let scheduleAssigneeFilter = 'all';
   let scheduleSortMode: ScheduleSortMode = 'risk';
+  let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
 
   // Modal States
   let showCreateModal = false;
@@ -300,6 +305,9 @@
   let schedEstimateSource: EstimateSource = '';
   let scheduleEstimateLoading = false;
   let scheduleEstimateError = '';
+  let schedAssignee = '';
+  let schedAssigneeSearchText = '';
+  let showScheduleModalAssigneeDropdown = false;
   const estimateHoursPerDay = 8;
 
   const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
@@ -634,6 +642,10 @@
       if (!match) return false;
     }
 
+    if (scheduleTypeFilter !== 'all' && item.issue_type !== scheduleTypeFilter) {
+      return false;
+    }
+
     if (scheduleAssigneeFilter !== 'all' && item.assignee !== scheduleAssigneeFilter) {
       return false;
     }
@@ -685,6 +697,7 @@
       const rawItems = data.items || [];
       scheduleItems = rawItems.map((item: any) => ({
         ...item,
+        issue_type: item.issue_type || 'demand',
         _lowerID: (item.demand_id || '').toLowerCase(),
         _lowerTitle: (item.title || '').toLowerCase(),
         _lowerDesc: (item.description || '').toLowerCase(),
@@ -694,6 +707,7 @@
         _lowerBranch: (item.branch || '').toLowerCase(),
         _lowerGroupId: (item.task_group_id || '').toLowerCase(),
         _lowerRiskLabel: (item.risk_label || '').toLowerCase(),
+        _lowerIssueType: (item.issue_type || '').toLowerCase(),
       }));
       scheduleSummary = data.summary || createEmptyScheduleSummary();
       scheduleGeneratedAt = data.generated_at || '';
@@ -833,11 +847,21 @@
     }
   }
 
-  function openScheduleModal(demand: Demand) {
-    selectedDemand = demand;
-    updateSchedDueDate(demand.due_date ? demand.due_date.slice(0, 10) : '');
-    schedTaskGroupID = getEffectiveTaskGroupId(demand);
-    resetScheduleEstimateFromDemand(demand);
+  function openScheduleModal(item: any) {
+    const task_id = item.task_id || item.demand_id || '';
+    const demand_id = item.demand_id || item.task_id || '';
+    const converted: Demand = {
+      ...item,
+      task_id,
+      demand_id,
+    };
+    selectedDemand = converted;
+    schedAssignee = converted.assignee || '';
+    schedAssigneeSearchText = '';
+    showScheduleModalAssigneeDropdown = false;
+    updateSchedDueDate(converted.due_date ? converted.due_date.slice(0, 10) : '');
+    schedTaskGroupID = getEffectiveTaskGroupId(converted);
+    resetScheduleEstimateFromDemand(converted);
     activeDatePicker = null;
     showScheduleDifficultyDropdown = false;
     showScheduleModal = true;
@@ -846,6 +870,9 @@
   function closeScheduleModal() {
     showScheduleModal = false;
     selectedDemand = null;
+    schedAssignee = '';
+    schedAssigneeSearchText = '';
+    showScheduleModalAssigneeDropdown = false;
     activeDatePicker = null;
     showScheduleDifficultyDropdown = false;
     scheduleEstimateLoading = false;
@@ -923,6 +950,28 @@
 
     const token = localStorage.getItem('jwt_token');
     try {
+      // 1. 如果是需求且负责人被更改，先更新负责人
+      const isBug = selectedDemand.issue_type === 'bug' || (selectedDemand.task_id && !selectedDemand.task_id.startsWith('DEMAND-'));
+      if (!isBug && schedAssignee !== selectedDemand.assignee) {
+        const reassignRes = await fetch('/api/demands/reassign', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            task_id: selectedDemand.task_id,
+            assignee: schedAssignee
+          })
+        });
+
+        if (!reassignRes.ok) {
+          const errMsg = await reassignRes.text();
+          throw new Error(`指派负责人失败: ${errMsg}`);
+        }
+      }
+
+      // 2. 保存排期设置
       const res = await fetch('/api/tasks/schedule', {
         method: 'POST',
         headers: {
@@ -949,9 +998,9 @@
         const errText = await res.text();
         alert(`排期失败: ${errText}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to save schedule:', e);
-      alert('排期请求发送失败');
+      alert(e.message || '网络连接错误，保存排期失败');
     }
   }
 
@@ -1058,6 +1107,7 @@
       showAssigneeDropdown = false;
       showProjectDropdown = false;
       showScheduleAssigneeDropdown = false;
+      showScheduleModalAssigneeDropdown = false;
     }
     if (!target.closest('.difficulty-select-shell')) {
       showScheduleDifficultyDropdown = false;
@@ -1159,7 +1209,12 @@
       <div class="schedule-control-panel">
         <div class="schedule-search-shell">
           <span class="search-mark"></span>
-          <input bind:value={scheduleSearchInput} placeholder="搜索需求、负责人、仓库、分支" />
+          <input 
+            type="text"
+            placeholder="搜索需求、负责人、仓库、分支" 
+            value={scheduleSearchInput}
+            on:input={handleScheduleSearch}
+          />
         </div>
 
         <div class="schedule-filter-strip">
@@ -1171,6 +1226,27 @@
               {filter.label}
             </button>
           {/each}
+        </div>
+
+        <div class="schedule-filter-strip type-filter-strip">
+          <button
+            class:active={scheduleTypeFilter === 'all'}
+            on:click={() => scheduleTypeFilter = 'all'}
+          >
+            全部类型
+          </button>
+          <button
+            class:active={scheduleTypeFilter === 'demand'}
+            on:click={() => scheduleTypeFilter = 'demand'}
+          >
+            仅需求
+          </button>
+          <button
+            class:active={scheduleTypeFilter === 'bug'}
+            on:click={() => scheduleTypeFilter = 'bug'}
+          >
+            仅缺陷
+          </button>
         </div>
 
         <div class="schedule-assignee-menu custom-dropdown-container">
@@ -1273,13 +1349,20 @@
                   <tr>
                     <td class="demand-cell">
                       <div class="demand-stack">
-                        {#if getJiraIssueUrl(item.demand_id)}
-                          <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                            #{item.demand_id}
-                          </a>
-                        {:else}
-                          <span class="schedule-id font-mono">#{item.demand_id}</span>
-                        {/if}
+                        <div class="demand-badge-row">
+                          {#if item.issue_type === 'bug'}
+                            <span class="type-badge bug">🐛 缺陷</span>
+                          {:else}
+                            <span class="type-badge demand">📋 需求</span>
+                          {/if}
+                          {#if getJiraIssueUrl(item.demand_id)}
+                            <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                              #{item.demand_id}
+                            </a>
+                          {:else}
+                            <span class="schedule-id font-mono">#{item.demand_id}</span>
+                          {/if}
+                        </div>
                         <strong>{item.title}</strong>
                         <small>{item.description || '暂无需求说明'}</small>
                       </div>
@@ -1831,12 +1914,56 @@
     <div class="modal-backdrop" on:click={closeScheduleModal}>
       <div class="modal-content schedule-modal" on:click|stopPropagation>
         <div class="modal-header">
-          <h3>⚡ 需求开发排期: #{selectedDemand.task_id}</h3>
+          <h3>⚡ {selectedDemand.issue_type === 'bug' ? '缺陷' : '需求'}开发排期与指派: #{selectedDemand.task_id}</h3>
           <button class="close-btn" on:click={closeScheduleModal}>&times;</button>
         </div>
 
         <div class="form-body">
           <p class="demand-brief font-mono">标题: {selectedDemand.title}</p>
+
+          <div class="form-group">
+            <label for="sched-assignee">负责人指派</label>
+            {#if selectedDemand.issue_type === 'bug' || (selectedDemand.task_id && !selectedDemand.task_id.startsWith('DEMAND-'))}
+              <div class="assignee-disabled-field font-mono" id="sched-assignee">
+                <span>👤 {schedAssignee || '未指派'}</span>
+                <span class="assignee-disabled-tip">(Jira 任务负责人请至 Jira 修改)</span>
+              </div>
+            {:else}
+              <div class="custom-dropdown-container" id="sched-assignee-container">
+                <div class="combobox-trigger-wrapper">
+                  <input
+                    id="sched-assignee"
+                    type="text"
+                    class="dropdown-trigger-input"
+                    placeholder={schedAssignee || '请选择负责人'}
+                    bind:value={schedAssigneeSearchText}
+                    on:focus|stopPropagation={() => showScheduleModalAssigneeDropdown = true}
+                  />
+                  <span class="arrow-icon {showScheduleModalAssigneeDropdown ? 'open' : ''}">▼</span>
+                </div>
+                {#if showScheduleModalAssigneeDropdown}
+                  <div class="dropdown-options-list glass-panel" style="position: absolute; z-index: 1000; width: 100%; max-height: 200px; overflow-y: auto;">
+                    {#each createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())) as assignee}
+                      <button
+                        type="button"
+                        class="dropdown-option-item {schedAssignee === assignee ? 'selected' : ''}"
+                        on:click={() => {
+                          schedAssignee = assignee;
+                          schedAssigneeSearchText = '';
+                          showScheduleModalAssigneeDropdown = false;
+                        }}
+                      >
+                        {assignee}
+                      </button>
+                    {/each}
+                    {#if createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())).length === 0}
+                      <div class="dropdown-empty">暂无匹配的候选人</div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
 
           <div class="schedule-estimate-panel">
             <div class="estimate-panel-head">
@@ -4260,5 +4387,48 @@
   }
   .combobox-trigger-wrapper .arrow-icon.open {
     transform: translateY(-50%) rotate(180deg);
+  }
+
+  .demand-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 2px;
+  }
+  .type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .type-badge.demand {
+    background: rgba(59, 130, 246, 0.12);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+  }
+  .type-badge.bug {
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+  .assignee-disabled-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px dashed rgba(148, 163, 184, 0.2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+  .assignee-disabled-tip {
+    font-size: 0.7rem;
+    color: #64748b;
   }
 </style>
