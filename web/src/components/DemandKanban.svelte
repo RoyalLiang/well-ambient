@@ -1271,7 +1271,13 @@
                   <tr>
                     <td class="demand-cell">
                       <div class="demand-stack">
-                        <span class="schedule-id font-mono">#{item.demand_id}</span>
+                        {#if getJiraIssueUrl(item.demand_id)}
+                          <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                            #{item.demand_id}
+                          </a>
+                        {:else}
+                          <span class="schedule-id font-mono">#{item.demand_id}</span>
+                        {/if}
                         <strong>{item.title}</strong>
                         <small>{item.description || '暂无需求说明'}</small>
                       </div>
@@ -1838,7 +1844,7 @@
                 <button type="button" class="estimate-clear-btn font-mono" on:click={clearScheduleEstimate}>清空</button>
               </div>
             </div>
-            <div class="estimate-manual-grid">
+            <div class="estimate-manual-grid" class:has-days={schedEstimateDays > 0}>
               <label class="estimate-field" for="sched-estimate-hours">
                 <span>预估小时</span>
                 <input
@@ -1852,10 +1858,12 @@
                   on:input={updateScheduleEstimateHours}
                 />
               </label>
-              <div class="estimate-reference-field" aria-live="polite">
-                <span>折算天数</span>
-                <strong>{schedEstimateDays > 0 ? `${formatOneDecimal(schedEstimateDays)} 天` : '待计算'}</strong>
-              </div>
+              {#if schedEstimateDays > 0}
+                <div class="estimate-reference-field" aria-live="polite">
+                  <span>折算天数</span>
+                  <strong>{formatOneDecimal(schedEstimateDays)} 天</strong>
+                </div>
+              {/if}
               <div class="estimate-difficulty-field difficulty-select-shell">
                 <span id="sched-difficulty-label">难度</span>
                 <button
@@ -1957,7 +1965,13 @@
 
         <div class="detail-body">
           <div class="detail-title-block">
-            <span class="detail-id font-mono">#{detailDemand.task_id}</span>
+            {#if getJiraIssueUrl(detailDemand.task_id)}
+              <a class="detail-id font-mono jira-id-link" href={getJiraIssueUrl(detailDemand.task_id)} target="_blank" rel="noopener noreferrer">
+                #{detailDemand.task_id}
+              </a>
+            {:else}
+              <span class="detail-id font-mono">#{detailDemand.task_id}</span>
+            {/if}
             <strong>{detailDemand.title}</strong>
             <p>{detailDemand.description || '暂无需求说明'}</p>
           </div>
@@ -1990,9 +2004,6 @@
           </div>
 
           <div class="detail-link-row">
-            {#if getJiraIssueUrl(detailDemand.task_id)}
-              <a href={getJiraIssueUrl(detailDemand.task_id)} target="_blank" rel="noopener noreferrer">打开 Jira</a>
-            {/if}
             {#if canManageDemand(detailDemand)}
               <button type="button" on:click={() => { if (detailDemand) { closeDemandDetails(); openScheduleModal(detailDemand); } }}>调整排期</button>
             {/if}
@@ -2499,6 +2510,13 @@
     color: #818cf8;
     font-size: 0.66rem;
     font-weight: 900;
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+
+  .schedule-id.jira-id-link:hover {
+    color: #a5b4fc;
+    text-decoration: underline;
   }
 
   .status-chip {
@@ -3379,9 +3397,13 @@
 
   .estimate-manual-grid {
     display: grid;
-    grid-template-columns: minmax(76px, 0.62fr) minmax(76px, 0.62fr) minmax(104px, 0.76fr);
+    grid-template-columns: minmax(76px, 0.62fr) minmax(104px, 0.76fr);
     gap: 8px;
     align-items: end;
+  }
+
+  .estimate-manual-grid.has-days {
+    grid-template-columns: minmax(76px, 0.62fr) minmax(76px, 0.62fr) minmax(104px, 0.76fr);
   }
 
   .estimate-field,
@@ -3581,6 +3603,14 @@
     font-size: 0.66rem;
     font-weight: 900;
     margin-bottom: 8px;
+    text-decoration: none;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .detail-id.jira-id-link:hover {
+    background: rgba(14, 165, 233, 0.16);
+    border-color: rgba(56, 189, 248, 0.45);
+    color: #38bdf8;
   }
 
   .detail-title-block strong {
