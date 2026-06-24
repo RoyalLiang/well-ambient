@@ -9,6 +9,7 @@
   const dispatch = createEventDispatcher();
 
   export let config: {
+    enabled?: boolean;
     app_id: string;
     app_secret: string;
     bot: { enabled: boolean; chat_group: string };
@@ -20,6 +21,7 @@
       task_id_column: string;
     };
   } = {
+    enabled: false,
     app_id: '',
     app_secret: '',
     bot: { enabled: false, chat_group: '' },
@@ -44,6 +46,7 @@
   let showBitableTokenEditor = !config.bitable?.app_token;
 
   // Step 1 states
+  let enabled = config.enabled ?? false;
   let appID = config.app_id || '';
   let appSecret = config.app_secret || '';
   let testingCreds = false;
@@ -67,6 +70,7 @@
   let bitableDetails = '';
   $: isConfigured = !!(appID || appSecret || botEnabled || bitableEnabled || chatGroup || appToken || tableID);
   $: if (!editing && !saveSuccess) {
+    enabled = config.enabled ?? false;
     appID = config.app_id || '';
     appSecret = config.app_secret || '';
     botEnabled = config.bot?.enabled ?? false;
@@ -200,6 +204,7 @@
   async function saveConfig() {
 
     const updatedFeishu = {
+      enabled: enabled,
       app_id: appID,
       app_secret: appSecret,
       bot: {
@@ -265,27 +270,52 @@
         <div>
           <span class="overview-kicker font-mono">Feishu Integration</span>
           <h4>飞书配置状态摘要</h4>
-          <p>已配置后只显示状态、巡检入口与编辑入口，凭证默认脱敏折叠。</p>
+          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
-        <span class="status-pill {appID ? 'online' : 'warning'}">{appID ? '已配置' : '待补全'}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+          <Switch id="feishu-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
+        </div>
       </div>
 
       <div class="overview-grid">
         <div class="overview-row">
-          <span>状态摘要</span>
-          <strong>机器人 {botEnabled ? '已启用' : '未启用'} · 多维表格 {bitableEnabled ? '已启用' : '未启用'}</strong>
+          <span>Feishu App ID</span>
+          <strong class="font-mono">{appID || '-'}</strong>
         </div>
         <div class="overview-row">
-          <span>健康检查</span>
-          <strong>{credsSuccess || credsError || bitableSuccess || bitableError || '尚未执行本次巡检'}</strong>
+          <span>App Secret 密钥</span>
+          <strong>{appSecret ? '已配置 (已脱敏保护)' : '未配置'}</strong>
         </div>
+        <div class="overview-row">
+          <span>机器人通知</span>
+          <strong>{botEnabled ? '已开启' : '未开启'} {chatGroup ? `(${chatGroup})` : ''}</strong>
+        </div>
+        <div class="overview-row">
+          <span>多维表格同步</span>
+          <strong>{bitableEnabled ? '已开启' : '未开启'}</strong>
+        </div>
+        {#if bitableEnabled}
+          <div class="overview-row">
+            <span>Bitable App Token</span>
+            <strong class="font-mono">{appToken ? appToken.substring(0, 10) + '...' : '-'}</strong>
+          </div>
+          <div class="overview-row">
+            <span>Table ID</span>
+            <strong class="font-mono">{tableID || '-'}</strong>
+          </div>
+          <div class="overview-row">
+            <span>任务 ID 列名 / 状态列名</span>
+            <strong class="font-sans">{taskIDCol} / {statusCol}</strong>
+          </div>
+        {/if}
         <div class="overview-row">
           <span>最近更新时间</span>
           <strong>{formatUpdated(lastUpdated)}</strong>
         </div>
         <div class="overview-row">
-          <span>敏感项</span>
-          <strong>App Secret {appSecret ? '已配置' : '未配置'} · Bitable Token {appToken ? '已配置' : '未配置'}</strong>
+          <span>健康状态</span>
+          <strong class="text-success">{credsSuccess || credsError || bitableSuccess || bitableError || '已就绪'}</strong>
         </div>
       </div>
 

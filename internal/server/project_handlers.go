@@ -27,6 +27,7 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		ProjectName  string `json:"project_name"`
 		GitReposJSON string `json:"git_repos_json"`
 		BasePriority string `json:"base_priority"`
+		ProjectPhase string `json:"project_phase"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -39,6 +40,11 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	phase := input.ProjectPhase
+	if phase == "" {
+		phase = "交付"
+	}
+
 	var config db.ProjectConfig
 	err := db.DB.Where("project_key = ?", input.ProjectKey).First(&config).Error
 	if err == nil {
@@ -46,6 +52,7 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		config.ProjectName = input.ProjectName
 		config.GitReposJSON = input.GitReposJSON
 		config.BasePriority = input.BasePriority
+		config.ProjectPhase = phase
 		config.UpdatedAt = time.Now()
 		if err := db.DB.Save(&config).Error; err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -58,6 +65,7 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 			ProjectName:  input.ProjectName,
 			GitReposJSON: input.GitReposJSON,
 			BasePriority: input.BasePriority,
+			ProjectPhase: phase,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
 		}

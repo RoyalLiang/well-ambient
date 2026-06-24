@@ -2,17 +2,19 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import Steps from '../shared/Steps.svelte';
   import TextInput from '../shared/TextInput.svelte';
+  import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
 
   const dispatch = createEventDispatcher();
 
   export let config: {
+    enabled?: boolean;
     base_url: string;
     secret_token: string;
     api_token?: string;
     repos: Array<{ name: string; path: string; project_id: string }>;
-  } = { base_url: '', secret_token: '', api_token: '', repos: [] };
+  } = { enabled: false, base_url: '', secret_token: '', api_token: '', repos: [] };
 
   export let saving = false;
   export let saveError = '';
@@ -26,6 +28,7 @@
   let showSecretEditor = !config.secret_token;
 
   // Step 1 states
+  let enabled = config.enabled ?? false;
   let baseURL = config.base_url || '';
   let apiToken = config.api_token || '';
   let testingConnection = false;
@@ -66,6 +69,7 @@
   $: webhookSummary = summarizeWebhookResults(webhookResults);
   $: isConfigured = !!(baseURL || apiToken || secretToken || repoList.length > 0);
   $: if (!editing && !saveSuccess) {
+    enabled = config.enabled ?? false;
     baseURL = config.base_url || '';
     apiToken = config.api_token || '';
     secretToken = config.secret_token || '';
@@ -300,6 +304,7 @@
 
   async function saveConfig() {
     const updatedGitLab = {
+      enabled: enabled,
       base_url: baseURL,
       secret_token: secretToken,
       api_token: apiToken,
@@ -422,27 +427,38 @@
         <div>
           <span class="overview-kicker font-mono">GitLab Integration</span>
           <h4>GitLab 配置状态摘要</h4>
-          <p>已配置的实例会直接进入摘要与巡检入口，不再强制重走配置向导。</p>
+          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
-        <span class="status-pill {baseURL ? 'online' : 'warning'}">{baseURL ? '已配置' : '待补全'}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+          <Switch id="gitlab-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
+        </div>
       </div>
 
       <div class="overview-grid">
         <div class="overview-row">
-          <span>状态摘要</span>
-          <strong>{baseURL ? '连接地址已配置' : '缺少连接地址'} · {repoList.length} 个项目</strong>
+          <span>GitLab 基础 URL 地址</span>
+          <strong class="font-mono">{baseURL || '-'}</strong>
         </div>
         <div class="overview-row">
-          <span>健康检查</span>
-          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+          <span>项目仓库绑定</span>
+          <strong>已绑定 {repoList.length} 个代码多仓</strong>
+        </div>
+        <div class="overview-row">
+          <span>API 访问令牌</span>
+          <strong>{apiToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>Webhook 密钥凭证</span>
+          <strong>{secretToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
         </div>
         <div class="overview-row">
           <span>最近更新时间</span>
           <strong>{formatUpdated(lastUpdated)}</strong>
         </div>
         <div class="overview-row">
-          <span>敏感项</span>
-          <strong>API Token {apiToken ? '已配置' : '未配置'} · Secret Token {secretToken ? '已配置' : '未配置'}</strong>
+          <span>健康检查状态</span>
+          <strong class="text-success">{testSuccess || testError || '已就绪'}</strong>
         </div>
       </div>
 

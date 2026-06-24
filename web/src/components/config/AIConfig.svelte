@@ -584,34 +584,52 @@
         <div>
           <span class="overview-kicker font-mono">AI Deconstructor</span>
           <h4>AI 引擎配置状态摘要</h4>
-          <p>已配置后默认显示模型状态、系统设计语料、健康检查和编辑入口。</p>
+          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
-        <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+          <Switch id="ai-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
+        </div>
       </div>
 
       <div class="overview-grid">
         <div class="overview-row">
-          <span>状态摘要</span>
-          <strong>{provider || 'openai'} · {modelName || '未指定模型'} · {endpointType}</strong>
+          <span>AI 提供商</span>
+          <strong class="font-sans">{provider || 'openai'}</strong>
         </div>
         <div class="overview-row">
-          <span>健康检查</span>
-          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+          <span>接口基础 URL 地址</span>
+          <strong class="font-mono">{baseURL || '-'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>大语言模型 (Model)</span>
+          <strong class="font-mono">{modelName || '未指定'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>接口端点类型 (Endpoint Type)</span>
+          <strong class="font-mono">{endpointType || 'completions'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>API 凭证 (Token)</span>
+          <strong>{apiToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>每日折算工时</span>
+          <strong class="font-mono">{defaultWorkHoursPerDay || 8} 小时/天</strong>
         </div>
         <div class="overview-row">
           <span>最近更新时间</span>
           <strong>{formatUpdated(lastUpdated)}</strong>
         </div>
         <div class="overview-row">
-          <span>敏感项</span>
-          <strong>API Key {apiToken ? '已配置' : '未配置'} · {defaultWorkHoursPerDay || 8} 小时/天</strong>
+          <span>健康状态</span>
+          <strong class="text-success">{testSuccess || testError || '已就绪'}</strong>
         </div>
       </div>
 
       <div class="context-health-grid">
         <span>设计语料 {activeContextFactCount} active</span>
         <span>语料 tokens {totalContextFactTokens || 0}</span>
-        <span>每日折算 {defaultWorkHoursPerDay || 8} 小时</span>
         <span>Pack 预览 {contextPackPreview ? '已生成' : '待生成'}</span>
       </div>
 

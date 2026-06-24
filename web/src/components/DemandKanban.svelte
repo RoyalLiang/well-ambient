@@ -305,19 +305,22 @@
   }
 
   function getProjectPriority(taskID: string): string {
-    if (!taskID) return 'P1';
+    if (!taskID) return 'P2';
     const idx = taskID.indexOf('-');
-    if (idx <= 0) return 'P1';
+    if (idx <= 0) return 'P2';
     const key = taskID.substring(0, idx).toUpperCase();
     const config = projectConfigs.find(c => c.project_key === key);
-    return config ? config.base_priority : 'P1';
+    return config ? config.base_priority : 'P2';
   }
 
   function getPriorityWeight(p?: string): number {
-    if (p === 'P0') return 300;
-    if (p === 'P1') return 200;
-    if (p === 'P2') return 100;
-    return 200; // default P1
+    if (p === 'P0') return 600;
+    if (p === 'P1') return 500;
+    if (p === 'P2') return 400;
+    if (p === 'P3') return 300;
+    if (p === 'P4') return 200;
+    if (p === 'P5') return 100;
+    return 400; // default P2
   }
 
   function compareDemandsByPriority(a: any, b: any): number {
@@ -2447,16 +2450,33 @@
   }
 
   .priority-badge.p-p1 {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
+    background: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
+    border: 1px solid rgba(249, 115, 22, 0.3);
   }
 
   .priority-badge.p-p2 {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  .priority-badge.p-p3 {
     background: rgba(59, 130, 246, 0.15);
     color: #60a5fa;
     border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
+  .priority-badge.p-p4 {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+  }
+
+  .priority-badge.p-p5 {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
   }
 
   .demand-dashboard {

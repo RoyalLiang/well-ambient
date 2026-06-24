@@ -1230,7 +1230,7 @@
       </div>
     {:else if activeSection === 'projects'}
       <div class="section-card">
-        <ProjectConfig lastUpdated={sectionLastUpdated('projects')} />
+        <ProjectConfig lastUpdated={sectionLastUpdated('projects')} syncProjects={globalConfig.jira?.sync_projects || []} />
       </div>
     {:else if activeSection === 'ai'}
       <div class="section-card">

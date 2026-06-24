@@ -24,6 +24,7 @@ type ServerConfig struct {
 
 // GitLabConfig holds connection settings for self-hosted GitLab
 type GitLabConfig struct {
+	Enabled  bool          `yaml:"enabled" json:"enabled"`
 	BaseURL  string        `yaml:"base_url" json:"base_url"`
 	Secret   string        `yaml:"secret_token" json:"secret_token"` // For webhook validation
 	APIToken string        `yaml:"api_token" json:"api_token"`       // For GitLab API requests
@@ -39,6 +40,7 @@ type RepoMapping struct {
 
 // FeishuConfig holds credentials for Feishu/Lark Integration
 type FeishuConfig struct {
+	Enabled   bool          `yaml:"enabled" json:"enabled"`
 	AppID     string        `yaml:"app_id" json:"app_id"`
 	AppSecret string        `yaml:"app_secret" json:"app_secret"`
 	Bot       BotConfig     `yaml:"bot" json:"bot"`

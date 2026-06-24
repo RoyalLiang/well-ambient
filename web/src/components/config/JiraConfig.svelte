@@ -191,33 +191,52 @@
         <div>
           <span class="overview-kicker font-mono">Jira Integration</span>
           <h4>Jira 配置状态摘要</h4>
-          <p>已配置后默认显示同步范围、健康检查、更新时间与编辑入口。</p>
+          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
-        <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="status-pill {enabled ? 'online' : 'warning'}">{enabled ? '已启用' : '已禁用'}</span>
+          <Switch id="jira-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
+        </div>
       </div>
 
       <div class="overview-grid">
         <div class="overview-row">
-          <span>状态摘要</span>
-          <strong>{enabled ? 'Jira 同步已启用' : '当前未启用同步'} · {syncProjects || '所有项目'}</strong>
+          <span>Jira 基础 URL 地址</span>
+          <strong class="font-mono">{baseURL || '-'}</strong>
         </div>
         <div class="overview-row">
-          <span>健康检查</span>
-          <strong>{testSuccess || testError || '尚未执行本次巡检'}</strong>
+          <span>用户邮箱 (Username)</span>
+          <strong class="font-mono">{username || 'Token 认证'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>敏感凭证 (API Token)</span>
+          <strong>{apiToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
         </div>
         <div class="overview-row">
           <span>最近更新时间</span>
           <strong>{formatUpdated(lastUpdated)}</strong>
         </div>
         <div class="overview-row">
-          <span>敏感项</span>
-          <strong>API Token {apiToken ? '已配置' : '未配置'} · 用户 {username || '(Token认证)'}</strong>
+          <span>同步项目 (Project Keys)</span>
+          <strong class="font-mono">{syncProjects || '所有项目'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>同步成员 (Assignees)</span>
+          <strong class="font-mono">{syncUsers || '所有成员'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>状态范围筛选</span>
+          <strong class="font-mono">{syncStatuses || '所有状态'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>健康状态</span>
+          <strong class="text-success">{testSuccess || testError || '已连接'}</strong>
         </div>
       </div>
 
       {#if customJQL}
         <div class="jql-preview">
-          <span>自定义 JQL</span>
+          <span>自定义 JQL 筛选</span>
           <code>{customJQL}</code>
         </div>
       {/if}

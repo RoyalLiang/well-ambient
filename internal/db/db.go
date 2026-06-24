@@ -218,6 +218,7 @@ type ProjectConfig struct {
 	ProjectKey   string    `gorm:"uniqueIndex;column:project_key" json:"project_key"` // e.g. "HIT"
 	GitReposJSON string    `gorm:"type:text" json:"git_repos_json"`
 	BasePriority string    `json:"base_priority"` // P0, P1, P2
+	ProjectPhase string    `gorm:"column:project_phase;default:'交付'" json:"project_phase"` // e.g. "POC", "交付", "运营", "售后"
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

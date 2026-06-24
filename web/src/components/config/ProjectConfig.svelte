@@ -5,13 +5,15 @@
   import Alert from '../shared/Alert.svelte';
 
   export let lastUpdated = '';
+  export let syncProjects: string[] = [];
 
   interface ProjectConfig {
     id?: number;
     project_name: string;
     project_key: string;
-    git_repos_json: string;
-    base_priority: string; // P0, P1, P2
+    git_repos_json?: string;
+    base_priority: string; // P0 - P5
+    project_phase?: string; // POC, 交付, 运营, 售后
   }
 
   let projects: ProjectConfig[] = [];
@@ -25,8 +27,19 @@
   let editingProject: ProjectConfig | null = null;
   let formProjectName = '';
   let formProjectKey = '';
-  let formBasePriority = 'P1';
-  let formGitReposStr = '';
+  let formBasePriority = 'P2'; // Default to P2
+  let formProjectPhase = '交付'; // Default to 交付
+
+  // Dropdown controls
+  let showKeyDropdown = false;
+
+  $: availableKeys = syncProjects.filter(key => {
+    return !projects.some(p => p.project_key.toUpperCase() === key.toUpperCase());
+  });
+
+  $: filteredKeys = availableKeys.filter(key => 
+    key.toLowerCase().includes(formProjectKey.toLowerCase())
+  );
 
   onMount(async () => {
     await fetchProjects();
@@ -54,8 +67,8 @@
     editingProject = null;
     formProjectName = '';
     formProjectKey = '';
-    formBasePriority = 'P1';
-    formGitReposStr = '';
+    formBasePriority = 'P2';
+    formProjectPhase = '交付';
     errorMsg = '';
     successMsg = '';
   }
@@ -65,13 +78,8 @@
     editingProject = project;
     formProjectName = project.project_name;
     formProjectKey = project.project_key;
-    formBasePriority = project.base_priority || 'P1';
-    
-    let repos: string[] = [];
-    try {
-      repos = JSON.parse(project.git_repos_json || '[]');
-    } catch (_) {}
-    formGitReposStr = repos.join(', ');
+    formBasePriority = project.base_priority || 'P2';
+    formProjectPhase = project.project_phase || '交付';
     errorMsg = '';
     successMsg = '';
   }
@@ -87,16 +95,12 @@
     successMsg = '';
     const token = localStorage.getItem('jwt_token');
 
-    const repos = formGitReposStr
-      .split(',')
-      .map(r => r.trim())
-      .filter(r => r.length > 0);
-
     const payload = {
       project_key: formProjectKey.trim().toUpperCase(),
       project_name: formProjectName.trim(),
       base_priority: formBasePriority,
-      git_repos_json: JSON.stringify(repos)
+      project_phase: formProjectPhase,
+      git_repos_json: "[]"
     };
 
     try {
@@ -134,21 +138,6 @@
     editingProject = null;
     errorMsg = '';
   }
-
-  function formatUpdated(value: string) {
-    if (!value) return '暂无更新记录';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
-  }
-
-  function parseRepos(jsonStr: string): string[] {
-    try {
-      return JSON.parse(jsonStr || '[]');
-    } catch (_) {
-      return [];
-    }
-  }
 </script>
 
 <div class="project-config-container">
@@ -163,7 +152,7 @@
     <div class="card-header flex-header">
       <div>
         <h2>📝 项目集成与优先级管理</h2>
-        <p>配置 Jira 项目键（Project Key）所关联的 Git 多仓路径，并设定项目的全局基准优先级（P0/P1/P2）。最强大脑将据此高亮和置顶相关任务。</p>
+        <p>配置并同步 Jira 项目键（Project Key）的全局基准优先级（P0 - P5）与当前项目运作阶段。最强大脑将自动执行权重置顶和健康监控。</p>
       </div>
       <Button variant="primary" on:click={startCreate}>➕ 新建项目集成</Button>
     </div>
@@ -172,7 +161,7 @@
       <div class="loading-state font-mono">正在加载项目集成列表...</div>
     {:else if projects.length === 0}
       <div class="empty-state font-mono">
-        <p>暂无自定义项目集成。当 Jira 数据同步时，系统会自动在此生成默认项目卡片。</p>
+        <p>暂无自定义项目集成。新建项目以设定基准属性。</p>
       </div>
     {:else}
       <div class="table-responsive">
@@ -181,8 +170,8 @@
             <tr>
               <th>项目键 (Key)</th>
               <th>项目名称</th>
+              <th>运作阶段</th>
               <th>优先级</th>
-              <th>Git 关联多仓</th>
               <th style="text-align: right;">操作</th>
             </tr>
           </thead>
@@ -192,18 +181,14 @@
                 <td class="font-mono text-bold highlight-key">{project.project_key}</td>
                 <td>{project.project_name}</td>
                 <td>
-                  <span class="priority-badge p-{project.base_priority.toLowerCase()}">
-                    {project.base_priority}
+                  <span class="phase-badge phase-{project.project_phase || '交付'}">
+                    {project.project_phase || '交付'}
                   </span>
                 </td>
                 <td>
-                  <div class="repos-wrapper">
-                    {#each parseRepos(project.git_repos_json) as repo}
-                      <span class="repo-tag font-mono">{repo}</span>
-                    {:else}
-                      <span class="text-muted text-xs">⚠️ 暂无关联仓库</span>
-                    {/each}
-                  </div>
+                  <span class="priority-badge p-{project.base_priority.toLowerCase()}">
+                    {project.base_priority}
+                  </span>
                 </td>
                 <td style="text-align: right;">
                   <Button size="small" variant="ghost" on:click={() => startEdit(project)}>编辑</Button>
@@ -217,46 +202,77 @@
   {:else}
     <div class="card-header">
       <h2>{editingProject ? '编辑项目配置' : '新建项目配置'}</h2>
-      <p>为项目设定专用的 Jira Project Key，关联多仓，并定义基准优先级。</p>
+      <p>为项目绑定专用的 Jira Project Key，定义优先级权重与当前项目运行周期阶段。</p>
     </div>
 
     <div class="form-container">
-      <TextInput
-        id="project-key"
-        label="Jira 项目键 (Project Key)"
-        placeholder="例如: HIT, CRM"
-        bind:value={formProjectKey}
-        disabled={!!editingProject}
-        required={true}
-        helperText="Jira 项目的关键简称前缀，例如任务ID为 'HIT-101' 则项目键为 'HIT'。保存后不可更改。"
-      />
+      <div class="custom-select-wrapper">
+        {#if editingProject}
+          <TextInput
+            id="project-key"
+            label="Jira 项目键 (Project Key)"
+            bind:value={formProjectKey}
+            disabled={true}
+            required={true}
+            helperText="Jira 项目键保存后不可更改。"
+          />
+        {:else}
+          <TextInput
+            id="project-key"
+            label="Jira 项目键 (Project Key)"
+            placeholder="搜索或选择 Jira 中同步的项目键 (如: HIT)"
+            bind:value={formProjectKey}
+            required={true}
+            on:focus={() => showKeyDropdown = true}
+            on:blur={() => setTimeout(() => showKeyDropdown = false, 200)}
+            helperText="已被其他项目集成配置占用的 Key 将不再列出。支持拼音与英文字符过滤。"
+          />
+          {#if showKeyDropdown}
+            <div class="custom-select-dropdown">
+              {#each filteredKeys as key}
+                <button type="button" class="dropdown-item" on:click={() => { formProjectKey = key; showKeyDropdown = false; }}>
+                  {key}
+                </button>
+              {:else}
+                <div class="dropdown-empty">没有匹配的待配置项目键</div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </div>
 
       <TextInput
         id="project-name"
         label="项目名称"
-        placeholder="例如: 最强大脑项目"
+        placeholder=""
         bind:value={formProjectName}
         required={true}
         helperText="展示在大脑项目大盘与诊断报表中的项目中文名。"
       />
 
-      <div class="form-group">
-        <label class="form-label" for="project-priority">项目优先级 (Base Priority)</label>
-        <select id="project-priority" class="select-input" bind:value={formBasePriority}>
-          <option value="P0">P0 - 阻断高优（任务强制置顶，并渲染红色发光）</option>
-          <option value="P1">P1 - 普通交付（默认，黄色发光）</option>
-          <option value="P2">P2 - 持续优化（低优先，蓝色发光）</option>
-        </select>
-        <span class="helper-text">不同优先级会直接影响协同大盘排期与需求列表中，最强大脑打分计算的加权置顶排布优先级。</span>
-      </div>
+      <div class="form-group-row">
+        <div class="form-group flex-1">
+          <label class="form-label" for="project-phase">项目阶段 (Project Phase)</label>
+          <select id="project-phase" class="select-input" bind:value={formProjectPhase}>
+            <option value="POC">POC</option>
+            <option value="交付">交付</option>
+            <option value="运营">运营</option>
+            <option value="售后">售后</option>
+          </select>
+        </div>
 
-      <TextInput
-        id="project-repos"
-        label="关联 Git 仓库 (Git Repos)"
-        placeholder="例如: group/repo1, group/repo2"
-        bind:value={formGitReposStr}
-        helperText="配置项目关联的代码多仓路径，支持多个，用英文逗号分隔。最强大脑将据此核对提交绑定与单测遥测状态。"
-      />
+        <div class="form-group flex-1">
+          <label class="form-label" for="project-priority">项目优先级 (Base Priority)</label>
+          <select id="project-priority" class="select-input" bind:value={formBasePriority}>
+            <option value="P0">P0 - 阻断高优</option>
+            <option value="P1">P1 - 核心交付</option>
+            <option value="P2">P2 - 持续优化</option>
+            <option value="P3">P3 - 关注保障</option>
+            <option value="P4">P4 - 日常维护</option>
+            <option value="P5">P5 - 辅助支持</option>
+          </select>
+        </div>
+      </div>
 
       <div class="form-actions">
         <Button variant="secondary" disabled={saving} on:click={cancelEdit}>取消</Button>
@@ -349,7 +365,36 @@
     font-weight: 700;
   }
 
-  /* Badges & tags */
+  /* Phase Badge styles */
+  .phase-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .phase-badge.phase-POC {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+  }
+  .phase-badge.phase-交付 {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(14, 165, 233, 0.3);
+  }
+  .phase-badge.phase-运营 {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+  .phase-badge.phase-售后 {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }
+
+  /* Priority Badges */
   .priority-badge {
     display: inline-block;
     padding: 3px 8px;
@@ -365,41 +410,30 @@
     border: 1px solid rgba(239, 68, 68, 0.3);
     box-shadow: 0 0 6px rgba(239, 68, 68, 0.2);
   }
-
   .priority-badge.p-p1 {
+    background: rgba(249, 115, 22, 0.15);
+    color: #fb923c;
+    border: 1px solid rgba(249, 115, 22, 0.3);
+  }
+  .priority-badge.p-p2 {
     background: rgba(245, 158, 11, 0.15);
     color: #fbbf24;
     border: 1px solid rgba(245, 158, 11, 0.3);
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
   }
-
-  .priority-badge.p-p2 {
+  .priority-badge.p-p3 {
     background: rgba(59, 130, 246, 0.15);
     color: #60a5fa;
     border: 1px solid rgba(59, 130, 246, 0.3);
   }
-
-  .repos-wrapper {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+  .priority-badge.p-p4 {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.3);
   }
-
-  .repo-tag {
-    background: rgba(30, 41, 59, 0.6);
-    border: 1px solid rgba(51, 65, 85, 0.5);
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 0.75rem;
-    color: #cbd5e1;
-  }
-
-  .text-muted {
-    color: #64748b;
-  }
-
-  .text-xs {
-    font-size: 0.75rem;
+  .priority-badge.p-p5 {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
   }
 
   /* Form design */
@@ -412,6 +446,16 @@
     border-radius: 8px;
     padding: 24px;
     margin-top: 16px;
+  }
+
+  .form-group-row {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .flex-1 {
+    flex: 1;
   }
 
   .form-group {
@@ -443,10 +487,50 @@
     box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
   }
 
-  .helper-text {
-    font-size: 0.75rem;
+  /* Searchable Select Dropdown */
+  .custom-select-wrapper {
+    position: relative;
+    width: 100%;
+  }
+
+  .custom-select-dropdown {
+    position: absolute;
+    top: calc(100% - 10px);
+    left: 0;
+    right: 0;
+    background: #0b1329;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 6px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+
+  .dropdown-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+    cursor: pointer;
+    font-family: monospace;
+  }
+
+  .dropdown-item:hover {
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+  }
+
+  .dropdown-empty {
+    padding: 12px 16px;
+    font-size: 0.8rem;
     color: #64748b;
-    line-height: 1.4;
+    text-align: center;
   }
 
   .form-actions {
