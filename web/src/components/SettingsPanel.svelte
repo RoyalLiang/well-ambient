@@ -400,6 +400,7 @@
   let showAddMembershipModal = false;
   let membershipTargetUser = '';
   let membershipSelectedGroup = '';
+  let showGroupDropdown = false;
   let membershipScope: 'global' | 'repo' = 'global';
   let membershipScopeID = '';
   let membershipError = '';
@@ -848,6 +849,7 @@
     membershipScopeID = '';
     membershipError = '';
     membershipSuccess = '';
+    showGroupDropdown = false;
     showAddMembershipModal = true;
   }
 
@@ -1152,20 +1154,20 @@
         <div class="nav-group">
           <span class="group-title">集成设置</span>
           <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
-            <span>🔌 GitLab 仓库</span>
             <span class="status-indicator indicator-{gitlabStatus}"></span>
+            <span>🔌 GitLab 仓库</span>
           </button>
           <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => switchSection('feishu')}>
-            <span>🤖 飞书消息同步</span>
             <span class="status-indicator indicator-{feishuStatus}"></span>
+            <span>🤖 飞书消息同步</span>
           </button>
           <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => switchSection('jira')}>
-            <span>📝 Jira 服务关联</span>
             <span class="status-indicator indicator-{jiraStatus}"></span>
+            <span>📝 Jira 服务关联</span>
           </button>
           <button class="nav-item {activeSection === 'projects' ? 'active' : ''}" on:click={() => switchSection('projects')}>
-            <span>📝 项目优先级与集成</span>
             <span class="status-indicator indicator-online"></span>
+            <span>📝 项目优先级与集成</span>
           </button>
         </div>
       {/if}
@@ -1175,13 +1177,13 @@
           <span class="group-title">AI 工作台</span>
           {#if currentUserPermissions.includes('config:read')}
             <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
-              <span>🧠 AI 引擎配置</span>
               <span class="status-indicator indicator-{aiStatus}"></span>
+              <span>🧠 AI 引擎配置</span>
             </button>
           {/if}
           <button class="nav-item {activeSection === 'ai_context' ? 'active' : ''}" on:click={() => switchSection('ai_context')}>
-            <span>🗂️ 系统设计语料库</span>
             <span class="status-indicator indicator-{currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning'}"></span>
+            <span>🗂️ 系统设计语料库</span>
           </button>
         </div>
       {/if}
@@ -1190,8 +1192,8 @@
         <div class="nav-group">
           <span class="group-title">运营洞察</span>
           <button class="nav-item {activeSection === 'kpi' ? 'active' : ''}" on:click={() => switchSection('kpi')}>
-            <span>📈 KPI 绩效大盘</span>
             <span class="status-indicator indicator-online"></span>
+            <span>📈 KPI 绩效大盘</span>
           </button>
         </div>
       {/if}
@@ -1895,15 +1897,37 @@
           <label for="membership-target-user">目标成员账户</label>
           <input id="membership-target-user" type="text" value={membershipTargetUser} disabled class="input-disabled font-mono" />
         </div>
-        <div class="field-item">
-          <label for="membership-selected-group">分配目标用户组</label>
-          <select id="membership-selected-group" bind:value={membershipSelectedGroup} class="custom-select font-mono">
-            {#each groups as g}
-              {#if g.name !== 'super_admin'}
-                <option value={g.name}>{g.displayName} ({g.name})</option>
-              {/if}
-            {/each}
-          </select>
+        <div class="field-item relative">
+          <label for="membership-selected-group-trigger">分配目标用户组</label>
+          <button 
+            id="membership-selected-group-trigger"
+            type="button" 
+            class="dropdown-trigger-btn font-mono"
+            on:click={() => showGroupDropdown = !showGroupDropdown}
+          >
+            <span>{groups.find(g => g.name === membershipSelectedGroup)?.displayName || membershipSelectedGroup} ({membershipSelectedGroup})</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </button>
+          
+          {#if showGroupDropdown}
+            <div class="dropdown-backdrop-overlay" on:click={() => showGroupDropdown = false}></div>
+            <div class="dropdown-options-list glass-panel font-mono">
+              {#each groups as g}
+                {#if g.name !== 'super_admin'}
+                  <button 
+                    type="button"
+                    class="dropdown-option-item {membershipSelectedGroup === g.name ? 'selected' : ''}"
+                    on:click={() => {
+                      membershipSelectedGroup = g.name;
+                      showGroupDropdown = false;
+                    }}
+                  >
+                    {g.displayName} ({g.name})
+                  </button>
+                {/if}
+              {/each}
+            </div>
+          {/if}
         </div>
         <div class="field-item">
           <span class="field-label">分配作用域等级 (Scope)</span>
@@ -2194,6 +2218,9 @@
     cursor: pointer;
     font-size: 0.85rem;
     transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .nav-item:hover {
@@ -3580,6 +3607,98 @@
   .custom-select:focus {
     border-color: #6366f1;
     box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+  }
+
+  /* Dropdown Styles for user group */
+  .relative {
+    position: relative;
+  }
+
+  .dropdown-trigger-btn {
+    width: 100%;
+    background-color: #1e293b;
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 6px;
+    color: #f1f5f9;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .dropdown-trigger-btn:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.3);
+  }
+
+  .dropdown-chevron {
+    color: #94a3b8;
+    transition: transform 0.2s ease;
+  }
+
+  .dropdown-options-list {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 100%;
+    max-height: 200px;
+    overflow-y: auto;
+    background: rgba(15, 23, 42, 0.98);
+    border: 1px solid rgba(99, 102, 241, 0.4);
+    border-radius: 8px;
+    z-index: 1100;
+    padding: 4px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
+  }
+
+  .dropdown-options-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .dropdown-options-list::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 3px;
+  }
+
+  .dropdown-option-item {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 8px 12px;
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+    box-sizing: border-box;
+  }
+
+  .dropdown-option-item:hover {
+    background: rgba(99, 102, 241, 0.2);
+    color: #ffffff;
+  }
+
+  .dropdown-option-item.selected {
+    background: rgba(99, 102, 241, 0.4);
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .dropdown-backdrop-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1099;
+    background: transparent;
   }
 
   .status-indicator {

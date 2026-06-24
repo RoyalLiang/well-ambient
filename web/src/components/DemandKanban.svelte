@@ -1423,7 +1423,7 @@
                         <span class="radial-label font-mono">PHDI健康度</span>
                       </div>
                     </div>
-                    <div class="diagnostic-bubble font-mono">
+                    <div class="diagnostic-bubble font-mono {getScoreColorClass(activeScore.compound_score)}">
                       <span class="bubble-title">🧠 大脑风控诊断意见</span>
                       <p>{activeScore.diagnostic}</p>
                     </div>
@@ -4973,7 +4973,7 @@
   }
   .brain-console-layout {
     display: grid;
-    grid-template-columns: 180px 2.2fr 1.8fr;
+    grid-template-columns: 180px 2.4fr 1.6fr;
     gap: 20px;
   }
   .console-section-label {
@@ -5027,11 +5027,12 @@
 
   /* 环形分数与诊断 */
   .brain-health-core {
-    display: flex;
+    display: grid;
+    grid-template-columns: 100px minmax(0, 1fr);
     gap: 20px;
     align-items: center;
     border-right: 1px solid rgba(51, 65, 85, 0.3);
-    padding-right: 15px;
+    padding-right: 20px;
   }
   .radial-score-box {
     flex-shrink: 0;
@@ -5048,32 +5049,37 @@
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    border: 4px solid rgba(51, 65, 85, 0.3);
-    box-shadow: 0 0 15px rgba(2, 6, 23, 0.3);
+    border: 3px solid rgba(51, 65, 85, 0.4);
+    background: rgba(15, 23, 42, 0.6);
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.6), inset 0 2px 8px rgba(0, 0, 0, 0.8);
+    transition: all 0.3s ease;
   }
   .radial-ring.score-excellent {
-    border-color: rgba(16, 185, 129, 0.4);
-    background: rgba(16, 185, 129, 0.08);
-    box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.45);
+    background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, rgba(10, 15, 30, 0.6) 100%);
+    box-shadow: 0 0 25px rgba(16, 185, 129, 0.18), inset 0 2px 8px rgba(16, 185, 129, 0.08);
   }
   .radial-ring.score-excellent .radial-score {
-    color: #34d399;
+    color: #10b981;
+    text-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
   }
   .radial-ring.score-good {
-    border-color: rgba(245, 158, 11, 0.4);
-    background: rgba(245, 158, 11, 0.08);
-    box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.45);
+    background: radial-gradient(circle, rgba(245, 158, 11, 0.12) 0%, rgba(10, 15, 30, 0.6) 100%);
+    box-shadow: 0 0 25px rgba(245, 158, 11, 0.18), inset 0 2px 8px rgba(245, 158, 11, 0.08);
   }
   .radial-ring.score-good .radial-score {
-    color: #fbbf24;
+    color: #f59e0b;
+    text-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
   }
   .radial-ring.score-risk {
-    border-color: rgba(239, 68, 68, 0.4);
-    background: rgba(239, 68, 68, 0.08);
-    box-shadow: 0 0 15px rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.45);
+    background: radial-gradient(circle, rgba(239, 68, 68, 0.12) 0%, rgba(10, 15, 30, 0.6) 100%);
+    box-shadow: 0 0 25px rgba(239, 68, 68, 0.18), inset 0 2px 8px rgba(239, 68, 68, 0.08);
   }
   .radial-ring.score-risk .radial-score {
-    color: #f87171;
+    color: #ef4444;
+    text-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
   }
   
   .radial-score {
@@ -5093,7 +5099,29 @@
     flex-direction: column;
     gap: 8px;
     min-width: 0;
+    background: rgba(99, 102, 241, 0.03);
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-left: 4px solid #6366f1;
+    border-radius: 8px;
+    padding: 14px 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
   }
+  .diagnostic-bubble.score-excellent {
+    border-left-color: #10b981;
+    background: rgba(16, 185, 129, 0.03);
+    border-color: rgba(16, 185, 129, 0.15);
+  }
+  .diagnostic-bubble.score-good {
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.03);
+    border-color: rgba(245, 158, 11, 0.15);
+  }
+  .diagnostic-bubble.score-risk {
+    border-left-color: #ef4444;
+    background: rgba(239, 68, 68, 0.03);
+    border-color: rgba(239, 68, 68, 0.15);
+  }
+
   .bubble-title {
     font-size: 0.72rem;
     font-weight: 800;
@@ -5107,11 +5135,15 @@
     white-space: pre-wrap;
   }
 
-  /* 维度打分刻度条 */
+  /* 维度打分刻度条 - 2x2双列网格 */
   .brain-dimension-board {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 20px;
+  }
+  .brain-dimension-board .console-section-label {
+    grid-column: span 2;
+    margin-bottom: 4px;
   }
   .dimension-row {
     display: flex;
@@ -5131,20 +5163,33 @@
   .dim-bar-bg {
     width: 100%;
     height: 6px;
-    background: rgba(30, 41, 59, 0.6);
-    border-radius: 3px;
+    background: rgba(15, 23, 42, 0.8);
+    border-radius: 99px;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
     overflow: hidden;
   }
   .dim-bar-fill {
     display: block;
     height: 100%;
-    border-radius: 3px;
-    transition: width 0.4s ease;
+    border-radius: 99px;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .dim-bar-fill.is-blue { background: #38bdf8; }
-  .dim-bar-fill.is-emerald { background: #34d399; }
-  .dim-bar-fill.is-amber { background: #fbbf24; }
-  .dim-bar-fill.is-rose { background: #f87171; }
+  .dim-bar-fill.is-blue { 
+    background: linear-gradient(90deg, #0ea5e9, #38bdf8); 
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+  }
+  .dim-bar-fill.is-emerald { 
+    background: linear-gradient(90deg, #059669, #34d399); 
+    box-shadow: 0 0 8px rgba(52, 211, 153, 0.4);
+  }
+  .dim-bar-fill.is-amber { 
+    background: linear-gradient(90deg, #d97706, #fbbf24); 
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.4);
+  }
+  .dim-bar-fill.is-rose { 
+    background: linear-gradient(90deg, #dc2626, #f87171); 
+    box-shadow: 0 0 8px rgba(248, 113, 113, 0.4);
+  }
 
   /* 评分样式分类色值 */
   .score-excellent {
