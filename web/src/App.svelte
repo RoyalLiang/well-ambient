@@ -827,8 +827,8 @@
     .settings-mode .app-content-shell {
       display: flex;
       flex: 1 1 auto;
-      height: max(620px, calc(100dvh - 220px));
-      min-height: 620px;
+      height: auto;
+      min-height: auto;
     }
   }
 

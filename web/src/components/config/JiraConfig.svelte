@@ -130,7 +130,7 @@
     }
   }
 
-  async function saveConfig() {
+  async function saveConfig(isToggle = false) {
     saving = true;
     saveError = '';
 
@@ -147,7 +147,8 @@
 
     dispatch('save', {
       key: 'jira',
-      data: updatedJira
+      data: updatedJira,
+      isToggle: isToggle
     });
   }
 
@@ -194,7 +195,7 @@
           <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
         </div>
         <div style="display: flex; align-items: center; gap: 10px;">
-          <Switch id="jira-overview-toggle" bind:checked={enabled} on:change={saveConfig} />
+          <Switch id="jira-overview-toggle" bind:checked={enabled} on:change={() => saveConfig(true)} />
         </div>
       </div>
 
@@ -420,7 +421,7 @@
 
       <div class="actions">
         <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>
-        <Button variant="primary" loading={saving} on:click={saveConfig}>
+        <Button variant="primary" loading={saving} on:click={() => saveConfig(false)}>
           保存并应用
         </Button>
       </div>

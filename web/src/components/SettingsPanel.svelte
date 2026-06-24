@@ -522,8 +522,8 @@
     }
   }
 
-  async function handleSaveConfig(event: CustomEvent<{ key: string; data: any }>) {
-    const { key, data } = event.detail;
+  async function handleSaveConfig(event: CustomEvent<{ key: string; data: any; isToggle?: boolean }>) {
+    const { key, data, isToggle } = event.detail;
     const newConfig = {
       ...globalConfig,
       [key]: data
@@ -544,8 +544,10 @@
       const result = await res.json();
       if (result.success) {
         globalConfig = newConfig;
-        saveSuccess = true;
-        saveSuccessKey = key;
+        if (!isToggle) {
+          saveSuccess = true;
+          saveSuccessKey = key;
+        }
         await fetchConfigVersions(true);
         window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
       } else {
@@ -2113,10 +2115,10 @@
     gap: 28px;
     flex: 1;
     width: 100%;
-    height: 100%;
+    height: auto;
     min-height: 0;
-    overflow: hidden;
-    padding-bottom: 24px;
+    overflow: visible;
+    padding-bottom: 32px;
     box-sizing: border-box;
   }
 
@@ -2127,27 +2129,12 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    height: 100%;
+    height: auto;
     min-height: 0;
-    max-height: 100%;
+    max-height: none;
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(71, 85, 105, 0.72) rgba(15, 23, 42, 0.28);
-  }
-
-  .settings-sidebar::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .settings-sidebar::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.6);
-    border-radius: 999px;
-  }
-
-  .settings-sidebar::-webkit-scrollbar-track {
-    background: transparent;
+    overflow: visible;
   }
 
   .sidebar-header {
@@ -2224,64 +2211,33 @@
 
   .settings-main {
     min-width: 0;
-    height: 100%;
+    height: auto;
     min-height: 0;
-    max-height: 100%;
+    max-height: none;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible;
     padding-right: 0;
     box-sizing: border-box;
-    overscroll-behavior: contain;
-  }
-
-  .settings-main::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .settings-main::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.72);
-    border-radius: 999px;
-  }
-
-  .settings-main::-webkit-scrollbar-track {
-    background: rgba(15, 23, 42, 0.36);
-    border-radius: 999px;
   }
 
   .section-card {
     flex: 1 1 auto;
     min-height: 0;
-    height: 100%;
-    overflow-y: auto;
+    height: auto;
+    overflow: visible;
     box-sizing: border-box;
     background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(10, 16, 31, 0.98));
     border: 1px solid rgba(71, 85, 105, 0.46);
     border-radius: 12px;
     padding: 24px;
     box-shadow: 0 18px 48px -34px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(71, 85, 105, 0.72) rgba(15, 23, 42, 0.28);
-  }
-
-  .section-card::-webkit-scrollbar {
-    width: 8px;
-  }
-
-  .section-card::-webkit-scrollbar-thumb {
-    background: rgba(71, 85, 105, 0.72);
-    border-radius: 999px;
-  }
-
-  .section-card::-webkit-scrollbar-track {
-    background: rgba(15, 23, 42, 0.36);
-    border-radius: 999px;
   }
 
   .kpi-settings-panel {
     min-width: 0;
-    height: 100%;
-    overflow-y: auto;
+    height: auto;
+    overflow: visible;
     box-sizing: border-box;
     padding: 4px 12px 24px 0;
   }
