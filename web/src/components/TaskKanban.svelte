@@ -18,6 +18,11 @@
     mrIid?: number;
     mrUrl?: string;
     taskGroupId?: string;
+    dueDate?: string;
+    estimateHours?: number;
+    estimateDays?: number;
+    difficulty?: string;
+    description?: string;
   }
 
   interface TaskResponse {
@@ -34,6 +39,11 @@
     mr_iid?: number;
     mr_url?: string;
     task_group_id?: string;
+    due_date?: string;
+    estimate_hours?: number;
+    estimate_days?: number;
+    difficulty?: string;
+    description?: string;
   }
 
   type TaskView = 'status' | 'personnel' | 'execution';
@@ -252,9 +262,17 @@
     }
   }
 
-  // Modal details state
   let selectedTask: Task | null = null;
   let showDetails = false;
+
+  // 编辑排期与指派变量
+  let editAssignee = '';
+  let editDueDate = '';
+  let editEstimateHours = 0;
+  let editDifficulty = '';
+  let editTaskGroupID = '';
+  let isSavingSchedule = false;
+  let saveScheduleError = '';
 
   // Reactive dropdown options populated from allTasks
   $: projectOptions = ['all', ...Array.from(new Set(allTasks.map(t => getProjectName(t.id))))];
@@ -483,6 +501,15 @@
   async function openDetails(task: Task) {
     selectedTask = task;
     showDetails = true;
+    
+    // 初始化编辑状态
+    editAssignee = task.assignee || '';
+    editDueDate = task.dueDate ? task.dueDate.slice(0, 10) : '';
+    editEstimateHours = task.estimateHours || 0;
+    editDifficulty = task.difficulty || '';
+    editTaskGroupID = task.taskGroupId || '';
+    saveScheduleError = '';
+
     loadingCommits = true;
     selectedTaskCommits = [];
     try {
@@ -494,6 +521,55 @@
       console.error('Failed to fetch commits:', e);
     } finally {
       loadingCommits = false;
+    }
+  }
+
+  async function handleSaveTaskSchedule() {
+    if (!selectedTask) return;
+    isSavingSchedule = true;
+    saveScheduleError = '';
+    const task = selectedTask;
+
+    try {
+      // 1. 如果是需求，并且负责人发生了改变，先更新指派人
+      if (task.id.startsWith('DEMAND-') && editAssignee !== task.assignee) {
+        const reassignRes = await fetch('/api/demands/reassign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_id: task.id, assignee: editAssignee })
+        });
+        if (!reassignRes.ok) {
+          const errMsg = await reassignRes.text();
+          throw new Error(`指派负责人失败: ${errMsg}`);
+        }
+      }
+
+      // 2. 保存排期设置
+      const scheduleRes = await fetch('/api/tasks/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task_id: task.id,
+          due_date: editDueDate,
+          estimate_hours: editEstimateHours,
+          difficulty: editDifficulty,
+          task_group_id: editTaskGroupID || '-'
+        })
+      });
+      if (!scheduleRes.ok) {
+        const errMsg = await scheduleRes.text();
+        throw new Error(`保存排期失败: ${errMsg}`);
+      }
+
+      // 3. 刷新数据并关闭弹窗
+      await fetchTasks();
+      showDetails = false;
+      selectedTask = null;
+    } catch (err: any) {
+      console.error('Failed to save schedule:', err);
+      saveScheduleError = err.message || '保存失败';
+    } finally {
+      isSavingSchedule = false;
     }
   }
 
@@ -634,7 +710,12 @@
       taskCreatedAt: t.task_created_at || t.last_update,
       mrIid: t.mr_iid,
       mrUrl: t.mr_url,
-      taskGroupId: t.task_group_id
+      taskGroupId: t.task_group_id,
+      dueDate: t.due_date,
+      estimateHours: t.estimate_hours,
+      estimateDays: t.estimate_days,
+      difficulty: t.difficulty,
+      description: t.description
     };
   }
 
@@ -1398,7 +1479,64 @@
         <span class="label">实际创建时间:</span>
         <span class="value">{formatTimeFull(selectedTask.taskCreatedAt)}</span>
       </div>
+
+      <div class="divider"></div>
+      <div class="section-title">⚡ 需求/故障开发排期与指派</div>
       
+      <div class="details-row align-items-center">
+        <span class="label">负责人指派:</span>
+        <span class="value">
+          {#if selectedTask.id.startsWith('DEMAND-')}
+            <select bind:value={editAssignee} class="edit-select">
+              {#each assigneeOptions.filter(x => x !== 'all') as opt}
+                <option value={opt}>{opt}</option>
+              {/each}
+            </select>
+          {:else}
+            <span class="assignee-sync-info">👤 {selectedTask.assignee} <small class="text-muted">(Jira 任务负责人请至 Jira 修改)</small></span>
+          {/if}
+        </span>
+      </div>
+
+      <div class="details-row align-items-center">
+        <span class="label">截止日期:</span>
+        <span class="value">
+          <input type="date" bind:value={editDueDate} class="edit-input" />
+        </span>
+      </div>
+
+      <div class="details-row align-items-center">
+        <span class="label">开发工时:</span>
+        <span class="value">
+          <input type="number" min="0" step="0.5" bind:value={editEstimateHours} class="edit-input w-24" placeholder="预估小时数" />
+          {#if editEstimateHours > 0}
+            <span class="days-converted font-mono ml-2">({(editEstimateHours / 8).toFixed(1)} 天)</span>
+          {/if}
+        </span>
+      </div>
+
+      <div class="details-row align-items-center">
+        <span class="label">开发难度:</span>
+        <span class="value">
+          <select bind:value={editDifficulty} class="edit-select">
+            <option value="">未评估</option>
+            <option value="low">Low (简单)</option>
+            <option value="medium">Medium (中等)</option>
+            <option value="high">High (困难)</option>
+          </select>
+        </span>
+      </div>
+
+      {#if saveScheduleError}
+        <div class="error-msg font-mono text-danger mb-2">❌ {saveScheduleError}</div>
+      {/if}
+
+      <div class="details-row justify-end mt-2 pb-2">
+        <button type="button" class="save-sched-btn font-mono" disabled={isSavingSchedule} on:click={handleSaveTaskSchedule}>
+          {isSavingSchedule ? '正在保存...' : '保存排期'}
+        </button>
+      </div>
+
       <div class="divider"></div>
       <div class="section-title">Git Telemetry 提交时序与多模块轨迹</div>
       
@@ -2525,6 +2663,83 @@
     text-align: right;
     max-width: 70%;
     word-break: break-all;
+  }
+
+  .details-row.align-items-center {
+    align-items: center;
+  }
+
+  .details-row.justify-end {
+    justify-content: flex-end;
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .edit-select,
+  .edit-input {
+    background: #0f172a;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 6px;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    outline: none;
+    transition: border-color 0.16s ease;
+    text-align: left;
+  }
+
+  .edit-select:focus,
+  .edit-input:focus {
+    border-color: rgba(99, 102, 241, 0.6);
+  }
+
+  .edit-select {
+    min-width: 130px;
+    cursor: pointer;
+  }
+
+  .edit-input[type="date"] {
+    cursor: pointer;
+  }
+
+  .days-converted {
+    color: #f59e0b;
+    font-size: 0.72rem;
+  }
+
+  .assignee-sync-info {
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+
+  .assignee-sync-info small {
+    color: #64748b;
+    display: block;
+    font-size: 0.68rem;
+    margin-top: 2px;
+  }
+
+  .save-sched-btn {
+    background: rgba(99, 102, 241, 0.18);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    border-radius: 6px;
+    color: #c7d2fe;
+    font-size: 0.76rem;
+    font-weight: 800;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  }
+
+  .save-sched-btn:hover:not(:disabled) {
+    background: rgba(99, 102, 241, 0.32);
+    border-color: rgba(129, 140, 248, 0.55);
+    color: #ffffff;
+  }
+
+  .save-sched-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .value.title-val {

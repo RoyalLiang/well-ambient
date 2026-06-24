@@ -255,7 +255,7 @@
     clearTimeout(scheduleSearchDebounceTimer);
     scheduleSearchDebounceTimer = setTimeout(() => {
       scheduleSearch = scheduleSearchInput;
-    }, 250);
+    }, 350);
   }
 
   let projectSearchText = '';
@@ -588,9 +588,12 @@
   $: createProjectOptions = buildCreateProjectOptions();
   $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
-  $: filteredScheduleItems = scheduleItems
-    .filter((item) => matchesScheduleFilters(item))
-    .sort((a, b) => compareScheduleItems(a, b));
+  $: filteredScheduleItems = (() => {
+    const query = scheduleSearch.trim().toLowerCase();
+    return scheduleItems
+      .filter((item) => matchesScheduleFilters(item, query))
+      .sort((a, b) => compareScheduleItems(a, b));
+  })();
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
@@ -615,8 +618,7 @@
     }
   }
 
-  function matchesScheduleFilters(item: any): boolean {
-    const query = scheduleSearch.trim().toLowerCase();
+  function matchesScheduleFilters(item: any, query: string): boolean {
     if (query) {
       const match = 
         (item._lowerID && item._lowerID.includes(query)) ||
@@ -1266,7 +1268,7 @@
                 </tr>
               </thead>
               <tbody>
-                {#each filteredScheduleItems as item}
+                {#each filteredScheduleItems as item (item.demand_id)}
                   {@const progress = getScheduleProgress(item)}
                   <tr>
                     <td class="demand-cell">
@@ -1590,6 +1592,11 @@
               <div class="card-bottom">
                 <span class="due-badge {dueInfo.className} font-mono">{dueInfo.text}</span>
                 <span class="status-badge font-mono">{item.status === 'review' ? '👀评审中' : '💻进行中'}</span>
+                {#if isAssignee(item) || hasPermission('demands:write')}
+                  <button class="edit-sched-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
+                    ⚙️
+                  </button>
+                {/if}
               </div>
             </div>
           {/each}
@@ -1663,6 +1670,11 @@
                 <span class="done-tag font-mono">🎉 已发布</span>
                 {#if item.completed_at}
                   <span class="done-date font-mono">{new Date(item.completed_at).toLocaleDateString()}</span>
+                {/if}
+                {#if isAssignee(item) || hasPermission('demands:write')}
+                  <button class="edit-sched-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
+                    ⚙️
+                  </button>
                 {/if}
               </div>
             </div>
@@ -2004,7 +2016,7 @@
           </div>
 
           <div class="detail-link-row">
-            {#if canManageDemand(detailDemand)}
+            {#if isAssignee(detailDemand) || hasPermission('demands:write') || canManageDemand(detailDemand)}
               <button type="button" on:click={() => { if (detailDemand) { closeDemandDetails(); openScheduleModal(detailDemand); } }}>调整排期</button>
             {/if}
           </div>
