@@ -423,6 +423,12 @@
     return config ? config.base_priority : 'P2';
   }
 
+  function getProjectName(projKey: string): string {
+    if (!projKey) return '';
+    const config = projectConfigs.find(c => c.project_key.toUpperCase() === projKey.toUpperCase());
+    return config ? config.project_name : '';
+  }
+
   function getPriorityWeight(p?: string): number {
     if (p === 'P0') return 600;
     if (p === 'P1') return 500;
@@ -1368,118 +1374,117 @@
     </div>
   </div>
 
+  <!-- 🧠 大脑项目健康遥测控制台入口（移至顶层，全视图通用） -->
+  <div class="brain-console-wrapper" style="margin-bottom: 20px;">
+    <button 
+      class="brain-toggle-btn font-mono" 
+      class:is-active={showScorerConsole} 
+      on:click={() => {
+        showScorerConsole = !showScorerConsole;
+        if (showScorerConsole && projectScores.length === 0) {
+          fetchProjectScores();
+        }
+      }}
+    >
+      {showScorerConsole ? '🧠 收起大脑项目健康遥测' : '🧠 展开大脑项目健康遥测与决策诊断'}
+    </button>
+
+    {#if showScorerConsole}
+      {@const activeScore = projectScores.find(p => p.project_key === selectedScoreProject)}
+      <div class="brain-console-card glass-panel" transition:slide>
+        {#if projectScoresLoading}
+          <div class="brain-loading font-mono">大脑遥测分析中...</div>
+        {:else if projectScores.length === 0}
+          <div class="brain-empty font-mono">暂无项目打分遥测数据，请录入任务后刷新。</div>
+        {:else}
+          <div class="brain-console-layout">
+            <!-- 项目选择侧栏 -->
+            <div class="brain-project-list">
+              <span class="console-section-label">遥测项目</span>
+              {#each projectScores as p}
+                <button 
+                  class="brain-proj-btn" 
+                  class:active={selectedScoreProject === p.project_key}
+                  on:click={() => selectedScoreProject = p.project_key}
+                >
+                  <span class="proj-key font-mono">{p.project_key}</span>
+                  <strong class="proj-score font-mono {getScoreColorClass(p.compound_score)}">{p.compound_score}分</strong>
+                </button>
+              {/each}
+            </div>
+
+            {#if activeScore}
+              <!-- 分数圆环与主诊断 -->
+              <div class="brain-health-core">
+                <div class="radial-score-box">
+                  <div class="radial-ring {getScoreColorClass(activeScore.compound_score)}">
+                    <span class="radial-score font-mono">{activeScore.compound_score}</span>
+                    <span class="radial-label font-mono">PHDI健康度</span>
+                  </div>
+                </div>
+                <div class="diagnostic-bubble font-mono {getScoreColorClass(activeScore.compound_score)}">
+                  <span class="bubble-title">🧠 大脑风控诊断意见</span>
+                  <p>{activeScore.diagnostic}</p>
+                </div>
+              </div>
+
+              <!-- 细分维度雷达刻度条 -->
+              <div class="brain-dimension-board">
+                <span class="console-section-label">多维健康度诊断</span>
+                
+                <div class="dimension-row">
+                  <div class="dim-label">
+                    <span>进度排期健康 (SH)</span>
+                    <strong class="font-mono">{activeScore.schedule_health_score}</strong>
+                  </div>
+                  <div class="dim-bar-bg">
+                    <span class="dim-bar-fill is-blue" style="width: {activeScore.schedule_health_score}%"></span>
+                  </div>
+                </div>
+
+                <div class="dimension-row">
+                  <div class="dim-label">
+                    <span>代码与工程质量 (EQ)</span>
+                    <strong class="font-mono">{activeScore.engineering_quality}</strong>
+                  </div>
+                  <div class="dim-bar-bg">
+                    <span class="dim-bar-fill is-emerald" style="width: {activeScore.engineering_quality}%"></span>
+                  </div>
+                </div>
+
+                <div class="dimension-row">
+                  <div class="dim-label">
+                    <span>指派与协同效率 (CE)</span>
+                    <strong class="font-mono">{activeScore.collaboration_effic}</strong>
+                  </div>
+                  <div class="dim-bar-bg">
+                    <span class="dim-bar-fill is-amber" style="width: {activeScore.collaboration_effic}%"></span>
+                  </div>
+                </div>
+
+                <div class="dimension-row">
+                  <div class="dim-label">
+                    <span>稳定性与缺陷控制 (SI)</span>
+                    <strong class="font-mono">{activeScore.stability_index}</strong>
+                  </div>
+                  <div class="dim-bar-bg">
+                    <span class="dim-bar-fill is-rose" style="width: {activeScore.stability_index}%"></span>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+
   {#if loading && demands.length === 0 && activeDemandView === 'board'}
     <div class="state-msg">加载需求大盘中...</div>
   {:else if errorMsg && activeDemandView === 'board'}
     <div class="state-msg error-msg font-mono">❌ {errorMsg}</div>
   {:else if activeDemandView === 'schedule'}
     <div class="schedule-workbench">
-      
-      <!-- 🧠 大脑项目健康遥测控制台入口 -->
-      <div class="brain-console-wrapper">
-        <button 
-          class="brain-toggle-btn font-mono" 
-          class:is-active={showScorerConsole} 
-          on:click={() => {
-            showScorerConsole = !showScorerConsole;
-            if (showScorerConsole && projectScores.length === 0) {
-              fetchProjectScores();
-            }
-          }}
-        >
-          {showScorerConsole ? '🧠 收起大脑项目健康遥测' : '🧠 展开大脑项目健康遥测与决策诊断'}
-        </button>
-
-        {#if showScorerConsole}
-          {@const activeScore = projectScores.find(p => p.project_key === selectedScoreProject)}
-          <div class="brain-console-card glass-panel" transition:slide>
-            {#if projectScoresLoading}
-              <div class="brain-loading font-mono">大脑遥测分析中...</div>
-            {:else if projectScores.length === 0}
-              <div class="brain-empty font-mono">暂无项目打分遥测数据，请录入任务后刷新。</div>
-            {:else}
-              <div class="brain-console-layout">
-                <!-- 项目选择侧栏 -->
-                <div class="brain-project-list">
-                  <span class="console-section-label">遥测项目</span>
-                  {#each projectScores as p}
-                    <button 
-                      class="brain-proj-btn" 
-                      class:active={selectedScoreProject === p.project_key}
-                      on:click={() => selectedScoreProject = p.project_key}
-                    >
-                      <span class="proj-key font-mono">{p.project_key}</span>
-                      <strong class="proj-score font-mono {getScoreColorClass(p.compound_score)}">{p.compound_score}分</strong>
-                    </button>
-                  {/each}
-                </div>
-
-                {#if activeScore}
-                  <!-- 分数圆环与主诊断 -->
-                  <div class="brain-health-core">
-                    <div class="radial-score-box">
-                      <div class="radial-ring {getScoreColorClass(activeScore.compound_score)}">
-                        <span class="radial-score font-mono">{activeScore.compound_score}</span>
-                        <span class="radial-label font-mono">PHDI健康度</span>
-                      </div>
-                    </div>
-                    <div class="diagnostic-bubble font-mono {getScoreColorClass(activeScore.compound_score)}">
-                      <span class="bubble-title">🧠 大脑风控诊断意见</span>
-                      <p>{activeScore.diagnostic}</p>
-                    </div>
-                  </div>
-
-                  <!-- 细分维度雷达刻度条 -->
-                  <div class="brain-dimension-board">
-                    <span class="console-section-label">多维健康度诊断</span>
-                    
-                    <div class="dimension-row">
-                      <div class="dim-label">
-                        <span>进度排期健康 (SH)</span>
-                        <strong class="font-mono">{activeScore.schedule_health_score}</strong>
-                      </div>
-                      <div class="dim-bar-bg">
-                        <span class="dim-bar-fill is-blue" style="width: {activeScore.schedule_health_score}%"></span>
-                      </div>
-                    </div>
-
-                    <div class="dimension-row">
-                      <div class="dim-label">
-                        <span>代码与工程质量 (EQ)</span>
-                        <strong class="font-mono">{activeScore.engineering_quality}</strong>
-                      </div>
-                      <div class="dim-bar-bg">
-                        <span class="dim-bar-fill is-emerald" style="width: {activeScore.engineering_quality}%"></span>
-                      </div>
-                    </div>
-
-                    <div class="dimension-row">
-                      <div class="dim-label">
-                        <span>指派与协同效率 (CE)</span>
-                        <strong class="font-mono">{activeScore.collaboration_effic}</strong>
-                      </div>
-                      <div class="dim-bar-bg">
-                        <span class="dim-bar-fill is-amber" style="width: {activeScore.collaboration_effic}%"></span>
-                      </div>
-                    </div>
-
-                    <div class="dimension-row">
-                      <div class="dim-label">
-                        <span>稳定性与缺陷控制 (SI)</span>
-                        <strong class="font-mono">{activeScore.stability_index}</strong>
-                      </div>
-                      <div class="dim-bar-bg">
-                        <span class="dim-bar-fill is-rose" style="width: {activeScore.stability_index}%"></span>
-                      </div>
-                    </div>
-                  </div>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
       <div class="schedule-summary-grid">
         <div class="schedule-summary-cell">
           <span class="summary-label font-mono">TOTAL</span>
@@ -1651,7 +1656,13 @@
                       <td colspan="8" class="project-group-cell">
                         <div class="project-group-inner">
                           <span class="fold-arrow">{row.isCollapsed ? '▶' : '▼'}</span>
-                          <strong class="group-project-key font-mono">{row.projectKey}</strong>
+                          <strong class="group-project-key font-mono">
+                            {#if getProjectName(row.projectKey)}
+                              {getProjectName(row.projectKey)} ({row.projectKey})
+                            {:else}
+                              {row.projectKey}
+                            {/if}
+                          </strong>
                           <span class="priority-badge p-{row.priority.toLowerCase()}">{row.priority}</span>
                           <span class="group-count">({row.itemCount} 个任务)</span>
                         </div>

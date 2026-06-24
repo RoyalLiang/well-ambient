@@ -2135,7 +2135,7 @@
   .settings-container {
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
-    align-items: stretch;
+    align-items: start;
     gap: 28px;
     flex: 1;
     width: 100%;
@@ -2155,10 +2155,17 @@
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
     height: auto;
     min-height: 0;
-    max-height: none;
+    max-height: calc(100vh - 48px);
     display: flex;
     flex-direction: column;
-    overflow: visible;
+    overflow-y: auto;
+    position: sticky;
+    top: 24px;
+    scrollbar-width: none; /* Firefox */
+  }
+
+  .settings-sidebar::-webkit-scrollbar {
+    display: none; /* Safari & Chrome */
   }
 
   .sidebar-header {
@@ -2227,6 +2234,10 @@
     background: rgba(30, 41, 59, 0.5);
     color: #e2e8f0;
     padding-left: 16px;
+  }
+
+  .nav-item:active {
+    transform: scale(0.97);
   }
 
   .nav-item.active {

@@ -168,8 +168,7 @@
         <table>
           <thead>
             <tr>
-              <th>项目键 (Key)</th>
-              <th>项目名称</th>
+              <th>项目 (Project)</th>
               <th>运作阶段</th>
               <th>优先级</th>
               <th style="text-align: right;">操作</th>
@@ -178,8 +177,9 @@
           <tbody>
             {#each projects as project}
               <tr>
-                <td class="font-mono text-bold highlight-key">{project.project_key}</td>
-                <td>{project.project_name}</td>
+                <td class="font-mono text-bold highlight-key">
+                  {project.project_name} <span class="project-key-label">({project.project_key})</span>
+                </td>
                 <td>
                   <span class="phase-badge phase-{project.project_phase || '交付'}">
                     {project.project_phase || '交付'}
@@ -363,6 +363,13 @@
   .highlight-key {
     color: #38bdf8 !important;
     font-weight: 700;
+  }
+
+  .project-key-label {
+    color: #818cf8;
+    font-size: 0.8rem;
+    font-weight: 500;
+    margin-left: 4px;
   }
 
   /* Phase Badge styles */
