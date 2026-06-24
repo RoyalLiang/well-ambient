@@ -917,14 +917,17 @@
 
           <div class="execution-table-wrapper">
             <table class="execution-table">
+              <colgroup>
+                <col style="width: 35%;" />
+                <col style="width: 25%;" />
+                <col style="width: 30%;" />
+                <col style="width: 10%;" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>任务</th>
-                  <th>归属需求</th>
-                  <th>执行证据</th>
-                  <th>结果状态</th>
-                  <th>风险判断</th>
-                  <th>最近活动</th>
+                  <th>任务与指派人</th>
+                  <th>当前状态</th>
+                  <th>Git Telemetry 代码证据 & MR</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -941,51 +944,26 @@
                           {/if}
                         </div>
                         <strong>{item.title}</strong>
-                        <small>{item.assignee} / {item.department || '未分配部门'}</small>
+                        <small>指派人: {item.assignee} / {item.department || '未分配部门'}</small>
                       </div>
                     </td>
                     <td>
-                      {#if item.parent_demand_id}
-                        <div class="exec-demand-stack">
-                          <span class="bound-pill">已绑定</span>
-                          <strong class="font-mono">#{item.parent_demand_id}</strong>
-                          <small>{item.parent_demand}</small>
-                        </div>
-                      {:else}
-                        <div class="exec-demand-stack">
-                          <span class="orphan-pill">未绑定</span>
-                          <small>不会回流需求排期进度</small>
-                        </div>
-                      {/if}
+                      <div class="exec-result-stack">
+                        <span class="result-pill result-{item.result_state}">{item.result_label}</span>
+                        <small>状态: {item.status}</small>
+                        <small style="color: #818cf8; font-size: 0.65rem;">分支: {item.branch || '未绑定分支'}</small>
+                      </div>
                     </td>
                     <td>
                       <div class="exec-evidence-stack">
                         <div class="evidence-score">
                           <span style="width: {item.evidence_score}%"></span>
                         </div>
-                        <strong>{item.evidence_score}%</strong>
-                        <small>Commit {item.commit_count} · MR {item.mr_count} · Merge {item.merged_mr_count}</small>
+                        <strong>代码完整度: {item.evidence_score}%</strong>
+                        <small>Commit {item.commit_count} · MR 状态: {item.merged_mr_count > 0 ? '已合并' : (item.mr_count > 0 ? '待合并' : '无 MR')}</small>
                         {#if item.mr_url}
                           <a href={item.mr_url} target="_blank" rel="noopener noreferrer" class="exec-mr-link">!{item.mr_iid || 'MR'}</a>
                         {/if}
-                      </div>
-                    </td>
-                    <td>
-                      <div class="exec-result-stack">
-                        <span class="result-pill result-{item.result_state}">{item.result_label}</span>
-                        <small>{item.status} · {item.branch || '未绑定分支'}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="exec-risk-stack">
-                        <span class="exec-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
-                        <small>{item.risk_reason}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="exec-activity-stack">
-                        <strong>{item.last_evidence_at || item.last_update || '-'}</strong>
-                        <small>{item.active_days} 天活跃周期 · 证据 {item.evidence_age_hours}h</small>
                       </div>
                     </td>
                     <td>

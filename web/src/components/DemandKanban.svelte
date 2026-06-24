@@ -287,11 +287,121 @@
   let scheduleContainerEl: HTMLDivElement;
   const scheduleItemHeight = 76;
 
+  let collapsedProjects: {[key: string]: boolean} = {};
+
+  function toggleProjectCollapse(projKey: string, currentCollapsed: boolean) {
+    collapsedProjects[projKey] = !currentCollapsed;
+    collapsedProjects = collapsedProjects;
+  }
+
+  function getProjectKey(taskID: string): string {
+    if (!taskID) return 'UNKNOWN';
+    const idx = taskID.indexOf('-');
+    if (idx <= 0) return 'UNKNOWN';
+    return taskID.substring(0, idx).toUpperCase();
+  }
+
+  function computeCompositeWeight(item: ScheduleItem): number {
+    const priority = item.project_priority || getProjectPriority(item.demand_id);
+    let baseWeight = 40; // Default P2
+    if (priority === 'P0') baseWeight = 60;
+    else if (priority === 'P1') baseWeight = 50;
+    else if (priority === 'P2') baseWeight = 40;
+    else if (priority === 'P3') baseWeight = 30;
+    else if (priority === 'P4') baseWeight = 20;
+    else if (priority === 'P5') baseWeight = 10;
+
+    let riskWeight = 4;
+    const risk = (item.risk_level || '').toLowerCase();
+    if (risk === 'overdue' || risk === 'danger') {
+      riskWeight = 20;
+    } else if (risk === 'warning') {
+      riskWeight = 12;
+    } else if (risk === 'safe') {
+      riskWeight = 4;
+    } else if (risk === 'done' || item.status === 'done') {
+      riskWeight = 0;
+    }
+
+    let urgencyWeight = 0;
+    if (item.scheduled && item.due_date) {
+      const days = item.days_remaining;
+      if (days <= 0) {
+        urgencyWeight = 20;
+      } else {
+        urgencyWeight = Math.max(0, 20 * (1 - days / 30));
+      }
+    }
+
+    return baseWeight + riskWeight + urgencyWeight;
+  }
+
+  $: flatRenderList = (() => {
+    const groups: { [key: string]: ScheduleItem[] } = {};
+    filteredScheduleItems.forEach((item) => {
+      const projKey = item.project_key || getProjectKey(item.demand_id);
+      if (!groups[projKey]) groups[projKey] = [];
+      groups[projKey].push(item);
+    });
+
+    for (const key in groups) {
+      groups[key].sort((a, b) => {
+        const wA = computeCompositeWeight(a);
+        const wB = computeCompositeWeight(b);
+        if (wA !== wB) return wB - wA;
+        return a.demand_id.localeCompare(b.demand_id);
+      });
+    }
+
+    const projKeys = Object.keys(groups);
+    projKeys.sort((a, b) => {
+      const prioA = groups[a][0].project_priority || getProjectPriority(groups[a][0].demand_id);
+      const prioB = groups[b][0].project_priority || getProjectPriority(groups[b][0].demand_id);
+      const wA = getPriorityWeight(prioA);
+      const wB = getPriorityWeight(prioB);
+      if (wA !== wB) return wB - wA;
+      return a.localeCompare(b);
+    });
+
+    const list: any[] = [];
+    projKeys.forEach((projKey) => {
+      const groupItems = groups[projKey];
+      const priority = groupItems[0].project_priority || getProjectPriority(groupItems[0].demand_id);
+      
+      let isCollapsed = collapsedProjects[projKey];
+      if (isCollapsed === undefined) {
+        isCollapsed = !(priority === 'P0' || priority === 'P1');
+      }
+
+      list.push({
+        type: 'header',
+        projectKey: projKey,
+        priority: priority,
+        itemCount: groupItems.length,
+        isCollapsed: isCollapsed,
+        id: `header-${projKey}`
+      });
+
+      if (!isCollapsed) {
+        groupItems.forEach((item) => {
+          list.push({
+            type: 'item',
+            projectKey: projKey,
+            data: item,
+            id: item.demand_id
+          });
+        });
+      }
+    });
+
+    return list;
+  })();
+
   $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
-  $: scheduleEndIndex = Math.min(filteredScheduleItems.length, Math.ceil((scheduleScrollTop + scheduleContainerHeight) / scheduleItemHeight) + 2);
-  $: visibleScheduleItems = filteredScheduleItems.slice(scheduleStartIndex, scheduleEndIndex);
+  $: scheduleEndIndex = Math.min(flatRenderList.length, Math.ceil((scheduleScrollTop + scheduleContainerHeight) / scheduleItemHeight) + 2);
+  $: visibleScheduleRows = flatRenderList.slice(scheduleStartIndex, scheduleEndIndex);
   $: scheduleTopPadding = scheduleStartIndex * scheduleItemHeight;
-  $: scheduleBottomPadding = (filteredScheduleItems.length - scheduleEndIndex) * scheduleItemHeight;
+  $: scheduleBottomPadding = (flatRenderList.length - scheduleEndIndex) * scheduleItemHeight;
 
   function handleScheduleScroll(e: Event) {
     scheduleScrollTop = (e.target as HTMLDivElement).scrollTop;
@@ -732,33 +842,9 @@
   }
 
   function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
-    // 1. Project Priority weight takes precedence
-    const priorityA = a.project_priority || getProjectPriority(a.demand_id);
-    const priorityB = b.project_priority || getProjectPriority(b.demand_id);
-    const weightA = getPriorityWeight(priorityA);
-    const weightB = getPriorityWeight(priorityB);
+    const weightA = computeCompositeWeight(a);
+    const weightB = computeCompositeWeight(b);
     if (weightA !== weightB) return weightB - weightA;
-
-    // 2. Fallback to existing sort modes
-    if (scheduleSortMode === 'owner') {
-      const ownerCompare = a.assignee.localeCompare(b.assignee);
-      if (ownerCompare !== 0) return ownerCompare;
-      return a.demand_id.localeCompare(b.demand_id);
-    }
-    if (scheduleSortMode === 'due') {
-      if (a.due_date !== b.due_date) {
-        if (!a.due_date) return 1;
-        if (!b.due_date) return -1;
-        return a.due_date.localeCompare(b.due_date);
-      }
-      return b.risk_rank - a.risk_rank;
-    }
-    if (a.risk_rank !== b.risk_rank) return b.risk_rank - a.risk_rank;
-    if (a.due_date !== b.due_date) {
-      if (!a.due_date) return 1;
-      if (!b.due_date) return -1;
-      return a.due_date.localeCompare(b.due_date);
-    }
     return a.demand_id.localeCompare(b.demand_id);
   }
 
@@ -1559,85 +1645,99 @@
               </thead>
               <tbody>
                 <tr style="height: {scheduleTopPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleTopPadding}px;"></td></tr>
-                {#each visibleScheduleItems as item (item.demand_id)}
-                  {@const progress = getScheduleProgress(item)}
-                  {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
-                  <tr>
-                    <td class="demand-cell">
-                      <div class="demand-stack">
-                        <div class="demand-badge-row">
-                          {#if item.issue_type === 'bug'}
-                            <span class="type-badge bug">🐛 缺陷</span>
-                          {:else}
-                            <span class="type-badge demand">📋 需求</span>
-                          {/if}
-                          {#if getJiraIssueUrl(item.demand_id)}
-                            <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                              #{item.demand_id}
-                            </a>
-                          {:else}
-                            <span class="schedule-id font-mono">#{item.demand_id}</span>
-                          {/if}
-                          {#if priority}
-                            <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
-                          {/if}
+                {#each visibleScheduleRows as row (row.id)}
+                  {#if row.type === 'header'}
+                    <tr class="project-group-header pg-{row.priority.toLowerCase()}" on:click={() => toggleProjectCollapse(row.projectKey, row.isCollapsed)}>
+                      <td colspan="8" class="project-group-cell">
+                        <div class="project-group-inner">
+                          <span class="fold-arrow">{row.isCollapsed ? '▶' : '▼'}</span>
+                          <strong class="group-project-key font-mono">{row.projectKey}</strong>
+                          <span class="priority-badge p-{row.priority.toLowerCase()}">{row.priority}</span>
+                          <span class="group-count">({row.itemCount} 个任务)</span>
                         </div>
-                        <strong>{item.title}</strong>
-                        <small>{item.description || '暂无需求说明'}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="owner-stack">
-                        <strong>{item.assignee}</strong>
-                        <span>{item.department}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="plan-stack">
-                        <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
-                        <strong>{formatScheduleDue(item)}</strong>
-                        <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="effort-stack">
-                        <strong>{formatScheduleEffort(item)}</strong>
-                        <span>{formatDifficultyLabel(item.difficulty)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="subtask-stack">
-                        <div class="subtask-meter">
-                          <span style="width: {progress}%"></span>
+                      </td>
+                    </tr>
+                  {:else}
+                    {@const item = row.data}
+                    {@const progress = getScheduleProgress(item)}
+                    {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
+                    <tr>
+                      <td class="demand-cell">
+                        <div class="demand-stack">
+                          <div class="demand-badge-row">
+                            {#if item.issue_type === 'bug'}
+                              <span class="type-badge bug">🐛 缺陷</span>
+                            {:else}
+                              <span class="type-badge demand">📋 需求</span>
+                            {/if}
+                            {#if getJiraIssueUrl(item.demand_id)}
+                              <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                                #{item.demand_id}
+                              </a>
+                            {:else}
+                              <span class="schedule-id font-mono">#{item.demand_id}</span>
+                            {/if}
+                            {#if priority}
+                              <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                            {/if}
+                          </div>
+                          <strong>{item.title}</strong>
+                          <small>{item.description || '暂无需求说明'}</small>
                         </div>
-                        <strong>{item.subtask_done}/{item.subtask_total || 0}</strong>
-                        <small>{item.task_group_id || '未绑定任务组'}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="risk-stack">
-                        <span class="schedule-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
-                        <small>{item.risk_reason}</small>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="updated-stack">
-                        <strong class="font-mono">{formatScheduleDate(item.last_update)}</strong>
-                        <span>{item.last_update || '-'}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="schedule-actions-cell">
-                        {#if canEditScheduleItem(item)}
-                          <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
-                        {/if}
-                        <button class="schedule-row-action is-telemetry font-mono" on:click|stopPropagation={() => {
-                          activeTelemetryTaskId = item.demand_id;
-                          isTelemetryDrawerOpen = true;
-                        }}>轨迹</button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td>
+                        <div class="owner-stack">
+                          <strong>{item.assignee}</strong>
+                          <span>{item.department}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="plan-stack">
+                          <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
+                          <strong>{formatScheduleDue(item)}</strong>
+                          <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="effort-stack">
+                          <strong>{formatScheduleEffort(item)}</strong>
+                          <span>{formatDifficultyLabel(item.difficulty)}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="subtask-stack">
+                          <div class="subtask-meter">
+                            <span style="width: {progress}%"></span>
+                          </div>
+                          <strong>{item.subtask_done}/{item.subtask_total || 0}</strong>
+                          <small>{item.task_group_id || '未绑定任务组'}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="risk-stack">
+                          <span class="schedule-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
+                          <small>{item.risk_reason}</small>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="updated-stack">
+                          <strong class="font-mono">{formatScheduleDate(item.last_update)}</strong>
+                          <span>{item.last_update || '-'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="schedule-actions-cell">
+                          {#if canEditScheduleItem(item)}
+                            <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
+                          {/if}
+                          <button class="schedule-row-action is-telemetry font-mono" on:click|stopPropagation={() => {
+                            activeTelemetryTaskId = item.demand_id;
+                            isTelemetryDrawerOpen = true;
+                          }}>轨迹</button>
+                        </div>
+                      </td>
+                    </tr>
+                  {/if}
                 {/each}
                 <tr style="height: {scheduleBottomPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleBottomPadding}px;"></td></tr>
               </tbody>
@@ -2442,41 +2542,150 @@
     margin-left: 6px;
   }
 
+  @keyframes p0-breath {
+    0% {
+      box-shadow: 0 0 4px rgba(239, 68, 68, 0.4), inset 0 0 2px rgba(239, 68, 68, 0.2);
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+    50% {
+      box-shadow: 0 0 14px rgba(239, 68, 68, 0.9), inset 0 0 6px rgba(239, 68, 68, 0.5);
+      border-color: rgba(239, 68, 68, 0.8);
+    }
+    100% {
+      box-shadow: 0 0 4px rgba(239, 68, 68, 0.4), inset 0 0 2px rgba(239, 68, 68, 0.2);
+      border-color: rgba(239, 68, 68, 0.4);
+    }
+  }
+
   .priority-badge.p-p0 {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.2);
+    background: rgba(239, 68, 68, 0.25);
+    color: #ff8080;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    animation: p0-breath 1.2s infinite ease-in-out;
   }
 
   .priority-badge.p-p1 {
-    background: rgba(249, 115, 22, 0.15);
-    color: #fb923c;
-    border: 1px solid rgba(249, 115, 22, 0.3);
+    background: rgba(249, 115, 22, 0.2);
+    color: #ff9d5c;
+    border: 1px solid rgba(249, 115, 22, 0.5);
+    box-shadow: 0 0 10px rgba(249, 115, 22, 0.5), inset 0 0 3px rgba(249, 115, 22, 0.3);
   }
 
   .priority-badge.p-p2 {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    background: rgba(245, 158, 11, 0.2);
+    color: #ffc83b;
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.4), inset 0 0 2px rgba(245, 158, 11, 0.2);
   }
 
   .priority-badge.p-p3 {
     background: rgba(59, 130, 246, 0.15);
     color: #60a5fa;
     border: 1px solid rgba(59, 130, 246, 0.3);
+    box-shadow: none;
   }
 
   .priority-badge.p-p4 {
     background: rgba(99, 102, 241, 0.15);
     color: #818cf8;
     border: 1px solid rgba(99, 102, 241, 0.3);
+    box-shadow: none;
   }
 
   .priority-badge.p-p5 {
     background: rgba(148, 163, 184, 0.15);
     color: #94a3b8;
     border: 1px solid rgba(148, 163, 184, 0.3);
+    box-shadow: none;
+  }
+
+  /* Project Swimlanes Styling */
+  @keyframes pg-p0-breath {
+    0% {
+      background: rgba(239, 68, 68, 0.05);
+      border-left: 4px solid rgba(239, 68, 68, 0.6);
+      box-shadow: 0 0 4px rgba(239, 68, 68, 0.1);
+    }
+    50% {
+      background: rgba(239, 68, 68, 0.12);
+      border-left: 4px solid rgba(239, 68, 68, 1.0);
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+    }
+    100% {
+      background: rgba(239, 68, 68, 0.05);
+      border-left: 4px solid rgba(239, 68, 68, 0.6);
+      box-shadow: 0 0 4px rgba(239, 68, 68, 0.1);
+    }
+  }
+
+  .project-group-header {
+    background: rgba(30, 41, 59, 0.85);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  .project-group-header:hover {
+    background: rgba(51, 65, 85, 0.95);
+  }
+
+  .project-group-header.pg-p0 {
+    animation: pg-p0-breath 1.2s infinite ease-in-out;
+  }
+
+  .project-group-header.pg-p1 {
+    background: rgba(249, 115, 22, 0.06);
+    border-left: 4px solid rgba(249, 115, 22, 0.8);
+    box-shadow: 0 0 8px rgba(249, 115, 22, 0.2);
+  }
+
+  .project-group-header.pg-p2 {
+    background: rgba(245, 158, 11, 0.05);
+    border-left: 4px solid rgba(245, 158, 11, 0.7);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.15);
+  }
+
+  .project-group-header.pg-p3 {
+    border-left: 4px solid #3b82f6;
+    background: rgba(30, 41, 59, 0.5);
+  }
+  .project-group-header.pg-p4 {
+    border-left: 4px solid #6366f1;
+    background: rgba(30, 41, 59, 0.4);
+  }
+  .project-group-header.pg-p5 {
+    border-left: 4px solid #94a3b8;
+    background: rgba(30, 41, 59, 0.3);
+  }
+
+  .project-group-cell {
+    padding: 10px 16px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .project-group-inner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .fold-arrow {
+    display: inline-block;
+    width: 14px;
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+
+  .group-project-key {
+    color: #f8fafc;
+    font-size: 0.95rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+  }
+
+  .group-count {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-left: auto;
   }
 
   .demand-dashboard {
