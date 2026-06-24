@@ -631,13 +631,7 @@
       const match = 
         (item._lowerID && item._lowerID.includes(query)) ||
         (item._lowerTitle && item._lowerTitle.includes(query)) ||
-        (item._lowerAssignee && item._lowerAssignee.includes(query)) ||
-        (item._lowerDept && item._lowerDept.includes(query)) ||
-        (item._lowerRepo && item._lowerRepo.includes(query)) ||
-        (item._lowerBranch && item._lowerBranch.includes(query)) ||
-        (item._lowerGroupId && item._lowerGroupId.includes(query)) ||
-        (item._lowerRiskLabel && item._lowerRiskLabel.includes(query)) ||
-        (item._lowerDesc && item._lowerDesc.includes(query));
+        (item._lowerAssignee && item._lowerAssignee.includes(query));
       
       if (!match) return false;
     }
@@ -1324,7 +1318,6 @@
                 <col class="col-owner" />
                 <col class="col-plan" />
                 <col class="col-effort" />
-                <col class="col-evidence" />
                 <col class="col-subtask" />
                 <col class="col-risk" />
                 <col class="col-update" />
@@ -1336,7 +1329,6 @@
                   <th>负责人</th>
                   <th>排期</th>
                   <th>工时</th>
-                  <th>交付证据</th>
                   <th>影子任务</th>
                   <th>风险</th>
                   <th>更新时间</th>
@@ -1384,22 +1376,6 @@
                       <div class="effort-stack">
                         <strong>{formatScheduleEffort(item)}</strong>
                         <span>{formatDifficultyLabel(item.difficulty)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div class="evidence-stack">
-                        {#if hasScheduleValue(item.branch)}
-                          <strong class="font-mono">{item.branch}</strong>
-                        {/if}
-                        {#if hasScheduleValue(item.repo)}
-                          <span>{item.repo}</span>
-                        {/if}
-                        {#if item.mr_url}
-                          <a href={item.mr_url} target="_blank" rel="noreferrer">MR 证据</a>
-                        {/if}
-                        {#if !hasDeliveryEvidence(item)}
-                          <span class="evidence-empty">待开发证据</span>
-                        {/if}
                       </div>
                     </td>
                     <td>
@@ -2292,6 +2268,7 @@
     font-weight: 800;
     cursor: pointer;
     transition: background 0.16s ease, color 0.16s ease;
+    white-space: nowrap;
   }
 
   .view-toggle button.active,
@@ -2356,10 +2333,10 @@
   }
 
   .schedule-control-panel {
-    display: grid;
-    grid-template-columns: minmax(220px, 1.25fr) minmax(300px, 2fr) minmax(150px, 0.7fr) minmax(220px, 1fr) auto;
-    gap: 10px;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    gap: 10px;
     background: rgba(10, 15, 30, 0.6);
     border: 1px solid rgba(51, 65, 85, 0.3);
     border-radius: 10px;
@@ -2370,6 +2347,7 @@
     position: relative;
     display: flex;
     align-items: center;
+    flex: 1 1 220px;
   }
 
   .schedule-search-shell input {
@@ -2747,18 +2725,11 @@
       grid-template-columns: repeat(3, minmax(130px, 1fr));
     }
 
-    .schedule-control-panel {
-      grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.4fr);
-    }
   }
 
   @media (max-width: 760px) {
     .schedule-summary-grid {
       grid-template-columns: repeat(2, minmax(120px, 1fr));
-    }
-
-    .schedule-control-panel {
-      grid-template-columns: 1fr;
     }
 
     .schedule-filter-strip,
