@@ -161,7 +161,7 @@ func buildExecutionTasksResponse(tasks []db.TaskTelemetry, logs []db.GitCommitLo
 
 	for _, task := range tasks {
 		issueType := normalizeIssueType(task.IssueType)
-		if isArchivedTask(task) || issueType == "demand" {
+		if isArchivedTask(task) || issueType == "demand" || strings.ToLower(strings.TrimSpace(task.Status)) == "done" {
 			continue
 		}
 

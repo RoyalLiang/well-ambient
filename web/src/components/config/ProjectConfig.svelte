@@ -61,21 +61,24 @@
       if (res.ok) {
         const data = await res.json();
         const items = data.agenda_items || [];
-        const newMap: {[key: string]: string} = {};
-        items.forEach((item: any) => {
-          if (item.repo) {
-            const repoStr = item.repo.trim();
-            const lastOpenParen = repoStr.lastIndexOf('(');
-            const lastCloseParen = repoStr.lastIndexOf(')');
-            if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
-              const key = repoStr.substring(lastOpenParen + 1, lastCloseParen).trim().toUpperCase();
-              const name = repoStr.substring(0, lastOpenParen).trim();
-              if (key && name) {
-                newMap[key] = name;
+        const newMap: {[key: string]: string} = data.project_map || {};
+        
+        if (Object.keys(newMap).length === 0) {
+          items.forEach((item: any) => {
+            if (item.repo) {
+              const repoStr = item.repo.trim();
+              const lastOpenParen = repoStr.lastIndexOf('(');
+              const lastCloseParen = repoStr.lastIndexOf(')');
+              if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
+                const key = repoStr.substring(lastOpenParen + 1, lastCloseParen).trim().toUpperCase();
+                const name = repoStr.substring(0, lastOpenParen).trim();
+                if (key && name) {
+                  newMap[key] = name;
+                }
               }
             }
-          }
-        });
+          });
+        }
         jiraProjectMap = newMap;
       }
     } catch (err) {

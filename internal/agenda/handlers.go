@@ -63,6 +63,23 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 	// Generate ambient auto actions flow
 	autoDecisions := GenerateAutonomousDecisions(allTasks)
 
+	// Generate project key to name map from all tasks (both active and done)
+	projectMap := make(map[string]string)
+	for _, t := range allTasks {
+		if t.Repo != "" && t.Repo != "-" {
+			repoStr := strings.TrimSpace(t.Repo)
+			lastOpenParen := strings.LastIndex(repoStr, "(")
+			lastCloseParen := strings.LastIndex(repoStr, ")")
+			if lastOpenParen > 0 && lastCloseParen > lastOpenParen {
+				key := strings.ToUpper(strings.TrimSpace(repoStr[lastOpenParen+1 : lastCloseParen]))
+				name := strings.TrimSpace(repoStr[:lastOpenParen])
+				if key != "" && name != "" {
+					projectMap[key] = name
+				}
+			}
+		}
+	}
+
 	response := map[string]interface{}{
 		"total_active_tasks": activeBugCount + activeTaskCount,
 		"active_bug_count":   activeBugCount,
@@ -70,6 +87,7 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 		"red_zone_count":     redZoneCount,
 		"agenda_items":       items,
 		"auto_decisions":     autoDecisions,
+		"project_map":        projectMap,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
