@@ -1193,7 +1193,11 @@
               aria-expanded={collapsedAssignees[assignee] === false}
             >
               <div class="assignee-info">
-                <span class="collapse-arrow">{collapsedAssignees[assignee] === false ? '▼' : '▶'}</span>
+                <span class="collapse-chevron" class:is-collapsed={collapsedAssignees[assignee] !== false}>
+                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
                 <span class="assignee-avatar">👤</span>
                 <span class="assignee-name">{assignee}</span>
                 <span class="assignee-count">
@@ -2742,12 +2746,16 @@
     background: rgba(51, 65, 85, 0.15);
   }
 
-  .collapse-arrow {
-    font-size: 0.65rem;
-    color: #64748b;
+  .collapse-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #6366f1;
     margin-right: 4px;
-    transition: transform 0.2s ease;
-    display: inline-block;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .collapse-chevron.is-collapsed {
+    transform: rotate(-90deg);
   }
 
   .swimlane.collapsed {

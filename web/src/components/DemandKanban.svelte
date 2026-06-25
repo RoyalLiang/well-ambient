@@ -1521,7 +1521,11 @@
                     <tr class="project-group-header pg-{row.priority.toLowerCase()}" on:click={() => toggleProjectCollapse(row.projectKey, row.isCollapsed)}>
                       <td colspan="8" class="project-group-cell">
                         <div class="project-group-inner">
-                          <span class="fold-arrow">{row.isCollapsed ? '▶' : '▼'}</span>
+                          <span class="collapse-chevron" class:is-collapsed={row.isCollapsed}>
+                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </span>
                           <strong class="group-project-key font-mono">
                             {#if getProjectName(row.projectKey)}
                               {getProjectName(row.projectKey)} ({row.projectKey})
@@ -2545,11 +2549,15 @@
     gap: 12px;
   }
 
-  .fold-arrow {
-    display: inline-block;
-    width: 14px;
-    color: #94a3b8;
-    font-size: 0.8rem;
+  .collapse-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #6366f1;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .collapse-chevron.is-collapsed {
+    transform: rotate(-90deg);
   }
 
   .group-project-key {

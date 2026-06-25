@@ -152,9 +152,9 @@
       <h2>
         <span class="pulse-status-dot online"></span>
         🧠 大脑项目健康遥测与决策诊断
-        <span class="collapse-chevron-icon" class:is-collapsed={isPanelCollapsed}>
+        <span class="collapse-chevron" class:is-collapsed={isPanelCollapsed}>
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="18 15 12 9 6 15"></polyline>
+            <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
         </span>
       </h2>
@@ -472,16 +472,16 @@
     animation: statusPulse 2s infinite ease-in-out;
   }
 
-  .collapse-chevron-icon {
+  .collapse-chevron {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     color: #6366f1;
     margin-left: 8px;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .collapse-chevron-icon.is-collapsed {
-    transform: rotate(180deg);
+  .collapse-chevron.is-collapsed {
+    transform: rotate(-90deg);
   }
 
   /* Modal Styles */
