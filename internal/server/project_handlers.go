@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 	"well-ambient/internal/db"
 	"well-ambient/internal/telemetry"
@@ -16,8 +17,23 @@ func (s *Server) handleGetProjectConfigs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	var filtered []db.ProjectConfig
+	syncProjects := s.config.Jira.SyncProjects
+	if len(syncProjects) > 0 {
+		for _, conf := range configs {
+			for _, sp := range syncProjects {
+				if strings.EqualFold(strings.TrimSpace(sp), conf.ProjectKey) {
+					filtered = append(filtered, conf)
+					break
+				}
+			}
+		}
+	} else {
+		filtered = configs
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(configs)
+	json.NewEncoder(w).Encode(filtered)
 }
 
 // handleSaveProjectConfig saves or updates a project configuration
@@ -100,8 +116,23 @@ func (s *Server) handleGetProjectScores(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	var filtered []db.ProjectScore
+	syncProjects := s.config.Jira.SyncProjects
+	if len(syncProjects) > 0 {
+		for _, score := range scores {
+			for _, sp := range syncProjects {
+				if strings.EqualFold(strings.TrimSpace(sp), score.ProjectKey) {
+					filtered = append(filtered, score)
+					break
+				}
+			}
+		}
+	} else {
+		filtered = scores
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(scores)
+	json.NewEncoder(w).Encode(filtered)
 }
 
 // handleCalculateProjectScores manually triggers scoring calculation

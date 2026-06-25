@@ -116,7 +116,8 @@
   function startEdit(project: ProjectConfig) {
     isEditing = true;
     editingProject = project;
-    formProjectName = project.project_name;
+    const keyUpper = project.project_key.toUpperCase();
+    formProjectName = jiraProjectMap[keyUpper] || project.project_name;
     formProjectKey = project.project_key;
     formBasePriority = project.base_priority || 'P2';
     formProjectPhase = project.project_phase || '交付';

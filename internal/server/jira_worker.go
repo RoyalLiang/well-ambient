@@ -154,6 +154,62 @@ func (s *Server) syncJiraTasks() {
 	if err := db.DB.Where("status != 'done' AND task_id LIKE '%-%'").Find(&activeLocalTasks).Error; err == nil && len(activeLocalTasks) > 0 {
 		var activeKeys []string
 		for _, t := range activeLocalTasks {
+			parts := strings.Split(t.TaskID, "-")
+			if len(parts) != 2 {
+				continue
+			}
+			projKey := parts[0]
+			issueNum := parts[1]
+
+			// 1. Validate projectKey: starts with letter, only letters/digits, length 2-10
+			if len(projKey) < 2 || len(projKey) > 10 {
+				continue
+			}
+			first := projKey[0]
+			if !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
+				continue
+			}
+			isValid := true
+			for i := 0; i < len(projKey); i++ {
+				c := projKey[i]
+				if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+					isValid = false
+					break
+				}
+			}
+			if !isValid {
+				continue
+			}
+
+			// 2. Validate issueNum: digits only
+			if len(issueNum) == 0 {
+				continue
+			}
+			isNum := true
+			for i := 0; i < len(issueNum); i++ {
+				if issueNum[i] < '0' || issueNum[i] > '9' {
+					isNum = false
+					break
+				}
+			}
+			if !isNum {
+				continue
+			}
+
+			// 3. Limit to configured SyncProjects
+			if len(s.config.Jira.SyncProjects) > 0 {
+				isSync := false
+				for _, sp := range s.config.Jira.SyncProjects {
+					if strings.EqualFold(strings.TrimSpace(sp), projKey) {
+						isSync = true
+						break
+					}
+				}
+				if !isSync {
+					continue
+				}
+			}
+
 			activeKeys = append(activeKeys, fmt.Sprintf("%q", t.TaskID))
 		}
 

@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -16,11 +17,59 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		return nil, fmt.Errorf("failed to fetch tasks for scoring: %v", err)
 	}
 
+	// Fetch latest Jira sync projects configuration
+	var latestConfig db.ConfigVersion
+	var syncProjects []string
+	if err := db.DB.Order("version desc").First(&latestConfig).Error; err == nil {
+		var cfg struct {
+			Jira struct {
+				SyncProjects []string `json:"sync_projects"`
+			} `json:"jira"`
+		}
+		if errDec := json.Unmarshal([]byte(latestConfig.ConfigJSON), &cfg); errDec == nil {
+			syncProjects = cfg.Jira.SyncProjects
+		}
+	}
+
+	// Helper to check if key is a valid Jira project key format
+	isValidJiraKey := func(k string) bool {
+		if len(k) < 2 || len(k) > 10 {
+			return false
+		}
+		first := k[0]
+		if !((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
+			return false
+		}
+		for i := 0; i < len(k); i++ {
+			c := k[i]
+			if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Helper to check if key is configured for sync
+	isSyncProject := func(k string) bool {
+		if !isValidJiraKey(k) {
+			return false
+		}
+		if len(syncProjects) == 0 {
+			return true // Fallback: if empty, let all valid keys pass
+		}
+		for _, p := range syncProjects {
+			if strings.EqualFold(strings.TrimSpace(p), k) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// 1. Group tasks by project key (prefix before "-")
 	projectTasks := make(map[string][]db.TaskTelemetry)
 	for _, task := range tasks {
 		key := getProjectKey(task.TaskID)
-		if key == "" {
+		if key == "" || !isSyncProject(key) {
 			continue
 		}
 		projectTasks[key] = append(projectTasks[key], task)
