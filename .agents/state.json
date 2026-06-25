@@ -1,7 +1,7 @@
 {
   "warm_memory": {
-    "goal": "Optimize project config dropdown autocompletion, unify project name format, and reconstruct brain health telemetry console to a table on collaborative kanban dashboard.",
-    "classification": "coding.complex; frontend visual dashboard refactor and configuration data alignment",
+    "goal": "Optimize project name visibility on telemetry/dashboard, and support project base score weighting configuration.",
+    "classification": "coding.complex; frontend visual dashboard refactor and backend scoring logic weight calibration",
     "phase": "complete",
     "constraints": [
       "Use design-taste guidelines for visual layouts and align styles to Dark Tech aesthetics.",
@@ -9,23 +9,27 @@
       "Stage and commit only intentional source modifications, leaving unrelated temp files unstaged."
     ],
     "decisions": [
-      "Relocated telemetry console out of Demand Kanban to Collaborative Kanban dashboard above Deconstructor.",
-      "Designed ProjectHealthTelemetry using a table structure with progress bars and expandable rows for AI diagnosis logs.",
-      "Built active project key-to-name lookup (jiraProjectMap) from /api/agenda/summary on ProjectConfig mount.",
-      "Enabled Key dropdown list autocomplete in config to autofill Name and Key inputs upon selecting a item."
+      "Added BaseScore and BaseScoreWeight columns to ProjectConfig model database schema.",
+      "Updated project handlers to support binding and storing base score and weight configurations.",
+      "Calibrated compound scoring calculation formula to weight-adjust PHDI with Base Score.",
+      "Resolved active project descriptions in ProjectHealthTelemetry dynamically on mount.",
+      "Appended green project tag badges to Kanban cards and override console headers in DecisionDashboard."
     ],
     "findings": [
       "The raw telemetry labels from backend already carry the structured project name.",
       "Caching key-to-name descriptions in Svelte reactive mapping resolves legacy configuration key records dynamically without database schema migrations."
     ],
     "touched_files": [
+      "internal/db/db.go",
+      "internal/server/project_handlers.go",
+      "internal/telemetry/project_scorer.go",
+      "web/src/components/DecisionDashboard.svelte",
       "web/src/components/ProjectHealthTelemetry.svelte",
-      "web/src/App.svelte",
-      "web/src/components/DemandKanban.svelte",
       "web/src/components/config/ProjectConfig.svelte"
     ],
     "validation": [
-      "npm run build: passed successfully without typescript or svelte compile issues."
+      "npm run build: passed successfully without typescript or svelte compile issues.",
+      "go build check: backend build passed."
     ],
     "blockers": [],
     "next": "Deliver final status to the user and prompt verification."
