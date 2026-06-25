@@ -80,20 +80,42 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 	var scores []db.ProjectScore
 
 	for projKey, tList := range projectTasks {
+		// Try to extract clean project name from task's Repo label (e.g. "PRJ23003-重庆赛力斯三厂-QTruck (CHQ)")
+		extractedName := ""
+		for _, t := range tList {
+			if t.Repo != "" && t.Repo != "-" {
+				idxOpen := strings.LastIndex(t.Repo, "(")
+				if idxOpen > 0 {
+					extractedName = strings.TrimSpace(t.Repo[:idxOpen])
+					break
+				}
+			}
+		}
+
 		// 2. Fetch or create project config
 		var config db.ProjectConfig
 		err := db.DB.Where("project_key = ?", projKey).First(&config).Error
 		if err != nil {
+			defaultName := projKey + "项目"
+			if extractedName != "" {
+				defaultName = extractedName
+			}
 			// Auto create a default project config
 			config = db.ProjectConfig{
 				ProjectKey:      projKey,
-				ProjectName:     projKey + "项目",
+				ProjectName:     defaultName,
 				BasePriority:    "P1", // Default priority
 				GitReposJSON:    "[]",
 				BaseScore:       60.0,
 				BaseScoreWeight: 0.10,
 			}
 			db.DB.Create(&config)
+		} else {
+			// Auto correct legacy default name (like "CHQ项目") to full clean name if available
+			if extractedName != "" && (config.ProjectName == "" || config.ProjectName == projKey+"项目" || strings.HasSuffix(config.ProjectName, "项目")) {
+				config.ProjectName = extractedName
+				db.DB.Save(&config)
+			}
 		}
 
 		// 3. Perform multidimensional calculations
