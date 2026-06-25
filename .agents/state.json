@@ -1,7 +1,7 @@
 {
   "warm_memory": {
-    "goal": "Optimize project name visibility on telemetry/dashboard, and support project base score weighting configuration.",
-    "classification": "coding.complex; frontend visual dashboard refactor and backend scoring logic weight calibration",
+    "goal": "Align edit project config naming, implement endpoint whitelist filtering, and fix Jira keep-alive sync worker crash.",
+    "classification": "coding.complex; backend sync worker batch query fix and dynamic whitelist filters",
     "phase": "complete",
     "constraints": [
       "Use design-taste guidelines for visual layouts and align styles to Dark Tech aesthetics.",
@@ -9,27 +9,25 @@
       "Stage and commit only intentional source modifications, leaving unrelated temp files unstaged."
     ],
     "decisions": [
-      "Added BaseScore and BaseScoreWeight columns to ProjectConfig model database schema.",
-      "Updated project handlers to support binding and storing base score and weight configurations.",
-      "Calibrated compound scoring calculation formula to weight-adjust PHDI with Base Score.",
-      "Resolved active project descriptions in ProjectHealthTelemetry dynamically on mount.",
-      "Appended green project tag badges to Kanban cards and override console headers in DecisionDashboard."
+      "Resolved formProjectName dynamically in startEdit using mapped project configurations in ProjectConfig.svelte.",
+      "Filtered GET /api/projects/config and GET /api/projects/scores by s.config.Jira.SyncProjects to exclude dirty items.",
+      "Restricted project scoring to keys that conform to Jira key format and are in SyncProjects.",
+      "Added strict format check (regex-like) for TaskIDs in jira_worker's keep-alive loop to prevent Jira 400 Bad Request error.",
+      "Restricted keep-alive query keys to configured SyncProjects only."
     ],
     "findings": [
-      "The raw telemetry labels from backend already carry the structured project name.",
-      "Caching key-to-name descriptions in Svelte reactive mapping resolves legacy configuration key records dynamically without database schema migrations."
+      "Jira search API throws a 400 error for the whole batch if even one key is malformed (e.g. user name or process name), causing all valid keys to fail syncing."
     ],
     "touched_files": [
-      "internal/db/db.go",
+      "internal/server/jira_worker.go",
       "internal/server/project_handlers.go",
       "internal/telemetry/project_scorer.go",
-      "web/src/components/DecisionDashboard.svelte",
-      "web/src/components/ProjectHealthTelemetry.svelte",
       "web/src/components/config/ProjectConfig.svelte"
     ],
     "validation": [
-      "npm run build: passed successfully without typescript or svelte compile issues.",
-      "go build check: backend build passed."
+      "npm run build: passed successfully.",
+      "go build check: backend build passed.",
+      "go test ./internal/telemetry ./internal/server: passed successfully."
     ],
     "blockers": [],
     "next": "Deliver final status to the user and prompt verification."
