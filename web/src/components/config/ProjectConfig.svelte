@@ -113,11 +113,24 @@
     successMsg = '';
   }
 
+  function cleanProjectName(name: string): string {
+    if (!name) return '';
+    const lastOpenParen = name.lastIndexOf('(');
+    const lastCloseParen = name.lastIndexOf(')');
+    if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
+      const potentialKey = name.substring(lastOpenParen + 1, lastCloseParen).trim();
+      if (potentialKey && /^[A-Z0-9]{2,10}$/i.test(potentialKey)) {
+        return name.substring(0, lastOpenParen).trim();
+      }
+    }
+    return name;
+  }
+
   function startEdit(project: ProjectConfig) {
     isEditing = true;
     editingProject = project;
     const keyUpper = project.project_key.toUpperCase();
-    formProjectName = jiraProjectMap[keyUpper] || project.project_name;
+    formProjectName = cleanProjectName(jiraProjectMap[keyUpper] || project.project_name);
     formProjectKey = project.project_key;
     formBasePriority = project.base_priority || 'P2';
     formProjectPhase = project.project_phase || '交付';
@@ -225,9 +238,9 @@
               <tr>
                 <td class="font-mono text-bold highlight-key">
                   {#if jiraProjectMap[project.project_key.toUpperCase()]}
-                    {jiraProjectMap[project.project_key.toUpperCase()]} <span class="project-key-label">({project.project_key})</span>
+                    {cleanProjectName(jiraProjectMap[project.project_key.toUpperCase()])} <span class="project-key-label">({project.project_key})</span>
                   {:else}
-                    {project.project_name} <span class="project-key-label">({project.project_key})</span>
+                    {cleanProjectName(project.project_name)} <span class="project-key-label">({project.project_key})</span>
                   {/if}
                 </td>
                 <td>

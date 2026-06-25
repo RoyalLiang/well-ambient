@@ -65,6 +65,29 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		return false
 	}
 
+	// Global name map based on any task's Repo label (e.g. "PRJ23003-重庆赛力斯三厂-QTruck (CHQ)")
+	keyToName := make(map[string]string)
+	namePrefixToName := make(map[string]string) // e.g. "PRJ23003" -> "PRJ23003-重庆赛力斯三厂-QTruck"
+	for _, t := range tasks {
+		if t.Repo != "" && t.Repo != "-" {
+			idxOpen := strings.LastIndex(t.Repo, "(")
+			idxClose := strings.LastIndex(t.Repo, ")")
+			if idxOpen > 0 && idxClose > idxOpen {
+				key := strings.TrimSpace(strings.ToUpper(t.Repo[idxOpen+1 : idxClose]))
+				name := strings.TrimSpace(t.Repo[:idxOpen])
+				if key != "" && name != "" {
+					keyToName[key] = name
+					// Check if name has a prefix before "-"
+					idxDash := strings.Index(name, "-")
+					if idxDash > 0 {
+						prefix := strings.TrimSpace(strings.ToUpper(name[:idxDash]))
+						namePrefixToName[prefix] = name
+					}
+				}
+			}
+		}
+	}
+
 	// 1. Group tasks by project key (prefix before "-")
 	projectTasks := make(map[string][]db.TaskTelemetry)
 	for _, task := range tasks {
@@ -80,14 +103,30 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 	var scores []db.ProjectScore
 
 	for projKey, tList := range projectTasks {
-		// Try to extract clean project name from task's Repo label (e.g. "PRJ23003-重庆赛力斯三厂-QTruck (CHQ)")
+		projKeyUpper := strings.ToUpper(projKey)
 		extractedName := ""
-		for _, t := range tList {
-			if t.Repo != "" && t.Repo != "-" {
-				idxOpen := strings.LastIndex(t.Repo, "(")
-				if idxOpen > 0 {
-					extractedName = strings.TrimSpace(t.Repo[:idxOpen])
-					break
+
+		// 1. Try key map directly
+		if name, ok := keyToName[projKeyUpper]; ok {
+			extractedName = name
+		}
+
+		// 2. Try prefix map if not found
+		if extractedName == "" {
+			if name, ok := namePrefixToName[projKeyUpper]; ok {
+				extractedName = name
+			}
+		}
+
+		// 3. Fallback to scanning this project's tasks (local check)
+		if extractedName == "" {
+			for _, t := range tList {
+				if t.Repo != "" && t.Repo != "-" {
+					idxOpen := strings.LastIndex(t.Repo, "(")
+					if idxOpen > 0 {
+						extractedName = strings.TrimSpace(t.Repo[:idxOpen])
+						break
+					}
 				}
 			}
 		}
@@ -99,6 +138,11 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 			defaultName := projKey + "项目"
 			if extractedName != "" {
 				defaultName = extractedName
+				// Avoid UNIQUE name collision: check if name already exists for other key
+				var existingWithSameName db.ProjectConfig
+				if errCheck := db.DB.Where("project_name = ? AND project_key != ?", defaultName, projKey).First(&existingWithSameName).Error; errCheck == nil {
+					defaultName = fmt.Sprintf("%s (%s)", extractedName, projKey)
+				}
 			}
 			// Auto create a default project config
 			config = db.ProjectConfig{
@@ -113,8 +157,18 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		} else {
 			// Auto correct legacy default name (like "CHQ项目") to full clean name if available
 			if extractedName != "" && (config.ProjectName == "" || config.ProjectName == projKey+"项目" || strings.HasSuffix(config.ProjectName, "项目")) {
-				config.ProjectName = extractedName
+				targetName := extractedName
+				// Avoid UNIQUE name collision: check if name already exists for other key
+				var existingWithSameName db.ProjectConfig
+				if errCheck := db.DB.Where("project_name = ? AND project_key != ?", targetName, projKey).First(&existingWithSameName).Error; errCheck == nil {
+					targetName = fmt.Sprintf("%s (%s)", extractedName, projKey)
+				}
+
+				config.ProjectName = targetName
 				db.DB.Save(&config)
+
+				// ALSO update all past ProjectScore records for this project key to prevent legacy names showing in history
+				db.DB.Model(&db.ProjectScore{}).Where("project_key = ?", projKey).Update("project_name", targetName)
 			}
 		}
 

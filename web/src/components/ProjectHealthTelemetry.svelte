@@ -22,6 +22,21 @@
   let errorMsg = '';
   let searchQuery = '';
   let expandedProjectKey: string | null = null; // 用于展开诊断行
+  let isPanelCollapsed = true; // 默认折叠
+
+  // Details Modal states
+  let showDetailsModal = false;
+  let selectedProjectScore: ProjectScore | null = null;
+
+  function showProjectDetails(score: ProjectScore) {
+    selectedProjectScore = score;
+    showDetailsModal = true;
+  }
+
+  function closeDetailsModal() {
+    showDetailsModal = false;
+    selectedProjectScore = null;
+  }
 
   async function fetchScoresAndConfigs() {
     loading = true;
@@ -79,16 +94,29 @@
     await fetchScoresAndConfigs();
   });
 
+  function cleanProjectName(name: string): string {
+    if (!name) return '';
+    const lastOpenParen = name.lastIndexOf('(');
+    const lastCloseParen = name.lastIndexOf(')');
+    if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
+      const potentialKey = name.substring(lastOpenParen + 1, lastCloseParen).trim();
+      if (potentialKey && /^[A-Z0-9]{2,10}$/i.test(potentialKey)) {
+        return name.substring(0, lastOpenParen).trim();
+      }
+    }
+    return name;
+  }
+
   function getDisplayName(score: ProjectScore): string {
     const keyUpper = score.project_key.toUpperCase();
     if (jiraProjectMap[keyUpper]) {
-      return jiraProjectMap[keyUpper];
+      return cleanProjectName(jiraProjectMap[keyUpper]);
     }
     const conf = projectConfigs.find(c => c.project_key.toUpperCase() === keyUpper);
     if (conf && conf.project_name && conf.project_name !== `${score.project_key}项目`) {
-      return conf.project_name;
+      return cleanProjectName(conf.project_name);
     }
-    return score.project_name || score.project_key;
+    return cleanProjectName(score.project_name) || score.project_key;
   }
 
   $: filteredScores = scores.filter(s => {
