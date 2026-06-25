@@ -3,6 +3,7 @@
   import CryptoJS from 'crypto-js';
   import TaskKanban from './components/TaskKanban.svelte';
   import Deconstructor from './components/Deconstructor.svelte';
+  import ProjectHealthTelemetry from './components/ProjectHealthTelemetry.svelte';
   import DecisionDashboard from './components/DecisionDashboard.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import DemandKanban from './components/DemandKanban.svelte';
@@ -742,6 +743,9 @@
   <section class="app-content-shell">
     {#if activeTab === 'dashboard'}
       <div class="dashboard-content">
+        <!-- Project Health Telemetry -->
+        <ProjectHealthTelemetry />
+
         <!-- AI Deconstructor -->
         <Deconstructor />
 

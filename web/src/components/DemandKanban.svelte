@@ -274,10 +274,6 @@
   let scheduleSortMode: ScheduleSortMode = 'risk';
   let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
 
-  let projectScores: any[] = [];
-  let selectedScoreProject = '';
-  let projectScoresLoading = false;
-  let showScorerConsole = false;
   let projectConfigs: any[] = [];
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
@@ -854,38 +850,13 @@
     return a.demand_id.localeCompare(b.demand_id);
   }
 
-  async function fetchProjectScores() {
-    projectScoresLoading = true;
-    const token = localStorage.getItem('jwt_token');
-    try {
-      const res = await fetch('/api/projects/scores', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        projectScores = await res.json();
-        if (projectScores.length > 0 && !selectedScoreProject) {
-          selectedScoreProject = projectScores[0].project_key;
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch project scores:', err);
-    } finally {
-      projectScoresLoading = false;
-    }
-  }
 
-  function getScoreColorClass(score: number): string {
-    if (score >= 90) return 'score-excellent';
-    if (score >= 70) return 'score-good';
-    return 'score-risk';
-  }
 
   async function fetchSchedule() {
     scheduleLoading = true;
     scheduleErrorMsg = '';
     const token = localStorage.getItem('jwt_token');
     try {
-      fetchProjectScores(); // 联动获取打分数据
       fetchProjectConfigs(); // 联动获取项目配置数据
 
       const res = await fetch('/api/schedule', {
@@ -1372,111 +1343,6 @@
         {demands.length} active demands
       {/if}
     </div>
-  </div>
-
-  <!-- 🧠 大脑项目健康遥测控制台入口（移至顶层，全视图通用） -->
-  <div class="brain-console-wrapper" style="margin-bottom: 20px;">
-    <button 
-      class="brain-toggle-btn font-mono" 
-      class:is-active={showScorerConsole} 
-      on:click={() => {
-        showScorerConsole = !showScorerConsole;
-        if (showScorerConsole && projectScores.length === 0) {
-          fetchProjectScores();
-        }
-      }}
-    >
-      {showScorerConsole ? '🧠 收起大脑项目健康遥测' : '🧠 展开大脑项目健康遥测与决策诊断'}
-    </button>
-
-    {#if showScorerConsole}
-      {@const activeScore = projectScores.find(p => p.project_key === selectedScoreProject)}
-      <div class="brain-console-card glass-panel" transition:slide>
-        {#if projectScoresLoading}
-          <div class="brain-loading font-mono">大脑遥测分析中...</div>
-        {:else if projectScores.length === 0}
-          <div class="brain-empty font-mono">暂无项目打分遥测数据，请录入任务后刷新。</div>
-        {:else}
-          <div class="brain-console-layout">
-            <!-- 项目选择侧栏 -->
-            <div class="brain-project-list">
-              <span class="console-section-label">遥测项目</span>
-              {#each projectScores as p}
-                <button 
-                  class="brain-proj-btn" 
-                  class:active={selectedScoreProject === p.project_key}
-                  on:click={() => selectedScoreProject = p.project_key}
-                >
-                  <span class="proj-key font-mono">{p.project_key}</span>
-                  <strong class="proj-score font-mono {getScoreColorClass(p.compound_score)}">{p.compound_score}分</strong>
-                </button>
-              {/each}
-            </div>
-
-            {#if activeScore}
-              <!-- 分数圆环与主诊断 -->
-              <div class="brain-health-core">
-                <div class="radial-score-box">
-                  <div class="radial-ring {getScoreColorClass(activeScore.compound_score)}">
-                    <span class="radial-score font-mono">{activeScore.compound_score}</span>
-                    <span class="radial-label font-mono">PHDI健康度</span>
-                  </div>
-                </div>
-                <div class="diagnostic-bubble font-mono {getScoreColorClass(activeScore.compound_score)}">
-                  <span class="bubble-title">🧠 大脑风控诊断意见</span>
-                  <p>{activeScore.diagnostic}</p>
-                </div>
-              </div>
-
-              <!-- 细分维度雷达刻度条 -->
-              <div class="brain-dimension-board">
-                <span class="console-section-label">多维健康度诊断</span>
-                
-                <div class="dimension-row">
-                  <div class="dim-label">
-                    <span>进度排期健康 (SH)</span>
-                    <strong class="font-mono">{activeScore.schedule_health_score}</strong>
-                  </div>
-                  <div class="dim-bar-bg">
-                    <span class="dim-bar-fill is-blue" style="width: {activeScore.schedule_health_score}%"></span>
-                  </div>
-                </div>
-
-                <div class="dimension-row">
-                  <div class="dim-label">
-                    <span>代码与工程质量 (EQ)</span>
-                    <strong class="font-mono">{activeScore.engineering_quality}</strong>
-                  </div>
-                  <div class="dim-bar-bg">
-                    <span class="dim-bar-fill is-emerald" style="width: {activeScore.engineering_quality}%"></span>
-                  </div>
-                </div>
-
-                <div class="dimension-row">
-                  <div class="dim-label">
-                    <span>指派与协同效率 (CE)</span>
-                    <strong class="font-mono">{activeScore.collaboration_effic}</strong>
-                  </div>
-                  <div class="dim-bar-bg">
-                    <span class="dim-bar-fill is-amber" style="width: {activeScore.collaboration_effic}%"></span>
-                  </div>
-                </div>
-
-                <div class="dimension-row">
-                  <div class="dim-label">
-                    <span>稳定性与缺陷控制 (SI)</span>
-                    <strong class="font-mono">{activeScore.stability_index}</strong>
-                  </div>
-                  <div class="dim-bar-bg">
-                    <span class="dim-bar-fill is-rose" style="width: {activeScore.stability_index}%"></span>
-                  </div>
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
   </div>
 
   {#if loading && demands.length === 0 && activeDemandView === 'board'}

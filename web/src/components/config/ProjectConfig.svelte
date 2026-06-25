@@ -32,18 +32,52 @@
 
   // Dropdown controls
   let showKeyDropdown = false;
+  let jiraProjectMap: {[key: string]: string} = {};
 
   $: availableKeys = syncProjects.filter(key => {
     return !projects.some(p => p.project_key.toUpperCase() === key.toUpperCase());
   });
 
-  $: filteredKeys = availableKeys.filter(key => 
-    key.toLowerCase().includes(formProjectKey.toLowerCase())
-  );
+  $: filteredKeys = availableKeys.filter(key => {
+    const q = formProjectKey.toLowerCase();
+    const name = jiraProjectMap[key.toUpperCase()] || '';
+    return key.toLowerCase().includes(q) || name.toLowerCase().includes(q);
+  });
 
   onMount(async () => {
-    await fetchProjects();
+    await Promise.all([fetchProjects(), fetchJiraProjectMap()]);
   });
+
+  async function fetchJiraProjectMap() {
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/agenda/summary', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.agenda_items || [];
+        const newMap: {[key: string]: string} = {};
+        items.forEach((item: any) => {
+          if (item.repo) {
+            const repoStr = item.repo.trim();
+            const lastOpenParen = repoStr.lastIndexOf('(');
+            const lastCloseParen = repoStr.lastIndexOf(')');
+            if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
+              const key = repoStr.substring(lastOpenParen + 1, lastCloseParen).trim().toUpperCase();
+              const name = repoStr.substring(0, lastOpenParen).trim();
+              if (key && name) {
+                newMap[key] = name;
+              }
+            }
+          }
+        });
+        jiraProjectMap = newMap;
+      }
+    } catch (err) {
+      console.error('Failed to fetch agenda summary for project autocomplete:', err);
+    }
+  }
 
   async function fetchProjects() {
     loading = true;
@@ -178,7 +212,11 @@
             {#each projects as project}
               <tr>
                 <td class="font-mono text-bold highlight-key">
-                  {project.project_name} <span class="project-key-label">({project.project_key})</span>
+                  {#if jiraProjectMap[project.project_key.toUpperCase()]}
+                    {jiraProjectMap[project.project_key.toUpperCase()]} <span class="project-key-label">({project.project_key})</span>
+                  {:else}
+                    {project.project_name} <span class="project-key-label">({project.project_key})</span>
+                  {/if}
                 </td>
                 <td>
                   <span class="phase-badge phase-{project.project_phase || '交付'}">
@@ -230,8 +268,22 @@
           {#if showKeyDropdown}
             <div class="custom-select-dropdown">
               {#each filteredKeys as key}
-                <button type="button" class="dropdown-item" on:click={() => { formProjectKey = key; showKeyDropdown = false; }}>
-                  {key}
+                <button 
+                  type="button" 
+                  class="dropdown-item" 
+                  on:click={() => { 
+                    formProjectKey = key; 
+                    if (jiraProjectMap[key.toUpperCase()]) {
+                      formProjectName = jiraProjectMap[key.toUpperCase()];
+                    }
+                    showKeyDropdown = false; 
+                  }}
+                >
+                  {#if jiraProjectMap[key.toUpperCase()]}
+                    {jiraProjectMap[key.toUpperCase()]} ({key})
+                  {:else}
+                    {key}
+                  {/if}
                 </button>
               {:else}
                 <div class="dropdown-empty">没有匹配的待配置项目键</div>
