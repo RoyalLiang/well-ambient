@@ -37,10 +37,12 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		if err != nil {
 			// Auto create a default project config
 			config = db.ProjectConfig{
-				ProjectKey:   projKey,
-				ProjectName:  projKey + "项目",
-				BasePriority: "P1", // Default priority
-				GitReposJSON: "[]",
+				ProjectKey:      projKey,
+				ProjectName:     projKey + "项目",
+				BasePriority:    "P1", // Default priority
+				GitReposJSON:    "[]",
+				BaseScore:       60.0,
+				BaseScoreWeight: 0.10,
 			}
 			db.DB.Create(&config)
 		}
@@ -51,8 +53,17 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		ce := computeCollaborationEfficiency(tList)
 		si := computeStabilityIndex(tList)
 
-		// Compound Health Score (PHDI)
-		phdi := 0.30*sh + 0.25*eq + 0.25*ce + 0.20*si
+		// Compound Health Score (PHDI) with Base Score Integration
+		baseWeight := config.BaseScoreWeight
+		if baseWeight < 0 {
+			baseWeight = 0
+		} else if baseWeight > 1 {
+			baseWeight = 1
+		}
+		baseScore := config.BaseScore
+
+		metricsScore := 0.30*sh + 0.25*eq + 0.25*ce + 0.20*si
+		phdi := baseWeight*baseScore + (1.0-baseWeight)*metricsScore
 
 		// Generate smart diagnostic text based on details
 		diagnostic := generateDiagnostic(projKey, config.BasePriority, sh, eq, ce, si, tList)

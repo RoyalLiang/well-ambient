@@ -23,11 +23,13 @@ func (s *Server) handleGetProjectConfigs(w http.ResponseWriter, r *http.Request)
 // handleSaveProjectConfig saves or updates a project configuration
 func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ProjectKey   string `json:"project_key"`
-		ProjectName  string `json:"project_name"`
-		GitReposJSON string `json:"git_repos_json"`
-		BasePriority string `json:"base_priority"`
-		ProjectPhase string `json:"project_phase"`
+		ProjectKey      string  `json:"project_key"`
+		ProjectName     string  `json:"project_name"`
+		GitReposJSON    string  `json:"git_repos_json"`
+		BasePriority    string  `json:"base_priority"`
+		ProjectPhase    string  `json:"project_phase"`
+		BaseScore       float64 `json:"base_score"`
+		BaseScoreWeight float64 `json:"base_score_weight"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -53,6 +55,8 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		config.GitReposJSON = input.GitReposJSON
 		config.BasePriority = input.BasePriority
 		config.ProjectPhase = phase
+		config.BaseScore = input.BaseScore
+		config.BaseScoreWeight = input.BaseScoreWeight
 		config.UpdatedAt = time.Now()
 		if err := db.DB.Save(&config).Error; err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -61,13 +65,15 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	} else {
 		// Create
 		config = db.ProjectConfig{
-			ProjectKey:   input.ProjectKey,
-			ProjectName:  input.ProjectName,
-			GitReposJSON: input.GitReposJSON,
-			BasePriority: input.BasePriority,
-			ProjectPhase: phase,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
+			ProjectKey:      input.ProjectKey,
+			ProjectName:     input.ProjectName,
+			GitReposJSON:    input.GitReposJSON,
+			BasePriority:    input.BasePriority,
+			ProjectPhase:    phase,
+			BaseScore:       input.BaseScore,
+			BaseScoreWeight: input.BaseScoreWeight,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
 		}
 		if err := db.DB.Create(&config).Error; err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

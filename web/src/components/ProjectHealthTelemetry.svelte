@@ -17,6 +17,7 @@
 
   let scores: ProjectScore[] = [];
   let projectConfigs: any[] = [];
+  let jiraProjectMap: {[key: string]: string} = {};
   let loading = false;
   let errorMsg = '';
   let searchQuery = '';
@@ -42,6 +43,31 @@
       if (resConfigs.ok) {
         projectConfigs = await resConfigs.json();
       }
+
+      // 3. Fetch agenda summary for project name matching
+      const resSummary = await fetch('/api/agenda/summary', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (resSummary.ok) {
+        const summaryData = await resSummary.json();
+        const items = summaryData.agenda_items || [];
+        const newMap: {[key: string]: string} = {};
+        items.forEach((item: any) => {
+          if (item.repo) {
+            const repoStr = item.repo.trim();
+            const lastOpenParen = repoStr.lastIndexOf('(');
+            const lastCloseParen = repoStr.lastIndexOf(')');
+            if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
+              const key = repoStr.substring(lastOpenParen + 1, lastCloseParen).trim().toUpperCase();
+              const name = repoStr.substring(0, lastOpenParen).trim();
+              if (key && name) {
+                newMap[key] = name;
+              }
+            }
+          }
+        });
+        jiraProjectMap = newMap;
+      }
     } catch (err: any) {
       errorMsg = err.message || '加载项目健康度遥测失败';
     } finally {
@@ -54,11 +80,15 @@
   });
 
   function getDisplayName(score: ProjectScore): string {
-    if (score.project_name && score.project_name !== score.project_key) {
-      return score.project_name;
+    const keyUpper = score.project_key.toUpperCase();
+    if (jiraProjectMap[keyUpper]) {
+      return jiraProjectMap[keyUpper];
     }
-    const conf = projectConfigs.find(c => c.project_key.toUpperCase() === score.project_key.toUpperCase());
-    return conf ? conf.project_name : score.project_name || score.project_key;
+    const conf = projectConfigs.find(c => c.project_key.toUpperCase() === keyUpper);
+    if (conf && conf.project_name && conf.project_name !== `${score.project_key}项目`) {
+      return conf.project_name;
+    }
+    return score.project_name || score.project_key;
   }
 
   $: filteredScores = scores.filter(s => {

@@ -711,6 +711,10 @@
                     {item.risk_level === 'critical' ? '危急卡点' : '排期预警'}
                   </span>
                 </div>
+
+                {#if item.repo && item.repo !== '-'}
+                  <div class="tile-project font-mono" title={item.repo}>📁 {item.repo}</div>
+                {/if}
                 
                 <h4 class="tile-title">{item.title}</h4>
                 
@@ -736,6 +740,9 @@
           <div class="override-info">
             <div class="override-title-row">
               <span class="task-id-badge font-mono">{selectedItem.task_id}</span>
+              {#if selectedItem.repo && selectedItem.repo !== '-'}
+                <span class="project-tag font-mono" title={selectedItem.repo}>📁 {selectedItem.repo}</span>
+              {/if}
               <span class="type-badge {selectedItem.issue_type === 'bug' ? 'badge-bug' : 'badge-task'}">
                 {selectedItem.issue_type === 'bug' ? '缺陷修复' : '功能需求'}
               </span>
@@ -966,6 +973,35 @@
 </div>
 
 <style>
+  .tile-project {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    align-self: flex-start;
+  }
+
+  .project-tag {
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #34d399;
+    padding: 2px 8px;
+    border-radius: 4px;
+    max-width: 240px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .decision-war-room {
     display: flex;
     flex-direction: column;

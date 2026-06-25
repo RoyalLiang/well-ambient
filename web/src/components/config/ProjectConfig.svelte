@@ -14,6 +14,8 @@
     git_repos_json?: string;
     base_priority: string; // P0 - P5
     project_phase?: string; // POC, 交付, 运营, 售后
+    base_score?: number;
+    base_score_weight?: number;
   }
 
   let projects: ProjectConfig[] = [];
@@ -29,6 +31,8 @@
   let formProjectKey = '';
   let formBasePriority = 'P2'; // Default to P2
   let formProjectPhase = '交付'; // Default to 交付
+  let formBaseScore = 60.0;
+  let formBaseScoreWeightPercent = 10;
 
   // Dropdown controls
   let showKeyDropdown = false;
@@ -103,6 +107,8 @@
     formProjectKey = '';
     formBasePriority = 'P2';
     formProjectPhase = '交付';
+    formBaseScore = 60.0;
+    formBaseScoreWeightPercent = 10;
     errorMsg = '';
     successMsg = '';
   }
@@ -114,6 +120,8 @@
     formProjectKey = project.project_key;
     formBasePriority = project.base_priority || 'P2';
     formProjectPhase = project.project_phase || '交付';
+    formBaseScore = project.base_score !== undefined ? project.base_score : 60.0;
+    formBaseScoreWeightPercent = project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10;
     errorMsg = '';
     successMsg = '';
   }
@@ -134,6 +142,8 @@
       project_name: formProjectName.trim(),
       base_priority: formBasePriority,
       project_phase: formProjectPhase,
+      base_score: formBaseScore,
+      base_score_weight: formBaseScoreWeightPercent / 100,
       git_repos_json: "[]"
     };
 
@@ -205,6 +215,7 @@
               <th>项目 (Project)</th>
               <th>运作阶段</th>
               <th>优先级</th>
+              <th>基础分 (权重)</th>
               <th style="text-align: right;">操作</th>
             </tr>
           </thead>
@@ -226,6 +237,12 @@
                 <td>
                   <span class="priority-badge p-{project.base_priority.toLowerCase()}">
                     {project.base_priority}
+                  </span>
+                </td>
+                <td>
+                  <span class="font-mono">
+                    {project.base_score !== undefined ? project.base_score : 60}分 
+                    ({project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10}%)
                   </span>
                 </td>
                 <td style="text-align: right;">
@@ -323,6 +340,30 @@
             <option value="P4">P4 - 日常维护</option>
             <option value="P5">P5 - 辅助支持</option>
           </select>
+        </div>
+      </div>
+
+      <div class="form-group-row">
+        <div class="flex-1">
+          <TextInput
+            id="project-base-score"
+            label="项目基础分 (Base Score)"
+            type="number"
+            bind:value={formBaseScore}
+            required={true}
+            helperText="项目基础打分（0-100分），作为健康度的计算起点。"
+          />
+        </div>
+
+        <div class="flex-1">
+          <TextInput
+            id="project-base-score-weight"
+            label="基础分权重 (Base Weight, %)"
+            type="number"
+            bind:value={formBaseScoreWeightPercent}
+            required={true}
+            helperText="基础分占综合健康度 PHDI 的计算权重比例（0-100%）。"
+          />
         </div>
       </div>
 
