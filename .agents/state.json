@@ -1,50 +1,33 @@
 {
   "warm_memory": {
-    "goal": "Polish the Settings AI engine, permission tree, and policy authorization admin surfaces.",
-    "classification": "coding.complex; frontend admin UI refactor plus backend permission catalog endpoint",
+    "goal": "Optimize project config dropdown autocompletion, unify project name format, and reconstruct brain health telemetry console to a table on collaborative kanban dashboard.",
+    "classification": "coding.complex; frontend visual dashboard refactor and configuration data alignment",
     "phase": "complete",
     "constraints": [
-      "Use taste-skill/design-taste guidance for frontend UI changes and keep the admin console restrained, dense, and dark-system aligned.",
-      "Treat AI engine provider/model setup separately from AI context facts used by demand deconstruction.",
-      "Permission growth should come from seeded backend permissions, not a fixed frontend matrix.",
-      "Do not touch or stage unrelated dirty files such as `well-ambient.db` or `internal/server/task_status.md`.",
-      "Commit only intentional source/config/docs/task-memory changes."
+      "Use design-taste guidelines for visual layouts and align styles to Dark Tech aesthetics.",
+      "Unify project format to ProjectNumber-ProjectName-CarModel (Key) everywhere.",
+      "Stage and commit only intentional source modifications, leaving unrelated temp files unstaged."
     ],
     "decisions": [
-      "Split Settings AI into `AI 引擎配置` and `上下文事实` tabs via `AIConfig` view modes.",
-      "Restyled AI context fact editing with chip choice grids, custom range inputs, and dark-system registry/preview panels.",
-      "Added `GET /api/permissions` and a permission DTO so Settings can fetch the live catalog.",
-      "Replaced the wide permission matrix with a namespace-derived permission tree and per-group coverage toggles.",
-      "Rebuilt policy authorization creation as templates, segmented choices, action chips, state toggle, and priority stepper.",
-      "Added `Button.size` support because existing Settings/GitLab config call sites already use `size=\"small\"`."
+      "Relocated telemetry console out of Demand Kanban to Collaborative Kanban dashboard above Deconstructor.",
+      "Designed ProjectHealthTelemetry using a table structure with progress bars and expandable rows for AI diagnosis logs.",
+      "Built active project key-to-name lookup (jiraProjectMap) from /api/agenda/summary on ProjectConfig mount.",
+      "Enabled Key dropdown list autocomplete in config to autofill Name and Key inputs upon selecting a item."
     ],
     "findings": [
-      "The old `permissionMeta` table was the main scalability risk: new permissions would not appear until frontend code changed.",
-      "The policy form's native selects/number/checkbox made the page feel like raw schema editing rather than guided authorization.",
-      "The AI context registry had many unstyled classes and raw selects/ranges; splitting the tab and adding component-like controls clarifies intent.",
-      "Full Go tests need loopback access because existing GitLab webhook tests use `httptest.NewServer`; sandboxed runs fail on local port binding.",
-      "`pnpm check` still has pre-existing TaskKanban/App errors outside this change; production build passes."
+      "The raw telemetry labels from backend already carry the structured project name.",
+      "Caching key-to-name descriptions in Svelte reactive mapping resolves legacy configuration key records dynamically without database schema migrations."
     ],
     "touched_files": [
-      "internal/server/policy_authorization_test.go",
-      "internal/server/server.go",
-      "internal/server/user_handlers.go",
-      "web/src/components/SettingsPanel.svelte",
-      "web/src/components/config/AIConfig.svelte",
-      "web/src/components/shared/Button.svelte",
-      "task_plan.md",
-      "findings.md",
-      "progress.md",
-      ".agents/state.json"
+      "web/src/components/ProjectHealthTelemetry.svelte",
+      "web/src/App.svelte",
+      "web/src/components/DemandKanban.svelte",
+      "web/src/components/config/ProjectConfig.svelte"
     ],
     "validation": [
-      "pnpm build in web: passed with existing Svelte accessibility warnings.",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run TestHandleListPermissionsReturnsSeededCatalog: passed.",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server/authz ./internal/agenda ./internal/config ./internal/kanban ./internal/telemetry: passed.",
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server and ./...: blocked by sandbox `listen tcp6 [::1]:0: bind: operation not permitted` from existing httptest server tests.",
-      "pnpm check in web: fails on pre-existing TaskKanban/App TypeScript errors; touched Settings/AI/Button files no longer add errors."
+      "npm run build: passed successfully without typescript or svelte compile issues."
     ],
     "blockers": [],
-    "next": "Stage and commit only intentional source/task-memory changes, excluding unrelated `well-ambient.db` and `internal/server/task_status.md`."
+    "next": "Deliver final status to the user and prompt verification."
   }
 }
