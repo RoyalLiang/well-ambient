@@ -2192,7 +2192,7 @@
                 <button type="button" class="estimate-clear-btn font-mono" on:click={clearScheduleEstimate}>清空</button>
               </div>
             </div>
-            <div class="estimate-manual-grid" class:has-days={schedEstimateDays > 0}>
+            <div class="estimate-manual-grid">
               <label class="estimate-field" for="sched-estimate-hours">
                 <span>预估小时</span>
                 <input
@@ -2206,12 +2206,6 @@
                   on:input={updateScheduleEstimateHours}
                 />
               </label>
-              {#if schedEstimateDays > 0}
-                <div class="estimate-reference-field" aria-live="polite">
-                  <span>折算天数</span>
-                  <strong>{formatOneDecimal(schedEstimateDays)} 天</strong>
-                </div>
-              {/if}
               <div class="estimate-difficulty-field difficulty-select-shell">
                 <span id="sched-difficulty-label">难度</span>
                 <button

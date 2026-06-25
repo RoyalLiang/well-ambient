@@ -143,6 +143,17 @@
       expandedProjectKey = key;
     }
   }
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        if (node.parentNode) {
+          node.parentNode.removeChild(node);
+        }
+      }
+    };
+  }
 </script>
 
 <div class="telemetry-panel glass-panel">
@@ -151,7 +162,7 @@
       <span class="eyebrow">SYSTEM HEALTH METRICS</span>
       <h2>
         <span class="pulse-status-dot online"></span>
-        🧠 大脑项目健康遥测与决策诊断
+        🧠 项目健康遥测
         <span class="collapse-chevron" class:is-collapsed={isPanelCollapsed}>
           <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"></polyline>
@@ -293,7 +304,7 @@
   {/if}
 
   {#if showDetailsModal && selectedProjectScore}
-    <div class="modal-backdrop" on:click={closeDetailsModal}>
+    <div class="modal-backdrop" use:portal on:click={closeDetailsModal}>
       <div class="modal-content glass-panel" on:click|stopPropagation>
         <div class="modal-header">
           <h3>📊 {getDisplayName(selectedProjectScore)} 项目详情大盘</h3>
@@ -302,63 +313,10 @@
         
         <div class="modal-body font-mono">
           <div class="dashboard-columns">
-            <!-- 左栏：诊断决策链 -->
+            <!-- 左栏：诊断决策链与大分分析 -->
             <div class="column-left">
-              <div class="detail-section">
-                <h4>📈 PHDI 综合健康度分析</h4>
-                <div class="phdi-display">
-                  <span class="big-score {getScoreColorClass(selectedProjectScore.compound_score)}">
-                    {selectedProjectScore.compound_score} <span class="unit">分</span>
-                  </span>
-                  
-                  <div class="formula-breakdown">
-                    <h5>计算公式权重剖析:</h5>
-                    {#if (projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())?.base_score_weight) !== undefined}
-                      {@const config = projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())}
-                      {@const w = config.base_score_weight}
-                      {@const s = config.base_score}
-                      {@const metricsScore = selectedProjectScore.schedule_health_score * 0.30 + selectedProjectScore.engineering_quality * 0.25 + selectedProjectScore.collaboration_effic * 0.25 + selectedProjectScore.stability_index * 0.20}
-                      
-                      <div class="formula-schematic">
-                        <div class="schematic-node input-node">
-                          <div class="node-label">基础权重设定</div>
-                          <div class="node-value">{s}分 &times; {Math.round(w * 100)}%</div>
-                        </div>
-                        <div class="schematic-connector">+</div>
-                        <div class="schematic-node input-node">
-                          <div class="node-label">过程遥测度量</div>
-                          <div class="node-value">{Math.round(metricsScore * 100)/100}分 &times; {Math.round((1 - w) * 100)}%</div>
-                        </div>
-                        <div class="schematic-connector">=</div>
-                        <div class="schematic-node result-node {getScoreColorClass(selectedProjectScore.compound_score)}">
-                          <div class="node-label">PHDI 综合得分</div>
-                          <div class="node-value">{selectedProjectScore.compound_score}分</div>
-                        </div>
-                      </div>
-                    {:else}
-                      <div class="formula-schematic">
-                        <div class="schematic-node input-node">
-                          <div class="node-label">默认基础设定</div>
-                          <div class="node-value">60分 &times; 10%</div>
-                        </div>
-                        <div class="schematic-connector">+</div>
-                        <div class="schematic-node input-node">
-                          <div class="node-label">度量过程指标</div>
-                          <div class="node-value">{Math.round((selectedProjectScore.compound_score - 6) / 0.9 * 100)/100}分 &times; 90%</div>
-                        </div>
-                        <div class="schematic-connector">=</div>
-                        <div class="schematic-node result-node {getScoreColorClass(selectedProjectScore.compound_score)}">
-                          <div class="node-label">PHDI 综合得分</div>
-                          <div class="node-value">{selectedProjectScore.compound_score}分</div>
-                        </div>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-
               {#if selectedProjectScore.diagnostic}
-                <div class="detail-section" style="margin-top: 20px;">
+                <div class="detail-section">
                   <h4>💡 大脑诊断意见</h4>
                   <div class="diagnostic-panel-modal {getScoreColorClass(selectedProjectScore.compound_score)} font-mono">
                     <div class="diag-header-row">
@@ -369,9 +327,67 @@
                   </div>
                 </div>
               {/if}
+
+              <div class="detail-section" style="margin-top: 10px;">
+                <h4>📈 PHDI 综合健康度分析</h4>
+                <div class="phdi-display">
+                  <div class="phdi-score-row" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 12px; border-bottom: 1px dashed rgba(255, 255, 255, 0.05); padding-bottom: 12px;">
+                    <span class="big-score {getScoreColorClass(selectedProjectScore.compound_score)}">
+                      {selectedProjectScore.compound_score} <span class="unit">分</span>
+                    </span>
+                    <span class="health-badge {getScoreColorClass(selectedProjectScore.compound_score)} font-mono">
+                      {selectedProjectScore.compound_score >= 85 ? '🟢 极佳交付 / 运行健康' : (selectedProjectScore.compound_score >= 70 ? '🟡 部分维度滞后' : '🔴 严重瓶颈高危')}
+                    </span>
+                  </div>
+                  
+                  <div class="formula-breakdown" style="width: 100%;">
+                    <h5 style="margin-top: 0;">计算公式权重剖析:</h5>
+                    {#if (projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())?.base_score_weight) !== undefined}
+                      {@const config = projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())}
+                      {@const w = config.base_score_weight}
+                      {@const s = config.base_score}
+                      {@const metricsScore = selectedProjectScore.schedule_health_score * 0.30 + selectedProjectScore.engineering_quality * 0.25 + selectedProjectScore.collaboration_effic * 0.25 + selectedProjectScore.stability_index * 0.20}
+                      
+                      <div class="formula-schematic">
+                        <div class="schematic-node input-node">
+                          <div class="node-label">基础设定</div>
+                          <div class="node-value">{s}分 &times; {Math.round(w * 100)}%</div>
+                        </div>
+                        <div class="schematic-connector">+</div>
+                        <div class="schematic-node input-node">
+                          <div class="node-label">过程遥测</div>
+                          <div class="node-value">{Math.round(metricsScore * 100)/100}分 &times; {Math.round((1 - w) * 100)}%</div>
+                        </div>
+                        <div class="schematic-connector">=</div>
+                        <div class="schematic-node result-node {getScoreColorClass(selectedProjectScore.compound_score)}">
+                          <div class="node-label">PHDI 综合</div>
+                          <div class="node-value">{selectedProjectScore.compound_score}分</div>
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="formula-schematic">
+                        <div class="schematic-node input-node">
+                          <div class="node-label">默认基础</div>
+                          <div class="node-value">60分 &times; 10%</div>
+                        </div>
+                        <div class="schematic-connector">+</div>
+                        <div class="schematic-node input-node">
+                          <div class="node-label">度量过程</div>
+                          <div class="node-value">{Math.round((selectedProjectScore.compound_score - 6) / 0.9 * 100)/100}分 &times; 90%</div>
+                        </div>
+                        <div class="schematic-connector">=</div>
+                        <div class="schematic-node result-node {getScoreColorClass(selectedProjectScore.compound_score)}">
+                          <div class="node-label">PHDI 综合</div>
+                          <div class="node-value">{selectedProjectScore.compound_score}分</div>
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <!-- 右栏：基础属性与遥测细目 -->
+            <!-- 右栏：基础属性与遥测细目、行动建议 -->
             <div class="column-right">
               <div class="detail-section">
                 <h4>📌 基础属性</h4>
@@ -399,14 +415,19 @@
                 </div>
               </div>
 
-              <div class="detail-section" style="margin-top: 20px;">
+              <div class="detail-section" style="margin-top: 15px;">
                 <h4>📊 核心维度明细</h4>
                 <div class="metrics-grid-vertical">
                   <!-- SH -->
                   <div class="metric-row-card">
-                    <div class="row-header">
+                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
                       <span class="row-title">进度排期健康 [SH]</span>
-                      <span class="row-score text-blue">{selectedProjectScore.schedule_health_score}%</span>
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                        <span class="row-status-tag font-mono {selectedProjectScore.schedule_health_score >= 85 ? 'text-emerald' : (selectedProjectScore.schedule_health_score >= 70 ? 'text-amber' : 'text-rose')}">
+                          {selectedProjectScore.schedule_health_score >= 85 ? '🟢 正常' : (selectedProjectScore.schedule_health_score >= 70 ? '🟡 风险' : '🔴 滞后')}
+                        </span>
+                        <span class="row-score text-blue">{selectedProjectScore.schedule_health_score}%</span>
+                      </div>
                     </div>
                     <div class="row-progress">
                       <span class="bg-blue" style="width: {selectedProjectScore.schedule_health_score}%"></span>
@@ -414,9 +435,14 @@
                   </div>
                   <!-- EQ -->
                   <div class="metric-row-card">
-                    <div class="row-header">
+                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
                       <span class="row-title">工程质量 [EQ]</span>
-                      <span class="row-score text-emerald">{selectedProjectScore.engineering_quality}%</span>
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                        <span class="row-status-tag font-mono {selectedProjectScore.engineering_quality >= 85 ? 'text-emerald' : (selectedProjectScore.engineering_quality >= 70 ? 'text-amber' : 'text-rose')}">
+                          {selectedProjectScore.engineering_quality >= 85 ? '🟢 正常' : (selectedProjectScore.engineering_quality >= 70 ? '🟡 待绑' : '🔴 无提交')}
+                        </span>
+                        <span class="row-score text-emerald">{selectedProjectScore.engineering_quality}%</span>
+                      </div>
                     </div>
                     <div class="row-progress">
                       <span class="bg-emerald" style="width: {selectedProjectScore.engineering_quality}%"></span>
@@ -424,9 +450,14 @@
                   </div>
                   <!-- CE -->
                   <div class="metric-row-card">
-                    <div class="row-header">
+                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
                       <span class="row-title">指派协同效率 [CE]</span>
-                      <span class="row-score text-amber">{selectedProjectScore.collaboration_effic}%</span>
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                        <span class="row-status-tag font-mono {selectedProjectScore.collaboration_effic >= 85 ? 'text-emerald' : (selectedProjectScore.collaboration_effic >= 70 ? 'text-amber' : 'text-rose')}">
+                          {selectedProjectScore.collaboration_effic >= 85 ? '🟢 均衡' : (selectedProjectScore.collaboration_effic >= 70 ? '🟡 偏载' : '🔴 严重不均')}
+                        </span>
+                        <span class="row-score text-amber">{selectedProjectScore.collaboration_effic}%</span>
+                      </div>
                     </div>
                     <div class="row-progress">
                       <span class="bg-amber" style="width: {selectedProjectScore.collaboration_effic}%"></span>
@@ -434,9 +465,14 @@
                   </div>
                   <!-- SI -->
                   <div class="metric-row-card">
-                    <div class="row-header">
+                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
                       <span class="row-title">缺陷与稳定性 [SI]</span>
-                      <span class="row-score text-rose">{selectedProjectScore.stability_index}%</span>
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                        <span class="row-status-tag font-mono {selectedProjectScore.stability_index >= 85 ? 'text-emerald' : (selectedProjectScore.stability_index >= 70 ? 'text-amber' : 'text-rose')}">
+                          {selectedProjectScore.stability_index >= 85 ? '🟢 稳定' : (selectedProjectScore.stability_index >= 70 ? '🟡 新增' : '🔴 高危')}
+                        </span>
+                        <span class="row-score text-rose">{selectedProjectScore.stability_index}%</span>
+                      </div>
                     </div>
                     <div class="row-progress">
                       <span class="bg-rose" style="width: {selectedProjectScore.stability_index}%"></span>
@@ -444,6 +480,44 @@
                   </div>
                 </div>
               </div>
+
+              <!-- 🧠 最强大脑改进建议 -->
+              <div class="detail-section" style="margin-top: 15px;">
+                <h4>🧠 大脑行动建议</h4>
+                <div class="action-recommendations">
+                  {#if selectedProjectScore.schedule_health_score < 85}
+                    <div class="recommendation-item">
+                      <span class="rec-bullet text-rose">⚡</span>
+                      <p>【排期优化】进度维度异常，建议前往 <a href="#/" class="rec-link" on:click|preventDefault={() => { closeDetailsModal(); window.location.hash = '#/demands'; }}>需求看板</a> 补全开发任务截止日或重新排期。</p>
+                    </div>
+                  {/if}
+                  {#if selectedProjectScore.engineering_quality < 85}
+                    <div class="recommendation-item">
+                      <span class="rec-bullet text-amber">⚡</span>
+                      <p>【工程合规】工程关联率偏低，请指导开发人员创建包含 <code>Task ID</code> 的 Git 提交流转记录，或开启 <b>离线排期模式</b>。</p>
+                    </div>
+                  {/if}
+                  {#if selectedProjectScore.collaboration_effic < 85}
+                    <div class="recommendation-item">
+                      <span class="rec-bullet text-blue">⚡</span>
+                      <p>【协同负载】团队负荷指数异常，建议重新平衡分工，调配闲置人力（如外部协同）以解开瓶颈。</p>
+                    </div>
+                  {/if}
+                  {#if selectedProjectScore.stability_index < 85}
+                    <div class="recommendation-item">
+                      <span class="rec-bullet text-rose">⚡</span>
+                      <p>【缺陷治理】当前项目遗留缺陷故障时效过长，建议指派测试人员进入以执行缺陷集中流转推进。</p>
+                    </div>
+                  {/if}
+                  {#if selectedProjectScore.schedule_health_score >= 85 && selectedProjectScore.engineering_quality >= 85 && selectedProjectScore.collaboration_effic >= 85 && selectedProjectScore.stability_index >= 85}
+                    <div class="recommendation-item success">
+                      <span class="rec-bullet text-emerald">✨</span>
+                      <p>【完美交付】本项目全部遥测指标表现完美，团队效能极佳，请继续保持当前的敏捷流转节奏！</p>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
@@ -518,6 +592,107 @@
   }
   .modal-content:hover {
     border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  /* 大分健康度标签 */
+  .health-badge {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+  .health-badge.score-green {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+  }
+  .health-badge.score-yellow {
+    background: rgba(245, 158, 11, 0.1);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+  }
+  .health-badge.score-red {
+    background: rgba(244, 63, 94, 0.12);
+    color: #f43f5e;
+    border: 1px solid rgba(244, 63, 94, 0.3);
+  }
+
+  /* 核心指标行状态标签 */
+  .row-status-tag {
+    font-size: 0.65rem;
+    font-weight: 800;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .row-status-tag.text-emerald {
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.06);
+    border-color: rgba(16, 185, 129, 0.15);
+  }
+  .row-status-tag.text-amber {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.05);
+    border-color: rgba(245, 158, 11, 0.15);
+  }
+  .row-status-tag.text-rose {
+    color: #f43f5e;
+    background: rgba(244, 63, 94, 0.06);
+    border-color: rgba(244, 63, 94, 0.15);
+  }
+
+  /* 智能行动建议 */
+  .action-recommendations {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .recommendation-item {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+
+  .recommendation-item p {
+    margin: 0;
+    color: #94a3b8;
+  }
+
+  .recommendation-item code {
+    background: rgba(255, 255, 255, 0.06);
+    padding: 1px 4px;
+    border-radius: 4px;
+    color: #f1f5f9;
+  }
+
+  .rec-bullet {
+    font-size: 0.8rem;
+    flex-shrink: 0;
+  }
+
+  .rec-link {
+    color: #6366f1;
+    text-decoration: none;
+    font-weight: 700;
+    border-bottom: 1px dashed rgba(99, 102, 241, 0.4);
+    transition: color 0.15s, border-color 0.15s;
+  }
+
+  .rec-link:hover {
+    color: #a5b4fc;
+    border-bottom-color: #a5b4fc;
+  }
+
+  .recommendation-item.success p {
+    color: #34d399;
   }
 
   /* Double column dashboard grid */

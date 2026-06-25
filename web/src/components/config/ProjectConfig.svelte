@@ -333,7 +333,7 @@
         placeholder=""
         bind:value={formProjectName}
         required={true}
-        helperText="展示在大脑项目大盘与诊断报表中的项目中文名。"
+        helperText="展示在项目大盘与诊断报表中的项目中文名。"
       />
 
       <div class="form-group-row">
