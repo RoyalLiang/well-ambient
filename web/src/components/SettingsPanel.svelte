@@ -2135,7 +2135,7 @@
   .settings-container {
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
-    align-items: start;
+    align-items: stretch;
     gap: 28px;
     flex: 1;
     width: 100%;
@@ -2153,12 +2153,11 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    height: auto;
+    height: 100%;
     min-height: 0;
-    max-height: calc(100vh - 48px);
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
+    overflow: visible;
     position: sticky;
     top: 24px;
     scrollbar-width: none; /* Firefox */
@@ -2249,7 +2248,7 @@
 
   .settings-main {
     min-width: 0;
-    height: auto;
+    height: 100%;
     min-height: 0;
     max-height: none;
     display: flex;
@@ -2262,7 +2261,7 @@
   .section-card {
     flex: 1 1 auto;
     min-height: 0;
-    height: auto;
+    height: 100%;
     overflow: visible;
     box-sizing: border-box;
     background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(10, 16, 31, 0.98));

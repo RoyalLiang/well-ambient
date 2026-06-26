@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Button from './shared/Button.svelte';
 
   interface ProjectScore {
@@ -27,6 +27,20 @@
   // Details Modal states
   let showDetailsModal = false;
   let selectedProjectScore: ProjectScore | null = null;
+
+  $: if (typeof document !== 'undefined') {
+    if (showDetailsModal) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+  }
+
+  onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.body.style.overflow = '';
+    }
+  });
 
   function showProjectDetails(score: ProjectScore) {
     selectedProjectScore = score;
@@ -521,10 +535,6 @@
             </div>
           </div>
         </div>
-        
-        <div class="modal-footer">
-          <Button variant="secondary" on:click={closeDetailsModal}>关闭</Button>
-        </div>
       </div>
     </div>
   {/if}
@@ -592,6 +602,23 @@
   }
   .modal-content:hover {
     border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  /* Custom scrollbar for modal-content */
+  .modal-content::-webkit-scrollbar {
+    width: 6px;
+  }
+  .modal-content::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 3px;
+  }
+  .modal-content::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.4);
+    border-radius: 3px;
+    transition: background 0.2s;
+  }
+  .modal-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.7);
   }
 
   /* 大分健康度标签 */
