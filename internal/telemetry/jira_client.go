@@ -183,3 +183,37 @@ func (jc *JiraClient) TransitionIssue(issueKey, transitionID string) error {
 
 	return nil
 }
+
+func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error {
+	var payload map[string]interface{}
+	if assigneeName == "" {
+		payload = map[string]interface{}{
+			"name": nil,
+		}
+	} else {
+		payload = map[string]interface{}{
+			"name": assigneeName,
+		}
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := jc.newRequest("PUT", fmt.Sprintf("/rest/api/2/issue/%s/assignee", issueKey), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira API returned status %s: %s", resp.Status, string(respBytes))
+	}
+	return nil
+}
+

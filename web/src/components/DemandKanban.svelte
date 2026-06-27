@@ -159,7 +159,7 @@
 
   function getSubTasksForDemand(taskGroupId?: string) {
     if (!taskGroupId || taskGroupId === '-' || taskGroupId === '') return [];
-    return allSubTasks.filter(t => t.task_group_id === taskGroupId);
+    return allSubTasks.filter(t => t.task_group_id === taskGroupId && isCoreMember(t.assignee));
   }
 
   function toggleDemandSubtasks(taskId: string) {
@@ -275,8 +275,47 @@
   let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
 
   let projectConfigs: any[] = [];
+  $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
+
+  let coreMembers = new Set(["Eddie", "Antigravity"]);
+
+  function isCoreMember(name: string): boolean {
+    if (!name || name === '未指派' || name === '-' || name === 'Unassigned') return true;
+    return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
+  }
+
+  function updateCoreMembers(config: any) {
+    if (config.jira) {
+      let users: string[] = [];
+      if (config.jira.sync_users && config.jira.sync_users.length > 0) {
+        users = [...config.jira.sync_users];
+      } else if (config.jira.custom_jql) {
+        const match = config.jira.custom_jql.match(/assignee\s+in\s*\(([^)]+)\)/i);
+        if (match && match[1]) {
+          users = match[1].split(',').map((name: string) => name.trim().replace(/['"]/g, ''));
+        }
+      }
+      if (users.length > 0) {
+        coreMembers = new Set(users);
+      }
+    }
+  }
+
+  async function fetchSystemConfig() {
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          updateCoreMembers(data);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch system config in DemandKanban:', e);
+    }
+  }
 
   let scheduleScrollTop = 0;
   let scheduleContainerHeight = 550;
@@ -342,8 +381,8 @@
 
     for (const key in groups) {
       groups[key].sort((a, b) => {
-        const wA = computeCompositeWeight(a);
-        const wB = computeCompositeWeight(b);
+        const wA = a.composite_weight ?? 0;
+        const wB = b.composite_weight ?? 0;
         if (wA !== wB) return wB - wA;
         return a.demand_id.localeCompare(b.demand_id);
       });
@@ -351,8 +390,8 @@
 
     const projKeys = Object.keys(groups);
     projKeys.sort((a, b) => {
-      const prioA = groups[a][0].project_priority || getProjectPriority(groups[a][0].demand_id);
-      const prioB = groups[b][0].project_priority || getProjectPriority(groups[b][0].demand_id);
+      const prioA = groups[a][0].project_priority || 'P2';
+      const prioB = groups[b][0].project_priority || 'P2';
       const wA = getPriorityWeight(prioA);
       const wB = getPriorityWeight(prioB);
       if (wA !== wB) return wB - wA;
@@ -415,13 +454,13 @@
     const idx = taskID.indexOf('-');
     if (idx <= 0) return 'P2';
     const key = taskID.substring(0, idx).toUpperCase();
-    const config = projectConfigs.find(c => c.project_key === key);
+    const config = projectConfigMap.get(key);
     return config ? config.base_priority : 'P2';
   }
 
   function getProjectName(projKey: string): string {
     if (!projKey) return '';
-    const config = projectConfigs.find(c => c.project_key.toUpperCase() === projKey.toUpperCase());
+    const config = projectConfigMap.get(projKey.toUpperCase());
     return config ? config.project_name : '';
   }
 
@@ -777,18 +816,28 @@
   }
 
   // Columns helper
-  $: pendingDemands = demands.filter(d => d.status !== 'done' && (d.status === 'backlog' ? !isDemandFullyScheduled(d) : !hasScheduleValue(d.branch))).sort((a, b) => compareDemandsByPriority(a, b));
-  $: scheduledDemands = demands.filter(d => d.status === 'backlog' && isDemandFullyScheduled(d)).sort((a, b) => compareDemandsByPriority(a, b));
-  $: inProgressDemands = demands.filter(d => (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-').sort((a, b) => compareDemandsByPriority(a, b));
-  $: deliveredDemands = demands.filter(d => d.status === 'done').sort((a, b) => compareDemandsByPriority(a, b));
+  $: pendingDemands = demands.filter(d => isCoreMember(d.assignee) && d.status !== 'done' && (d.status === 'backlog' ? !isDemandFullyScheduled(d) : !hasScheduleValue(d.branch))).sort((a, b) => compareDemandsByPriority(a, b));
+  $: scheduledDemands = demands.filter(d => isCoreMember(d.assignee) && d.status === 'backlog' && isDemandFullyScheduled(d)).sort((a, b) => compareDemandsByPriority(a, b));
+  $: inProgressDemands = demands.filter(d => isCoreMember(d.assignee) && (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-').sort((a, b) => compareDemandsByPriority(a, b));
+  $: deliveredDemands = demands.filter(d => isCoreMember(d.assignee) && d.status === 'done').sort((a, b) => compareDemandsByPriority(a, b));
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
   $: createAssigneeOptions = buildCreateAssigneeOptions();
   $: createProjectOptions = buildCreateProjectOptions();
-  $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.filter(item => isCoreMember(item.assignee)).map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
+  $: scheduleItemsWithWeights = scheduleItems.map(item => {
+    const priority = item.project_priority || getProjectPriority(item.demand_id);
+    const weight = computeCompositeWeight(item, priority);
+    return {
+      ...item,
+      project_priority: priority,
+      composite_weight: weight
+    };
+  });
+
   $: filteredScheduleItems = (() => {
     const query = scheduleSearch.trim().toLowerCase();
-    return scheduleItems
+    return scheduleItemsWithWeights
       .filter((item) => matchesScheduleFilters(item, query))
       .sort((a, b) => compareScheduleItems(a, b));
   })();
@@ -817,6 +866,9 @@
   }
 
   function matchesScheduleFilters(item: any, query: string): boolean {
+    if (!isCoreMember(item.assignee)) {
+      return false;
+    }
     if (query) {
       const match = 
         (item._lowerID && item._lowerID.includes(query)) ||
@@ -843,9 +895,9 @@
     return true;
   }
 
-  function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
-    const weightA = computeCompositeWeight(a);
-    const weightB = computeCompositeWeight(b);
+  function compareScheduleItems(a: any, b: any): number {
+    const weightA = a.composite_weight ?? 0;
+    const weightB = b.composite_weight ?? 0;
     if (weightA !== weightB) return weightB - weightA;
     return a.demand_id.localeCompare(b.demand_id);
   }
@@ -857,8 +909,6 @@
     scheduleErrorMsg = '';
     const token = localStorage.getItem('jwt_token');
     try {
-      fetchProjectConfigs(); // 联动获取项目配置数据
-
       const res = await fetch('/api/schedule', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -1122,28 +1172,7 @@
 
     const token = localStorage.getItem('jwt_token');
     try {
-      // 1. 如果是需求且负责人被更改，先更新负责人
-      const isBug = selectedDemand.issue_type === 'bug' || (selectedDemand.task_id && !selectedDemand.task_id.startsWith('DEMAND-'));
-      if (!isBug && schedAssignee !== selectedDemand.assignee) {
-        const reassignRes = await fetch('/api/demands/reassign', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            task_id: selectedDemand.task_id,
-            assignee: schedAssignee
-          })
-        });
-
-        if (!reassignRes.ok) {
-          const errMsg = await reassignRes.text();
-          throw new Error(`指派负责人失败: ${errMsg}`);
-        }
-      }
-
-      // 2. 保存排期设置
+      // 统一通过 /api/tasks/schedule 保存排期及负责人变更
       const res = await fetch('/api/tasks/schedule', {
         method: 'POST',
         headers: {
@@ -1159,7 +1188,8 @@
           estimate_hours: schedEstimateHours,
           estimate_days: schedEstimateDays,
           difficulty: schedDifficulty,
-          estimate_source: schedEstimateSource
+          estimate_source: schedEstimateSource,
+          assignee: schedAssignee
         })
       });
 
@@ -1218,7 +1248,7 @@
   }
 
   function formatScheduleDate(value: string): string {
-    if (!value) return '-';
+    if (!value) return '';
     return formatDateDisplay(value.slice(0, 10));
   }
 
@@ -1254,7 +1284,7 @@
   function formatScheduleEffort(item: ScheduleItem): string {
     if (item.estimate_hours > 0) return `${formatOneDecimal(item.estimate_hours)} 小时`;
     if (item.estimate_days > 0) return `${formatOneDecimal(item.estimate_days)} 天`;
-    return '待 AI 评估';
+    return '待AI评估';
   }
 
   function hasDeliveryEvidence(item: ScheduleItem): boolean {
@@ -1295,7 +1325,18 @@
     fetchDemandOptions();
     fetchJiraConfig();
     fetchProjectConfigs();
+    fetchSystemConfig();
     document.addEventListener('click', handleDocumentClick);
+
+    const handleConfigUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const config = customEvent.detail;
+      if (config) {
+        updateCoreMembers(config);
+      }
+    };
+    window.addEventListener('config-updated', handleConfigUpdated);
+
     // Poll updates every 15 seconds
     const interval = setInterval(() => {
       fetchDemands();
@@ -1306,6 +1347,7 @@
     return () => {
       clearInterval(interval);
       document.removeEventListener('click', handleDocumentClick);
+      window.removeEventListener('config-updated', handleConfigUpdated);
     };
   });
 
@@ -1491,35 +1533,25 @@
             <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
           </div>
           <div class="schedule-table-wrapper" style="max-height: 600px; overflow-y: auto;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl}>
-            <table class="schedule-table">
-              <colgroup>
-                <col class="col-demand" />
-                <col class="col-owner" />
-                <col class="col-plan" />
-                <col class="col-effort" />
-                <col class="col-subtask" />
-                <col class="col-risk" />
-                <col class="col-update" />
-                <col class="col-action" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>需求</th>
-                  <th>负责人</th>
-                  <th>排期</th>
-                  <th>工时</th>
-                  <th>影子任务</th>
-                  <th>风险</th>
-                  <th>更新时间</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style="height: {scheduleTopPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleTopPadding}px;"></td></tr>
+            <div class="grid-table">
+              <div class="grid-thead">
+                <div class="grid-tr">
+                  <div class="grid-th">需求</div>
+                  <div class="grid-th">负责人</div>
+                  <div class="grid-th">排期</div>
+                  <div class="grid-th">工时</div>
+                  <div class="grid-th">影子任务</div>
+                  <div class="grid-th">风险</div>
+                  <div class="grid-th">更新时间</div>
+                  <div class="grid-th col-action">操作</div>
+                </div>
+              </div>
+              <div class="grid-tbody">
+                <div style="height: {scheduleTopPadding}px;"></div>
                 {#each visibleScheduleRows as row (row.id)}
                   {#if row.type === 'header'}
-                    <tr class="project-group-header pg-{row.priority.toLowerCase()}" on:click={() => toggleProjectCollapse(row.projectKey, row.isCollapsed)}>
-                      <td colspan="8" class="project-group-cell">
+                    <div class="grid-tr project-group-header pg-{row.priority.toLowerCase()}" on:click={() => toggleProjectCollapse(row.projectKey, row.isCollapsed)}>
+                      <div class="project-group-cell">
                         <div class="project-group-inner">
                           <span class="collapse-chevron" class:is-collapsed={row.isCollapsed}>
                             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -1536,14 +1568,14 @@
                           <span class="priority-badge p-{row.priority.toLowerCase()}">{row.priority}</span>
                           <span class="group-count">({row.itemCount} 个任务)</span>
                         </div>
-                      </td>
-                    </tr>
+                      </div>
+                    </div>
                   {:else}
                     {@const item = row.data}
                     {@const progress = getScheduleProgress(item)}
                     {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
-                    <tr>
-                      <td class="demand-cell">
+                    <div class="grid-tr">
+                      <div class="grid-td demand-cell">
                         <div class="demand-stack">
                           <div class="demand-badge-row">
                             {#if item.issue_type === 'bug'}
@@ -1562,51 +1594,44 @@
                               <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
                             {/if}
                           </div>
-                          <strong>{item.title}</strong>
-                          <small>{item.description || '暂无需求说明'}</small>
+                          <strong title={item.title}>{item.title}</strong>
                         </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
                         <div class="owner-stack">
                           <strong>{item.assignee}</strong>
-                          <span>{item.department}</span>
                         </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
                         <div class="plan-stack">
+                          <strong class="font-mono" style="font-size: 0.85rem; color: #f8fafc;">
+                            {formatScheduleDate(item.due_date)}
+                          </strong>
                           <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
-                          <strong>{formatScheduleDue(item)}</strong>
-                          <span class="font-mono">{formatScheduleDate(item.due_date)}</span>
                         </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
                         <div class="effort-stack">
                           <strong>{formatScheduleEffort(item)}</strong>
-                          <span>{formatDifficultyLabel(item.difficulty)}</span>
                         </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
                         <div class="subtask-stack">
                           <div class="subtask-meter">
                             <span style="width: {progress}%"></span>
                           </div>
                           <strong>{item.subtask_done}/{item.subtask_total || 0}</strong>
-                          <small>{item.task_group_id || '未绑定任务组'}</small>
                         </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
                         <div class="risk-stack">
-                          <span class="schedule-risk-pill risk-{item.risk_level}">{item.risk_label}</span>
-                          <small>{item.risk_reason}</small>
+                          <span class="schedule-risk-pill risk-{item.risk_level}" title={item.risk_reason || ''}>{item.risk_label}</span>
                         </div>
-                      </td>
-                      <td>
-                        <div class="updated-stack">
-                          <strong class="font-mono">{formatScheduleDate(item.last_update)}</strong>
-                          <span>{item.last_update || '-'}</span>
-                        </div>
-                      </td>
-                      <td>
+                      </div>
+                      <div class="grid-td">
+                        <span class="font-mono text-slate-300 text-xs">{item.last_update ? item.last_update.slice(2, 16) : '-'}</span>
+                      </div>
+                      <div class="grid-td col-action">
                         <div class="schedule-actions-cell">
                           {#if canEditScheduleItem(item)}
                             <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
@@ -1616,13 +1641,13 @@
                             isTelemetryDrawerOpen = true;
                           }}>轨迹</button>
                         </div>
-                      </td>
-                    </tr>
+                      </div>
+                    </div>
                   {/if}
                 {/each}
-                <tr style="height: {scheduleBottomPadding}px;"><td colspan="8" style="padding: 0; border: none; height: {scheduleBottomPadding}px;"></td></tr>
-              </tbody>
-            </table>
+                <div style="height: {scheduleBottomPadding}px;"></div>
+              </div>
+            </div>
             {#if filteredScheduleItems.length === 0}
               <div class="schedule-empty-state font-mono">当前筛选下暂无排期数据</div>
             {/if}
@@ -1654,11 +1679,7 @@
                     #{item.task_id}
                   </button>
                 {/if}
-                {#if priority}
-                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
-                {/if}
                 <div class="card-actions">
-                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
@@ -1703,6 +1724,9 @@
               {/if}
               
               <div class="card-bottom">
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <span class="brain-link-badge font-mono">{getBrainBindingState(item)}</span>
                 {#if isAssignee(item) || hasPermission('demands:write')}
                   <button class="action-btn schedule-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
@@ -1739,11 +1763,7 @@
                     #{item.task_id}
                   </button>
                 {/if}
-                {#if priority}
-                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
-                {/if}
                 <div class="card-actions">
-                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
@@ -1790,6 +1810,9 @@
 
               <div class="mapped-repo-line font-mono">{displayRepo(item.repo)}</div>
               <div class="card-bottom">
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <span class="due-badge {dueInfo.className} font-mono">{dueInfo.text}</span>
                 {#if isAssignee(item) || hasPermission('demands:write')}
                   <button class="edit-sched-btn" on:click|stopPropagation={() => openScheduleModal(item)}>
@@ -1826,11 +1849,7 @@
                     #{item.task_id}
                   </button>
                 {/if}
-                {#if priority}
-                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
-                {/if}
                 <div class="card-actions">
-                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
@@ -1877,6 +1896,9 @@
 
               <div class="mapped-repo-line font-mono">{displayRepo(item.repo)}</div>
               <div class="card-bottom">
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <span class="due-badge {dueInfo.className} font-mono">{dueInfo.text}</span>
                 <span class="status-badge font-mono">{item.status === 'review' ? '👀评审中' : '💻进行中'}</span>
                 {#if isAssignee(item) || hasPermission('demands:write')}
@@ -1913,11 +1935,7 @@
                     #{item.task_id}
                   </button>
                 {/if}
-                {#if priority}
-                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
-                {/if}
                 <div class="card-actions">
-                  <button class="icon-action-btn detail-action-btn" title="查看详情" on:click|stopPropagation={() => openDemandDetails(item)}>详情</button>
                   <button class="icon-action-btn telemetry-action-btn" title="查看代码轨迹" on:click|stopPropagation={() => { activeTelemetryTaskId = item.task_id; isTelemetryDrawerOpen = true; }}>🚀</button>
                   {#if canManageDemand(item)}
                     <button class="icon-action-btn" title="归档需求" on:click|stopPropagation={() => handleArchiveDemand(item.task_id)}>📁</button>
@@ -1959,6 +1977,9 @@
               {/if}
               
               <div class="card-bottom mt-1">
+                {#if priority}
+                  <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                {/if}
                 <span class="done-tag font-mono">🎉 已发布</span>
                 {#if item.completed_at}
                   <span class="done-date font-mono">{new Date(item.completed_at).toLocaleDateString()}</span>
@@ -2880,71 +2901,91 @@
     background: rgba(15, 23, 42, 0.72);
   }
 
-  .schedule-table {
+  .grid-table {
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    min-width: 1040px;
-    border-collapse: collapse;
-    table-layout: fixed;
+    min-width: 1200px;
+    background: #0b0f19;
   }
 
-  .schedule-table .col-demand { width: 236px; }
-  .schedule-table .col-owner { width: 96px; }
-  .schedule-table .col-plan { width: 112px; }
-  .schedule-table .col-effort { width: 84px; }
-  .schedule-table .col-evidence { width: 130px; }
-  .schedule-table .col-subtask { width: 98px; }
-  .schedule-table .col-risk { width: 146px; }
-  .schedule-table .col-update { width: 76px; }
-  .schedule-table .col-action { width: 62px; }
-
-  .schedule-table th {
+  .grid-thead {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 3;
     background: #0b1220;
-    color: #64748b;
-    font-size: 0.66rem;
-    font-weight: 900;
-    text-align: left;
-    letter-spacing: 0.04em;
-    padding: 10px 8px;
     border-bottom: 1px solid rgba(71, 85, 105, 0.48);
   }
 
-  .schedule-table td {
-    vertical-align: top;
+  .grid-tr {
+    display: grid;
+    grid-template-columns: minmax(300px, 1fr) 90px 120px 100px 110px 140px 110px 140px;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .grid-tr.project-group-header {
+    display: block;
+    cursor: pointer;
+    background: rgba(30, 41, 59, 0.5);
+    border-bottom: 1px solid rgba(71, 85, 105, 0.2);
+    transition: background 0.2s;
+  }
+
+  .grid-tr.project-group-header:hover {
+    background: rgba(30, 41, 59, 0.8);
+  }
+
+  .grid-th {
+    color: #64748b;
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
     padding: 10px 8px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.24);
-    color: #cbd5e1;
+    user-select: none;
+    text-align: left;
+  }
+
+  .grid-td {
+    padding: 10px 8px;
     font-size: 0.78rem;
+    color: #cbd5e1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .schedule-table tr:hover td {
-    background: rgba(30, 41, 59, 0.22);
+  .grid-table .demand-badge-row {
+    flex-wrap: nowrap;
   }
 
-  .schedule-table th:last-child,
-  .schedule-table td:last-child {
+  .grid-td.col-action,
+  .grid-th.col-action {
     position: sticky;
     right: 0;
     z-index: 4;
-    background: #0b1220;
-    box-shadow: -12px 0 20px rgba(2, 6, 23, 0.34);
-    padding-left: 6px;
-    padding-right: 6px;
+    background: #0b0f19;
+    box-shadow: -12px 0 20px rgba(2, 6, 23, 0.2);
+    border-left: 1px solid rgba(255, 255, 255, 0.04);
+    justify-content: center;
     text-align: center;
   }
 
-  .schedule-table th:last-child {
-    z-index: 6;
+  .grid-td.col-action {
+    background: #0b0f19;
   }
 
-  .schedule-table td:last-child {
-    background: #0c1424;
+  .grid-tr:hover {
+    background: rgba(30, 41, 59, 0.22);
   }
 
-  .schedule-table tr:hover td:last-child {
-    background: #111c30;
+  .grid-tr:hover .grid-td.col-action {
+    background: #131b2e;
+  }
+
+  .project-group-cell {
+    padding: 8px 12px;
+    width: 100%;
   }
 
   .demand-cell {
@@ -2977,18 +3018,40 @@
     word-break: break-word;
   }
 
-  .demand-stack small,
   .plan-stack span,
   .effort-stack span,
   .evidence-stack span,
   .updated-stack span,
   .owner-stack span,
-  .subtask-stack small,
-  .risk-stack small {
+  .subtask-stack small {
     color: #64748b;
     font-size: 0.68rem;
     line-height: 1.4;
     word-break: break-word;
+  }
+
+  .demand-stack small,
+  .risk-stack small {
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    display: block;
+  }
+
+  .bind-badge {
+    color: #10b981 !important;
+    font-size: 0.65rem;
+    font-weight: 700;
+  }
+
+  .unbind-badge {
+    color: #64748b !important;
+    font-size: 0.65rem;
+    font-weight: 500;
   }
 
   .evidence-stack a {
@@ -3078,7 +3141,7 @@
   .risk-done { color: #cbd5e1; background: rgba(100, 116, 139, 0.12); border-color: rgba(100, 116, 139, 0.28); }
 
   .schedule-row-action {
-    width: 100%;
+    width: 52px;
     background: rgba(99, 102, 241, 0.14);
     border: 1px solid rgba(129, 140, 248, 0.38);
     color: #c4b5fd;
@@ -3088,6 +3151,8 @@
     font-weight: 800;
     cursor: pointer;
     white-space: nowrap;
+    text-align: center;
+    box-sizing: border-box;
   }
 
   .schedule-row-action:hover {
@@ -3097,8 +3162,10 @@
 
   .schedule-actions-cell {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 6px;
+    justify-content: center;
+    align-items: center;
   }
 
   .schedule-row-action.is-telemetry {

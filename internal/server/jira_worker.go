@@ -7,6 +7,7 @@ import (
 	"time"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/kanban"
 	"well-ambient/internal/telemetry"
 )
@@ -421,4 +422,35 @@ func parseJiraTime(timeStr string) time.Time {
 		return t
 	}
 	return time.Now()
+}
+
+// syncAssigneeToJira updates the assignee in Jira. It runs asynchronously to avoid blocking the API response.
+func (s *Server) syncAssigneeToJira(issueKey string, localAssignee string) {
+	if !s.config.Jira.Enabled {
+		return
+	}
+	log.Printf("Jira sync: attempting to sync assignee override for %s -> %s", issueKey, localAssignee)
+	jc := telemetry.NewJiraClient(&s.config.Jira)
+
+	// 1. 根据中文显示名称/邮箱名反查 Jira 所需的 username
+	jiraUser := localAssignee
+	if localAssignee == "未指派" || localAssignee == "-" || localAssignee == "Unassigned" {
+		jiraUser = "" // 取消指派
+	} else {
+		var user userdb.User
+		if err := db.DB.Where("name = ?", localAssignee).First(&user).Error; err == nil {
+			jiraUser = user.Username
+			if idx := strings.Index(jiraUser, "@"); idx > 0 {
+				jiraUser = jiraUser[:idx] // 剥离邮箱前缀，有些 Jira 的登录用户名就是邮箱前缀
+			}
+		}
+	}
+
+	// 2. 调用 JiraClient 接口
+	err := jc.UpdateAssignee(issueKey, jiraUser)
+	if err != nil {
+		log.Printf("Jira sync: failed to sync assignee for %s to Jira: %v", issueKey, err)
+	} else {
+		log.Printf("Jira sync: successfully synced assignee for %s to Jira (%s)", issueKey, jiraUser)
+	}
 }

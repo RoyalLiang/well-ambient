@@ -17,6 +17,7 @@
 
   let scores: ProjectScore[] = [];
   let projectConfigs: any[] = [];
+  $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
   let jiraProjectMap: {[key: string]: string} = {};
   let loading = false;
   let errorMsg = '';
@@ -27,6 +28,7 @@
   // Details Modal states
   let showDetailsModal = false;
   let selectedProjectScore: ProjectScore | null = null;
+  $: selectedConfig = selectedProjectScore ? projectConfigMap.get(selectedProjectScore.project_key.toUpperCase()) : null;
 
   $: if (typeof document !== 'undefined') {
     if (showDetailsModal) {
@@ -135,7 +137,7 @@
     if (jiraProjectMap[keyUpper]) {
       return cleanProjectName(jiraProjectMap[keyUpper]);
     }
-    const conf = projectConfigs.find(c => c.project_key.toUpperCase() === keyUpper);
+    const conf = projectConfigMap.get(keyUpper);
     if (conf && conf.project_name && conf.project_name !== `${score.project_key}项目`) {
       return cleanProjectName(conf.project_name);
     }
@@ -362,10 +364,9 @@
                   
                   <div class="formula-breakdown" style="width: 100%;">
                     <h5 style="margin-top: 0;">计算公式权重剖析:</h5>
-                    {#if (projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())?.base_score_weight) !== undefined}
-                      {@const config = projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())}
-                      {@const w = config.base_score_weight}
-                      {@const s = config.base_score}
+                    {#if selectedConfig?.base_score_weight !== undefined}
+                      {@const w = selectedConfig.base_score_weight}
+                      {@const s = selectedConfig.base_score}
                       {@const metricsScore = selectedProjectScore.schedule_health_score * 0.30 + selectedProjectScore.engineering_quality * 0.25 + selectedProjectScore.collaboration_effic * 0.25 + selectedProjectScore.stability_index * 0.20}
                       
                       <div class="formula-schematic">
@@ -419,13 +420,13 @@
                   <div class="detail-item">
                     <span class="label">当前所处阶段:</span>
                     <span class="value badge">{
-                      (projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())?.project_phase) || '交付'
+                      selectedConfig?.project_phase || '交付'
                     }</span>
                   </div>
                   <div class="detail-item">
                     <span class="label">基准优先级:</span>
                     <span class="value">{
-                      (projectConfigs.find(c => c.project_key.toUpperCase() === selectedProjectScore.project_key.toUpperCase())?.base_priority) || 'P1'
+                      selectedConfig?.base_priority || 'P1'
                     }</span>
                   </div>
                   <div class="detail-item">

@@ -254,6 +254,7 @@
   }
 
   let users: User[] = [];
+  $: userMap = new Map<string, User>(users.map(u => [u.username, u]));
   let groups: Group[] = [];
   let permissionCatalog: PermissionMeta[] = [];
   let auditLogs: AuditLog[] = [];
@@ -947,7 +948,7 @@
 
   async function executeTransfer() {
     transferError = '';
-    const targetUser = users.find(u => u.username === transferTargetUsername);
+    const targetUser = userMap.get(transferTargetUsername);
     if (!targetUser) return;
     if (transferConfirmName.trim() !== targetUser.name) {
       transferError = `输入的姓名不匹配，请输入「${targetUser.name}」以确认安全转让`;
@@ -1219,7 +1220,7 @@
   </aside>
 
   <!-- Right Section Panel -->
-  <main class="settings-main">
+  <main class="settings-main" style="max-height: {settingsSidebarHeight ? `${settingsSidebarHeight}px` : 'none'};">
     {#if activeSection === 'gitlab'}
       <div class="section-card">
         <GitLabConfig config={globalConfig.gitlab} lastUpdated={sectionLastUpdated('gitlab')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
@@ -2153,7 +2154,8 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    height: 100%;
+    height: auto;
+    align-self: start;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -2248,20 +2250,39 @@
 
   .settings-main {
     min-width: 0;
-    height: 100%;
+    height: auto;
     min-height: 0;
     max-height: none;
     display: flex;
     flex-direction: column;
-    overflow: visible;
-    padding-right: 0;
+    overflow-y: auto;
+    padding-right: 8px;
     box-sizing: border-box;
   }
 
+  .settings-main::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .settings-main::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.3);
+    border-radius: 3px;
+  }
+
+  .settings-main::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 3px;
+    transition: background 0.2s;
+  }
+
+  .settings-main::-webkit-scrollbar-thumb:hover {
+    background: rgba(99, 102, 241, 0.5);
+  }
+
   .section-card {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
-    height: 100%;
+    height: auto;
     overflow: visible;
     box-sizing: border-box;
     background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(10, 16, 31, 0.98));
@@ -2272,6 +2293,7 @@
   }
 
   .kpi-settings-panel {
+    flex: 0 0 auto;
     min-width: 0;
     height: auto;
     overflow: visible;
@@ -2280,6 +2302,7 @@
   }
 
   .config-audit-panel {
+    flex: 0 0 auto;
     margin-top: 12px;
     background: rgba(11, 19, 41, 0.72);
     border: 1px solid rgba(51, 65, 85, 0.36);

@@ -504,6 +504,11 @@ func (s *Server) handleReassignDemand(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to sync reassigned demand %s to kanban file: %v", telemetry.TaskID, err)
 	}
 
+	// 反向同步到 Jira
+	if s.config.Jira.Enabled && !strings.HasPrefix(telemetry.TaskID, "TASK-") {
+		go s.syncAssigneeToJira(telemetry.TaskID, telemetry.Assignee)
+	}
+
 	notif := db.Notification{
 		Type:      "demand_reassigned",
 		TaskID:    telemetry.TaskID,
@@ -536,6 +541,7 @@ type ScheduleTaskRequest struct {
 	EstimateHours  float64 `json:"estimate_hours"`
 	Difficulty     string  `json:"difficulty"`
 	EstimateSource string  `json:"estimate_source"`
+	Assignee       string  `json:"assignee"`
 }
 
 // handleScheduleTask updates the task's due date, development branch and handles notification read status
@@ -638,6 +644,27 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 			estimateSource = "manual_adjusted"
 		}
 		telemetry.EstimateSource = estimateSource
+	}
+
+	// Update Assignee if provided
+	if req.Assignee != "" {
+		req.Assignee = strings.TrimSpace(req.Assignee)
+		oldAssignee := telemetry.Assignee
+		if oldAssignee != req.Assignee {
+			telemetry.Assignee = req.Assignee
+			decisionLog := fmt.Sprintf("[%s] %s 调整任务负责人：从 [%s] 转派给 [%s]。",
+				time.Now().Format("2006-01-02 15:04:05"), actorName, oldAssignee, telemetry.Assignee)
+			if telemetry.DecisionLogs != "" {
+				telemetry.DecisionLogs += "\n" + decisionLog
+			} else {
+				telemetry.DecisionLogs = decisionLog
+			}
+
+			// 反向同步到 Jira
+			if s.config.Jira.Enabled && !strings.HasPrefix(telemetry.TaskID, "TASK-") {
+				go s.syncAssigneeToJira(telemetry.TaskID, telemetry.Assignee)
+			}
+		}
 	}
 
 	telemetry.LastUpdate = time.Now()
