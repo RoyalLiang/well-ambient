@@ -273,7 +273,9 @@
   let scheduleAssigneeFilter = 'all';
   let scheduleSortMode: ScheduleSortMode = 'risk';
   let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
-
+  let scheduleProjectFilter = 'all';
+  let scheduleProjectSearchText = '';
+  let showScheduleProjectDropdown = false;
   let projectConfigs: any[] = [];
   $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
   let activeTelemetryTaskId = '';
@@ -389,64 +391,15 @@
   }
 
   $: flatRenderList = (() => {
-    const groups: { [key: string]: ScheduleItem[] } = {};
-    filteredScheduleItems.forEach((item) => {
-      const projKey = item.project_key || getProjectKey(item.demand_id);
-      if (!groups[projKey]) groups[projKey] = [];
-      groups[projKey].push(item);
-    });
+    const sorted = [...filteredScheduleItems];
+    sorted.sort((a, b) => compareScheduleItems(a, b));
 
-    for (const key in groups) {
-      groups[key].sort((a, b) => {
-        const wA = a.composite_weight ?? 0;
-        const wB = b.composite_weight ?? 0;
-        if (wA !== wB) return wB - wA;
-        return a.demand_id.localeCompare(b.demand_id);
-      });
-    }
-
-    const projKeys = Object.keys(groups);
-    projKeys.sort((a, b) => {
-      const prioA = groups[a][0].project_priority || 'P2';
-      const prioB = groups[b][0].project_priority || 'P2';
-      const wA = getPriorityWeight(prioA);
-      const wB = getPriorityWeight(prioB);
-      if (wA !== wB) return wB - wA;
-      return a.localeCompare(b);
-    });
-
-    const list: any[] = [];
-    projKeys.forEach((projKey) => {
-      const groupItems = groups[projKey];
-      const priority = groupItems[0].project_priority || getProjectPriority(groupItems[0].demand_id);
-      
-      let isCollapsed = collapsedProjects[projKey];
-      if (isCollapsed === undefined) {
-        isCollapsed = !(priority === 'P0' || priority === 'P1');
-      }
-
-      list.push({
-        type: 'header',
-        projectKey: projKey,
-        priority: priority,
-        itemCount: groupItems.length,
-        isCollapsed: isCollapsed,
-        id: `header-${projKey}`
-      });
-
-      if (!isCollapsed) {
-        groupItems.forEach((item) => {
-          list.push({
-            type: 'item',
-            projectKey: projKey,
-            data: item,
-            id: item.demand_id
-          });
-        });
-      }
-    });
-
-    return list;
+    return sorted.map((item) => ({
+      type: 'item',
+      projectKey: item.project_key || getProjectKey(item.demand_id),
+      data: item,
+      id: item.demand_id
+    }));
   })();
 
   $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
@@ -864,6 +817,7 @@
   $: if (!showProjectDropdown) projectSearchText = '';
   $: if (!showAssigneeDropdown) assigneeSearchText = '';
   $: if (!showScheduleAssigneeDropdown) scheduleAssigneeSearchText = '';
+  $: if (!showScheduleProjectDropdown) scheduleProjectSearchText = '';
   $: {
     const shouldLock = showCreateModal || showScheduleModal || showConfirmModal || showDemandDetailsModal;
     if (shouldLock && !manualModalScrollLocked) {
@@ -901,6 +855,13 @@
 
     if (scheduleAssigneeFilter !== 'all' && item.assignee !== scheduleAssigneeFilter) {
       return false;
+    }
+
+    if (scheduleProjectFilter !== 'all') {
+      const projKey = item.project_key || getProjectKey(item.demand_id);
+      if (projKey !== scheduleProjectFilter) {
+        return false;
+      }
     }
 
     if (scheduleRiskFilter === 'attention') {
@@ -1327,6 +1288,7 @@
       showProjectDropdown = false;
       showScheduleAssigneeDropdown = false;
       showScheduleModalAssigneeDropdown = false;
+      showScheduleProjectDropdown = false;
     }
     if (!target.closest('.difficulty-select-shell')) {
       showScheduleDifficultyDropdown = false;
@@ -1520,6 +1482,45 @@
           {/if}
         </div>
 
+        <div class="schedule-project-menu custom-dropdown-container">
+          <div class="combobox-trigger-wrapper">
+            <input
+              type="text"
+              class="dropdown-trigger-input schedule-trigger-override"
+              placeholder={scheduleProjectFilter === 'all' ? '全部项目' : (getProjectName(scheduleProjectFilter) || scheduleProjectFilter)}
+              bind:value={scheduleProjectSearchText}
+              on:focus|stopPropagation={() => showScheduleProjectDropdown = true}
+            />
+            <span class="arrow-icon {showScheduleProjectDropdown ? 'open' : ''}">▼</span>
+          </div>
+          {#if showScheduleProjectDropdown}
+            <div class="dropdown-options-list glass-panel">
+              <button
+                type="button"
+                class="dropdown-option-item {scheduleProjectFilter === 'all' ? 'selected' : ''}"
+                on:click={() => {
+                  scheduleProjectFilter = 'all';
+                  showScheduleProjectDropdown = false;
+                }}
+              >
+                全部项目
+              </button>
+              {#each projectConfigs.filter(p => !scheduleProjectSearchText || p.project_name.toLowerCase().includes(scheduleProjectSearchText.toLowerCase()) || p.project_key.toLowerCase().includes(scheduleProjectSearchText.toLowerCase())) as proj}
+                <button
+                  type="button"
+                  class="dropdown-option-item {scheduleProjectFilter === proj.project_key ? 'selected' : ''}"
+                  on:click={() => {
+                    scheduleProjectFilter = proj.project_key;
+                    showScheduleProjectDropdown = false;
+                  }}
+                >
+                  {proj.project_name} ({proj.project_key})
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
         <div class="schedule-sort-strip">
           {#each scheduleSortModes as mode}
             <button
@@ -1554,6 +1555,7 @@
               <div class="grid-thead">
                 <div class="grid-tr">
                   <div class="grid-th">需求</div>
+                  <div class="grid-th">项目</div>
                   <div class="grid-th">负责人</div>
                   <div class="grid-th">排期</div>
                   <div class="grid-th">工时</div>
@@ -1566,31 +1568,9 @@
               <div class="grid-tbody">
                 <div style="height: {scheduleTopPadding}px;"></div>
                 {#each visibleScheduleRows as row (row.id)}
-                  {#if row.type === 'header'}
-                    <div class="grid-tr project-group-header pg-{row.priority.toLowerCase()}" on:click={() => toggleProjectCollapse(row.projectKey, row.isCollapsed)}>
-                      <div class="project-group-cell">
-                        <div class="project-group-inner">
-                          <span class="collapse-chevron" class:is-collapsed={row.isCollapsed}>
-                            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                              <polyline points="6 9 12 15 18 9"></polyline>
-                            </svg>
-                          </span>
-                          <strong class="group-project-key font-mono">
-                            {#if getProjectName(row.projectKey)}
-                              {getProjectName(row.projectKey)} ({row.projectKey})
-                            {:else}
-                              {row.projectKey}
-                            {/if}
-                          </strong>
-                          <span class="priority-badge p-{row.priority.toLowerCase()}">{row.priority}</span>
-                          <span class="group-count">({row.itemCount} 个任务)</span>
-                        </div>
-                      </div>
-                    </div>
-                  {:else}
-                    {@const item = row.data}
-                    {@const progress = getScheduleProgress(item)}
-                    {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
+                  {@const item = row.data}
+                  {@const progress = getScheduleProgress(item)}
+                  {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
                     <div class="grid-tr">
                       <div class="grid-td demand-cell">
                         <div class="demand-stack">
@@ -1613,6 +1593,11 @@
                           </div>
                           <strong title={item.title}>{item.title}</strong>
                         </div>
+                      </div>
+                      <div class="grid-td project-cell">
+                        <strong class="font-sans" style="font-size: 0.8rem; color: #94a3b8;">
+                          {getProjectName(item.project_key || getProjectKey(item.demand_id)) || item.project_key || getProjectKey(item.demand_id)}
+                        </strong>
                       </div>
                       <div class="grid-td">
                         <div class="owner-stack">
@@ -1660,7 +1645,6 @@
                         </div>
                       </div>
                     </div>
-                  {/if}
                 {/each}
                 <div style="height: {scheduleBottomPadding}px;"></div>
               </div>
@@ -2761,13 +2745,14 @@
 
   .schedule-control-panel {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 10px;
     background: rgba(10, 15, 30, 0.6);
     border: 1px solid rgba(51, 65, 85, 0.3);
     border-radius: 10px;
     padding: 10px;
+    overflow-x: auto;
   }
 
   .schedule-search-shell {
@@ -2816,7 +2801,8 @@
     border-radius: 2px;
   }
 
-  .schedule-assignee-menu {
+  .schedule-assignee-menu,
+  .schedule-project-menu {
     min-width: 150px;
   }
 
@@ -2936,7 +2922,7 @@
 
   .grid-tr {
     display: grid;
-    grid-template-columns: minmax(300px, 1fr) 90px 120px 100px 110px 140px 110px 140px;
+    grid-template-columns: minmax(280px, 1fr) 160px 90px 120px 100px 110px 140px 110px 140px;
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
@@ -3006,7 +2992,16 @@
   }
 
   .demand-cell {
-    width: 28%;
+    width: auto;
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .project-cell {
+    width: auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .demand-stack,
