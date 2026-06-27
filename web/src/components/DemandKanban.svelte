@@ -159,7 +159,7 @@
 
   function getSubTasksForDemand(taskGroupId?: string) {
     if (!taskGroupId || taskGroupId === '-' || taskGroupId === '') return [];
-    return allSubTasks.filter(t => t.task_group_id === taskGroupId && isCoreMember(t.assignee));
+    return subTasksMap.get(taskGroupId) || [];
   }
 
   function toggleDemandSubtasks(taskId: string) {
@@ -285,6 +285,23 @@
     if (!name || name === '未指派' || name === '-' || name === 'Unassigned') return true;
     return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
   }
+
+  $: subTasksMap = (() => {
+    const map = new Map<string, any[]>();
+    for (let i = 0; i < allSubTasks.length; i++) {
+      const t = allSubTasks[i];
+      const gid = t.task_group_id;
+      if (!gid || gid === '-' || gid === '') continue;
+      if (!isCoreMember(t.assignee)) continue;
+      let list = map.get(gid);
+      if (!list) {
+        list = [];
+        map.set(gid, list);
+      }
+      list.push(t);
+    }
+    return map;
+  })();
 
   function updateCoreMembers(config: any) {
     if (config.jira) {
