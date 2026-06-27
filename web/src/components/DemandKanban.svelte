@@ -276,6 +276,9 @@
   let scheduleProjectFilter = 'all';
   let scheduleProjectSearchText = '';
   let showScheduleProjectDropdown = false;
+  let showRiskDropdown = false;
+  let showTypeDropdown = false;
+  let showSortDropdown = false;
   let projectConfigs: any[] = [];
   $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
   let activeTelemetryTaskId = '';
@@ -1411,36 +1414,80 @@
           />
         </div>
 
-        <div class="schedule-filter-strip">
-          {#each scheduleRiskFilters as filter}
+        <div class="schedule-dropdown-menu custom-dropdown-container">
+          <div class="combobox-trigger-wrapper">
             <button
-              class:active={scheduleRiskFilter === filter.value}
-              on:click={() => scheduleRiskFilter = filter.value}
+              type="button"
+              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+              on:click|stopPropagation={() => showRiskDropdown = !showRiskDropdown}
             >
-              {filter.label}
+              {scheduleRiskFilters.find(f => f.value === scheduleRiskFilter)?.label || '风险筛选'}
             </button>
-          {/each}
+            <span class="arrow-icon {showRiskDropdown ? 'open' : ''}">▼</span>
+          </div>
+          {#if showRiskDropdown}
+            <div class="dropdown-options-list glass-panel">
+              {#each scheduleRiskFilters as filter}
+                <button
+                  type="button"
+                  class="dropdown-option-item {scheduleRiskFilter === filter.value ? 'selected' : ''}"
+                  on:click={() => {
+                    scheduleRiskFilter = filter.value;
+                    showRiskDropdown = false;
+                  }}
+                >
+                  {filter.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
 
-        <div class="schedule-filter-strip type-filter-strip">
-          <button
-            class:active={scheduleTypeFilter === 'all'}
-            on:click={() => scheduleTypeFilter = 'all'}
-          >
-            全部类型
-          </button>
-          <button
-            class:active={scheduleTypeFilter === 'demand'}
-            on:click={() => scheduleTypeFilter = 'demand'}
-          >
-            仅需求
-          </button>
-          <button
-            class:active={scheduleTypeFilter === 'bug'}
-            on:click={() => scheduleTypeFilter = 'bug'}
-          >
-            仅缺陷
-          </button>
+        <div class="schedule-dropdown-menu custom-dropdown-container">
+          <div class="combobox-trigger-wrapper">
+            <button
+              type="button"
+              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+              on:click|stopPropagation={() => showTypeDropdown = !showTypeDropdown}
+            >
+              {scheduleTypeFilter === 'all' ? '全部类型' : (scheduleTypeFilter === 'demand' ? '仅需求' : '仅缺陷')}
+            </button>
+            <span class="arrow-icon {showTypeDropdown ? 'open' : ''}">▼</span>
+          </div>
+          {#if showTypeDropdown}
+            <div class="dropdown-options-list glass-panel">
+              <button
+                type="button"
+                class="dropdown-option-item {scheduleTypeFilter === 'all' ? 'selected' : ''}"
+                on:click={() => {
+                  scheduleTypeFilter = 'all';
+                  showTypeDropdown = false;
+                }}
+              >
+                全部类型
+              </button>
+              <button
+                type="button"
+                class="dropdown-option-item {scheduleTypeFilter === 'demand' ? 'selected' : ''}"
+                on:click={() => {
+                  scheduleTypeFilter = 'demand';
+                  showTypeDropdown = false;
+                }}
+              >
+                仅需求
+              </button>
+              <button
+                type="button"
+                class="dropdown-option-item {scheduleTypeFilter === 'bug' ? 'selected' : ''}"
+                on:click={() => {
+                  scheduleTypeFilter = 'bug';
+                  showTypeDropdown = false;
+                }}
+              >
+                仅缺陷
+              </button>
+            </div>
+          {/if}
         </div>
 
         <div class="schedule-assignee-menu custom-dropdown-container">
@@ -1521,15 +1568,33 @@
           {/if}
         </div>
 
-        <div class="schedule-sort-strip">
-          {#each scheduleSortModes as mode}
+        <div class="schedule-dropdown-menu custom-dropdown-container">
+          <div class="combobox-trigger-wrapper">
             <button
-              class:active={scheduleSortMode === mode.value}
-              on:click={() => scheduleSortMode = mode.value}
+              type="button"
+              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+              on:click|stopPropagation={() => showSortDropdown = !showSortDropdown}
             >
-              {mode.label}
+              排序: {scheduleSortModes.find(m => m.value === scheduleSortMode)?.label || '默认排序'}
             </button>
-          {/each}
+            <span class="arrow-icon {showSortDropdown ? 'open' : ''}">▼</span>
+          </div>
+          {#if showSortDropdown}
+            <div class="dropdown-options-list glass-panel">
+              {#each scheduleSortModes as mode}
+                <button
+                  type="button"
+                  class="dropdown-option-item {scheduleSortMode === mode.value ? 'selected' : ''}"
+                  on:click={() => {
+                    scheduleSortMode = mode.value;
+                    showSortDropdown = false;
+                  }}
+                >
+                  {mode.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
 
         <button class="schedule-refresh-btn font-mono" class:is-loading={scheduleLoading} on:click={fetchSchedule}>
@@ -2752,14 +2817,14 @@
     border: 1px solid rgba(51, 65, 85, 0.3);
     border-radius: 10px;
     padding: 10px;
-    overflow-x: auto;
   }
 
   .schedule-search-shell {
     position: relative;
     display: flex;
     align-items: center;
-    flex: 1 1 220px;
+    flex: 2 1 280px;
+    min-width: 220px;
   }
 
   .schedule-search-shell input {
@@ -2803,7 +2868,15 @@
 
   .schedule-assignee-menu,
   .schedule-project-menu {
-    min-width: 150px;
+    min-width: 130px;
+  }
+
+  .schedule-dropdown-menu {
+    min-width: 110px;
+  }
+
+  .dropdown-trigger-btn {
+    cursor: pointer !important;
   }
 
   .schedule-menu-trigger {
