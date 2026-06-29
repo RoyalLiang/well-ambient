@@ -802,13 +802,21 @@
   }
 
   .app-container {
-    max-width: 1400px;
+    width: 90%;
+    max-width: 100%;
     margin: 0 auto;
     padding: 24px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+  }
+
+  @media (max-width: 768px) {
+    .app-container {
+      width: 95%;
+      padding: 16px 12px;
+    }
   }
 
   .app-container.settings-mode {
