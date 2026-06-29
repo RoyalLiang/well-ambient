@@ -809,7 +809,10 @@
     };
   });
 
-  $: filteredScheduleItems = scheduleItemsWithWeights;
+  $: filteredScheduleItems = scheduleItemsWithWeights.filter(item => {
+    if (scheduleAssigneeFilter === '外部协同') return true;
+    return isCoreMember(item.assignee);
+  });
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
@@ -1278,7 +1281,7 @@
   function formatScheduleEffort(item: ScheduleItem): string {
     if (item.estimate_hours > 0) return `${formatOneDecimal(item.estimate_hours)} 小时`;
     if (item.estimate_days > 0) return `${formatOneDecimal(item.estimate_days)} 天`;
-    return '待AI评估';
+    return '待评估';
   }
 
   function hasDeliveryEvidence(item: ScheduleItem): boolean {
@@ -1703,7 +1706,9 @@
                           <strong class="font-mono" style="font-size: 0.85rem; color: #f8fafc;">
                             {formatScheduleDate(item.due_date)}
                           </strong>
-                          <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
+                          {#if getScheduleStatusLabel(item) !== '已排期'}
+                            <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
+                          {/if}
                         </div>
                       </div>
                       <div class="grid-td">
@@ -1729,9 +1734,13 @@
                       </div>
                       <div class="grid-td col-action">
                         <div class="schedule-actions-cell">
-                          {#if canEditScheduleItem(item)}
-                            <button class="schedule-row-action" on:click={() => openScheduleFromItem(item)}>调整</button>
-                          {/if}
+                          <button 
+                            class="schedule-row-action" 
+                            disabled={item.issue_type === 'bug' || item.issue_type === '缺陷' || item.issue_type === '故障' || item.issue_type === 'defect' || !canEditScheduleItem(item)}
+                            on:click={() => openScheduleFromItem(item)}
+                          >
+                            调整
+                          </button>
                           <button class="schedule-row-action is-telemetry font-mono" on:click|stopPropagation={() => {
                             activeTelemetryTaskId = item.demand_id;
                             isTelemetryDrawerOpen = true;
@@ -2248,46 +2257,39 @@
 
           <div class="form-group">
             <label for="sched-assignee">负责人指派</label>
-            {#if selectedDemand.issue_type === 'bug' || (selectedDemand.task_id && !selectedDemand.task_id.startsWith('DEMAND-'))}
-              <div class="assignee-disabled-field font-mono" id="sched-assignee">
-                <span>👤 {schedAssignee || '未指派'}</span>
-                <span class="assignee-disabled-tip">(Jira 任务负责人请至 Jira 修改)</span>
+            <div class="custom-dropdown-container" id="sched-assignee-container">
+              <div class="combobox-trigger-wrapper">
+                <input
+                  id="sched-assignee"
+                  type="text"
+                  class="dropdown-trigger-input"
+                  placeholder={schedAssignee || '请选择负责人'}
+                  bind:value={schedAssigneeSearchText}
+                  on:focus|stopPropagation={() => showScheduleModalAssigneeDropdown = true}
+                />
+                <span class="arrow-icon {showScheduleModalAssigneeDropdown ? 'open' : ''}">▼</span>
               </div>
-            {:else}
-              <div class="custom-dropdown-container" id="sched-assignee-container">
-                <div class="combobox-trigger-wrapper">
-                  <input
-                    id="sched-assignee"
-                    type="text"
-                    class="dropdown-trigger-input"
-                    placeholder={schedAssignee || '请选择负责人'}
-                    bind:value={schedAssigneeSearchText}
-                    on:focus|stopPropagation={() => showScheduleModalAssigneeDropdown = true}
-                  />
-                  <span class="arrow-icon {showScheduleModalAssigneeDropdown ? 'open' : ''}">▼</span>
+              {#if showScheduleModalAssigneeDropdown}
+                <div class="dropdown-options-list glass-panel" style="position: absolute; z-index: 1000; width: 100%; max-height: 200px; overflow-y: auto;">
+                  {#each createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())) as assignee}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {schedAssignee === assignee ? 'selected' : ''}"
+                      on:click={() => {
+                        schedAssignee = assignee;
+                        schedAssigneeSearchText = '';
+                        showScheduleModalAssigneeDropdown = false;
+                      }}
+                    >
+                      {assignee}
+                    </button>
+                  {/each}
+                  {#if createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())).length === 0}
+                    <div class="dropdown-empty">暂无匹配的候选人</div>
+                  {/if}
                 </div>
-                {#if showScheduleModalAssigneeDropdown}
-                  <div class="dropdown-options-list glass-panel" style="position: absolute; z-index: 1000; width: 100%; max-height: 200px; overflow-y: auto;">
-                    {#each createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())) as assignee}
-                      <button
-                        type="button"
-                        class="dropdown-option-item {schedAssignee === assignee ? 'selected' : ''}"
-                        on:click={() => {
-                          schedAssignee = assignee;
-                          schedAssigneeSearchText = '';
-                          showScheduleModalAssigneeDropdown = false;
-                        }}
-                      >
-                        {assignee}
-                      </button>
-                    {/each}
-                    {#if createAssigneeOptions.filter(name => !schedAssigneeSearchText || name.toLowerCase().includes(schedAssigneeSearchText.toLowerCase())).length === 0}
-                      <div class="dropdown-empty">暂无匹配的候选人</div>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/if}
+              {/if}
+            </div>
           </div>
 
           <div class="schedule-estimate-panel">
@@ -3267,6 +3269,14 @@
     white-space: nowrap;
     text-align: center;
     box-sizing: border-box;
+  }
+
+  .schedule-row-action:disabled {
+    background: rgba(148, 163, 184, 0.08) !important;
+    border: 1px solid rgba(148, 163, 184, 0.18) !important;
+    color: #64748b !important;
+    cursor: not-allowed !important;
+    opacity: 0.65;
   }
 
   .schedule-row-action:hover {
