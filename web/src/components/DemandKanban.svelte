@@ -802,7 +802,7 @@
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
   $: createAssigneeOptions = buildCreateAssigneeOptions();
   $: createProjectOptions = buildCreateProjectOptions();
-  $: scheduleAssigneeOptions = Array.from(new Set(scheduleItems.filter(item => isCoreMember(item.assignee)).map((item) => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  $: scheduleAssigneeOptions = [...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)), "外部协同"];
   $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
   $: scheduleItemsWithWeights = scheduleItems.map(item => {
     const priority = item.project_priority || getProjectPriority(item.demand_id);
@@ -1721,7 +1721,7 @@
                           <strong class="font-mono" style="font-size: 0.85rem; color: #f8fafc;">
                             {formatScheduleDate(item.due_date)}
                           </strong>
-                          {#if getScheduleStatusLabel(item) !== '已排期'}
+                          {#if !item.due_date}
                             <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
                           {/if}
                         </div>
