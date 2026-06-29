@@ -53,6 +53,7 @@ func (s *Server) syncJiraTasks() {
 		// Determine assignee name
 		assigneeName := "未指派"
 		if issue.Fields.Assignee != nil {
+			s.syncJiraUserToLocal(issue.Fields.Assignee.Name, issue.Fields.Assignee.DisplayName, issue.Fields.Assignee.EmailAddress)
 			if issue.Fields.Assignee.DisplayName != "" {
 				assigneeName = issue.Fields.Assignee.DisplayName
 			} else if issue.Fields.Assignee.Name != "" {
@@ -233,6 +234,7 @@ func (s *Server) syncJiraTasks() {
 			for _, issue := range aliveIssues {
 				assigneeName := "未指派"
 				if issue.Fields.Assignee != nil {
+					s.syncJiraUserToLocal(issue.Fields.Assignee.Name, issue.Fields.Assignee.DisplayName, issue.Fields.Assignee.EmailAddress)
 					if issue.Fields.Assignee.DisplayName != "" {
 						assigneeName = issue.Fields.Assignee.DisplayName
 					} else if issue.Fields.Assignee.Name != "" {
@@ -438,10 +440,24 @@ func (s *Server) syncAssigneeToJira(issueKey string, localAssignee string) {
 		jiraUser = "" // 取消指派
 	} else {
 		var user userdb.User
-		if err := db.DB.Where("name = ?", localAssignee).First(&user).Error; err == nil {
+		err := db.DB.Where("name = ? OR username = ? OR email = ?", localAssignee, localAssignee, localAssignee).First(&user).Error
+		if err == nil {
 			jiraUser = user.Username
 			if idx := strings.Index(jiraUser, "@"); idx > 0 {
 				jiraUser = jiraUser[:idx] // 剥离邮箱前缀，有些 Jira 的登录用户名就是邮箱前缀
+			}
+		} else {
+			// 如果没有查到，且 localAssignee 包含中文，说明是无法直接使用的中文名，为防 Jira API 报错应终止同步
+			hasChinese := false
+			for _, r := range localAssignee {
+				if r >= 0x4e00 && r <= 0x9fa5 {
+					hasChinese = true
+					break
+				}
+			}
+			if hasChinese {
+				log.Printf("Jira sync WARNING: cannot map local assignee '%s' to a valid Jira username, skipping Jira sync.", localAssignee)
+				return
 			}
 		}
 	}
@@ -452,5 +468,55 @@ func (s *Server) syncAssigneeToJira(issueKey string, localAssignee string) {
 		log.Printf("Jira sync: failed to sync assignee for %s to Jira: %v", issueKey, err)
 	} else {
 		log.Printf("Jira sync: successfully synced assignee for %s to Jira (%s)", issueKey, jiraUser)
+	}
+}
+
+// syncJiraUserToLocal automatically upserts the user info retrieved from Jira into the local users table.
+func (s *Server) syncJiraUserToLocal(username, displayName, email string) {
+	if username == "" && email == "" {
+		return
+	}
+
+	var user userdb.User
+	// 尝试通过 Username 或 Email 查询
+	err := db.DB.Where("username = ? OR email = ?", username, email).First(&user).Error
+	if err != nil {
+		// 未找到，新建用户映射
+		dbEmail := email
+		if dbEmail == "" {
+			dbEmail = username + "@westwell-lab.com"
+		}
+		dbUsername := username
+		if dbUsername == "" {
+			dbUsername = email
+		}
+		dbName := displayName
+		if dbName == "" {
+			dbName = username
+		}
+
+		newUser := userdb.User{
+			Username:   dbUsername,
+			Email:      dbEmail,
+			Name:       dbName,
+			Department: "未分配",
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+
+		if err := db.DB.Create(&newUser).Error; err != nil {
+			log.Printf("Jira sync user: failed to create user mapping for %s: %v", username, err)
+		} else {
+			log.Printf("Jira sync user: automatically created local user mapping: %s (%s)", dbName, dbUsername)
+		}
+	} else {
+		// 已存在，如果显示名有变化则同步更新
+		if displayName != "" && user.Name != displayName {
+			user.Name = displayName
+			user.UpdatedAt = time.Now()
+			if err := db.DB.Save(&user).Error; err == nil {
+				log.Printf("Jira sync user: updated local user name mapping for %s: %s -> %s", username, user.Name, displayName)
+			}
+		}
 	}
 }

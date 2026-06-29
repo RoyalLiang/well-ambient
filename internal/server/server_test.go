@@ -2142,3 +2142,46 @@ func TestDemandAndKPILogic(t *testing.T) {
 		t.Errorf("Expected task %s to be deleted from DB, but still exists", deleteTaskID)
 	}
 }
+
+func TestJiraSyncUserToLocalAndAssignee(t *testing.T) {
+	setupServerTestDB(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+		Jira: config.JiraConfig{
+			Enabled: true,
+		},
+	}
+	srv := NewServer(cfg, "")
+
+	// 1. 测试从 Jira 同步用户到本地用户表
+	// 初始状态下不存在该用户
+	var user userdb.User
+	err := db.DB.Where("username = ?", "lulu.zhang").First(&user).Error
+	if err == nil {
+		t.Fatalf("Expected user lulu.zhang not to exist in DB initially")
+	}
+
+	// 执行自动同步方法
+	srv.syncJiraUserToLocal("lulu.zhang", "张露露", "lulu.zhang@westwell-lab.com")
+
+	// 验证用户在 DB 中被正确创建
+	err = db.DB.Where("username = ?", "lulu.zhang").First(&user).Error
+	if err != nil {
+		t.Fatalf("Expected user lulu.zhang to be created, but got error: %v", err)
+	}
+	if user.Name != "张露露" || user.Email != "lulu.zhang@westwell-lab.com" {
+		t.Errorf("Unexpected user fields: %+v", user)
+	}
+
+	// 2. 测试重新同步已存在用户且有名字更新的情况
+	srv.syncJiraUserToLocal("lulu.zhang", "张露露_new", "lulu.zhang@westwell-lab.com")
+	err = db.DB.Where("username = ?", "lulu.zhang").First(&user).Error
+	if err != nil {
+		t.Fatalf("Failed to fetch user after update: %v", err)
+	}
+	if user.Name != "张露露_new" {
+		t.Errorf("Expected user name to be '张露露_new', got '%s'", user.Name)
+	}
+}
+
