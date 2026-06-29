@@ -126,6 +126,16 @@
   let executionLoading = false;
   let executionErrorMsg = '';
   let executionSearch = '';
+  let executionSearchInput = '';
+  let executionSearchDebounceTimer: any;
+  function handleExecutionSearch(event: Event) {
+    const inputVal = (event.target as HTMLInputElement).value;
+    executionSearchInput = inputVal;
+    clearTimeout(executionSearchDebounceTimer);
+    executionSearchDebounceTimer = setTimeout(() => {
+      executionSearch = inputVal;
+    }, 200);
+  }
   let executionRiskFilter: ExecutionRiskFilter = 'attention';
   let executionAssigneeFilter = 'all';
 
@@ -158,52 +168,23 @@
   }
 
   function getAssigneeStatusCount(assignee: string, status: string, tasks: Task[]): number {
-    return tasks.filter(t => {
-      const statusMatch = t.status.toLowerCase() === status.toLowerCase();
-      if (assignee === "外部协同") {
-        return !isCoreMember(t.assignee) && statusMatch;
-      }
-      return t.assignee === assignee && statusMatch;
-    }).length;
+    return (assigneeTasksMap.get(assignee) || []).filter(t => t.status.toLowerCase() === status.toLowerCase()).length;
   }
 
   function getAssigneeTaskCount(assignee: string, tasks: Task[]): number {
-    return tasks.filter(t => {
-      if (assignee === "外部协同") {
-        return !isCoreMember(t.assignee);
-      }
-      return t.assignee === assignee;
-    }).length;
+    return (assigneeTasksMap.get(assignee) || []).length;
   }
 
   function getAssigneeBugCount(assignee: string, tasks: Task[]): number {
-    return tasks.filter(t => {
-      const isBug = t.issueType === 'bug';
-      if (assignee === "外部协同") {
-        return !isCoreMember(t.assignee) && isBug;
-      }
-      return t.assignee === assignee && isBug;
-    }).length;
+    return (assigneeTasksMap.get(assignee) || []).filter(t => t.issueType === 'bug').length;
   }
 
   function isAssigneeHighLoad(assignee: string, tasks: Task[]): boolean {
-    return tasks.filter(t => {
-      const activeMatch = t.status.toLowerCase() !== 'done';
-      if (assignee === "外部协同") {
-        return !isCoreMember(t.assignee) && activeMatch;
-      }
-      return t.assignee === assignee && activeMatch;
-    }).length >= 5;
+    return (assigneeTasksMap.get(assignee) || []).filter(t => t.status.toLowerCase() !== 'done').length >= 5;
   }
 
   function isAssigneeDelayed(assignee: string, tasks: Task[]): boolean {
-    return tasks.filter(t => {
-      const delayMatch = getDelayDays(t.taskCreatedAt, t.status) >= 3;
-      if (assignee === "外部协同") {
-        return !isCoreMember(t.assignee) && delayMatch;
-      }
-      return t.assignee === assignee && delayMatch;
-    }).length > 0;
+    return (assigneeTasksMap.get(assignee) || []).filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3).length > 0;
   }
 
   let showProjectDropdown = false;
@@ -266,7 +247,7 @@
   ]);
 
   function isCoreMember(name: string): boolean {
-    if (!name) return false;
+    if (!name || name === '未指派' || name === '-' || name === 'Unassigned') return true;
     return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
   }
 
@@ -336,7 +317,7 @@
   $: inProgress = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'progress');
   $: inReview = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'review');
   $: done = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'done');
-  $: executionAssigneeOptions = ['all', ...Array.from(new Set(executionItems.map(item => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b))];
+  $: executionAssigneeOptions = ['all', ...Array.from(new Set(executionItems.filter(item => isCoreMember(item.assignee)).map(item => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b))];
   $: filteredExecutionItems = executionItems
     .filter(item => matchesExecutionFilters(item))
     .sort((a, b) => compareExecutionItems(a, b));
@@ -348,6 +329,23 @@
       ]
     : [selectedAssignee]
   );
+
+  $: assigneeTasksMap = (() => {
+    const map = new Map<string, Task[]>();
+    viewAssignees.forEach(ass => map.set(ass, []));
+
+    sortedFilteredTasks.forEach(t => {
+      const isCore = isCoreMember(t.assignee);
+      const key = isCore ? t.assignee : "外部协同";
+      const list = map.get(key);
+      if (list) {
+        list.push(t);
+      } else {
+        map.set(key, [t]);
+      }
+    });
+    return map;
+  })();
 
   // 反应式活跃度与卡点风险双驱动自适应折叠：
   $: if (viewAssignees && filteredTasks) {
@@ -370,22 +368,8 @@
   }
 
   function getAssigneeTasks(assignee: string, status: string): Task[] {
-    return filteredTasks
-      .filter(t => {
-        const statusMatch = t.status.toLowerCase() === status.toLowerCase();
-        if (assignee === "外部协同") {
-          return !isCoreMember(t.assignee) && statusMatch;
-        }
-        return t.assignee === assignee && statusMatch;
-      })
-      .sort((a, b) => {
-        const timeA = a.taskCreatedAt ? new Date(a.taskCreatedAt).getTime() : 0;
-        const timeB = b.taskCreatedAt ? new Date(b.taskCreatedAt).getTime() : 0;
-        if (timeA === 0 && timeB === 0) return 0;
-        if (timeA === 0) return 1;
-        if (timeB === 0) return -1;
-        return timeA - timeB; // Longest-running first
-      });
+    const list = assigneeTasksMap.get(assignee) || [];
+    return list.filter(t => t.status.toLowerCase() === status.toLowerCase());
   }
 
   function setTaskView(view: TaskView) {
@@ -396,22 +380,25 @@
   }
 
   function matchesExecutionFilters(item: ExecutionTaskItem): boolean {
+    if (!isCoreMember(item.assignee)) {
+      return false;
+    }
+
     const query = executionSearch.trim().toLowerCase();
     if (query) {
-      const haystack = [
-        item.task_id,
-        item.title,
-        item.issue_type,
-        item.assignee,
-        item.department,
-        item.repo,
-        item.branch,
-        item.parent_demand_id,
-        item.parent_demand,
-        item.risk_label,
-        item.result_label
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(query)) return false;
+      const match = 
+        (item.task_id && item.task_id.toLowerCase().includes(query)) ||
+        (item.title && item.title.toLowerCase().includes(query)) ||
+        (item.issue_type && item.issue_type.toLowerCase().includes(query)) ||
+        (item.assignee && item.assignee.toLowerCase().includes(query)) ||
+        (item.department && item.department.toLowerCase().includes(query)) ||
+        (item.repo && item.repo.toLowerCase().includes(query)) ||
+        (item.branch && item.branch.toLowerCase().includes(query)) ||
+        (item.parent_demand_id && item.parent_demand_id.toLowerCase().includes(query)) ||
+        (item.parent_demand && item.parent_demand.toLowerCase().includes(query)) ||
+        (item.risk_label && item.risk_label.toLowerCase().includes(query)) ||
+        (item.result_label && item.result_label.toLowerCase().includes(query));
+      if (!match) return false;
     }
 
     if (executionAssigneeFilter !== 'all' && item.assignee !== executionAssigneeFilter) {
@@ -603,6 +590,26 @@
     }
   }
 
+  async function fetchUsersFallback() {
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/users', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const names = data.map((u: any) => u.name).filter(Boolean);
+          if (names.length > 0) {
+            coreMembers = new Set([...coreMembers, ...names]);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch users fallback in TaskKanban:', e);
+    }
+  }
+
   function mapTask(t: TaskResponse): Task {
     const rawType = (t.issue_type || 'task').toLowerCase().trim();
     let issueType = 'task';
@@ -665,6 +672,7 @@
   onMount(() => {
     fetchTasks();
     fetchConfig();
+    fetchUsersFallback();
     fetchJiraLinkConfig();
     intervalId = setInterval(() => {
       fetchTasks();
@@ -854,7 +862,12 @@
       <div class="execution-control-panel">
         <div class="execution-search-shell">
           <span class="execution-search-mark"></span>
-          <input bind:value={executionSearch} placeholder="搜索 Jira Key、任务、负责人、分支、需求" />
+          <input 
+            type="text" 
+            placeholder="搜索 Jira Key、任务、负责人、分支、需求" 
+            value={executionSearchInput}
+            on:input={handleExecutionSearch}
+          />
         </div>
 
         <div class="execution-risk-strip">
@@ -916,66 +929,60 @@
           </div>
 
           <div class="execution-table-wrapper">
-            <table class="execution-table">
-              <colgroup>
-                <col style="width: 35%;" />
-                <col style="width: 25%;" />
-                <col style="width: 30%;" />
-                <col style="width: 10%;" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>任务与指派人</th>
-                  <th>当前状态</th>
-                  <th>Git Telemetry 代码证据 & MR</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div class="exec-grid-table">
+              <div class="exec-grid-thead">
+                <div class="exec-grid-tr">
+                  <div class="exec-grid-th">任务名称</div>
+                  <div class="exec-grid-th">负责人</div>
+                  <div class="exec-grid-th">当前状态</div>
+                  <div class="exec-grid-th">Git Telemetry 代码证据 & MR</div>
+                  <div class="exec-grid-th col-action">操作</div>
+                </div>
+              </div>
+              <div class="exec-grid-tbody">
                 {#each filteredExecutionItems as item}
-                  <tr>
-                    <td>
+                  <div class="exec-grid-tr">
+                    <div class="exec-grid-td">
                       <div class="exec-task-stack">
                         <div class="exec-id-row">
-                          <span class="exec-task-id font-mono">{item.task_id}</span>
-                          <span class="exec-type-badge type-{item.issue_type}">{item.issue_type === 'bug' ? 'Bug' : 'Task'}</span>
                           {#if jiraBaseUrl && item.task_id && !item.task_id.startsWith('TASK-')}
-                            <a href="{jiraBaseUrl}/browse/{item.task_id}" target="_blank" rel="noopener noreferrer" class="exec-link">Jira</a>
+                            <a href="{jiraBaseUrl}/browse/{item.task_id}" target="_blank" rel="noopener noreferrer" class="exec-task-id font-mono exec-link-only-id">{item.task_id}</a>
+                          {:else}
+                            <span class="exec-task-id font-mono">{item.task_id}</span>
                           {/if}
+                          <span class="exec-type-badge type-{item.issue_type}">{item.issue_type === 'bug' ? 'Bug' : 'Task'}</span>
                         </div>
                         <strong>{item.title}</strong>
-                        <small>指派人: {item.assignee} / {item.department || '未分配部门'}</small>
                       </div>
-                    </td>
-                    <td>
+                    </div>
+                    <div class="exec-grid-td">
+                      <div class="exec-assignee-cell">
+                        <strong>{item.assignee || '未指派'}</strong>
+                      </div>
+                    </div>
+                    <div class="exec-grid-td">
                       <div class="exec-result-stack">
                         <span class="result-pill result-{item.result_state}">{item.result_label}</span>
-                        <small>状态: {item.status}</small>
-                        <small style="color: #818cf8; font-size: 0.65rem;">分支: {item.branch || '未绑定分支'}</small>
                       </div>
-                    </td>
-                    <td>
+                    </div>
+                    <div class="exec-grid-td">
                       <div class="exec-evidence-stack">
-                        <div class="evidence-score">
-                          <span style="width: {item.evidence_score}%"></span>
+                        <div class="evidence-score-bar" title="代码完整度: {item.evidence_score}%">
+                          <div class="evidence-score-fill" style="width: {item.evidence_score}%"></div>
+                          <span class="evidence-score-text">{item.evidence_score}%</span>
                         </div>
-                        <strong>代码完整度: {item.evidence_score}%</strong>
-                        <small>Commit {item.commit_count} · MR 状态: {item.merged_mr_count > 0 ? '已合并' : (item.mr_count > 0 ? '待合并' : '无 MR')}</small>
-                        {#if item.mr_url}
-                          <a href={item.mr_url} target="_blank" rel="noopener noreferrer" class="exec-mr-link">!{item.mr_iid || 'MR'}</a>
-                        {/if}
                       </div>
-                    </td>
-                    <td>
+                    </div>
+                    <div class="exec-grid-td col-action">
                       <button class="exec-action-btn font-mono" on:click={() => {
                         activeTelemetryTaskId = item.task_id;
                         isTelemetryDrawerOpen = true;
                       }}>代码轨迹</button>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 {/each}
-              </tbody>
-            </table>
+              </div>
+            </div>
             {#if filteredExecutionItems.length === 0}
               <div class="execution-empty font-mono">当前筛选下暂无执行任务</div>
             {/if}
@@ -1679,36 +1686,56 @@
     background: rgba(15, 23, 42, 0.72);
   }
 
-  .execution-table {
+  .exec-grid-table {
+    display: flex;
+    flex-direction: column;
     width: 100%;
     min-width: 1120px;
-    border-collapse: collapse;
-    table-layout: fixed;
+    background: #0b0f19;
   }
 
-  .execution-table th {
+  .exec-grid-thead {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 3;
     background: #0b1220;
-    color: #64748b;
-    font-size: 0.66rem;
-    font-weight: 900;
-    text-align: left;
-    letter-spacing: 0.04em;
-    padding: 10px 12px;
     border-bottom: 1px solid rgba(71, 85, 105, 0.48);
   }
 
-  .execution-table td {
-    vertical-align: top;
-    padding: 12px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.24);
-    color: #cbd5e1;
-    font-size: 0.78rem;
+  .exec-grid-tr {
+    display: grid;
+    grid-template-columns: 3fr 1.5fr 1.5fr 3fr 1fr;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
 
-  .execution-table tr:hover td {
+  .exec-grid-th {
+    color: #64748b;
+    font-size: 0.66rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    padding: 10px 12px;
+    user-select: none;
+    text-align: left;
+  }
+
+  .exec-grid-td {
+    padding: 12px;
+    font-size: 0.78rem;
+    color: #cbd5e1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .exec-grid-td.col-action,
+  .exec-grid-th.col-action {
+    border-left: 1px solid rgba(99, 102, 241, 0.18);
+    justify-content: center;
+    text-align: center;
+  }
+
+  .exec-grid-tr:hover {
     background: rgba(30, 41, 59, 0.22);
   }
 
@@ -1824,6 +1851,55 @@
     height: 100%;
     background: linear-gradient(90deg, #38bdf8, #818cf8);
     border-radius: inherit;
+  }
+
+  .evidence-score-bar {
+    position: relative;
+    height: 16px;
+    background: rgba(51, 65, 85, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .evidence-score-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, #38bdf8, #818cf8);
+    border-radius: 8px;
+    transition: width 0.3s ease;
+  }
+
+  .evidence-score-text {
+    position: relative;
+    z-index: 1;
+    font-size: 0.68rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  }
+
+  .exec-link-only-id {
+    color: #38bdf8;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+
+  .exec-link-only-id:hover {
+    color: #60a5fa;
+    text-decoration: underline;
+  }
+
+  .exec-assignee-cell {
+    color: #cbd5e1;
+    font-size: 0.78rem;
   }
 
   .result-merged_done,
