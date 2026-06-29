@@ -714,12 +714,23 @@
     document.removeEventListener('click', handleDocumentClick);
   });
 
-  $: if (isMounted && currentView === 'execution' && (selectedProject !== undefined || selectedAssignee !== undefined || executionSearch !== undefined || executionRiskFilter !== undefined)) {
-    fetchExecutionTasks();
-  }
+  $: {
+    // 显式声明依赖项，确保 Svelte 编译器精准捕获每一次过滤条件改变及生命周期挂载
+    const _view = currentView;
+    const _proj = selectedProject;
+    const _ass = selectedAssignee;
+    const _execAss = executionAssigneeFilter;
+    const _execSearch = executionSearch;
+    const _execRisk = executionRiskFilter;
+    const _mounted = isMounted;
 
-  $: if (isMounted && currentView !== 'execution' && (selectedProject !== undefined || selectedAssignee !== undefined)) {
-    fetchTasks();
+    if (_mounted) {
+      if (_view === 'execution') {
+        fetchExecutionTasks();
+      } else {
+        fetchTasks();
+      }
+    }
   }
 </script>
 
