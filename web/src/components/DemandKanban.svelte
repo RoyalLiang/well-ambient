@@ -3041,7 +3041,7 @@
 
   .grid-tr {
     display: grid;
-    grid-template-columns: minmax(280px, 1fr) 160px 90px 120px 100px 110px 140px 110px 140px;
+    grid-template-columns: minmax(280px, 1fr) 180px 80px 120px 80px 110px 100px 130px 120px;
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
@@ -3103,6 +3103,11 @@
 
   .grid-tr:hover .grid-td.col-action {
     background: #131b2e;
+  }
+
+  .project-cell {
+    white-space: normal;
+    word-break: break-all;
   }
 
   .project-group-cell {
