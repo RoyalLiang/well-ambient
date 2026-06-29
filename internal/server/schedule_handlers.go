@@ -77,18 +77,78 @@ type scheduleRisk struct {
 	DaysRemaining int
 }
 
-// handleGetSchedule returns a compact schedule table projection for demand planning.
+// handleGetSchedule returns a compact schedule table projection for demand planning with query filters.
 func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var tasks []db.TaskTelemetry
-	if err := db.DB.Find(&tasks).Error; err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query schedule tasks: %v", err), http.StatusInternalServerError)
+	projectFilter := r.URL.Query().Get("project")
+	assigneeFilter := r.URL.Query().Get("assignee")
+	searchFilter := r.URL.Query().Get("search")
+	typeFilter := r.URL.Query().Get("type")
+	riskFilter := r.URL.Query().Get("risk")
+
+	// 1. 查询过滤后的 demands (主卡片)
+	tx := db.DB.Model(&db.TaskTelemetry{}).Where("status != ?", "archived")
+	tx = tx.Where("issue_type IN ?", []string{"demand", "bug", "缺陷", "故障", "defect"})
+
+	if projectFilter != "" && projectFilter != "all" {
+		tx = tx.Where("task_id LIKE ?", projectFilter+"-%")
+	}
+
+	if assigneeFilter != "" && assigneeFilter != "all" {
+		if assigneeFilter == "外部协同" {
+			coreMembers := []string{
+				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
+				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
+				"Eddie", "Antigravity",
+			}
+			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")
+		} else {
+			tx = tx.Where("assignee = ?", assigneeFilter)
+		}
+	}
+
+	if searchFilter != "" {
+		sPattern := "%" + searchFilter + "%"
+		tx = tx.Where("(task_id LIKE ? OR title LIKE ? OR assignee LIKE ?)", sPattern, sPattern, sPattern)
+	}
+
+	if typeFilter == "demand" {
+		tx = tx.Where("issue_type IN ?", []string{"demand"})
+	} else if typeFilter == "bug" {
+		tx = tx.Where("issue_type IN ?", []string{"bug", "缺陷", "故障", "defect"})
+	}
+
+	var demands []db.TaskTelemetry
+	if err := tx.Find(&demands).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query schedule demands: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// 2. 根据过滤后的 demands 收集 TaskGroupID
+	var groupIDs []string
+	for _, d := range demands {
+		gID := normalizedTaskGroupID(d.TaskGroupID)
+		if gID != "" {
+			groupIDs = append(groupIDs, gID)
+		}
+	}
+
+	// 3. 只查询与这些 groupIDs 相关的子任务，避免全表扫描！
+	var subtasks []db.TaskTelemetry
+	if len(groupIDs) > 0 {
+		if err := db.DB.Where("task_group_id IN ? AND status != ? AND issue_type NOT IN ?", 
+			groupIDs, "archived", []string{"demand", "bug", "缺陷", "故障", "defect"}).Find(&subtasks).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to query subtasks: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// 4. 将 demands 和 subtasks 合并作为 tasks 列表传给 buildScheduleResponse
+	allTasks := append(demands, subtasks...)
 
 	var users []userdb.User
 	if err := db.DB.Find(&users).Error; err != nil {
@@ -96,7 +156,27 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := buildScheduleResponse(tasks, users, time.Now())
+	response := buildScheduleResponse(allTasks, users, time.Now())
+
+	// 5. 风险层级过滤
+	if riskFilter == "attention" {
+		var filteredItems []ScheduleItemDTO
+		for _, item := range response.Items {
+			if item.RiskLevel != "safe" && item.RiskLevel != "done" {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		response.Items = filteredItems
+	} else if riskFilter != "" && riskFilter != "all" {
+		var filteredItems []ScheduleItemDTO
+		for _, item := range response.Items {
+			if item.RiskLevel == riskFilter {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		response.Items = filteredItems
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

@@ -240,6 +240,7 @@
     department: string;
   }
 
+  let isMounted = false;
   let demands: Demand[] = [];
   let demandsById: Map<string, Demand> = new Map();
   let users: UserOption[] = [];
@@ -808,12 +809,7 @@
     };
   });
 
-  $: filteredScheduleItems = (() => {
-    const query = scheduleSearch.trim().toLowerCase();
-    return scheduleItemsWithWeights
-      .filter((item) => matchesScheduleFilters(item, query))
-      .sort((a, b) => compareScheduleItems(a, b));
-  })();
+  $: filteredScheduleItems = scheduleItemsWithWeights;
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
@@ -890,7 +886,24 @@
     scheduleErrorMsg = '';
     const token = localStorage.getItem('jwt_token');
     try {
-      const res = await fetch('/api/schedule', {
+      const params = new URLSearchParams();
+      if (scheduleProjectFilter && scheduleProjectFilter !== 'all') {
+        params.append('project', scheduleProjectFilter);
+      }
+      if (scheduleAssigneeFilter && scheduleAssigneeFilter !== 'all') {
+        params.append('assignee', scheduleAssigneeFilter);
+      }
+      if (scheduleSearch && scheduleSearch.trim()) {
+        params.append('search', scheduleSearch.trim());
+      }
+      if (scheduleTypeFilter && scheduleTypeFilter !== 'all') {
+        params.append('type', scheduleTypeFilter);
+      }
+      if (scheduleRiskFilter && scheduleRiskFilter !== 'all') {
+        params.append('risk', scheduleRiskFilter);
+      }
+      const queryStr = params.toString() ? '?' + params.toString() : '';
+      const res = await fetch('/api/schedule' + queryStr, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -1302,6 +1315,7 @@
   }
 
   onMount(() => {
+    isMounted = true;
     fetchDemands();
     fetchUsers();
     fetchDemandOptions();
@@ -1339,6 +1353,21 @@
       manualModalScrollLocked = false;
     }
   });
+
+  $: {
+    // 显式引用依赖项，让 Svelte 编译器精确捕捉排期表过滤状态的变动
+    const _view = activeDemandView;
+    const _proj = scheduleProjectFilter;
+    const _ass = scheduleAssigneeFilter;
+    const _search = scheduleSearch;
+    const _type = scheduleTypeFilter;
+    const _risk = scheduleRiskFilter;
+    const _mounted = isMounted;
+
+    if (_mounted && _view === 'schedule') {
+      fetchSchedule();
+    }
+  }
 </script>
 
 <div class="demand-dashboard font-sans">
