@@ -239,8 +239,8 @@
   let selectedTask: Task | null = null;
   let showDetails = false;
 
-  // Reactive dropdown options populated from allTasks
-  $: projectOptions = ['all', ...Array.from(new Set(allTasks.map(t => getProjectName(t.id))))];
+  let allProjects: string[] = [];
+  $: projectOptions = ['all', ...allProjects];
   let coreMembers = new Set([
     "梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
     "李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
@@ -275,14 +275,8 @@
 
   $: assigneeOptions = [
     'all', 
-    ...Array.from(new Set(allTasks.filter(t => {
-      if (isCoreMember(t.assignee)) return true;
-      return t.status.toLowerCase() !== 'done';
-    }).map(t => {
-      if (!t.assignee) return null;
-      if (isCoreMember(t.assignee)) return t.assignee;
-      return "外部协同";
-    }).filter((ass): ass is string => Boolean(ass))))
+    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)),
+    '外部协同'
   ];
 
   // Reactive filtered tasks
@@ -318,7 +312,11 @@
   $: inProgress = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'progress');
   $: inReview = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'review');
   $: done = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'done');
-  $: executionAssigneeOptions = ['all', ...Array.from(new Set(executionItems.filter(item => isCoreMember(item.assignee)).map(item => item.assignee).filter(Boolean))).sort((a, b) => a.localeCompare(b))];
+  $: executionAssigneeOptions = [
+    'all', 
+    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)),
+    '外部协同'
+  ];
   $: filteredExecutionItems = executionItems
     .filter(item => matchesExecutionFilters(item))
     .sort((a, b) => compareExecutionItems(a, b));
@@ -683,6 +681,9 @@
       const data: TaskResponse[] = await res.json();
       
       allTasks = data.map(mapTask);
+      if (allProjects.length === 0 && data.length > 0) {
+        allProjects = Array.from(new Set(data.map(t => getProjectName(t.task_id || t.id)))).sort((a, b) => a.localeCompare(b));
+      }
       errorMsg = '';
     } catch (e: any) {
       console.error('Failed to fetch tasks:', e);
