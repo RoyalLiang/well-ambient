@@ -116,6 +116,7 @@
     };
   }
 
+  let isMounted = false;
   let allTasks: Task[] = [];
   let selectedProject = 'all';
   let selectedAssignee = 'all';
@@ -428,7 +429,21 @@
     executionLoading = true;
     executionErrorMsg = '';
     try {
-      const res = await fetch('/api/execution/tasks');
+      const params = new URLSearchParams();
+      if (selectedProject && selectedProject !== 'all') {
+        params.append('project', selectedProject);
+      }
+      if (selectedAssignee && selectedAssignee !== 'all') {
+        params.append('assignee', selectedAssignee);
+      }
+      if (executionSearch && executionSearch.trim()) {
+        params.append('search', executionSearch.trim());
+      }
+      if (executionRiskFilter && executionRiskFilter !== 'all') {
+        params.append('risk', executionRiskFilter);
+      }
+      const queryStr = params.toString() ? '?' + params.toString() : '';
+      const res = await fetch('/api/execution/tasks' + queryStr);
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data: ExecutionTasksResponse = await res.json();
       executionItems = data.items || [];
@@ -655,7 +670,15 @@
 
   async function fetchTasks() {
     try {
-      const res = await fetch('/api/tasks');
+      const params = new URLSearchParams();
+      if (selectedProject && selectedProject !== 'all') {
+        params.append('project', selectedProject);
+      }
+      if (selectedAssignee && selectedAssignee !== 'all') {
+        params.append('assignee', selectedAssignee);
+      }
+      const queryStr = params.toString() ? '?' + params.toString() : '';
+      const res = await fetch('/api/tasks' + queryStr);
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const data: TaskResponse[] = await res.json();
       
@@ -670,6 +693,7 @@
   }
 
   onMount(() => {
+    isMounted = true;
     fetchTasks();
     fetchConfig();
     fetchUsersFallback();
@@ -689,6 +713,14 @@
     }
     document.removeEventListener('click', handleDocumentClick);
   });
+
+  $: if (isMounted && currentView === 'execution' && (selectedProject !== undefined || selectedAssignee !== undefined || executionSearch !== undefined || executionRiskFilter !== undefined)) {
+    fetchExecutionTasks();
+  }
+
+  $: if (isMounted && currentView !== 'execution' && (selectedProject !== undefined || selectedAssignee !== undefined)) {
+    fetchTasks();
+  }
 </script>
 
 <section class="kanban-section">

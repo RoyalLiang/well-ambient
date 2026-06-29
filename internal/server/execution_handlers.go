@@ -81,23 +81,66 @@ type executionRisk struct {
 	Tags   []string
 }
 
-// handleGetExecutionTasks returns Jira/task-level execution observability without polluting demand scheduling.
+// handleGetExecutionTasks returns Jira/task-level execution observability with query filters
 func (s *Server) handleGetExecutionTasks(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	projectFilter := r.URL.Query().Get("project")
+	assigneeFilter := r.URL.Query().Get("assignee")
+	searchFilter := r.URL.Query().Get("search")
+	riskFilter := r.URL.Query().Get("risk")
+
+	tx := db.DB.Model(&db.TaskTelemetry{})
+
+	// 1. 项目前缀过滤
+	if projectFilter != "" && projectFilter != "all" {
+		tx = tx.Where("task_id LIKE ?", projectFilter+"-%")
+	}
+
+	// 2. 负责人过滤
+	if assigneeFilter != "" && assigneeFilter != "all" {
+		if assigneeFilter == "外部协同" {
+			coreMembers := []string{
+				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
+				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
+				"Eddie", "Antigravity",
+			}
+			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")
+		} else {
+			tx = tx.Where("assignee = ?", assigneeFilter)
+		}
+	}
+
+	// 3. 关键字匹配
+	if searchFilter != "" {
+		sPattern := "%" + searchFilter + "%"
+		tx = tx.Where("(task_id LIKE ? OR title LIKE ? OR assignee LIKE ? OR repo LIKE ? OR branch LIKE ?)", 
+			sPattern, sPattern, sPattern, sPattern, sPattern)
+	}
+
 	var tasks []db.TaskTelemetry
-	if err := db.DB.Find(&tasks).Error; err != nil {
+	if err := tx.Find(&tasks).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to query execution tasks: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// 4. 仅查询与这些过滤任务关联的提交日志，规避全表扫描
+	var taskIDs []string
+	for _, t := range tasks {
+		if t.TaskID != "" {
+			taskIDs = append(taskIDs, t.TaskID)
+		}
+	}
+
 	var logs []db.GitCommitLog
-	if err := db.DB.Order("created_at desc").Find(&logs).Error; err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query execution evidence: %v", err), http.StatusInternalServerError)
-		return
+	if len(taskIDs) > 0 {
+		if err := db.DB.Where("task_id IN ?", taskIDs).Order("created_at desc").Find(&logs).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to query execution evidence: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	var users []userdb.User
@@ -107,6 +150,26 @@ func (s *Server) handleGetExecutionTasks(w http.ResponseWriter, r *http.Request)
 	}
 
 	response := buildExecutionTasksResponse(tasks, logs, users, time.Now())
+
+	// 5. 风险层级过滤
+	if riskFilter == "attention" {
+		var filteredItems []ExecutionTaskItemDTO
+		for _, item := range response.Items {
+			if item.RiskLevel != "safe" && item.RiskLevel != "done" {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		response.Items = filteredItems
+	} else if riskFilter != "" && riskFilter != "all" {
+		var filteredItems []ExecutionTaskItemDTO
+		for _, item := range response.Items {
+			if item.RiskLevel == riskFilter {
+				filteredItems = append(filteredItems, item)
+			}
+		}
+		response.Items = filteredItems
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

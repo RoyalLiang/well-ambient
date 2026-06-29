@@ -255,10 +255,32 @@ func (s *Server) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 	telemetry.HandleWebhook(s.config, w, r)
 }
 
-// handleGetTasks returns all task telemetries as JSON
+// handleGetTasks returns task telemetries as JSON with query filters
 func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
+	projectFilter := r.URL.Query().Get("project")
+	assigneeFilter := r.URL.Query().Get("assignee")
+
+	tx := db.DB.Where("status != ?", "archived")
+
+	if projectFilter != "" && projectFilter != "all" {
+		tx = tx.Where("task_id LIKE ?", projectFilter+"-%")
+	}
+
+	if assigneeFilter != "" && assigneeFilter != "all" {
+		if assigneeFilter == "外部协同" {
+			coreMembers := []string{
+				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
+				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
+				"Eddie", "Antigravity",
+			}
+			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")
+		} else {
+			tx = tx.Where("assignee = ?", assigneeFilter)
+		}
+	}
+
 	var tasks []db.TaskTelemetry
-	if err := db.DB.Find(&tasks).Error; err != nil {
+	if err := tx.Find(&tasks).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to query tasks: %v", err), http.StatusInternalServerError)
 		return
 	}
