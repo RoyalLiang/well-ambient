@@ -1733,10 +1733,10 @@
                       </div>
                       <div class="grid-td">
                         <div class="subtask-stack">
-                          <div class="subtask-meter">
+                          <div class="subtask-meter" title="影子任务进度: {item.subtask_done}/{item.subtask_total || 0}">
                             <span style="width: {progress}%"></span>
+                            <small class="subtask-percentage-text">{item.subtask_done}/{item.subtask_total || 0}</small>
                           </div>
-                          <strong>{item.subtask_done}/{item.subtask_total || 0}</strong>
                         </div>
                       </div>
                       <div class="grid-td">
@@ -3238,19 +3238,38 @@
   .status-chip.status-done { color: #86efac; border-color: rgba(16, 185, 129, 0.34); background: rgba(16, 185, 129, 0.1); }
 
   .subtask-meter {
-    height: 6px;
+    height: 14px;
     width: 100%;
     min-width: 80px;
     background: rgba(51, 65, 85, 0.72);
-    border-radius: 999px;
+    border-radius: 5px;
     overflow: hidden;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .subtask-meter span {
-    display: block;
-    height: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
     background: linear-gradient(90deg, #38bdf8, #818cf8);
     border-radius: inherit;
+    z-index: 1;
+  }
+
+  .subtask-percentage-text {
+    position: relative;
+    z-index: 2;
+    font-size: 0.68rem;
+    font-weight: 900;
+    color: #ffffff;
+    font-family: monospace;
+    pointer-events: none;
+    line-height: 1;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
   }
 
   .schedule-risk-pill {
