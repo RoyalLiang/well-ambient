@@ -694,6 +694,7 @@
     demands.forEach((demand) => addFormOption(options, demand.assignee));
     allSubTasks.forEach((task) => addFormOption(options, task.assignee));
     scheduleItems.forEach((item) => addFormOption(options, item.assignee));
+    coreMembers.forEach((name) => addFormOption(options, name)); // 显式追加所有开发核心成员
     addFormOption(options, currentUserName || currentUserEmail);
     return sortedFormOptions(options);
   }
@@ -1095,6 +1096,16 @@
     activeDatePicker = null;
     showScheduleDifficultyDropdown = false;
     scheduleEstimateLoading = false;
+  }
+
+  function handleScheduleModalClick(e: Event) {
+    const target = e.target as HTMLElement;
+    if (!target.closest('#sched-assignee-container')) {
+      showScheduleModalAssigneeDropdown = false;
+    }
+    if (!target.closest('.difficulty-select-shell')) {
+      showScheduleDifficultyDropdown = false;
+    }
   }
 
   function openDemandDetails(demand: Demand) {
@@ -2246,7 +2257,7 @@
   <!-- Schedule Demand Modal -->
   {#if showScheduleModal && selectedDemand}
     <div class="modal-backdrop" on:click={closeScheduleModal}>
-      <div class="modal-content schedule-modal" on:click|stopPropagation>
+      <div class="modal-content schedule-modal" on:click|stopPropagation={handleScheduleModalClick}>
         <div class="modal-header">
           <h3>⚡ {selectedDemand.issue_type === 'bug' ? '缺陷' : '需求'}开发排期与指派: #{selectedDemand.task_id}</h3>
           <button class="close-btn" on:click={closeScheduleModal}>&times;</button>
