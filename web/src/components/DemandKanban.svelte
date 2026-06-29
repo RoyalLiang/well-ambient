@@ -285,7 +285,11 @@
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
 
-  let coreMembers = new Set(["Eddie", "Antigravity"]);
+  let coreMembers = new Set([
+    "梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
+    "李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
+    "Eddie", "Antigravity"
+  ]);
 
   function isCoreMember(name: string): boolean {
     if (!name || name === '未指派' || name === '-' || name === 'Unassigned') return true;
