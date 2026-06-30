@@ -23,7 +23,8 @@
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        commits = await res.json();
+        const data = await res.json();
+        commits = data || [];
       } else {
         throw new Error('获取代码轨迹失败');
       }
@@ -68,7 +69,7 @@
           </div>
         {:else if errorMsg}
           <div class="error-state font-mono">❌ {errorMsg}</div>
-        {:else if commits.length > 0}
+        {:else if commits && commits.length > 0}
           <div class="commit-timeline">
             {#each commits as log}
               <div class="timeline-item">

@@ -335,7 +335,7 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 	_ = db.DB.Where("task_id = ?", taskID).Find(&jiraComments)
 
 	// 合并为 TelemetryActivityDTO
-	var activities []TelemetryActivityDTO
+	activities := []TelemetryActivityDTO{}
 	for _, gl := range gitLogs {
 		activities = append(activities, TelemetryActivityDTO{
 			TaskID:    gl.TaskID,
