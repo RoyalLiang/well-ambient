@@ -2185,3 +2185,63 @@ func TestJiraSyncUserToLocalAndAssignee(t *testing.T) {
 	}
 }
 
+func TestGetTaskCommitsCombinesGitAndJiraLogs(t *testing.T) {
+	setupServerTestDB(t)
+
+	cfg := &config.Config{Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"}}
+	srv := NewServer(cfg, "")
+
+	taskID := "TEST-101"
+	now := time.Now()
+
+	// 1. 种子数据：GitCommitLog
+	gitLog := db.GitCommitLog{
+		TaskID:    taskID,
+		Repo:      "core",
+		Branch:    "feat/TEST-101",
+		CommitID:  "git-sha-123",
+		Message:   "git commit message",
+		Author:    "Alice",
+		Action:    "git_push",
+		CreatedAt: now.Add(-10 * time.Minute),
+	}
+	db.DB.Create(&gitLog)
+
+	// 2. 种子数据：JiraCommentLog
+	jiraComment := db.JiraCommentLog{
+		TaskID:    taskID,
+		CommentID: "comment-id-456",
+		Author:    "Bob (Jira)",
+		Body:      "jira comment body",
+		CreatedAt: now, // 更加新鲜，应该排在前面
+	}
+	db.DB.Create(&jiraComment)
+
+	// 3. 构造请求调用 handleGetTaskCommits
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/commits?task_id="+taskID, nil)
+	rr := httptest.NewRecorder()
+	srv.handleGetTaskCommits(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Unexpected status: got %d", rr.Code)
+	}
+
+	var activities []TelemetryActivityDTO
+	if err := json.NewDecoder(rr.Body).Decode(&activities); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if len(activities) != 2 {
+		t.Fatalf("Expected 2 activities, got %d", len(activities))
+	}
+
+	// 验证排序：Jira 评论更加新鲜，应位于 activities[0]
+	if activities[0].Action != "jira_comment" || activities[0].Author != "Bob (Jira)" {
+		t.Errorf("Expected first item to be Jira comment, got %+v", activities[0])
+	}
+	if activities[1].Action != "git_push" || activities[1].CommitID != "git-sha-123" {
+		t.Errorf("Expected second item to be Git push, got %+v", activities[1])
+	}
+}
+
+

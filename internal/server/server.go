@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 	"well-ambient/internal/agenda"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
@@ -305,6 +307,19 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type TelemetryActivityDTO struct {
+	TaskID    string    `json:"task_id"`
+	Repo      string    `json:"repo"`
+	Branch    string    `json:"branch"`
+	CommitID  string    `json:"commit_id,omitempty"`
+	Message   string    `json:"message"`
+	Author    string    `json:"author"`
+	MrIID     int       `json:"mr_iid,omitempty"`
+	MrURL     string    `json:"mr_url,omitempty"`
+	Action    string    `json:"action"` // git_push, mr_open, mr_merge, mr_close, jira_comment
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // handleGetTaskCommits returns all git commit/MR logs associated with a task_id
 func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 	taskID := r.URL.Query().Get("task_id")
@@ -313,14 +328,47 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var logs []db.GitCommitLog
-	if err := db.DB.Where("task_id = ?", taskID).Order("created_at desc").Find(&logs).Error; err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query git logs: %v", err), http.StatusInternalServerError)
-		return
+	var gitLogs []db.GitCommitLog
+	_ = db.DB.Where("task_id = ?", taskID).Find(&gitLogs)
+
+	var jiraComments []db.JiraCommentLog
+	_ = db.DB.Where("task_id = ?", taskID).Find(&jiraComments)
+
+	// 合并为 TelemetryActivityDTO
+	var activities []TelemetryActivityDTO
+	for _, gl := range gitLogs {
+		activities = append(activities, TelemetryActivityDTO{
+			TaskID:    gl.TaskID,
+			Repo:      gl.Repo,
+			Branch:    gl.Branch,
+			CommitID:  gl.CommitID,
+			Message:   gl.Message,
+			Author:    gl.Author,
+			MrIID:     gl.MrIID,
+			MrURL:     gl.MrURL,
+			Action:    gl.Action,
+			CreatedAt: gl.CreatedAt,
+		})
+	}
+	for _, jc := range jiraComments {
+		activities = append(activities, TelemetryActivityDTO{
+			TaskID:    jc.TaskID,
+			Repo:      "Jira",
+			Branch:    "-",
+			Message:   jc.Body,
+			Author:    jc.Author,
+			Action:    "jira_comment",
+			CreatedAt: jc.CreatedAt,
+		})
 	}
 
+	// 倒序排序
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].CreatedAt.After(activities[j].CreatedAt)
+	})
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(logs); err != nil {
+	if err := json.NewEncoder(w).Encode(activities); err != nil {
 		log.Printf("Error encoding task commits: %v", err)
 	}
 }

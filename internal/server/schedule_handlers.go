@@ -346,6 +346,53 @@ func resolveScheduleRisk(demand db.TaskTelemetry, stats scheduleSubtaskStats, no
 		}
 	}
 
+	issueType := strings.ToLower(strings.TrimSpace(demand.IssueType))
+	isBug := issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect"
+
+	if isBug {
+		assignee := strings.TrimSpace(demand.Assignee)
+		hasAssignee := assignee != "" && assignee != "-" && assignee != "未指派" && strings.ToLower(assignee) != "unassigned"
+		if !hasAssignee {
+			return scheduleRisk{
+				Level:  "unscheduled",
+				Label:  "待指派",
+				Reason: "缺陷尚未指派负责人进行修复",
+				Rank:   70,
+			}
+		}
+
+		if demand.DueDate != nil && !demand.DueDate.IsZero() {
+			today := startOfDay(now)
+			dueDay := startOfDay(*demand.DueDate)
+			daysRemaining := int(dueDay.Sub(today).Hours() / 24)
+			if daysRemaining < 0 {
+				return scheduleRisk{
+					Level:         "overdue",
+					Label:         "已逾期",
+					Reason:        fmt.Sprintf("超过计划截止日 %d 天", -daysRemaining),
+					Rank:          100,
+					DaysRemaining: daysRemaining,
+				}
+			}
+			if daysRemaining <= 3 {
+				return scheduleRisk{
+					Level:         "due_soon",
+					Label:         "临期",
+					Reason:        fmt.Sprintf("%d 天后到期，请关注修复确定性", daysRemaining),
+					Rank:          82,
+					DaysRemaining: daysRemaining,
+				}
+			}
+		}
+
+		return scheduleRisk{
+			Level:         "safe",
+			Label:         "修复中",
+			Reason:        "缺陷已指派负责人并处于开发修复阶段",
+			Rank:          10,
+		}
+	}
+
 	if !hasScheduleBranch(demand.Branch) {
 		return scheduleRisk{
 			Level:  "unscheduled",
@@ -429,6 +476,14 @@ func scheduleActivityTime(task db.TaskTelemetry) time.Time {
 }
 
 func isDemandScheduled(demand db.TaskTelemetry) bool {
+	issueType := strings.ToLower(strings.TrimSpace(demand.IssueType))
+	isBug := issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect"
+	if isBug {
+		status := strings.ToLower(strings.TrimSpace(demand.Status))
+		assignee := strings.TrimSpace(demand.Assignee)
+		hasAssignee := assignee != "" && assignee != "-" && assignee != "未指派" && strings.ToLower(assignee) != "unassigned"
+		return hasAssignee && status != "done" && status != "archived"
+	}
 	return hasScheduleBranch(demand.Branch) && demand.DueDate != nil && !demand.DueDate.IsZero()
 }
 

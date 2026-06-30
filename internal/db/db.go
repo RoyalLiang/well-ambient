@@ -16,7 +16,7 @@ type WebhookLog struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	Event     string    `json:"event"`
 	Payload   string    `gorm:"type:text" json:"payload"`
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }
 
 // TaskTelemetry tracks the parsed git state for tasks
@@ -25,15 +25,15 @@ type TaskTelemetry struct {
 	Title             string     `json:"title"`
 	Description       string     `json:"description"` // 详细描述
 	Repo              string     `json:"repo"`
-	Assignee          string     `json:"assignee"`
+	Assignee          string     `gorm:"index" json:"assignee"`
 	Creator           string     `json:"creator"`      // 创建人
 	CreatorDept       string     `json:"creator_dept"` // 创建人部门
-	Branch            string     `json:"branch"`
+	Branch            string     `gorm:"index" json:"branch"`
 	LastCommit        string     `json:"last_commit"`
-	Status            string     `json:"status"` // backlog, progress, review, done
-	IssueType         string     `json:"issue_type"`
+	Status            string     `gorm:"index" json:"status"` // backlog, progress, review, done
+	IssueType         string     `gorm:"index" json:"issue_type"`
 	TaskCreatedAt     time.Time  `json:"task_created_at"`
-	LastUpdate        time.Time  `json:"last_update"`
+	LastUpdate        time.Time  `gorm:"index" json:"last_update"`
 	CompletedAt       *time.Time `json:"completed_at"`                              // 完成时间
 	DueDate           *time.Time `json:"due_date"`                                  // 任务截止时间
 	DecisionLogs      string     `json:"decision_logs"`                             // 会议决策历史，存储为 JSON 字符串
@@ -190,6 +190,16 @@ type GitCommitLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// JiraCommentLog tracks discussion updates pulled from Jira issues (comments)
+type JiraCommentLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	TaskID    string    `gorm:"index" json:"task_id"`
+	CommentID string    `gorm:"uniqueIndex" json:"comment_id"` // Jira comment ID for idempotency
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
+}
+
 // Notification represents a notification event in the system
 type Notification struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -199,7 +209,7 @@ type Notification struct {
 	Message   string    `json:"message"`  // Detailed body text
 	Assignee  string    `json:"assignee"` // Owner, author or actor
 	Link      string    `json:"link"`     // Actionable link (GitLab commit/MR URL)
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }
 
 // UserNotificationState tracks read/dismissed states for notifications on a per-user basis
@@ -260,6 +270,7 @@ func InitDB(dbPath string) error {
 		&ContextPackItem{},
 		&ConfigVersion{},
 		&GitCommitLog{},
+		&JiraCommentLog{},
 		&Notification{},
 		&UserNotificationState{},
 		&userdb.User{},

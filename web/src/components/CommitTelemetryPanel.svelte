@@ -74,16 +74,20 @@
               <div class="timeline-item">
                 <div class="timeline-badge-container">
                   <span class="timeline-badge badge-{log.action}">
-                    {log.action === 'git_push' ? 'Push' : 'MR'}
+                    {log.action === 'git_push' ? 'Push' : (log.action === 'jira_comment' ? 'Comment' : 'MR')}
                   </span>
                   <span class="timeline-time font-mono">{formatTimeBrief(log.created_at)}</span>
                 </div>
                 <div class="timeline-content">
                   <div class="timeline-meta">
-                    <span class="meta-repo">📁 {log.repo}</span>
-                    <span class="meta-branch">🌿 {log.branch}</span>
-                    {#if log.commit_id}
-                      <span class="meta-hash font-mono" title="Commit Hash">{log.commit_id.substring(0, 8)}</span>
+                    {#if log.action === 'jira_comment'}
+                      <span class="meta-repo">💬 Jira 评论</span>
+                    {:else}
+                      <span class="meta-repo">📁 {log.repo}</span>
+                      <span class="meta-branch">🌿 {log.branch}</span>
+                      {#if log.commit_id}
+                        <span class="meta-hash font-mono" title="Commit Hash">{log.commit_id.substring(0, 8)}</span>
+                      {/if}
                     {/if}
                   </div>
                   <div class="timeline-body font-mono">
@@ -96,7 +100,7 @@
                     {/if}
                   </div>
                   <div class="timeline-footer">
-                    <span>👤 提交人: {log.author}</span>
+                    <span>👤 {log.action === 'jira_comment' ? '评论人' : '提交人'}: {log.author}</span>
                   </div>
                 </div>
               </div>
@@ -296,6 +300,12 @@
     background: rgba(168, 85, 247, 0.15);
     color: #c084fc;
     border: 1px solid rgba(168, 85, 247, 0.3);
+  }
+
+  .timeline-badge.badge-jira_comment {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
   }
 
   .timeline-time {

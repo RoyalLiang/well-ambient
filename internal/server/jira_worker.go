@@ -146,6 +146,8 @@ func (s *Server) syncJiraTasks() {
 				}
 			}
 		}
+		// 每次成功拉取到 Jira 任务时同步其评论
+		s.syncJiraComments(jc, issue.Key)
 	}
 
 	// =================================================================
@@ -286,6 +288,8 @@ func (s *Server) syncJiraTasks() {
 							_ = kanban.SyncTaskToKanban(&existing)
 						}
 					}
+					// 自动同步评论
+					s.syncJiraComments(jc, issue.Key)
 				}
 			}
 		}
@@ -516,6 +520,41 @@ func (s *Server) syncJiraUserToLocal(username, displayName, email string) {
 			user.UpdatedAt = time.Now()
 			if err := db.DB.Save(&user).Error; err == nil {
 				log.Printf("Jira sync user: updated local user name mapping for %s: %s -> %s", username, user.Name, displayName)
+			}
+		}
+	}
+}
+
+// syncJiraComments pulls comments for a Jira issue and saves them locally.
+func (s *Server) syncJiraComments(jc *telemetry.JiraClient, issueKey string) {
+	if jc == nil || issueKey == "" {
+		return
+	}
+
+	comments, err := jc.GetComments(issueKey)
+	if err != nil {
+		log.Printf("Jira sync comments: failed to fetch comments for %s: %v", issueKey, err)
+		return
+	}
+
+	for _, c := range comments {
+		var existing db.JiraCommentLog
+		err := db.DB.Where("comment_id = ?", c.ID).First(&existing).Error
+		if err != nil {
+			createdTime := parseJiraTime(c.Created)
+			authorName := c.Author.DisplayName
+			if authorName == "" {
+				authorName = "Unknown"
+			}
+			newComment := db.JiraCommentLog{
+				TaskID:    issueKey,
+				CommentID: c.ID,
+				Author:    authorName,
+				Body:      c.Body,
+				CreatedAt: createdTime,
+			}
+			if err := db.DB.Create(&newComment).Error; err != nil {
+				log.Printf("Jira sync comments: failed to save comment %s for %s: %v", c.ID, issueKey, err)
 			}
 		}
 	}

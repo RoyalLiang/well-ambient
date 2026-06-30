@@ -217,3 +217,43 @@ func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error
 	return nil
 }
 
+type JiraComment struct {
+	ID     string `json:"id"`
+	Author struct {
+		DisplayName string `json:"displayName"`
+	} `json:"author"`
+	Body    string `json:"body"`
+	Created string `json:"created"`
+}
+
+type JiraCommentsResponse struct {
+	Comments []JiraComment `json:"comments"`
+}
+
+func (jc *JiraClient) GetComments(issueKey string) ([]JiraComment, error) {
+	path := fmt.Sprintf("/rest/api/2/issue/%s/comment", issueKey)
+	req, err := jc.newRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Jira get comments failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var res JiraCommentsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	return res.Comments, nil
+}
+
+
