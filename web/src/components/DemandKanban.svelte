@@ -1673,6 +1673,7 @@
                   <div class="grid-th">工时</div>
                   <div class="grid-th">影子任务</div>
                   <div class="grid-th">风险</div>
+                  <div class="grid-th">创建时间</div>
                   <div class="grid-th">更新时间</div>
                   <div class="grid-th col-action">操作</div>
                 </div>
@@ -1743,6 +1744,9 @@
                         <div class="risk-stack">
                           <span class="schedule-risk-pill risk-{item.risk_level}" title={item.risk_reason || ''}>{item.risk_label}</span>
                         </div>
+                      </div>
+                      <div class="grid-td">
+                        <span class="font-mono text-slate-400 text-xs" style="opacity: 0.85;">{item.created_at ? item.created_at.slice(0, 10) : '-'}</span>
                       </div>
                       <div class="grid-td">
                         <span class="font-mono text-slate-300 text-xs">{item.last_update ? item.last_update.slice(2, 16) : '-'}</span>
@@ -3041,7 +3045,7 @@
 
   .grid-tr {
     display: grid;
-    grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1.1fr) 80px 120px 80px 110px 100px 130px 120px;
+    grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1.1fr) 80px 120px 80px 110px 100px 100px 130px 120px;
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   }
