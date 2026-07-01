@@ -241,6 +241,7 @@
 
   let allProjects: string[] = [];
   $: projectOptions = ['all', ...allProjects];
+  let projectNamesMap: Record<string, string> = {};
   let coreMembers = new Set([
     "梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
     "李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
@@ -602,6 +603,26 @@
     }
   }
 
+  async function fetchProjectConfigs() {
+    try {
+      const res = await fetch('/api/projects/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          const newMap: Record<string, string> = {};
+          data.forEach((p: any) => {
+            if (p.project_key && p.project_name) {
+              newMap[p.project_key.toUpperCase()] = p.project_name;
+            }
+          });
+          projectNamesMap = newMap;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch project configs:', e);
+    }
+  }
+
   async function fetchUsersFallback() {
     const token = localStorage.getItem('jwt_token');
     try {
@@ -696,7 +717,7 @@
     isMounted = true;
     fetchTasks();
     fetchConfig();
-    fetchUsersFallback();
+    fetchProjectConfigs();
     fetchJiraLinkConfig();
     intervalId = setInterval(() => {
       fetchTasks();
@@ -762,7 +783,7 @@
           <input 
             type="text" 
             class="combobox-trigger-input"
-            placeholder={selectedProject === 'all' ? '全部项目' : selectedProject}
+            placeholder={selectedProject === 'all' ? '全部项目' : (projectNamesMap[selectedProject.toUpperCase()] || selectedProject)}
             bind:value={projectSearchText}
             on:focus|stopPropagation={() => showProjectDropdown = true}
             on:click|stopPropagation={() => showProjectDropdown = true}
@@ -776,12 +797,20 @@
         </div>
         {#if showProjectDropdown}
           <div class="custom-select-options">
-            {#each projectOptions.filter(proj => proj === 'all' || !projectSearchText || proj.toLowerCase().includes(projectSearchText.toLowerCase())) as proj}
+            {#each projectOptions.filter(proj => {
+              if (proj === 'all') return true;
+              if (!projectSearchText) return true;
+              const term = projectSearchText.toLowerCase();
+              const keyMatch = proj.toLowerCase().includes(term);
+              const name = projectNamesMap[proj.toUpperCase()] || '';
+              const nameMatch = name.toLowerCase().includes(term);
+              return keyMatch || nameMatch;
+            }) as proj}
               <button 
                 class="custom-option {selectedProject === proj ? 'active' : ''}" 
                 on:click={() => selectProject(proj)}
               >
-                {proj === 'all' ? '全部项目' : proj}
+                {proj === 'all' ? '全部项目' : (projectNamesMap[proj.toUpperCase()] || proj)}
               </button>
             {/each}
           </div>
@@ -3310,7 +3339,8 @@
     font-family: inherit;
     padding: 0 !important;
     margin: 0 !important;
-    width: 90px;
+    flex: 1;
+    min-width: 0;
   }
   .combobox-trigger-input::placeholder {
     color: #cbd5e1 !important;

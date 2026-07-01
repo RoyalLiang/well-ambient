@@ -2585,7 +2585,8 @@
     font-family: inherit;
     padding: 0 !important;
     margin: 0 !important;
-    width: 90px;
+    flex: 1;
+    min-width: 0;
   }
   .combobox-trigger-input::placeholder {
     color: #cbd5e1 !important;
