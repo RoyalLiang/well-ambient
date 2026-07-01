@@ -729,7 +729,7 @@
     {/if}
     {#if hasPermission('decision:read')}
       <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
-        ⚡ 决策战争室 (War Room)
+        ⚡ 决策看板 (War Room)
       </button>
     {/if}
     {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}
@@ -760,7 +760,7 @@
         currentUserDepartment={currentUserDepartment}
       />
     {:else if activeTab === 'decision'}
-      <DecisionDashboard />
+      <DecisionDashboard currentUser={currentUserName} />
     {:else if activeTab === 'settings'}
       <SettingsPanel
         currentUserRole={currentUserRole}

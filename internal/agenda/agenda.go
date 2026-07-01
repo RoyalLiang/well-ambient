@@ -28,6 +28,7 @@ type AgendaItem struct {
 	TelemetrySnippet TelemetrySnippet  `json:"telemetry_snippet"`
 	DueDate          *time.Time        `json:"due_date"`
 	DecisionLogs     string            `json:"decision_logs"`
+	GitLogs          []db.GitCommitLog `json:"git_logs"` // 关联的真实 Git 日志与 MR 行为
 }
 
 // AutoDecision represents an AI autonomous operation that ran in the background
@@ -36,6 +37,8 @@ type AutoDecision struct {
 	TaskID   string `json:"task_id"`
 	Message  string `json:"message"`
 	Assignee string `json:"assignee,omitempty"`
+	Repo     string `json:"repo,omitempty"`
+	Branch   string `json:"branch,omitempty"`
 }
 
 // EvaluateActiveTasks analyzes active tasks and computes their risk levels
@@ -68,6 +71,7 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 			RiskType:     "none",
 			DueDate:      t.DueDate,
 			DecisionLogs: t.DecisionLogs,
+			GitLogs:      []db.GitCommitLog{},
 			TelemetrySnippet: TelemetrySnippet{
 				Branch:     t.Branch,
 				LastCommit: t.LastCommit,
@@ -151,6 +155,8 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 				TaskID:   t.TaskID,
 				Message:  fmt.Sprintf("🤖 检测到分支 %s 已被合入，AI 已自动将该任务流转至 DONE 并归档。", t.Branch),
 				Assignee: t.Assignee,
+				Repo:     t.Repo,
+				Branch:   t.Branch,
 			})
 		} else if t.Status == "review" {
 			logs = append(logs, AutoDecision{
@@ -158,6 +164,8 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 				TaskID:   t.TaskID,
 				Message:  fmt.Sprintf("🤖 检测到开发者 %s 提交了 Merge Request，AI 已自动流转至 Review 并提醒评审人。", t.Assignee),
 				Assignee: t.Assignee,
+				Repo:     t.Repo,
+				Branch:   t.Branch,
 			})
 		}
 	}

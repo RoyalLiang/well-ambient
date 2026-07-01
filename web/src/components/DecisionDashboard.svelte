@@ -1,10 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  export let currentUser = '';
 
   interface TelemetrySnippet {
     branch: string;
     last_commit: string;
     last_update: string;
+  }
+
+  interface GitCommitLog {
+    id: number;
+    task_id: string;
+    repo: string;
+    branch: string;
+    commit_id: string;
+    message: string;
+    author: string;
+    mr_iid: number;
+    mr_url: string;
+    action: string;
+    created_at: string;
   }
 
   interface AgendaItem {
@@ -20,6 +35,7 @@
     telemetry_snippet: TelemetrySnippet;
     due_date: string | null;
     decision_logs: string;
+    git_logs?: GitCommitLog[]; // 新增：底层关联的真实 Git 历史轨迹
   }
 
   interface AutoDecision {
@@ -27,6 +43,8 @@
     task_id: string;
     message: string;
     assignee?: string;
+    repo?: string; // 新增：仓储名
+    branch?: string; // 新增：分支名
   }
 
   // Pre-calculated AI resolution recommendation helper
@@ -51,7 +69,12 @@
   let newAssignee = '';
   let newDueDate = '';
   let decisionNote = '';
-  let operator = '李明（项目主管）';
+  let operator = '';
+
+  // 绑定当前登录用户作为默认的调停人
+  $: if (currentUser && !operator) {
+    operator = currentUser;
+  }
 
   // Live interventions in current meeting
   let localDecisions: string[] = [];
@@ -113,6 +136,8 @@
     }
   }
 
+  let jiraBaseUrl = '';
+
   async function fetchConfig() {
     try {
       const res = await fetch('/api/config');
@@ -120,6 +145,7 @@
         const data = await res.json();
         if (data) {
           updateCoreMembers(data);
+          jiraBaseUrl = data?.jira?.base_url ? data.jira.base_url.replace(/\/+$/, '') : '';
         }
       }
     } catch (e) {
@@ -568,8 +594,20 @@
         <div class="terminal-body font-mono">
           {#each filteredAutoDecisions as dec}
             <div class="terminal-line">
-              <span class="time">[{dec.time}]</span>
-              <span class="task-link">#{dec.task_id}</span>
+              <div class="terminal-meta-row">
+                <span class="time">[{dec.time}]</span>
+                {#if jiraBaseUrl && dec.task_id && !dec.task_id.startsWith('TASK-')}
+                  <a href="{jiraBaseUrl}/browse/{dec.task_id}" target="_blank" rel="noopener noreferrer" class="task-link">#{dec.task_id}</a>
+                {:else}
+                  <span class="task-link">#{dec.task_id}</span>
+                {/if}
+                {#if dec.repo}
+                  <span class="terminal-repo">[{dec.repo}]</span>
+                {/if}
+                {#if dec.branch}
+                  <span class="terminal-branch">({dec.branch})</span>
+                {/if}
+              </div>
               <p class="msg">{dec.message}</p>
             </div>
           {/each}
@@ -695,9 +733,12 @@
         {:else}
           <div class="agenda-items-grid">
             {#each filteredItems as item}
-              <button 
+              <div 
                 class="agenda-tile-card {item.risk_level === 'critical' ? 'tile-red' : 'tile-yellow'} {selectedItem?.task_id === item.task_id ? 'selected' : ''}"
                 on:click={() => selectItem(item)}
+                on:keydown={(e) => e.key === 'Enter' && selectItem(item)}
+                role="button"
+                tabindex="0"
               >
                 <div class="tile-header">
                   <div class="type-badge-col">
@@ -712,20 +753,25 @@
                   </span>
                 </div>
 
-                {#if item.repo && item.repo !== '-'}
-                  <div class="tile-project font-mono" title={item.repo}>📁 {item.repo}</div>
+                {#if item.task_id}
+                  {#if jiraBaseUrl && !item.task_id.startsWith('TASK-')}
+                    <a href="{jiraBaseUrl}/browse/{item.task_id}" target="_blank" rel="noopener noreferrer" class="tile-project font-mono jira-id-link" on:click|stopPropagation>
+                      🎫 {item.task_id}
+                    </a>
+                  {:else}
+                    <span class="tile-project font-mono">🎫 {item.task_id}</span>
+                  {/if}
                 {/if}
                 
                 <h4 class="tile-title">{item.title}</h4>
                 
                 <div class="tile-footer font-mono">
-                  <span>ID: {item.task_id}</span>
                   <span class="assignee">👤 {item.assignee}</span>
                 </div>
                 {#if item.risk_level === 'critical'}
                   <div class="tile-pulse-glow"></div>
                 {/if}
-              </button>
+              </div>
             {/each}
           </div>
         {/if}
@@ -739,7 +785,13 @@
           <!-- Left Col: Telemetry detail & AI Diagnosis -->
           <div class="override-info">
             <div class="override-title-row">
-              <span class="task-id-badge font-mono">{selectedItem.task_id}</span>
+              {#if jiraBaseUrl && !selectedItem.task_id.startsWith('TASK-')}
+                <a href="{jiraBaseUrl}/browse/{selectedItem.task_id}" target="_blank" rel="noopener noreferrer" class="task-id-badge font-mono jira-id-link">
+                  {selectedItem.task_id}
+                </a>
+              {:else}
+                <span class="task-id-badge font-mono">{selectedItem.task_id}</span>
+              {/if}
               {#if selectedItem.repo && selectedItem.repo !== '-'}
                 <span class="project-tag font-mono" title={selectedItem.repo}>📁 {selectedItem.repo}</span>
               {/if}
@@ -751,11 +803,46 @@
             <h3 class="override-title">{selectedItem.title}</h3>
             
             <div class="git-telemetry-timeline font-mono">
-              <div class="timeline-meta">
-                <span>分支: <code>{selectedItem.telemetry_snippet.branch || '-'}</code></span>
-                <span>最后提交: <code>{selectedItem.telemetry_snippet.last_commit || '-'}</code></span>
+              <div class="timeline-meta-status">
                 <span>流转状态: <code>{selectedItem.status.toLowerCase() === 'progress' && selectedItem.issue_type === 'bug' ? 'INVESTIGATION' : selectedItem.status.toUpperCase()}</code></span>
+                {#if selectedItem.repo && selectedItem.repo !== '-'}
+                  <span>当前追踪仓库: <code>{selectedItem.repo}</code></span>
+                {/if}
               </div>
+
+              {#if !selectedItem.git_logs || selectedItem.git_logs.length === 0}
+                <div class="git-empty-alert">
+                  <span class="icon">⚠️</span>
+                  <div class="alert-content">
+                    <strong>未检测到实际代码提交轨迹</strong>
+                    <p>代码仓库中尚未检测到该任务的提交记录。AI 怀疑开发分支入口缺失，或开发工作尚未正式开始。</p>
+                  </div>
+                </div>
+              {:else}
+                <div class="git-timeline-list">
+                  <span class="timeline-title-mini">📁 关联开发轨迹（最新最多10条记录）：</span>
+                  {#each selectedItem.git_logs as log}
+                    <div class="git-timeline-item action-{log.action}">
+                      <div class="item-meta">
+                        <span class="action-badge">{log.action.replace('git_', '').replace('mr_', '').toUpperCase()}</span>
+                        <span class="repo-tag" title={log.repo}>{log.repo}</span>
+                        <span class="branch-tag" title={log.branch}>{log.branch}</span>
+                        {#if log.commit_id}
+                          <span class="commit-hash"><code>{log.commit_id.slice(0, 7)}</code></span>
+                        {/if}
+                        <span class="author-tag">@{log.author}</span>
+                        <span class="time-tag">{new Date(log.created_at).toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}</span>
+                      </div>
+                      <p class="commit-msg">{log.message}</p>
+                      {#if log.mr_url}
+                        <a href="{log.mr_url}" target="_blank" rel="noopener noreferrer" class="mr-action-link">
+                          🔗 查看合并请求 !{log.mr_iid}
+                        </a>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </div>
 
             <!-- AI Diagnosed Advice -->
@@ -973,6 +1060,178 @@
 </div>
 
 <style>
+  /* 自动流转终端元信息与标签样式 */
+  .terminal-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .terminal-repo {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+  }
+  .terminal-branch {
+    color: #a78bfa;
+    background: rgba(167, 139, 250, 0.08);
+    border: 1px solid rgba(167, 139, 250, 0.2);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+  }
+
+  /* Git Telemetry Timeline 样式 */
+  .timeline-meta-status {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 12px;
+    color: #94a3b8;
+    font-size: 0.75rem;
+  }
+  .timeline-meta-status code {
+    color: #38bdf8;
+  }
+  .git-empty-alert {
+    background: rgba(244, 63, 94, 0.06);
+    border: 1px dashed rgba(244, 63, 94, 0.35);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .git-empty-alert .icon {
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  .git-empty-alert .alert-content strong {
+    display: block;
+    color: #f43f5e;
+    font-size: 0.75rem;
+    margin-bottom: 4px;
+  }
+  .git-empty-alert .alert-content p {
+    margin: 0;
+    font-size: 0.7rem;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+  .git-timeline-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 180px;
+    overflow-y: auto;
+    background: rgba(2, 6, 23, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+  }
+  .git-timeline-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .git-timeline-list::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.25);
+    border-radius: 2px;
+  }
+  .timeline-title-mini {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-weight: 700;
+  }
+  .git-timeline-item {
+    background: rgba(15, 23, 42, 0.4);
+    border-left: 3px solid #64748b;
+    border-radius: 4px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .git-timeline-item.action-git_push { border-left-color: #3b82f6; }
+  .git-timeline-item.action-mr_open { border-left-color: #a855f7; }
+  .git-timeline-item.action-mr_merge { border-left-color: #10b981; }
+  .git-timeline-item.action-ai_review { border-left-color: #06b6d4; background: rgba(6, 182, 212, 0.04); }
+  
+  .git-timeline-item .item-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.65rem;
+  }
+  .action-badge {
+    font-size: 0.55rem;
+    font-weight: 800;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: #475569;
+    color: #cbd5e1;
+  }
+  .action-git_push .action-badge { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+  .action-mr_open .action-badge { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+  .action-mr_merge .action-badge { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+  .action-ai_review .action-badge { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
+
+  .repo-tag {
+    color: #38bdf8;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .branch-tag {
+    color: #a78bfa;
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .commit-hash {
+    color: #cbd5e1;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0px 4px;
+    border-radius: 3px;
+  }
+  .author-tag {
+    color: #e2e8f0;
+  }
+  .time-tag {
+    color: #475569;
+    margin-left: auto;
+  }
+  .commit-msg {
+    margin: 0;
+    font-size: 0.7rem;
+    color: #cbd5e1;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .mr-action-link {
+    font-size: 0.65rem;
+    color: #c084fc;
+    text-decoration: none;
+    align-self: flex-start;
+    border-bottom: 1px dashed rgba(192, 132, 252, 0.4);
+    padding-bottom: 1px;
+    transition: all 0.2s;
+  }
+  .mr-action-link:hover {
+    color: #d8b4fe;
+    border-bottom-color: #d8b4fe;
+  }
+
   .tile-project {
     font-size: 0.72rem;
     font-weight: 700;
@@ -1367,10 +1626,12 @@
     border-color: rgba(99, 102, 241, 0.35);
   }
 
-  .agenda-tile-card.selected {
+  .agenda-tile-card.selected,
+  .agenda-tile-card:focus {
     background: rgba(99, 102, 241, 0.1);
     border-color: #6366f1;
     box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
+    outline: none;
   }
 
   .tile-header {
@@ -1477,6 +1738,24 @@
     color: #818cf8;
     padding: 2px 8px;
     border-radius: 4px;
+    text-decoration: none;
+    display: inline-block;
+  }
+
+  a.task-id-badge:hover {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: rgba(99, 102, 241, 0.5);
+  }
+
+  .jira-id-link {
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+
+  .tile-project.jira-id-link:hover {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: rgba(16, 185, 129, 0.4);
+    transform: translateY(-1px);
   }
 
   .type-badge {
