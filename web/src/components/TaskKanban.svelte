@@ -379,10 +379,6 @@
   }
 
   function matchesExecutionFilters(item: ExecutionTaskItem): boolean {
-    if (!isCoreMember(item.assignee)) {
-      return false;
-    }
-
     const query = executionSearch.trim().toLowerCase();
     if (query) {
       const match = 
@@ -400,8 +396,14 @@
       if (!match) return false;
     }
 
-    if (executionAssigneeFilter !== 'all' && item.assignee !== executionAssigneeFilter) {
-      return false;
+    if (executionAssigneeFilter === '外部协同') {
+      if (isCoreMember(item.assignee)) {
+        return false;
+      }
+    } else if (executionAssigneeFilter !== 'all') {
+      if (item.assignee !== executionAssigneeFilter) {
+        return false;
+      }
     }
 
     if (executionRiskFilter === 'attention') {
@@ -767,8 +769,14 @@
             placeholder={selectedProject === 'all' ? '全部项目' : selectedProject}
             bind:value={projectSearchText}
             on:focus|stopPropagation={() => showProjectDropdown = true}
+            on:click|stopPropagation={() => showProjectDropdown = true}
           />
-          <span class="select-arrow">{showProjectDropdown ? '▲' : '▼'}</span>
+          <span 
+            class="select-arrow"
+            on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
+            role="button"
+            tabindex="0"
+          >{showProjectDropdown ? '▲' : '▼'}</span>
         </div>
         {#if showProjectDropdown}
           <div class="custom-select-options">
@@ -794,8 +802,14 @@
             placeholder={selectedAssignee === 'all' ? '全部经办人' : selectedAssignee}
             bind:value={assigneeSearchText}
             on:focus|stopPropagation={() => showAssigneeDropdown = true}
+            on:click|stopPropagation={() => showAssigneeDropdown = true}
           />
-          <span class="select-arrow">{showAssigneeDropdown ? '▲' : '▼'}</span>
+          <span 
+            class="select-arrow"
+            on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
+            role="button"
+            tabindex="0"
+          >{showAssigneeDropdown ? '▲' : '▼'}</span>
         </div>
         {#if showAssigneeDropdown}
           <div class="custom-select-options">
@@ -933,8 +947,14 @@
               placeholder={executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}
               bind:value={execAssigneeSearchText}
               on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
+              on:click|stopPropagation={() => showExecutionAssigneeDropdown = true}
             />
-            <span class="select-arrow">{showExecutionAssigneeDropdown ? '▲' : '▼'}</span>
+            <span 
+              class="select-arrow" 
+              on:click|stopPropagation={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown}
+              role="button"
+              tabindex="0"
+            >{showExecutionAssigneeDropdown ? '▲' : '▼'}</span>
           </div>
           {#if showExecutionAssigneeDropdown}
             <div class="custom-select-options">
