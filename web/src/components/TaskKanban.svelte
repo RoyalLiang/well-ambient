@@ -436,9 +436,6 @@
       if (selectedAssignee && selectedAssignee !== 'all') {
         params.append('assignee', selectedAssignee);
       }
-      if (executionSearch && executionSearch.trim()) {
-        params.append('search', executionSearch.trim());
-      }
       if (executionRiskFilter && executionRiskFilter !== 'all') {
         params.append('risk', executionRiskFilter);
       }
@@ -723,7 +720,6 @@
     const _proj = selectedProject;
     const _ass = selectedAssignee;
     const _execAss = executionAssigneeFilter;
-    const _execSearch = executionSearch;
     const _execRisk = executionRiskFilter;
     const _mounted = isMounted;
 
