@@ -108,5 +108,5 @@ type AuditLog struct {
 	TargetType    string    `json:"target_type"` // Target type (e.g. user, group, config)
 	Detail        string    `gorm:"type:text" json:"detail"`
 	IpAddress     string    `json:"ip_address"`
-	CreatedAt     time.Time `json:"created_at"`
+	CreatedAt     time.Time `gorm:"index" json:"created_at"`
 }

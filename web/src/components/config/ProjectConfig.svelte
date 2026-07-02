@@ -3,6 +3,23 @@
   import Button from '../shared/Button.svelte';
   import TextInput from '../shared/TextInput.svelte';
   import Alert from '../shared/Alert.svelte';
+  import Select from '../shared/Select.svelte';
+
+  const phaseOptions = [
+    { value: 'POC', label: 'POC' },
+    { value: '交付', label: '交付' },
+    { value: '运营', label: '运营' },
+    { value: '售后', label: '售后' }
+  ];
+
+  const priorityOptions = [
+    { value: 'P0', label: 'P0 - 阻断高优' },
+    { value: 'P1', label: 'P1 - 核心交付' },
+    { value: 'P2', label: 'P2 - 持续优化' },
+    { value: 'P3', label: 'P3 - 关注保障' },
+    { value: 'P4', label: 'P4 - 日常维护' },
+    { value: 'P5', label: 'P5 - 辅助支持' }
+  ];
 
   export let lastUpdated = '';
   export let syncProjects: string[] = [];
@@ -337,26 +354,22 @@
       />
 
       <div class="form-group-row">
-        <div class="form-group flex-1">
-          <label class="form-label" for="project-phase">项目阶段 (Project Phase)</label>
-          <select id="project-phase" class="select-input" bind:value={formProjectPhase}>
-            <option value="POC">POC</option>
-            <option value="交付">交付</option>
-            <option value="运营">运营</option>
-            <option value="售后">售后</option>
-          </select>
+        <div class="flex-1">
+          <Select
+            id="project-phase"
+            label="项目阶段 (Project Phase)"
+            bind:value={formProjectPhase}
+            options={phaseOptions}
+          />
         </div>
 
-        <div class="form-group flex-1">
-          <label class="form-label" for="project-priority">项目优先级 (Base Priority)</label>
-          <select id="project-priority" class="select-input" bind:value={formBasePriority}>
-            <option value="P0">P0 - 阻断高优</option>
-            <option value="P1">P1 - 核心交付</option>
-            <option value="P2">P2 - 持续优化</option>
-            <option value="P3">P3 - 关注保障</option>
-            <option value="P4">P4 - 日常维护</option>
-            <option value="P5">P5 - 辅助支持</option>
-          </select>
+        <div class="flex-1">
+          <Select
+            id="project-priority"
+            label="项目优先级 (Base Priority)"
+            bind:value={formBasePriority}
+            options={priorityOptions}
+          />
         </div>
       </div>
 
@@ -575,34 +588,7 @@
     flex: 1;
   }
 
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
 
-  .form-label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #cbd5e1;
-  }
-
-  .select-input {
-    background: #0f172a;
-    border: 1px solid rgba(51, 65, 85, 0.8);
-    border-radius: 6px;
-    color: #f1f5f9;
-    padding: 10px 12px;
-    font-size: 0.9rem;
-    width: 100%;
-    outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-
-  .select-input:focus {
-    border-color: #38bdf8;
-    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
-  }
 
   /* Searchable Select Dropdown */
   .custom-select-wrapper {

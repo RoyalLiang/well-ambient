@@ -110,3 +110,37 @@ For spreadsheet extraction in this desktop runtime, prefer bundled Node + tempor
 - Related Files: 全局领航能力汇总.xlsx
 
 ---
+
+## [ERR-20260623-001] tracked_task_memory_overwrite
+
+**Logged**: 2026-06-23T00:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Task-local planning files in this repository are tracked long-lived memory files; replacing them with fresh planning templates erased prior task history in the worktree.
+
+### Error
+```text
+git restore -- task_plan.md findings.md progress.md
+fatal: Unable to create '/Users/eddie/Workspace/well-ambient/.git/index.lock': Operation not permitted
+```
+
+### Context
+- Operation attempted: create fresh `task_plan.md`, `findings.md`, and `progress.md` for a complex UI/backend task.
+- These files already existed in git and contained long-running project memory, so adding fresh templates was the wrong approach.
+- A sandboxed `git restore` could not write the git index lock; elevated restore was used only for those three files.
+
+### Suggested Fix
+Before using planning-with-files in this repository, check whether `task_plan.md`, `findings.md`, and `progress.md` are tracked. If they are tracked, append a small new phase/update instead of replacing the file.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md, findings.md, progress.md
+
+### Resolution
+- **Resolved**: 2026-06-23T00:00:00+08:00
+- **Notes**: Restored the three files to HEAD and continued implementation without staging the accidental overwrite.
+
+---
