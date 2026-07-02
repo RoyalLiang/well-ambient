@@ -3,10 +3,26 @@
   import { slide } from 'svelte/transition';
 
   let inputText = '';
+  type IntentMode = 'intent' | 'summary';
+  type IntentInsight = {
+    intent: string;
+    confidence: number;
+    summary: string;
+    missing_context: string[];
+    next_questions: string[];
+    suggested_action: string;
+    endpoint: string;
+    source: 'api' | 'local';
+  };
 
   let isLoading = false;
   let hasResult = false;
   let isAIEnabled = false;
+  let intentInputText = '';
+  let intentMode: IntentMode = 'intent';
+  let intentLoading = false;
+  let intentError = '';
+  let intentResult: IntentInsight | null = null;
 
   type DeconstructAnalysis = {
     completeness_score: number;
@@ -267,6 +283,139 @@
 
   function confidenceLabel(value: number) {
     return `${Math.round(value * 100)}%`;
+  }
+
+  function asText(value: any, fallback = ''): string {
+    if (value === null || value === undefined) return fallback;
+    const text = String(value).trim();
+    return text || fallback;
+  }
+
+  function normalizeTextList(value: any): string[] {
+    if (Array.isArray(value)) {
+      return value.map(item => asText(item)).filter(Boolean).slice(0, 6);
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(/\n|；|;/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 6);
+    }
+    return [];
+  }
+
+  function normalizeConfidenceValue(value: any): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.min(1, Math.max(0, parsed > 1 ? parsed / 100 : parsed));
+  }
+
+  function normalizeIntentInsight(data: any, endpoint: string): IntentInsight {
+    const payload = data?.result || data?.data || data || {};
+    const missingContext = normalizeTextList(payload.missing_context || payload.missingContext || payload.missing_info || payload.missingInfo);
+    const nextQuestions = normalizeTextList(payload.next_questions || payload.nextQuestions || payload.questions || payload.meeting_questions);
+    return {
+      intent: asText(payload.intent || payload.intent_type || payload.type, 'unknown'),
+      confidence: normalizeConfidenceValue(payload.confidence ?? payload.score),
+      summary: asText(payload.summary || payload.answer || payload.brief, '暂无摘要'),
+      missing_context: missingContext,
+      next_questions: nextQuestions,
+      suggested_action: asText(payload.suggested_action || payload.suggestedAction || payload.action || payload.next_step, '补充缺失信息后再进入解构或调停'),
+      endpoint,
+      source: 'api'
+    };
+  }
+
+  function inferLocalIntent(text: string, endpoint: string): IntentInsight {
+    const normalized = text.trim();
+    const lower = normalized.toLowerCase();
+    let intent = 'requirement_clarification';
+    if (/bug|缺陷|故障|报错|异常|crash/.test(lower)) {
+      intent = 'bug_triage';
+    } else if (/总结|周会|日报|复盘|纪要|meeting|summary/.test(lower)) {
+      intent = 'conversation_summary';
+    } else if (/延期|转派|挂起|升级|冲突|override/.test(lower)) {
+      intent = 'override_decision';
+    } else if (/排期|截止|due|schedule/.test(lower)) {
+      intent = 'schedule_governance';
+    }
+
+    const missing: string[] = [];
+    if (!/负责人|assignee|owner|谁/.test(lower)) missing.push('负责人或协作部门');
+    if (!/截止|deadline|due|上线|日期/.test(lower)) missing.push('截止时间或期望上线窗口');
+    if (!/验收|acceptance|完成标准|测试/.test(lower)) missing.push('验收标准或验证方式');
+    if (!/影响|范围|impact|依赖|dependency/.test(lower)) missing.push('影响范围和外部依赖');
+
+    const summary = normalized
+      ? normalized.replace(/\s+/g, ' ').slice(0, 180)
+      : '等待输入多轮对话或需求文本';
+
+    return {
+      intent,
+      confidence: normalized ? 0.42 : 0,
+      summary,
+      missing_context: missing.slice(0, 4),
+      next_questions: missing.slice(0, 3).map(item => `请补充${item}`),
+      suggested_action: intent === 'conversation_summary'
+        ? '先确认会议结论和待办责任人，再同步到决策队列'
+        : '先补齐缺失上下文，再进入 AI 解构或人工调停',
+      endpoint,
+      source: 'local'
+    };
+  }
+
+  function intentLabel(intent: string) {
+    const normalized = intent.toLowerCase();
+    if (normalized.includes('bug')) return '缺陷排查';
+    if (normalized.includes('summary')) return '对话总结';
+    if (normalized.includes('override')) return '人工调停';
+    if (normalized.includes('schedule')) return '排期治理';
+    if (normalized.includes('requirement')) return '需求澄清';
+    return intent || '未知意图';
+  }
+
+  function syncIntentInputFromDemand() {
+    intentInputText = inputText.trim();
+    intentError = '';
+  }
+
+  async function runIntentAssistant(mode: IntentMode) {
+    const text = intentInputText.trim();
+    if (!text) {
+      displayToast('请先输入对话或需求文本', 'error');
+      return;
+    }
+
+    intentMode = mode;
+    intentLoading = true;
+    intentError = '';
+    const endpoint = mode === 'summary' ? '/api/ai/assistant/summary' : '/api/ai/intent';
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          messages: [{ role: 'user', content: text }],
+          mode
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      intentResult = normalizeIntentInsight(data, endpoint);
+    } catch (e: any) {
+      intentResult = inferLocalIntent(text, endpoint);
+      intentError = `${endpoint} 暂不可用，当前展示本地兜底识别结果。${e.message || ''}`.trim();
+    } finally {
+      intentLoading = false;
+    }
   }
 
   async function fetchConfig() {
@@ -598,6 +747,121 @@
         class="demand-textarea"
         placeholder={isAIEnabled ? "在此粘贴或上传原始需求描述..." : "AI 服务未启用，不可输入..."}
       ></textarea>
+
+      <div class="intent-console-panel">
+        <div class="intent-console-header">
+          <div>
+            <span class="result-section-label">AI 意图识别 / 对话总结</span>
+            <p>把多轮沟通显式拆成当前意图、缺失上下文、下一问和建议动作。</p>
+          </div>
+          <button
+            type="button"
+            class="btn-load-intent-source font-mono"
+            on:click={syncIntentInputFromDemand}
+            disabled={!inputText.trim()}
+          >
+            载入需求文本
+          </button>
+        </div>
+
+        <textarea
+          class="intent-textarea"
+          bind:value={intentInputText}
+          placeholder="粘贴产品、研发、测试之间的多轮对话，或直接复用上方需求文本..."
+        ></textarea>
+
+        <div class="intent-actions-row">
+          <div class="intent-mode-tabs font-mono">
+            <button
+              type="button"
+              class:intent-active={intentMode === 'intent'}
+              on:click={() => intentMode = 'intent'}
+            >
+              意图
+            </button>
+            <button
+              type="button"
+              class:intent-active={intentMode === 'summary'}
+              on:click={() => intentMode = 'summary'}
+            >
+              总结
+            </button>
+          </div>
+          <button
+            type="button"
+            class="btn-run-intent font-mono"
+            on:click={() => runIntentAssistant(intentMode)}
+            disabled={intentLoading || !intentInputText.trim()}
+          >
+            {intentLoading ? '识别中...' : intentMode === 'summary' ? '生成总结' : '识别意图'}
+          </button>
+        </div>
+
+        {#if intentError}
+          <div class="intent-inline-error font-mono">{intentError}</div>
+        {/if}
+
+        <div class="intent-result-shell">
+          {#if intentResult}
+            <div class="intent-result-top font-mono">
+              <div>
+                <span>当前意图</span>
+                <strong>{intentLabel(intentResult.intent)}</strong>
+              </div>
+              <div>
+                <span>置信度</span>
+                <strong>{confidenceLabel(intentResult.confidence)}</strong>
+              </div>
+              <div>
+                <span>来源</span>
+                <strong>{intentResult.source === 'api' ? intentResult.endpoint : 'local fallback'}</strong>
+              </div>
+            </div>
+
+            <div class="intent-summary-block">
+              <span>摘要</span>
+              <p>{intentResult.summary}</p>
+            </div>
+
+            <div class="intent-detail-grid">
+              <div class="intent-detail-cell">
+                <span>缺失上下文</span>
+                {#if intentResult.missing_context.length > 0}
+                  <ul>
+                    {#each intentResult.missing_context as item}
+                      <li>{item}</li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <p>暂无明显缺口</p>
+                {/if}
+              </div>
+
+              <div class="intent-detail-cell">
+                <span>下一问</span>
+                {#if intentResult.next_questions.length > 0}
+                  <ul>
+                    {#each intentResult.next_questions as item}
+                      <li>{item}</li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <p>无需追加提问，可进入下一步</p>
+                {/if}
+              </div>
+            </div>
+
+            <div class="intent-action-strip">
+              <span class="font-mono">建议动作</span>
+              <p>{intentResult.suggested_action}</p>
+            </div>
+          {:else}
+            <div class="intent-empty-state font-mono">
+              等待输入后识别。结果会显示 intent、confidence、summary、missing_context、next_questions 和 suggested_action。
+            </div>
+          {/if}
+        </div>
+      </div>
 
       <!--折叠 Prompt 约束 -->
       {#if isAIEnabled}
@@ -1240,6 +1504,245 @@
     border-color: #6366f1;
   }
 
+  .intent-console-panel {
+    margin-top: 14px;
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    background: rgba(2, 6, 23, 0.34);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.05);
+  }
+
+  .intent-console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .intent-console-header p {
+    margin: 4px 0 0 0;
+    color: #64748b;
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+
+  .btn-load-intent-source,
+  .btn-run-intent {
+    border: 1px solid rgba(129, 140, 248, 0.28);
+    background: rgba(99, 102, 241, 0.1);
+    color: #c4b5fd;
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, transform 0.12s ease;
+    white-space: nowrap;
+  }
+
+  .btn-load-intent-source:hover:not(:disabled),
+  .btn-run-intent:hover:not(:disabled) {
+    border-color: rgba(129, 140, 248, 0.58);
+    background: rgba(99, 102, 241, 0.18);
+  }
+
+  .btn-load-intent-source:active,
+  .btn-run-intent:active {
+    transform: scale(0.97);
+  }
+
+  .btn-load-intent-source:disabled,
+  .btn-run-intent:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .intent-textarea {
+    width: 100%;
+    height: 104px;
+    resize: vertical;
+    min-height: 88px;
+    max-height: 180px;
+    box-sizing: border-box;
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.68);
+    color: #cbd5e1;
+    border-radius: 7px;
+    padding: 10px 11px;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    outline: none;
+  }
+
+  .intent-textarea:focus {
+    border-color: rgba(56, 189, 248, 0.55);
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.12);
+  }
+
+  .intent-actions-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .intent-mode-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(15, 23, 42, 0.55);
+    border-radius: 7px;
+  }
+
+  .intent-mode-tabs button {
+    border: none;
+    background: transparent;
+    color: #64748b;
+    border-radius: 5px;
+    padding: 5px 9px;
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 900;
+    cursor: pointer;
+  }
+
+  .intent-mode-tabs button.intent-active {
+    background: rgba(56, 189, 248, 0.14);
+    color: #7dd3fc;
+  }
+
+  .intent-inline-error {
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    background: rgba(120, 53, 15, 0.1);
+    color: #fbbf24;
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-size: 0.66rem;
+    line-height: 1.4;
+  }
+
+  .intent-result-shell {
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    background: rgba(15, 23, 42, 0.36);
+    border-radius: 8px;
+    padding: 10px;
+    min-height: 126px;
+  }
+
+  .intent-result-top {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    margin-bottom: 9px;
+  }
+
+  .intent-result-top div {
+    min-width: 0;
+    border: 1px solid rgba(51, 65, 85, 0.35);
+    background: rgba(2, 6, 23, 0.38);
+    border-radius: 6px;
+    padding: 7px 8px;
+  }
+
+  .intent-result-top span,
+  .intent-summary-block span,
+  .intent-detail-cell span,
+  .intent-action-strip span {
+    display: block;
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 900;
+    margin-bottom: 4px;
+  }
+
+  .intent-result-top strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.76rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .intent-summary-block {
+    border: 1px solid rgba(56, 189, 248, 0.16);
+    background: rgba(8, 47, 73, 0.12);
+    border-radius: 6px;
+    padding: 8px 9px;
+    margin-bottom: 8px;
+  }
+
+  .intent-summary-block p,
+  .intent-detail-cell p,
+  .intent-action-strip p {
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .intent-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .intent-detail-cell {
+    min-width: 0;
+    min-height: 86px;
+    border: 1px solid rgba(51, 65, 85, 0.32);
+    border-radius: 6px;
+    background: rgba(2, 6, 23, 0.26);
+    padding: 8px 9px;
+  }
+
+  .intent-detail-cell ul {
+    margin: 0;
+    padding: 0 0 0 14px;
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+
+  .intent-detail-cell li + li {
+    margin-top: 4px;
+  }
+
+  .intent-action-strip {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    border: 1px solid rgba(16, 185, 129, 0.18);
+    background: rgba(6, 78, 59, 0.1);
+    border-radius: 6px;
+    padding: 8px 9px;
+    margin-top: 8px;
+  }
+
+  .intent-action-strip span {
+    color: #34d399;
+    white-space: nowrap;
+  }
+
+  .intent-empty-state {
+    min-height: 104px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.68rem;
+    line-height: 1.45;
+  }
+
   .actions {
     display: flex;
     justify-content: flex-end;
@@ -1605,7 +2108,19 @@
     }
 
     .analysis-kpi-row,
-    .analysis-grid {
+    .analysis-grid,
+    .intent-result-top,
+    .intent-detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .intent-console-header,
+    .intent-actions-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .intent-action-strip {
       grid-template-columns: 1fr;
     }
   }

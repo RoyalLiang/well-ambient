@@ -54,6 +54,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/tasks", s.withAuth(s.handleGetTasks))
 	s.mux.HandleFunc("GET /api/tasks/commits", s.withAuth(s.handleGetTaskCommits))
 	s.mux.HandleFunc("GET /api/execution/tasks", s.withPermission("dashboard:read", s.handleGetExecutionTasks))
+	s.mux.HandleFunc("GET /api/strongest-brain/evidence-chain", s.withPermission("dashboard:read", s.handleGetStrongestBrainEvidenceChain))
+	s.mux.HandleFunc("GET /api/strongest-brain/decision-queue", s.withPermission("decision:read", s.handleGetStrongestBrainDecisionQueue))
 	s.mux.HandleFunc("GET /api/logs", s.withAuth(s.handleGetLogs))
 
 	// Protected Config APIs
@@ -103,6 +105,9 @@ func (s *Server) routes() {
 
 	// Protected AI Deconstructor API
 	s.mux.HandleFunc("POST /api/deconstruct", s.withAuth(s.handleDeconstruct))
+	s.mux.HandleFunc("POST /api/ai/intent", s.withAuth(s.handleAIIntentSummary))
+	s.mux.HandleFunc("POST /api/ai/intent-summary", s.withAuth(s.handleAIIntentSummary))
+	s.mux.HandleFunc("POST /api/ai/assistant/summary", s.withAuth(s.handleAIIntentSummary))
 	s.mux.HandleFunc("POST /api/tasks/import", s.withAuth(s.handleImportTasks))
 	s.mux.HandleFunc("GET /api/context/facts", s.withPermission("ai_context:read", s.handleListContextFacts))
 	s.mux.HandleFunc("POST /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
@@ -271,8 +276,8 @@ func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	if assigneeFilter != "" && assigneeFilter != "all" {
 		if assigneeFilter == "外部协同" {
 			coreMembers := []string{
-				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
-				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
+				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华",
+				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang",
 				"Eddie", "Antigravity",
 			}
 			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")

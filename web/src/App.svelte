@@ -729,7 +729,7 @@
     {/if}
     {#if hasPermission('decision:read')}
       <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
-        ⚡ 决策看板 (War Room)
+        ⚡ 最强大脑 / 决策队列
       </button>
     {/if}
     {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}

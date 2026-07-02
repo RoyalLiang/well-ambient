@@ -12,6 +12,24 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Improve seamless requirement/task/bug status transition feedback and strongest-brain guidance
 - [x] Run focused validation, then stage and commit intentional changes
 
+## Current Task Addendum: Strongest Brain Master Plan Landing, Intent Recognition, And Summary
+- [x] Commit all existing workspace changes as a baseline before new implementation
+- [x] Load planning, execution, and frontend taste guidance
+- [x] Update the master plan with AI intent recognition and summarization direction
+- [x] Use subagents for backend, frontend, and QA/integration tracks
+- [x] Implement strongest-brain v1 read models, decision queue, evidence chain, and AI intent/summary API
+- [x] Implement the visible strongest-brain cockpit and AI intent/summary interaction surface
+- [x] Integrate subagent work, resolve conflicts, and run focused validation
+- [x] Update task memory and commit intentional changes
+
+### Backend Strongest-Brain Worker Scope
+- [x] Read master plan, server handlers, and related DB models
+- [x] Implement backend-only EvidenceChain and DecisionQueueItem read APIs
+- [x] Reuse existing schedule governance rows where possible
+- [x] Add deterministic AI intent recognition and summary v1 API with optional configured AI call
+- [x] Add focused backend tests and run targeted validation
+- [x] Return worker output for main rollout integration and commit
+
 ## Current Task Addendum: GitLab Webhook Ensure/Status MVP
 - [x] Inspect existing GitLab/Jira integration and route patterns
 - [x] Add GitLab project webhook ensure/status backend capability
@@ -26,7 +44,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Phase 21: Board Cohesion, Audit Panel, And Modal Lock Polish
+Phase 22: Strongest Brain Master Plan Landing, Intent Recognition, And Summary
 
 ## Phases
 
@@ -202,6 +220,18 @@ Phase 21: Board Cohesion, Audit Panel, And Modal Lock Polish
 - [x] Fix assignee mutation propagation and demand board action click targets
 - [x] Add cohesive status-transition UX and strongest-brain recommendation dimensions
 - [x] Run focused frontend/backend validation and commit intentional changes
+- **Status:** complete
+
+### Phase 22: Strongest Brain Master Plan Landing, Intent Recognition, And Summary
+- [x] Create a checkpoint commit for all existing workspace changes
+- [x] Read `planning-with-files`, `executing-plans`, and `design-taste-frontend`
+- [x] Spawn backend, frontend, and QA/integration subagents with disjoint scopes
+- [x] Add AI intent recognition and summarization to the master plan
+- [x] Add backend strongest-brain read models and API endpoints
+- [x] Add deterministic AI intent/summary fallback with optional configured-AI path
+- [x] Add frontend strongest-brain cockpit and transparent AI intent/summary conversation panel
+- [x] Add focused tests and run validation
+- [x] Commit intentional Phase 22 changes
 - **Status:** complete
 
 ## Key Questions

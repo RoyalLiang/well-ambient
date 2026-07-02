@@ -6,9 +6,16 @@
 - Follow-up requirements: require `taste-skill` for frontend UI work, explain/deepen demand scheduling and AI deconstruction binding, fix user department display, and fix the native-looking new-demand due-date style.
 - Current extension requirement: generate a concrete landing plan from the architecture recommendations and use self-agents to land GitLab/Jira integration, KPI report preview, and AI deconstruction expansion in bounded implementation tracks.
 - Current task addendum: compact the work-summary effort/AI-evaluation controls, optimize the config version audit/rollback surface, lock background scroll under modals, repair assignee/Jira/detail interactions across decision and demand boards, and make demand/task/bug status transitions feel seamless with strongest-brain recommendation guidance.
+- Current backend worker scope: implement the strongest-brain v1 backend read-model loop for EvidenceChain, DecisionQueueItem, schedule governance reuse, and AI intent recognition/summary, limited to backend server/db/telemetry files and focused tests.
+- Current Phase 22 requirement: based on `docs/strongest-brain-phased-master-plan.md`, add AI intent recognition and summarization to the plan and implementation, checkpoint all existing code first, then use subagents to land the complete strongest-brain plan as a v1 closed loop.
 
 ## Research Findings
 - Git status shows the repository contents are currently untracked; avoid treating that as disposable state.
+- Phase 22 baseline checkpoint commit created before new implementation: `2a7890c chore: checkpoint current workspace changes`.
+- Phase 22 uses three subagents with disjoint scopes: backend strongest-brain/AI intent API, frontend cockpit/AI conversation UI, and QA integration review.
+- The active frontend design read is an internal研发协同 dark cockpit, not a marketing or landing surface; density should remain operational and UI copy should be plain, auditable, and concise.
+- Phase 22 landed a v1 strongest-brain loop: master plan addendum, decision queue API, evidence chain API, deterministic AI intent/summary API, cockpit decision queue UI, and transparent deconstructor conversation panel.
+- Full server package validation is still sandbox-limited because existing GitLab webhook tests bind a local `httptest` listener; targeted Phase 22 handler tests pass without listener binding.
 - Follow-up `find` showed `internal/server` and `cmd/server` do exist, but were not returned by the initial `rg --files` listing, likely due ignore rules.
 - `DemandKanban.svelte` already contains demand/subtask filtering, card progress rendering, and confirm modal classes.
 - `Deconstructor.svelte` already fetches active demands and posts `demand_id` to `/api/tasks/import`.
@@ -78,6 +85,7 @@
 - Agenda decision reassignment writes `TaskTelemetry`, decision logs, and kanban markdown, but Jira sync later unconditionally restores the Jira assignee. This explains the user-visible "success but no effect" behavior after a background sync.
 - The config version audit panel now filters by section, but selection can still point at a version from another section and the two-column diff layout consumes too much height on integration pages.
 - Final Phase 21 fix: expose only Jira `base_url` through authenticated `/api/jira/link-config`, allow authenticated demand users to load assignee/project options, preserve recent local assignee override logs from Jira sync for 24 hours, compact the schedule estimate strip, make config-version audit section-specific and lower height, and use card-level detail fallback on demand cards.
+- Current Phase 22 backend constraint: this worker should not modify frontend files and must not revert changes made by parallel agents.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -120,6 +128,9 @@
 | Keep AI schedule estimation optional | AI configuration failures should not block a normal schedule edit; the estimate is useful context and persisted telemetry, not a mandatory gate. |
 | Preserve local manual assignee overrides from Jira sync for 24 hours | A decision-panel reassignment should visibly take effect immediately, while still allowing Jira to become authoritative again after the handoff window if no matching Jira update arrives. |
 | Expose Jira link metadata through a non-secret authenticated endpoint | Demand/task users need to open Jira issues, but should not require full `config:read` access or receive integration tokens. |
+| Build the strongest-brain queue as an aggregation layer over schedule and execution read models | This lands a useful v1 loop without duplicating risk logic already covered by `/api/schedule` and `/api/execution/tasks`. |
+| Use deterministic AI intent/summary fallback first | The conversation surface must remain explainable and usable when AI providers are disabled, misconfigured, or slow. |
+| Fetch Jira link config before full config in the decision cockpit | Decision users need issue links, but should not depend on `config:read` to render the queue. |
 
 ## Issues Encountered
 | Issue | Resolution |
@@ -132,6 +143,7 @@
 | `svelte-check` still fails after this UI polish | Remaining type errors are pre-existing and outside the touched files: `TaskKanban` nullable values, `Button size` props in config/settings panels, `Switch helperText`, and `App.svelte` header indexing. Production build passes. |
 | Full server test suite cannot run inside the current sandbox | Existing tests using `httptest.NewServer` fail with `listen tcp6 [::1]:0: bind: operation not permitted`; targeted non-listener permission catalog test passes. |
 | `svelte-check` still fails after Settings/RBAC polish | Remaining errors are pre-existing in `TaskKanban.svelte` and `App.svelte`; touched Settings/AI/Button files no longer contribute errors, and production build passes. |
+| Phase 22 full server package test cannot be re-run outside the sandbox in this session | The required escalation was rejected due account usage limit; targeted Phase 22 Go tests, frontend build, and `git diff --check` passed. |
 
 ## Resources
 - Source plan: `/Users/eddie/.gemini/antigravity/brain/ffc6d8a3-38c0-4a9b-a458-9b51beeff27b/implementation_plan.md`

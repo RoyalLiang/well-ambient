@@ -38,6 +38,34 @@
     git_logs?: GitCommitLog[]; // 新增：底层关联的真实 Git 历史轨迹
   }
 
+  interface DecisionQueueItem {
+    id: string;
+    task_id: string;
+    title: string;
+    problem: string;
+    evidence: string[];
+    suggested_action: string;
+    impact_scope: string;
+    jump_label: string;
+    jump_url: string;
+    risk_level: string;
+    risk_type: string;
+    status: string;
+    assignee: string;
+    project: string;
+    issue_type: string;
+    updated_at: string;
+    source: 'strongest_brain' | 'agenda_fallback';
+  }
+
+  interface SummaryTile {
+    scope: string;
+    value: string;
+    label: string;
+    detail: string;
+    tone: 'safe' | 'warn' | 'danger' | 'info';
+  }
+
   interface AutoDecision {
     time: string;
     task_id: string;
@@ -57,6 +85,11 @@
 
   let agendaItems: AgendaItem[] = [];
   let autoDecisions: AutoDecision[] = [];
+  let strongestBrainItems: DecisionQueueItem[] = [];
+  let strongestBrainLoading = false;
+  let strongestBrainError = '';
+  let strongestBrainGeneratedAt = '';
+  let strongestBrainApiAvailable = false;
   let loading = true;
   let errorMsg = '';
 
@@ -140,12 +173,20 @@
 
   async function fetchConfig() {
     try {
+      const jiraRes = await fetch('/api/jira/link-config');
+      if (jiraRes.ok) {
+        const linkConfig = await jiraRes.json();
+        jiraBaseUrl = linkConfig?.base_url ? linkConfig.base_url.replace(/\/+$/, '') : '';
+      }
+
       const res = await fetch('/api/config');
       if (res.ok) {
         const data = await res.json();
         if (data) {
           updateCoreMembers(data);
-          jiraBaseUrl = data?.jira?.base_url ? data.jira.base_url.replace(/\/+$/, '') : '';
+          if (!jiraBaseUrl) {
+            jiraBaseUrl = data?.jira?.base_url ? data.jira.base_url.replace(/\/+$/, '') : '';
+          }
         }
       }
     } catch (e) {
@@ -162,17 +203,27 @@
   $: activeTaskCount = filteredAgendaItems.filter(item => item.issue_type !== 'bug').length;
   $: redZoneCount = filteredAgendaItems.filter(item => item.risk_level === 'critical').length;
   $: totalActiveTasks = activeBugCount + activeTaskCount;
+  $: decisionHealthPercent = totalActiveTasks > 0
+    ? Math.max(8, Math.round(((totalActiveTasks - redZoneCount) / totalActiveTasks) * 100))
+    : 100;
+  $: decisionHealthLabel = redZoneCount > 0 ? 'ATTENTION' : 'SAFE';
 
   $: hasShadowAgenda = false; // 既然完全剥离，就不存在外部协同任务的快捷方式了
 
   // Dynamic filter option lists
   $: assigneesList = [
     'all', 
-    ...Array.from(new Set(filteredAgendaItems.map(item => item.assignee).filter(Boolean)))
+    ...Array.from(new Set([
+      ...filteredAgendaItems.map(item => item.assignee).filter(Boolean),
+      ...strongestBrainItems.map(item => item.assignee).filter(Boolean)
+    ]))
   ];
   $: projectList = [
     'all',
-    ...Array.from(new Set(filteredAgendaItems.map(item => item.repo).filter((repo): repo is string => !!repo)))
+    ...Array.from(new Set([
+      ...filteredAgendaItems.map(item => item.repo).filter((repo): repo is string => !!repo),
+      ...strongestBrainItems.map(item => item.project).filter(Boolean)
+    ]))
   ];
   $: aiPlan = getAiResolvePlan(selectedItem);
   $: overrideAssigneeOptions = Array.from(new Set([
@@ -209,6 +260,15 @@
       };
       return getPriority(b.risk_level) - getPriority(a.risk_level);
     });
+  $: agendaDecisionQueueItems = filteredAgendaItems.map((item, index) => normalizeAgendaDecisionItem(item, index));
+  $: rawDecisionQueueItems = strongestBrainItems.length > 0 ? strongestBrainItems : agendaDecisionQueueItems;
+  $: visibleDecisionQueueItems = rawDecisionQueueItems
+    .filter(item => matchesDecisionQueueFilters(item))
+    .sort(compareDecisionQueueItems);
+  $: decisionSummaryTiles = buildDecisionSummaryTiles(visibleDecisionQueueItems);
+  $: decisionQueueSourceLabel = strongestBrainItems.length > 0
+    ? `Decision Queue API${strongestBrainGeneratedAt ? ` / ${formatTimeBrief(strongestBrainGeneratedAt)}` : ''}`
+    : 'Agenda fallback';
 
   function getAiResolvePlan(item: AgendaItem | null): AiResolvePlan {
     if (!item) return { assignee: '', due_date: '', note: '', impact: '' };
@@ -251,6 +311,194 @@
   function selectRepo(r: string) {
     selectedRepo = r;
     showRepoDropdown = false;
+  }
+
+  function asText(value: any, fallback = ''): string {
+    if (value === null || value === undefined) return fallback;
+    const text = String(value).trim();
+    return text || fallback;
+  }
+
+  function normalizeTextList(value: any): string[] {
+    if (Array.isArray(value)) {
+      return value.map(item => asText(item)).filter(Boolean).slice(0, 5);
+    }
+    if (typeof value === 'string') {
+      return value
+        .split(/\n|；|;/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .slice(0, 5);
+    }
+    return [];
+  }
+
+  function normalizeQueueRisk(value: any): string {
+    const risk = asText(value, 'warning').toLowerCase();
+    if (['critical', 'high', 'danger', 'red', 'p0'].includes(risk)) return 'critical';
+    if (['safe', 'low', 'ok', 'done', 'green'].includes(risk)) return 'safe';
+    return 'warning';
+  }
+
+  function normalizeQueueStatus(value: any): string {
+    const status = asText(value, 'open').toLowerCase();
+    if (['processing', 'triaging', 'in_progress', 'doing'].includes(status)) return 'processing';
+    if (['decided', 'resolved', 'done', 'closed'].includes(status)) return 'decided';
+    if (['ignored', 'dismissed'].includes(status)) return 'ignored';
+    if (['meeting', 'escalated', 'escalated_meeting'].includes(status)) return 'meeting';
+    return 'open';
+  }
+
+  function statusText(status: string): string {
+    switch (normalizeQueueStatus(status)) {
+      case 'processing': return '处理中';
+      case 'decided': return '已决策';
+      case 'ignored': return '已忽略';
+      case 'meeting': return '升级会议';
+      default: return '未处理';
+    }
+  }
+
+  function riskText(risk: string): string {
+    switch (normalizeQueueRisk(risk)) {
+      case 'critical': return '高风险';
+      case 'safe': return '正常';
+      default: return '中风险';
+    }
+  }
+
+  function normalizeDecisionQueueItem(raw: any, index: number): DecisionQueueItem {
+    const taskID = asText(raw.task_id || raw.taskId || raw.demand_id || raw.id, `decision-${index + 1}`);
+    const title = asText(raw.title || raw.problem || raw.issue || raw.summary, '未命名异常决策');
+    const evidence = normalizeTextList(raw.evidence || raw.evidence_list || raw.evidence_chain || raw.signals);
+    const jumpTarget = raw.jump_target || raw.target || raw.link || {};
+    const jumpURL = asText(raw.jump_url || raw.target_url || raw.url || jumpTarget.url);
+    const jumpLabel = asText(raw.jump_label || raw.target_label || jumpTarget.label || taskID);
+
+    return {
+      id: asText(raw.id || raw.queue_id || raw.decision_id, `${taskID}-${index}`),
+      task_id: taskID,
+      title,
+      problem: asText(raw.problem || raw.reason || raw.desc, title),
+      evidence: evidence.length > 0 ? evidence : ['等待证据链读模型回传'],
+      suggested_action: asText(raw.suggested_action || raw.recommendation || raw.action, '补齐事实后再决定是否转派、延期、拆分或升级会议'),
+      impact_scope: asText(raw.impact_scope || raw.impact || raw.scope, '影响范围待读模型补齐'),
+      jump_label: jumpLabel,
+      jump_url: jumpURL,
+      risk_level: normalizeQueueRisk(raw.risk_level || raw.risk || raw.severity),
+      risk_type: asText(raw.risk_type || raw.type, 'exception'),
+      status: normalizeQueueStatus(raw.status || raw.handling_status),
+      assignee: asText(raw.assignee || raw.owner || raw.recommended_owner, '未指派'),
+      project: asText(raw.project || raw.repo || raw.project_key, '未归属'),
+      issue_type: asText(raw.issue_type || raw.kind, 'task').toLowerCase(),
+      updated_at: asText(raw.updated_at || raw.last_update || raw.created_at),
+      source: 'strongest_brain'
+    };
+  }
+
+  function normalizeAgendaDecisionItem(item: AgendaItem, index: number): DecisionQueueItem {
+    const evidence = [
+      item.telemetry_snippet?.branch ? `分支 ${item.telemetry_snippet.branch}` : '',
+      item.telemetry_snippet?.last_commit ? `最近提交 ${item.telemetry_snippet.last_commit}` : '',
+      item.desc
+    ].filter(Boolean);
+    const jiraURL = jiraBaseUrl && item.task_id && !item.task_id.startsWith('TASK-')
+      ? `${jiraBaseUrl}/browse/${item.task_id}`
+      : '';
+
+    return {
+      id: `${item.task_id || 'agenda'}-${index}`,
+      task_id: item.task_id,
+      title: item.title,
+      problem: item.desc || getAiRecommendation(item),
+      evidence: evidence.length > 0 ? evidence : ['Agenda 已命中异常，但缺少代码证据摘要'],
+      suggested_action: getBrainFlowSuggestion(item),
+      impact_scope: getAiResolvePlan(item).impact || '影响范围待补充',
+      jump_label: item.task_id || '查看目标',
+      jump_url: jiraURL,
+      risk_level: normalizeQueueRisk(item.risk_level),
+      risk_type: item.risk_type || 'agenda_risk',
+      status: item.decision_logs ? 'processing' : 'open',
+      assignee: item.assignee || '未指派',
+      project: item.repo || '未归属',
+      issue_type: item.issue_type || 'task',
+      updated_at: item.telemetry_snippet?.last_update || item.due_date || '',
+      source: 'agenda_fallback'
+    };
+  }
+
+  function matchesDecisionQueueFilters(item: DecisionQueueItem): boolean {
+    if (currentFilter === 'task' && item.issue_type === 'bug') return false;
+    if (currentFilter === 'bug' && item.issue_type !== 'bug') return false;
+    if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
+    if (selectedRepo !== 'all' && item.project !== selectedRepo) return false;
+    if (showRiskLevel === 'risks' && normalizeQueueRisk(item.risk_level) === 'safe') return false;
+    return true;
+  }
+
+  function queueRiskRank(risk: string): number {
+    const normalized = normalizeQueueRisk(risk);
+    if (normalized === 'critical') return 3;
+    if (normalized === 'warning') return 2;
+    return 1;
+  }
+
+  function compareDecisionQueueItems(a: DecisionQueueItem, b: DecisionQueueItem): number {
+    const riskDelta = queueRiskRank(b.risk_level) - queueRiskRank(a.risk_level);
+    if (riskDelta !== 0) return riskDelta;
+    const statusDelta = (normalizeQueueStatus(a.status) === 'open' ? -1 : 0) - (normalizeQueueStatus(b.status) === 'open' ? -1 : 0);
+    if (statusDelta !== 0) return statusDelta;
+    return (b.updated_at || '').localeCompare(a.updated_at || '');
+  }
+
+  function buildDecisionSummaryTiles(items: DecisionQueueItem[]): SummaryTile[] {
+    const total = items.length;
+    const critical = items.filter(item => normalizeQueueRisk(item.risk_level) === 'critical').length;
+    const open = items.filter(item => normalizeQueueStatus(item.status) === 'open').length;
+    const meeting = items.filter(item => normalizeQueueStatus(item.status) === 'meeting' || normalizeQueueRisk(item.risk_level) === 'critical').length;
+    const evidenceGaps = items.filter(item => item.evidence.length === 0 || item.evidence[0].includes('等待')).length;
+
+    return [
+      {
+        scope: '日内',
+        value: `${critical}/${total}`,
+        label: '高风险/全部',
+        detail: open > 0 ? `${open} 个未处理异常需要今天拍板` : '暂无未处理异常，继续监听证据回流',
+        tone: critical > 0 ? 'danger' : open > 0 ? 'warn' : 'safe'
+      },
+      {
+        scope: '周会',
+        value: `${meeting}`,
+        label: '建议议题',
+        detail: meeting > 0 ? '优先讨论红区、负责人冲突和需要升级的问题' : '周会可缩短为确认和复盘',
+        tone: meeting > 0 ? 'warn' : 'safe'
+      },
+      {
+        scope: '迭代',
+        value: `${evidenceGaps}`,
+        label: '证据缺口',
+        detail: evidenceGaps > 0 ? '需要补齐上下文、排期、代码或验收证据' : '需求、证据、干预和复盘链路完整',
+        tone: evidenceGaps > 0 ? 'info' : 'safe'
+      }
+    ];
+  }
+
+  function formatTimeBrief(timeStr: string): string {
+    if (!timeStr) return '';
+    const date = new Date(timeStr);
+    if (Number.isNaN(date.getTime())) return timeStr;
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    return `${month}-${day} ${hour}:${minute}`;
+  }
+
+  function focusDecisionQueueItem(item: DecisionQueueItem) {
+    const match = filteredAgendaItems.find(agenda => agenda.task_id === item.task_id);
+    if (match) {
+      selectItem(match);
+    }
   }
 
   function selectOverrideAssignee(name: string) {
@@ -360,6 +608,35 @@
     }
     if (showOverrideDatePicker && overrideDatePickerEl && !overrideDatePickerEl.contains(target)) {
       showOverrideDatePicker = false;
+    }
+  }
+
+  async function fetchStrongestBrainQueue() {
+    strongestBrainLoading = true;
+    strongestBrainError = '';
+    try {
+      const res = await fetch('/api/strongest-brain/decision-queue');
+      if (res.status === 404) {
+        strongestBrainApiAvailable = false;
+        strongestBrainItems = [];
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(`Decision Queue API ${res.status}`);
+      }
+      const data = await res.json();
+      const rawItems = Array.isArray(data)
+        ? data
+        : (data.items || data.queue || data.decision_queue || data.decisionQueue || []);
+      strongestBrainItems = rawItems.map((item: any, index: number) => normalizeDecisionQueueItem(item, index));
+      strongestBrainGeneratedAt = data.generated_at || data.generatedAt || '';
+      strongestBrainApiAvailable = true;
+    } catch (err: any) {
+      strongestBrainError = err.message || '决策队列接口暂不可用';
+      strongestBrainItems = [];
+      strongestBrainApiAvailable = false;
+    } finally {
+      strongestBrainLoading = false;
     }
   }
 
@@ -515,8 +792,12 @@
 
   onMount(() => {
     fetchAgenda();
+    fetchStrongestBrainQueue();
     fetchConfig();
-    const interval = setInterval(fetchAgenda, 15000);
+    const interval = setInterval(() => {
+      fetchAgenda();
+      fetchStrongestBrainQueue();
+    }, 15000);
     document.addEventListener('click', handleDocumentClick);
     return () => {
       clearInterval(interval);
@@ -526,6 +807,104 @@
 </script>
 
 <div class="decision-war-room font-sans">
+  <section class="strongest-brain-queue glass-panel">
+    <div class="brain-queue-header">
+      <div>
+        <span class="eyebrow">STRONGEST BRAIN DECISION QUEUE</span>
+        <h2>最强大脑决策队列</h2>
+        <p>按日内、周会、迭代三种时间尺度收敛异常，只暴露需要人判断的问题。</p>
+      </div>
+      <div class="brain-source-stack font-mono">
+        <span class="brain-source-chip {strongestBrainApiAvailable ? 'live' : 'fallback'}">
+          {decisionQueueSourceLabel}
+        </span>
+        {#if strongestBrainLoading}
+          <span class="brain-source-note">刷新中</span>
+        {:else if strongestBrainError && strongestBrainItems.length === 0}
+          <span class="brain-source-note">API 暂不可用，使用旧 agenda 兜底</span>
+        {/if}
+      </div>
+    </div>
+
+    <div class="brain-summary-grid">
+      {#each decisionSummaryTiles as tile}
+        <div class="brain-summary-tile summary-{tile.tone}">
+          <span class="summary-scope font-mono">{tile.scope}</span>
+          <strong class="font-mono">{tile.value}</strong>
+          <span class="summary-label">{tile.label}</span>
+          <p>{tile.detail}</p>
+        </div>
+      {/each}
+    </div>
+
+    {#if strongestBrainLoading && visibleDecisionQueueItems.length === 0}
+      <div class="brain-loading-grid">
+        <div class="brain-skeleton"></div>
+        <div class="brain-skeleton"></div>
+        <div class="brain-skeleton"></div>
+      </div>
+    {:else if visibleDecisionQueueItems.length === 0}
+      <div class="brain-empty-state font-mono">
+        当前没有需要人处理的异常决策。系统会继续监听 Jira、GitLab、排期、AI 解构和人工干预事件。
+      </div>
+    {:else}
+      <div class="decision-queue-grid">
+        {#each visibleDecisionQueueItems.slice(0, 8) as item}
+          <div
+            class="decision-queue-card risk-{normalizeQueueRisk(item.risk_level)} {selectedItem?.task_id === item.task_id ? 'selected' : ''}"
+            on:click={() => focusDecisionQueueItem(item)}
+            on:keydown={(e) => e.key === 'Enter' && focusDecisionQueueItem(item)}
+            role="button"
+            tabindex="0"
+          >
+            <div class="decision-card-top">
+              <span class="queue-risk font-mono">{riskText(item.risk_level)}</span>
+              <span class="queue-status font-mono status-{normalizeQueueStatus(item.status)}">{statusText(item.status)}</span>
+            </div>
+
+            <div class="decision-card-title-row">
+              <span class="queue-task-id font-mono">{item.task_id}</span>
+              <h3>{item.title}</h3>
+            </div>
+
+            <div class="decision-card-section">
+              <span>问题</span>
+              <p>{item.problem}</p>
+            </div>
+
+            <div class="decision-card-section evidence">
+              <span>证据</span>
+              <ul>
+                {#each item.evidence.slice(0, 3) as evidence}
+                  <li>{evidence}</li>
+                {/each}
+              </ul>
+            </div>
+
+            <div class="decision-card-section">
+              <span>建议动作</span>
+              <p>{item.suggested_action}</p>
+            </div>
+
+            <div class="decision-card-bottom font-mono">
+              <span title={item.impact_scope}>影响: {item.impact_scope}</span>
+              <span>负责人: {item.assignee}</span>
+            </div>
+
+            <div class="decision-card-actions">
+              {#if item.jump_url}
+                <a href={item.jump_url} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                  跳转 {item.jump_label}
+                </a>
+              {:else}
+                <span class="queue-target font-mono">目标: {item.jump_label}</span>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
   
   <!-- Bento Grid Container -->
   <div class="bento-grid">
@@ -1267,6 +1646,308 @@
     gap: 24px;
     margin-top: 10px;
     color: #e2e8f0;
+  }
+
+  .strongest-brain-queue {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: visible;
+  }
+
+  .brain-queue-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.24);
+    padding-bottom: 12px;
+  }
+
+  .brain-queue-header h2 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1.2rem;
+    font-weight: 850;
+  }
+
+  .brain-queue-header p {
+    margin: 5px 0 0 0;
+    max-width: 720px;
+    color: #94a3b8;
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  .brain-source-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .brain-source-chip {
+    border: 1px solid rgba(71, 85, 105, 0.58);
+    background: rgba(2, 6, 23, 0.54);
+    color: #94a3b8;
+    border-radius: 7px;
+    padding: 6px 9px;
+    font-size: 0.66rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .brain-source-chip.live {
+    border-color: rgba(16, 185, 129, 0.34);
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.08);
+  }
+
+  .brain-source-chip.fallback {
+    border-color: rgba(245, 158, 11, 0.28);
+    color: #fbbf24;
+    background: rgba(120, 53, 15, 0.12);
+  }
+
+  .brain-source-note {
+    color: #64748b;
+    font-size: 0.64rem;
+    text-align: right;
+  }
+
+  .brain-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .brain-summary-tile {
+    min-width: 0;
+    min-height: 112px;
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    background: rgba(2, 6, 23, 0.32);
+    border-radius: 10px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 4px 10px;
+  }
+
+  .brain-summary-tile.summary-danger { border-color: rgba(244, 63, 94, 0.34); background: rgba(127, 29, 29, 0.12); }
+  .brain-summary-tile.summary-warn { border-color: rgba(245, 158, 11, 0.3); background: rgba(120, 53, 15, 0.1); }
+  .brain-summary-tile.summary-safe { border-color: rgba(16, 185, 129, 0.28); background: rgba(6, 78, 59, 0.12); }
+  .brain-summary-tile.summary-info { border-color: rgba(56, 189, 248, 0.26); background: rgba(8, 47, 73, 0.12); }
+
+  .summary-scope {
+    color: #94a3b8;
+    font-size: 0.64rem;
+    font-weight: 900;
+  }
+
+  .brain-summary-tile strong {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    color: #f8fafc;
+    font-size: 1.45rem;
+    line-height: 1;
+    align-self: start;
+  }
+
+  .summary-label {
+    color: #64748b;
+    font-size: 0.68rem;
+    font-weight: 800;
+  }
+
+  .brain-summary-tile p {
+    grid-column: 1 / -1;
+    margin: 4px 0 0 0;
+    color: #cbd5e1;
+    font-size: 0.74rem;
+    line-height: 1.45;
+  }
+
+  .brain-loading-grid,
+  .decision-queue-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  .brain-skeleton {
+    height: 228px;
+    border-radius: 10px;
+    border: 1px solid rgba(51, 65, 85, 0.36);
+    background:
+      linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.08), transparent),
+      rgba(2, 6, 23, 0.38);
+    background-size: 180% 100%;
+    animation: queueSkeleton 1.4s ease-in-out infinite;
+  }
+
+  @keyframes queueSkeleton {
+    0% { background-position: 120% 0; }
+    100% { background-position: -120% 0; }
+  }
+
+  .brain-empty-state {
+    border: 1px dashed rgba(71, 85, 105, 0.58);
+    background: rgba(2, 6, 23, 0.32);
+    color: #64748b;
+    border-radius: 10px;
+    padding: 18px;
+    text-align: center;
+    font-size: 0.74rem;
+  }
+
+  .decision-queue-card {
+    min-width: 0;
+    min-height: 248px;
+    border: 1px solid rgba(51, 65, 85, 0.42);
+    border-top-width: 3px;
+    background: rgba(2, 6, 23, 0.36);
+    border-radius: 10px;
+    padding: 12px;
+    display: grid;
+    grid-template-rows: auto auto minmax(42px, auto) minmax(54px, auto) minmax(42px, auto) auto auto;
+    gap: 9px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  }
+
+  .decision-queue-card.risk-critical { border-top-color: #f43f5e; }
+  .decision-queue-card.risk-warning { border-top-color: #f59e0b; }
+  .decision-queue-card.risk-safe { border-top-color: #10b981; }
+
+  .decision-queue-card:hover,
+  .decision-queue-card:focus,
+  .decision-queue-card.selected {
+    background: rgba(15, 23, 42, 0.56);
+    border-color: rgba(129, 140, 248, 0.45);
+    transform: translateY(-1px);
+  }
+
+  .decision-card-top,
+  .decision-card-bottom,
+  .decision-card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .queue-risk,
+  .queue-status,
+  .queue-task-id,
+  .queue-target {
+    min-width: 0;
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: 0.62rem;
+    font-weight: 900;
+    white-space: nowrap;
+  }
+
+  .queue-risk {
+    color: #f8fafc;
+    background: rgba(71, 85, 105, 0.34);
+  }
+
+  .queue-status.status-open { color: #fbbf24; background: rgba(245, 158, 11, 0.12); }
+  .queue-status.status-processing { color: #7dd3fc; background: rgba(14, 165, 233, 0.12); }
+  .queue-status.status-decided { color: #34d399; background: rgba(16, 185, 129, 0.12); }
+  .queue-status.status-ignored { color: #94a3b8; background: rgba(100, 116, 139, 0.12); }
+  .queue-status.status-meeting { color: #c4b5fd; background: rgba(139, 92, 246, 0.14); }
+
+  .decision-card-title-row {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .queue-task-id {
+    align-self: flex-start;
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.18);
+  }
+
+  .decision-card-title-row h3 {
+    margin: 0;
+    color: #f1f5f9;
+    font-size: 0.86rem;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .decision-card-section {
+    min-width: 0;
+  }
+
+  .decision-card-section span {
+    display: block;
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 900;
+    margin-bottom: 3px;
+  }
+
+  .decision-card-section p,
+  .decision-card-section li {
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    line-height: 1.42;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .decision-card-section p {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .decision-card-section ul {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0;
+    padding: 0 0 0 13px;
+  }
+
+  .decision-card-bottom {
+    color: #64748b;
+    font-size: 0.66rem;
+    border-top: 1px solid rgba(51, 65, 85, 0.26);
+    padding-top: 8px;
+  }
+
+  .decision-card-bottom span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .decision-card-actions a,
+  .queue-target {
+    color: #93c5fd;
+    text-decoration: none;
+    font-size: 0.68rem;
+  }
+
+  .decision-card-actions a:hover {
+    color: #bfdbfe;
+    text-decoration: underline;
   }
 
   /* Bento Grid Layout (3 Columns, 3 Rows equivalent height) */
@@ -2591,5 +3272,68 @@
   .combobox-trigger-input::placeholder {
     color: #cbd5e1 !important;
     opacity: 1;
+  }
+
+  @media (max-width: 1280px) {
+    .bento-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .bento-metrics,
+    .bento-terminal,
+    .bento-agenda,
+    .bento-override {
+      grid-column: 1;
+      grid-row: auto;
+    }
+
+    .decision-queue-grid,
+    .brain-loading-grid {
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+    }
+  }
+
+  @media (max-width: 760px) {
+    .brain-queue-header,
+    .panel-header-row,
+    .override-panel-layout,
+    .input-row,
+    .controls-header .header-main {
+      grid-template-columns: 1fr;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .brain-summary-grid,
+    .decision-queue-grid,
+    .brain-loading-grid,
+    .metrics-grid,
+    .override-decision-strip,
+    .brain-flow-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .brain-source-stack {
+      align-items: flex-start;
+    }
+
+    .override-info {
+      border-right: none;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.25);
+      padding-right: 0;
+      padding-bottom: 16px;
+    }
+
+    .filter-bar,
+    .override-actions,
+    .decision-card-bottom {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .custom-select-container,
+    .custom-select-trigger {
+      width: 100%;
+    }
   }
 </style>
