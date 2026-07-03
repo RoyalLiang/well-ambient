@@ -480,12 +480,43 @@
 
   let selectedTaskCommits: any[] = [];
   let loadingCommits = false;
+  let evidenceChain: any = null;
+  let evidenceChainLoading = false;
+  let evidenceChainError = '';
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
 
   async function openDetails(task: Task) {
     selectedTask = task;
     showDetails = true;
+    
+    evidenceChainLoading = true;
+    evidenceChainError = '';
+    evidenceChain = null;
+    try {
+      const res = await fetch(`/api/strongest-brain/evidence-chain?task_id=${encodeURIComponent(task.id)}`);
+      if (res.ok) {
+        evidenceChain = await res.json();
+      } else {
+        throw new Error('无法拉取该任务的交付证据链');
+      }
+    } catch (err: any) {
+      evidenceChainError = err.message || '获取交付证据链异常';
+    } finally {
+      evidenceChainLoading = false;
+    }
+  }
+
+  function getEvidenceStatus(task: any) {
+    if (!task.branch || task.branch === '-') {
+      return { label: '🔴 零代码证据', class: 'badge-no-code' };
+    }
+    const hasCommit = (task.lastCommit && task.lastCommit !== '-') || (task.lastCommitID && task.lastCommitID !== '-');
+    const hasMR = task.mrUrl && task.mrUrl !== '';
+    if (hasCommit || hasMR) {
+      return { label: '🟢 已关联代码', class: 'badge-has-code' };
+    }
+    return { label: '🟡 有分支无提交', class: 'badge-branch-only' };
   }
 
   function getProjectName(id: string): string {
@@ -1137,6 +1168,7 @@
         <div class="column-body">
           {#each inProgress as task}
             {@const parentDemand = getParentDemand(task.taskGroupId)}
+            {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-progress {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
                 <div class="meta-left">
@@ -1147,7 +1179,10 @@
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge badge-progress-sub">{getProjectName(task.id)}</span>
                 </div>
-                <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                <div class="meta-right">
+                  <span class="evidence-badge-tag {ev.class} font-mono">{ev.label}</span>
+                  <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                </div>
               </div>
               <h4 class="task-title text-focus">{task.title}</h4>
               {#if parentDemand}
@@ -1189,6 +1224,7 @@
         <div class="column-body">
           {#each inReview as task}
             {@const parentDemand = getParentDemand(task.taskGroupId)}
+            {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-review {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
                 <div class="meta-left">
@@ -1199,7 +1235,10 @@
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge badge-review-sub">{getProjectName(task.id)}</span>
                 </div>
-                <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                <div class="meta-right">
+                  <span class="evidence-badge-tag {ev.class} font-mono">{ev.label}</span>
+                  <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                </div>
               </div>
               <h4 class="task-title text-focus">{task.title}</h4>
               {#if parentDemand}
@@ -1243,6 +1282,7 @@
         <div class="column-body">
           {#each done as task}
             {@const parentDemand = getParentDemand(task.taskGroupId)}
+            {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-done" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
                 <div class="meta-left">
@@ -1253,7 +1293,10 @@
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge">{getProjectName(task.id)}</span>
                 </div>
-                <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                <div class="meta-right">
+                  <span class="evidence-badge-tag {ev.class} font-mono">{ev.label}</span>
+                  <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
+                </div>
               </div>
               <h4 class="task-title title-done">{task.title}</h4>
               {#if parentDemand}
@@ -1484,6 +1527,66 @@
         }}>
           🛰️ 展开代码提交轨迹与 MR 证据
         </button>
+      </div>
+      
+      <!-- Evidence Chain 真实交付证据链 -->
+      <div class="divider"></div>
+      <div class="evidence-chain-section">
+        <span class="decoupled-title font-mono">⛓️ 真实交付证据链 (Evidence Chain)</span>
+        
+        {#if evidenceChainLoading}
+          <div class="evidence-chain-loading font-mono">正在检索关联的交付证据链...</div>
+        {:else if evidenceChainError}
+          <div class="evidence-chain-error font-mono">⚠️ {evidenceChainError}</div>
+        {:else if evidenceChain}
+          {@const summary = evidenceChain.summary || {}}
+          <div class="evidence-chain-summary-panel">
+            <div class="chain-stat">
+              <span class="stat-label">关联任务</span>
+              <strong>{summary.related_tasks || 0}</strong>
+            </div>
+            <div class="chain-stat">
+              <span class="stat-label">提交次数</span>
+              <strong>{summary.commits || 0}</strong>
+            </div>
+            <div class="chain-stat">
+              <span class="stat-label">Merge Request</span>
+              <strong>{summary.merge_requests || 0} (已合并 {summary.merged_mrs || 0})</strong>
+            </div>
+          </div>
+          
+          {#if evidenceChain.evidence && evidenceChain.evidence.length > 0}
+            <div class="evidence-timeline custom-scrollbar">
+              {#each evidenceChain.evidence as log}
+                <div class="timeline-node">
+                  <div class="node-meta">
+                    <span class="node-time font-mono">{log.created_at.slice(5, 16)}</span>
+                    <span class="node-repo font-mono">[{log.repo}]</span>
+                    {#if log.mr_url}
+                      <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-link-chain">🔗 MR</a>
+                    {/if}
+                  </div>
+                  <div class="node-content">
+                    <span class="node-action action-{log.action.toLowerCase()} font-mono">{log.action.replace('mr_', 'MR ')}</span>
+                    {#if log.commit_id}
+                      <span class="node-commit font-mono">commit: {log.commit_id.slice(0, 8)}</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="evidence-chain-empty font-mono">⚠️ 暂无任何 GitLab 代码提交或 MR 合并记录事实。</div>
+          {/if}
+          
+          {#if summary.signals && summary.signals.length > 0}
+            <div class="evidence-chain-signals">
+              {#each summary.signals as signal}
+                <span class="signal-chip font-mono">🔍 {signal}</span>
+              {/each}
+            </div>
+          {/if}
+        {/if}
       </div>
       
       <div class="details-row">
@@ -3390,5 +3493,177 @@
     background: rgba(56, 189, 248, 0.15);
     color: #38bdf8;
     border-color: rgba(56, 189, 248, 0.4);
+  }
+
+  /* 证据小徽章与证据链样式 */
+  .meta-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .evidence-badge-tag {
+    font-size: 0.65rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .evidence-badge-tag.badge-no-code {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+  }
+  .evidence-badge-tag.badge-branch-only {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.3);
+  }
+  .evidence-badge-tag.badge-has-code {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(52, 211, 153, 0.3);
+  }
+  .evidence-chain-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 14px;
+    margin-bottom: 14px;
+  }
+  .evidence-chain-loading {
+    font-size: 0.75rem;
+    color: #64748b;
+    padding: 8px 0;
+  }
+  .evidence-chain-error {
+    font-size: 0.75rem;
+    color: #f87171;
+    padding: 8px 0;
+  }
+  .evidence-chain-summary-panel {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    background: rgba(15, 23, 42, 0.4);
+    border: 1px solid rgba(51, 65, 85, 0.3);
+    padding: 10px;
+    border-radius: 8px;
+  }
+  .chain-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .chain-stat .stat-label {
+    font-size: 0.65rem;
+    color: #64748b;
+  }
+  .chain-stat strong {
+    font-size: 1rem;
+    color: #f1f5f9;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .evidence-timeline {
+    max-height: 200px;
+    overflow-y: auto;
+    border-left: 2px solid rgba(99, 102, 241, 0.3);
+    padding-left: 12px;
+    margin-left: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .timeline-node {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
+  }
+  .timeline-node::before {
+    content: '';
+    position: absolute;
+    left: -17px;
+    top: 5px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #818cf8;
+    box-shadow: 0 0 6px #818cf8;
+  }
+  .node-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.65rem;
+    color: #64748b;
+  }
+  .node-time {
+    color: #94a3b8;
+  }
+  .node-repo {
+    background: rgba(148, 163, 184, 0.1);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .mr-link-chain {
+    color: #818cf8;
+    text-decoration: none;
+  }
+  .mr-link-chain:hover {
+    text-decoration: underline;
+  }
+  .node-content {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.75rem;
+  }
+  .node-action {
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  .node-action.action-git_push {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+  }
+  .node-action.action-mr_open {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+  }
+  .node-action.action-mr_merge {
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+  }
+  .node-commit {
+    color: #cbd5e1;
+  }
+  .evidence-chain-empty {
+    font-size: 0.75rem;
+    color: #f87171;
+    text-align: center;
+    padding: 12px;
+    background: rgba(239, 68, 68, 0.05);
+    border: 1px dashed rgba(239, 68, 68, 0.25);
+    border-radius: 6px;
+  }
+  .evidence-chain-signals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .signal-chip {
+    font-size: 0.65rem;
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.4);
+    padding: 2px 8px;
+    border-radius: 9999px;
+    color: #cbd5e1;
   }
 </style>

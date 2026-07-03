@@ -423,44 +423,48 @@
     decisionSuccess = '';
     decisionError = '';
 
-    const payload: any = { note: decisionNote };
+    let value = '';
     if (action === 'reassign') {
       if (!newAssignee.trim()) {
         decisionError = '请输入转派负责人';
         decisionLoading = false;
         return;
       }
-      payload.assignee = newAssignee;
+      value = newAssignee;
     } else if (action === 'reschedule') {
       if (!newDueDate) {
         decisionError = '请选择新的截止时间';
         decisionLoading = false;
         return;
       }
-      payload.due_date = newDueDate;
+      value = newDueDate;
+    } else {
+      decisionError = `不支持的干预动作: ${action}`;
+      decisionLoading = false;
+      return;
     }
 
     try {
-      const res = await fetch('/api/agenda/decision', {
+      const res = await fetch('/api/strongest-brain/intervention', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           task_id: selectedItem.task_id,
           action,
-          payload,
-          operator
+          value,
+          reason: decisionNote || '人工调停干预'
         })
       });
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(text || '提交人工调停指令失败');
+        throw new Error(text || '提交人工干预指令失败');
       }
 
       const result = await res.json();
-      decisionSuccess = '人工干预成功！已覆盖 AI 决策并同步外部系统。';
+      decisionSuccess = '人工干预成功！已记录至事件账本并更新状态。';
       
-      const actionName = action === 'reassign' ? '覆盖指派' : (action === 'suspend' ? '强制挂起' : '调整截止期');
+      const actionName = action === 'reassign' ? '覆盖指派' : '调整截止期';
       localDecisions = [
         `[${new Date().toLocaleTimeString()}] 主管 ${operator} 调停 ${selectedItem.task_id}：执行了「${actionName}」干预。`,
         ...localDecisions

@@ -9,7 +9,7 @@
   import DemandKanban from './components/DemandKanban.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
 
-  let activeTab = 'dashboard'; // 'dashboard' | 'demands' | 'decision' | 'settings'
+  let activeTab = 'decision'; // 'decision' | 'schedule' | 'evidence' | 'settings'
 
   interface Alert {
     id: number;
@@ -73,9 +73,9 @@
     
     // Define tabs and their corresponding required permissions
     const tabPermissions: Record<string, string> = {
-      'dashboard': 'dashboard:read',
-      'demands': 'demands:read',
       'decision': 'decision:read',
+      'schedule': 'demands:read',
+      'evidence': 'dashboard:read',
       'settings': 'config:read'
     };
 
@@ -89,7 +89,7 @@
     }
     
     // Otherwise look for first allowed tab
-    const orderedTabs = ['dashboard', 'demands', 'decision', 'settings'];
+    const orderedTabs = ['decision', 'schedule', 'evidence', 'settings'];
     for (const tab of orderedTabs) {
       if (tab === 'settings') {
         if (hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')) {
@@ -717,19 +717,19 @@
 
   <!-- Tab Navigation -->
   <div class="tabs-navigation font-mono">
-    {#if hasPermission('dashboard:read')}
-      <button class="tab-btn {activeTab === 'dashboard' ? 'active' : ''}" on:click={() => activeTab = 'dashboard'}>
-        📊 协同看板
+    {#if hasPermission('decision:read')}
+      <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
+        ⚡ 决策队列
       </button>
     {/if}
     {#if hasPermission('demands:read')}
-      <button class="tab-btn {activeTab === 'demands' ? 'active' : ''}" on:click={() => activeTab = 'demands'}>
-        📋 需求看板
+      <button class="tab-btn {activeTab === 'schedule' ? 'active' : ''}" on:click={() => activeTab = 'schedule'}>
+        🗓️ 排期治理台
       </button>
     {/if}
-    {#if hasPermission('decision:read')}
-      <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
-        ⚡ 最强大脑 / 决策队列
+    {#if hasPermission('dashboard:read')}
+      <button class="tab-btn {activeTab === 'evidence' ? 'active' : ''}" on:click={() => activeTab = 'evidence'}>
+        🔍 证据观测台
       </button>
     {/if}
     {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}
@@ -741,7 +741,16 @@
 
   <!-- Core Dashboard Layout -->
   <section class="app-content-shell">
-    {#if activeTab === 'dashboard'}
+    {#if activeTab === 'decision'}
+      <DecisionDashboard currentUser={currentUserName} />
+    {:else if activeTab === 'schedule'}
+      <DemandKanban
+        currentUserPermissions={currentUserPermissions}
+        currentUserName={currentUserName}
+        currentUserEmail={currentUserEmail}
+        currentUserDepartment={currentUserDepartment}
+      />
+    {:else if activeTab === 'evidence'}
       <div class="dashboard-content">
         <!-- Project Health Telemetry -->
         <ProjectHealthTelemetry />
@@ -752,15 +761,6 @@
         <!-- Kanban -->
         <TaskKanban />
       </div>
-    {:else if activeTab === 'demands'}
-      <DemandKanban
-        currentUserPermissions={currentUserPermissions}
-        currentUserName={currentUserName}
-        currentUserEmail={currentUserEmail}
-        currentUserDepartment={currentUserDepartment}
-      />
-    {:else if activeTab === 'decision'}
-      <DecisionDashboard currentUser={currentUserName} />
     {:else if activeTab === 'settings'}
       <SettingsPanel
         currentUserRole={currentUserRole}

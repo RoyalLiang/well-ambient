@@ -250,6 +250,19 @@ type ProjectScore struct {
 	CreatedAt           time.Time `json:"created_at"`
 }
 
+// DecisionEvent stores override, reassignment, and AI inference events for audit trails
+type DecisionEvent struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	TaskID     string    `gorm:"index" json:"task_id"`
+	Actor      string    `json:"actor"`       // 操作人 (如 "AI_Brain", "Eddie")
+	Action     string    `json:"action"`      // override_assignee, override_due, ai_infer_stuck等
+	OldValue   string    `json:"old_value"`
+	NewValue   string    `json:"new_value"`
+	Reason     string    `json:"reason"`      // 理由
+	Confidence float64   `json:"confidence"`  // AI 置信度
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // InitDB initializes the SQLite connection and runs auto-migrations
 func InitDB(dbPath string) error {
 	var err error
@@ -283,6 +296,7 @@ func InitDB(dbPath string) error {
 		&userdb.AuditLog{},
 		&ProjectConfig{},
 		&ProjectScore{},
+		&DecisionEvent{},
 	)
 	if err != nil {
 		return err

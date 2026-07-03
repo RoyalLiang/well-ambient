@@ -174,3 +174,73 @@ func TestAIIntentSummaryDeterministicFallback(t *testing.T) {
 		t.Fatalf("unexpected intent response: %+v", response)
 	}
 }
+
+func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
+	_ = seedStrongestBrainUser(t) // 初始化 db 和基础用户
+	
+	var u userdb.User
+	if err := db.DB.Where("username = ?", "brain-user").First(&u).Error; err != nil {
+		t.Fatalf("query user: %v", err)
+	}
+	var superAdminGroup userdb.UserGroup
+	if err := db.DB.Where("name = ?", "super_admin").First(&superAdminGroup).Error; err != nil {
+		t.Fatalf("query super_admin group: %v", err)
+	}
+	if err := db.DB.Create(&userdb.UserGroupMembership{UserID: u.ID, UserGroupID: superAdminGroup.ID, Scope: "global"}).Error; err != nil {
+		t.Fatalf("seed super_admin membership: %v", err)
+	}
+
+	token, err := GenerateJWT(u.Username, u.Name, "mock-token", "", []string{"member", "super_admin"}, []string{"dashboard:read", "demands:read", "decision:read", "demands:write"}, u.Department)
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	now := time.Now()
+	task := db.TaskTelemetry{
+		TaskID:        "DEMAND-3",
+		Title:         "待转派需求",
+		IssueType:     "demand",
+		Status:        "progress",
+		Assignee:      "Brain User",
+		LastUpdate:    now,
+	}
+	if err := db.DB.Create(&task).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+	
+	// 测试 reassign 动作
+	body := bytes.NewBufferString(`{
+		"task_id": "DEMAND-3",
+		"action": "reassign",
+		"value": "朱家聪",
+		"reason": "需要朱家聪协助攻坚"
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/strongest-brain/intervention", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	// 验证数据库状态已修改
+	var updatedTask db.TaskTelemetry
+	if err := db.DB.Where("task_id = ?", "DEMAND-3").First(&updatedTask).Error; err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if updatedTask.Assignee != "朱家聪" {
+		t.Fatalf("task assignee = %q, want %q", updatedTask.Assignee, "朱家聪")
+	}
+
+	// 验证 DecisionEvent 已经写入
+	var event db.DecisionEvent
+	if err := db.DB.Where("task_id = ?", "DEMAND-3").First(&event).Error; err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	if event.Action != "override_reassign" || event.Actor != "Brain User" || event.NewValue != "朱家聪" || event.Reason != "需要朱家聪协助攻坚" {
+		t.Fatalf("unexpected event log: %+v", event)
+	}
+}

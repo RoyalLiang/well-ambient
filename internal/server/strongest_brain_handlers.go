@@ -820,3 +820,105 @@ func compactStrings(values []string, limit int) []string {
 	}
 	return result
 }
+
+func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TaskID string `json:"task_id"`
+		Action string `json:"action"` // "reassign", "reschedule", "link_repo"
+		Value  string `json:"value"`  // 新指派人, 新截止日期, 新仓库名等
+		Reason string `json:"reason"` // 理由
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad Request: invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.TaskID == "" || req.Action == "" || req.Value == "" {
+		http.Error(w, "Bad Request: task_id, action, and value are required", http.StatusBadRequest)
+		return
+	}
+
+	var task db.TaskTelemetry
+	if err := db.DB.Where("task_id = ?", req.TaskID).First(&task).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Task %s not found", req.TaskID), http.StatusNotFound)
+		return
+	}
+
+	actor := r.Header.Get("x-authenticated-user-name")
+	if actor == "" {
+		actor = r.Header.Get("x-authenticated-user-id")
+	}
+	if actor == "" {
+		actor = "Unknown"
+	}
+
+	var oldVal string
+	switch req.Action {
+	case "reassign":
+		oldVal = task.Assignee
+		task.Assignee = req.Value
+		task.LastUpdate = time.Now()
+	case "reschedule":
+		if task.DueDate != nil {
+			oldVal = task.DueDate.Format("2006-01-02")
+		} else {
+			oldVal = ""
+		}
+		
+		t, err := time.Parse("2006-01-02", req.Value)
+		if err != nil {
+			t2, err2 := time.Parse(time.RFC3339, req.Value)
+			if err2 != nil {
+				http.Error(w, "Bad Request: invalid date format (expected YYYY-MM-DD)", http.StatusBadRequest)
+				return
+			}
+			t = t2
+		}
+		
+		task.DueDate = &t
+		task.LastUpdate = time.Now()
+	case "link_repo":
+		oldVal = task.Repo
+		task.Repo = req.Value
+		task.LastUpdate = time.Now()
+	default:
+		http.Error(w, "Bad Request: invalid action", http.StatusBadRequest)
+		return
+	}
+
+	tx := db.DB.Begin()
+	if err := tx.Save(&task).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, fmt.Sprintf("Failed to update task: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	event := db.DecisionEvent{
+		TaskID:    req.TaskID,
+		Actor:     actor,
+		Action:    "override_" + req.Action,
+		OldValue:  oldVal,
+		NewValue:  req.Value,
+		Reason:    req.Reason,
+		CreatedAt: time.Now(),
+	}
+	if err := tx.Create(&event).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, fmt.Sprintf("Failed to record decision event: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	tx.Commit()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "success",
+		"event":  event,
+	})
+}
