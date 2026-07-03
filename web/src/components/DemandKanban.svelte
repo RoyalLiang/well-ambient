@@ -778,6 +778,11 @@
     demands.forEach((demand) => addFormOption(options, demand.repo));
     allSubTasks.forEach((task) => addFormOption(options, task.repo));
     scheduleItems.forEach((item) => addFormOption(options, item.repo));
+    projectConfigs.forEach((proj) => {
+      if (proj && proj.project_key) {
+        addFormOption(options, proj.project_key);
+      }
+    });
     return ['-', ...sortedFormOptions(options)];
   }
 
