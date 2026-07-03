@@ -764,13 +764,11 @@
 
   function buildCreateAssigneeOptions() {
     const options = new Set<string>();
-    demandOptionAssignees.forEach((name) => addFormOption(options, name));
-    users.forEach((user) => addFormOption(options, user.name || user.username));
-    demands.forEach((demand) => addFormOption(options, demand.assignee));
-    allSubTasks.forEach((task) => addFormOption(options, task.assignee));
-    scheduleItems.forEach((item) => addFormOption(options, item.assignee));
-    coreMembers.forEach((name) => addFormOption(options, name)); // 显式追加所有开发核心成员
-    addFormOption(options, currentUserName || currentUserEmail);
+    coreMembers.forEach((name) => {
+      if (name && name !== '未指派' && name !== '-' && name !== 'Unassigned') {
+        addFormOption(options, name);
+      }
+    });
     return sortedFormOptions(options);
   }
 
@@ -2567,11 +2565,30 @@
                   placeholder={displayProjectOption(newRepo)}
                   bind:value={projectSearchText}
                   on:focus|stopPropagation={() => showProjectDropdown = true}
+                  on:keydown={(e) => {
+                    if (e.key === 'Enter' && projectSearchText.trim()) {
+                      newRepo = projectSearchText.trim();
+                      showProjectDropdown = false;
+                    }
+                  }}
                 />
                 <span class="arrow-icon {showProjectDropdown ? 'open' : ''}">▼</span>
               </div>
               {#if showProjectDropdown}
                 <div class="dropdown-options-list glass-panel">
+                  {#if projectSearchText && !createProjectOptions.some(proj => displayProjectOption(proj).toLowerCase() === projectSearchText.toLowerCase())}
+                    <button
+                      type="button"
+                      class="dropdown-option-item new-custom-option"
+                      style="color: #818cf8; font-weight: 500; border-bottom: 1px solid rgba(129, 140, 248, 0.15);"
+                      on:click={() => {
+                        newRepo = projectSearchText.trim();
+                        showProjectDropdown = false;
+                      }}
+                    >
+                      ➕ 使用新项目: "{projectSearchText}"
+                    </button>
+                  {/if}
                   {#each createProjectOptions.filter(proj => !projectSearchText || displayProjectOption(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
                     <button
                       type="button"
@@ -2584,7 +2601,7 @@
                       {displayProjectOption(project)}
                     </button>
                   {/each}
-                  {#if createProjectOptions.length <= 1}
+                  {#if createProjectOptions.length <= 1 && !projectSearchText}
                     <div class="dropdown-empty">暂无项目候选，请先配置 GitLab/Jira 项目或等待 Jira 同步。</div>
                   {/if}
                 </div>
@@ -2628,7 +2645,7 @@
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" class:picker-open={activeDatePicker === 'new'}>
             <label for="demand-due">期望截止交付日期</label>
             <div class="date-input-shell">
               <button type="button" id="demand-due" class="date-input-display {newDueDate ? 'has-value' : ''}" on:click|stopPropagation={() => openDatePicker('new')}>
@@ -4352,6 +4369,22 @@
     max-height: calc(100dvh - 48px);
     overflow-y: auto;
     overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(129, 140, 248, 0.3) transparent;
+  }
+
+  .modal-content::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .modal-content::-webkit-scrollbar-thumb {
+    background: rgba(129, 140, 248, 0.3);
+    border-radius: 3px;
+  }
+
+  .modal-content::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .demand-create-modal {
@@ -4400,6 +4433,11 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .form-group.picker-open {
+    margin-bottom: 300px;
+    transition: margin-bottom 0.16s ease-out;
   }
 
   .form-group label {
