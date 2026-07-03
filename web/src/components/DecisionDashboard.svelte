@@ -55,7 +55,27 @@
     project: string;
     issue_type: string;
     updated_at: string;
-    source: 'strongest_brain' | 'agenda_fallback';
+    source: string;
+  }
+
+  interface DecisionActionPlan {
+    decision_kind: string;
+    primary_action: string;
+    idle_cost: string;
+    entry_label: string;
+    entry_hint: string;
+    source_label: string;
+    can_intervene: boolean;
+  }
+
+  interface DecisionQueueMeaningStats {
+    total: number;
+    critical: number;
+    open: number;
+    schedule: number;
+    execution: number;
+    context: number;
+    agenda: number;
   }
 
   interface SummaryTile {
@@ -90,6 +110,7 @@
   let strongestBrainError = '';
   let strongestBrainGeneratedAt = '';
   let strongestBrainApiAvailable = false;
+  let selectedDecisionQueueItem: DecisionQueueItem | null = null;
   let loading = true;
   let errorMsg = '';
 
@@ -265,6 +286,9 @@
   $: visibleDecisionQueueItems = rawDecisionQueueItems
     .filter(item => matchesDecisionQueueFilters(item))
     .sort(compareDecisionQueueItems);
+  $: selectedDecisionQueueItem = reconcileSelectedDecisionQueueItem(selectedDecisionQueueItem, visibleDecisionQueueItems);
+  $: selectedDecisionPlan = getDecisionActionPlan(selectedDecisionQueueItem);
+  $: decisionQueueMeaningStats = buildDecisionQueueMeaningStats(visibleDecisionQueueItems);
   $: decisionSummaryTiles = buildDecisionSummaryTiles(visibleDecisionQueueItems);
   $: decisionQueueSourceLabel = strongestBrainItems.length > 0
     ? `Decision Queue API${strongestBrainGeneratedAt ? ` / ${formatTimeBrief(strongestBrainGeneratedAt)}` : ''}`
@@ -349,6 +373,30 @@
     return 'open';
   }
 
+  function normalizeQueueSource(value: any): string {
+    const source = asText(value, 'strongest_brain').toLowerCase();
+    if (source.includes('schedule')) return 'schedule';
+    if (source.includes('execution') || source.includes('evidence')) return 'execution';
+    if (source.includes('context')) return 'context';
+    if (source.includes('agenda')) return 'agenda_fallback';
+    return source || 'strongest_brain';
+  }
+
+  function queueSourceLabel(source: string): string {
+    switch (normalizeQueueSource(source)) {
+      case 'schedule': return '排期';
+      case 'execution': return '执行证据';
+      case 'context': return '上下文';
+      case 'agenda_fallback': return '旧Agenda';
+      default: return '综合';
+    }
+  }
+
+  function hasAgendaInterventionTarget(item: DecisionQueueItem | null): boolean {
+    if (!item) return false;
+    return filteredAgendaItems.some(agenda => agenda.task_id === item.task_id);
+  }
+
   function statusText(status: string): string {
     switch (normalizeQueueStatus(status)) {
       case 'processing': return '处理中';
@@ -392,7 +440,7 @@
       project: asText(raw.project || raw.repo || raw.project_key, '未归属'),
       issue_type: asText(raw.issue_type || raw.kind, 'task').toLowerCase(),
       updated_at: asText(raw.updated_at || raw.last_update || raw.created_at),
-      source: 'strongest_brain'
+      source: normalizeQueueSource(raw.source || raw.origin || raw.kind_source || 'strongest_brain')
     };
   }
 
@@ -483,6 +531,106 @@
     ];
   }
 
+  function buildDecisionQueueMeaningStats(items: DecisionQueueItem[]): DecisionQueueMeaningStats {
+    const stats: DecisionQueueMeaningStats = {
+      total: items.length,
+      critical: 0,
+      open: 0,
+      schedule: 0,
+      execution: 0,
+      context: 0,
+      agenda: 0
+    };
+    for (const item of items) {
+      if (normalizeQueueRisk(item.risk_level) === 'critical') stats.critical++;
+      if (normalizeQueueStatus(item.status) === 'open') stats.open++;
+      switch (normalizeQueueSource(item.source)) {
+        case 'schedule':
+          stats.schedule++;
+          break;
+        case 'execution':
+          stats.execution++;
+          break;
+        case 'context':
+          stats.context++;
+          break;
+        case 'agenda_fallback':
+          stats.agenda++;
+          break;
+      }
+    }
+    return stats;
+  }
+
+  function defaultDecisionActionPlan(): DecisionActionPlan {
+    return {
+      decision_kind: '监听',
+      primary_action: '暂无需要人工拍板的异常，保持后台事实收集。',
+      idle_cost: '无即时阻塞。',
+      entry_label: '等待新异常',
+      entry_hint: '系统会在风险升级、证据缺口或负责人冲突时重新入队。',
+      source_label: '综合',
+      can_intervene: false
+    };
+  }
+
+  function getDecisionKind(item: DecisionQueueItem): string {
+    const riskType = asText(item.risk_type).toLowerCase();
+    const source = normalizeQueueSource(item.source);
+    if (source === 'context') return '补齐语料';
+    if (riskType.includes('missing_schedule') || riskType.includes('unscheduled')) return '补排期';
+    if (riskType.includes('overdue')) return '改承诺';
+    if (riskType.includes('due_soon')) return '临期确认';
+    if (riskType.includes('stale') || riskType.includes('no_commit')) return '破阻塞';
+    if (riskType.includes('mismatch') || riskType.includes('conflict')) return '对齐事实';
+    if (riskType.includes('orphan') || riskType.includes('unbound')) return '补归属';
+    if (source === 'execution') return '补证据';
+    return '人工判断';
+  }
+
+  function getIdleCost(item: DecisionQueueItem): string {
+    const riskType = asText(item.risk_type).toLowerCase();
+    const risk = normalizeQueueRisk(item.risk_level);
+    const source = normalizeQueueSource(item.source);
+    if (source === 'context') return '继续缺少系统事实会让需求解构、估算和周会摘要发生漂移。';
+    if (riskType.includes('missing_schedule') || riskType.includes('unscheduled')) return '需求会停留在看板状态，无法进入可追踪负责人、分支和截止日闭环。';
+    if (riskType.includes('overdue')) return '延期原因不落账会继续吞掉迭代缓冲，并让下游验收窗口失真。';
+    if (riskType.includes('due_soon')) return '临期未确认会在下一轮刷新变成逾期，压缩合并和回归时间。';
+    if (riskType.includes('stale') || riskType.includes('no_commit')) return '静默会掩盖真实阻塞，直到评审、合并或验收阶段集中爆雷。';
+    if (riskType.includes('mismatch')) return '看板状态和代码事实继续分叉，复盘时无法判断真实完成度。';
+    if (riskType.includes('orphan') || riskType.includes('unbound')) return '执行证据无法回流父需求，完成记录会变成孤岛。';
+    if (risk === 'critical') return '红区问题会持续占用交付缓冲，需要今天给出明确处理口径。';
+    return item.impact_scope || '影响范围需要在拍板前补齐。';
+  }
+
+  function getDecisionActionPlan(item: DecisionQueueItem | null): DecisionActionPlan {
+    if (!item) return defaultDecisionActionPlan();
+    const canIntervene = hasAgendaInterventionTarget(item);
+    const hasJump = Boolean(item.jump_url);
+    return {
+      decision_kind: getDecisionKind(item),
+      primary_action: item.suggested_action || '补齐事实后决定转派、延期、拆分或升级会议。',
+      idle_cost: getIdleCost(item),
+      entry_label: canIntervene ? '进入调停' : hasJump ? `打开${item.jump_label || '目标'}` : '定位来源',
+      entry_hint: canIntervene
+        ? '已匹配下方人工干预面板，可直接转派、改期或挂起。'
+        : hasJump
+          ? '先打开外部目标确认事实，再回到队列记录决策。'
+          : `来自${queueSourceLabel(item.source)}读模型，请回到对应看板补齐事实。`,
+      source_label: queueSourceLabel(item.source),
+      can_intervene: canIntervene
+    };
+  }
+
+  function reconcileSelectedDecisionQueueItem(current: DecisionQueueItem | null, items: DecisionQueueItem[]): DecisionQueueItem | null {
+    if (items.length === 0) return null;
+    if (current) {
+      const match = items.find(item => item.id === current.id || item.task_id === current.task_id);
+      if (match) return match;
+    }
+    return items[0];
+  }
+
   function formatTimeBrief(timeStr: string): string {
     if (!timeStr) return '';
     const date = new Date(timeStr);
@@ -495,6 +643,7 @@
   }
 
   function focusDecisionQueueItem(item: DecisionQueueItem) {
+    selectedDecisionQueueItem = item;
     const match = filteredAgendaItems.find(agenda => agenda.task_id === item.task_id);
     if (match) {
       selectItem(match);
@@ -837,6 +986,27 @@
       {/each}
     </div>
 
+    {#if selectedDecisionQueueItem}
+      <div class="brain-meaning-panel risk-{normalizeQueueRisk(selectedDecisionQueueItem.risk_level)}">
+        <div class="meaning-focus">
+          <span class="meaning-label font-mono">TODAY DECISION</span>
+          <strong>{selectedDecisionPlan.decision_kind} · {selectedDecisionQueueItem.task_id}</strong>
+          <p>{selectedDecisionPlan.idle_cost}</p>
+        </div>
+        <div class="meaning-action">
+          <span class="meaning-label font-mono">{selectedDecisionPlan.source_label}</span>
+          <strong>{selectedDecisionPlan.primary_action}</strong>
+          <p>{selectedDecisionPlan.entry_hint}</p>
+        </div>
+        <div class="meaning-source-board font-mono">
+          <span>排期 {decisionQueueMeaningStats.schedule}</span>
+          <span>执行 {decisionQueueMeaningStats.execution}</span>
+          <span>上下文 {decisionQueueMeaningStats.context}</span>
+          <span>Agenda {decisionQueueMeaningStats.agenda}</span>
+        </div>
+      </div>
+    {/if}
+
     {#if strongestBrainLoading && visibleDecisionQueueItems.length === 0}
       <div class="brain-loading-grid">
         <div class="brain-skeleton"></div>
@@ -850,8 +1020,9 @@
     {:else}
       <div class="decision-queue-grid">
         {#each visibleDecisionQueueItems.slice(0, 8) as item}
+          {@const actionPlan = getDecisionActionPlan(item)}
           <div
-            class="decision-queue-card risk-{normalizeQueueRisk(item.risk_level)} {selectedItem?.task_id === item.task_id ? 'selected' : ''}"
+            class="decision-queue-card risk-{normalizeQueueRisk(item.risk_level)} {selectedDecisionQueueItem?.id === item.id ? 'selected' : ''}"
             on:click={() => focusDecisionQueueItem(item)}
             on:keydown={(e) => e.key === 'Enter' && focusDecisionQueueItem(item)}
             role="button"
@@ -863,13 +1034,24 @@
             </div>
 
             <div class="decision-card-title-row">
-              <span class="queue-task-id font-mono">{item.task_id}</span>
+              <div class="decision-card-id-row">
+                <span class="queue-task-id font-mono">{item.task_id}</span>
+                <span class="queue-source font-mono">{actionPlan.source_label}</span>
+              </div>
               <h3>{item.title}</h3>
             </div>
 
             <div class="decision-card-section">
               <span>问题</span>
               <p>{item.problem}</p>
+            </div>
+
+            <div class="decision-card-plan">
+              <div>
+                <span>拍板类型</span>
+                <strong>{actionPlan.decision_kind}</strong>
+              </div>
+              <p>{actionPlan.idle_cost}</p>
             </div>
 
             <div class="decision-card-section evidence">
@@ -883,7 +1065,7 @@
 
             <div class="decision-card-section">
               <span>建议动作</span>
-              <p>{item.suggested_action}</p>
+              <p>{actionPlan.primary_action}</p>
             </div>
 
             <div class="decision-card-bottom font-mono">
@@ -894,10 +1076,12 @@
             <div class="decision-card-actions">
               {#if item.jump_url}
                 <a href={item.jump_url} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                  跳转 {item.jump_label}
+                  {actionPlan.entry_label}
                 </a>
+              {:else if actionPlan.can_intervene}
+                <span class="queue-target font-mono">点击卡片进入调停</span>
               {:else}
-                <span class="queue-target font-mono">目标: {item.jump_label}</span>
+                <span class="queue-target font-mono">{actionPlan.entry_label}: {item.jump_label}</span>
               {/if}
             </div>
           </div>
@@ -1769,6 +1953,84 @@
     line-height: 1.45;
   }
 
+  .brain-meaning-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: stretch;
+    border: 1px solid rgba(51, 65, 85, 0.48);
+    border-left-width: 4px;
+    background: rgba(2, 6, 23, 0.34);
+    border-radius: 8px;
+    padding: 12px;
+  }
+
+  .brain-meaning-panel.risk-critical {
+    border-left-color: #f43f5e;
+    background: linear-gradient(90deg, rgba(127, 29, 29, 0.18), rgba(2, 6, 23, 0.34));
+  }
+
+  .brain-meaning-panel.risk-warning {
+    border-left-color: #f59e0b;
+    background: linear-gradient(90deg, rgba(120, 53, 15, 0.14), rgba(2, 6, 23, 0.34));
+  }
+
+  .brain-meaning-panel.risk-safe {
+    border-left-color: #10b981;
+  }
+
+  .meaning-focus,
+  .meaning-action {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .meaning-label {
+    color: #64748b;
+    font-size: 0.62rem;
+    font-weight: 900;
+  }
+
+  .meaning-focus strong,
+  .meaning-action strong {
+    color: #f8fafc;
+    font-size: 0.86rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .meaning-focus p,
+  .meaning-action p {
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 0.74rem;
+    line-height: 1.45;
+  }
+
+  .meaning-source-board {
+    min-width: 168px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    align-self: stretch;
+  }
+
+  .meaning-source-board span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    border: 1px solid rgba(71, 85, 105, 0.42);
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.42);
+    color: #94a3b8;
+    font-size: 0.62rem;
+    font-weight: 900;
+    white-space: nowrap;
+  }
+
   .brain-loading-grid,
   .decision-queue-grid {
     display: grid;
@@ -1804,14 +2066,14 @@
 
   .decision-queue-card {
     min-width: 0;
-    min-height: 248px;
+    min-height: 322px;
     border: 1px solid rgba(51, 65, 85, 0.42);
     border-top-width: 3px;
     background: rgba(2, 6, 23, 0.36);
     border-radius: 10px;
     padding: 12px;
     display: grid;
-    grid-template-rows: auto auto minmax(42px, auto) minmax(54px, auto) minmax(42px, auto) auto auto;
+    grid-template-rows: auto auto minmax(38px, auto) minmax(60px, auto) minmax(54px, auto) minmax(42px, auto) auto auto;
     gap: 9px;
     cursor: pointer;
     outline: none;
@@ -1870,11 +2132,30 @@
     gap: 6px;
   }
 
+  .decision-card-id-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
   .queue-task-id {
     align-self: flex-start;
     color: #34d399;
     background: rgba(16, 185, 129, 0.1);
     border: 1px solid rgba(16, 185, 129, 0.18);
+  }
+
+  .queue-source {
+    color: #93c5fd;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.18);
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: 0.62rem;
+    font-weight: 900;
+    white-space: nowrap;
   }
 
   .decision-card-title-row h3 {
@@ -1892,6 +2173,26 @@
     min-width: 0;
   }
 
+  .decision-card-plan {
+    min-width: 0;
+    border: 1px solid rgba(71, 85, 105, 0.32);
+    border-radius: 7px;
+    background: rgba(15, 23, 42, 0.4);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .decision-card-plan div {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .decision-card-plan span,
   .decision-card-section span {
     display: block;
     color: #64748b;
@@ -1900,6 +2201,14 @@
     margin-bottom: 3px;
   }
 
+  .decision-card-plan strong {
+    color: #f8fafc;
+    font-size: 0.72rem;
+    font-weight: 900;
+    white-space: nowrap;
+  }
+
+  .decision-card-plan p,
   .decision-card-section p,
   .decision-card-section li {
     color: #cbd5e1;
@@ -1910,6 +2219,13 @@
   }
 
   .decision-card-section p {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .decision-card-plan p {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -3291,6 +3607,16 @@
     .brain-loading-grid {
       grid-template-columns: repeat(2, minmax(220px, 1fr));
     }
+
+    .brain-meaning-panel {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .meaning-source-board {
+      grid-column: 1 / -1;
+      min-width: 0;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
   }
 
   @media (max-width: 760px) {
@@ -3305,12 +3631,18 @@
     }
 
     .brain-summary-grid,
+    .brain-meaning-panel,
     .decision-queue-grid,
     .brain-loading-grid,
     .metrics-grid,
     .override-decision-strip,
     .brain-flow-grid {
       grid-template-columns: 1fr;
+    }
+
+    .meaning-source-board {
+      grid-column: auto;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .brain-source-stack {

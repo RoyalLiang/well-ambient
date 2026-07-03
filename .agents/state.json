@@ -1,40 +1,35 @@
 {
   "warm_memory": {
-    "goal": "Continue strongest-brain master plan by landing Phase 23 schedule governance risk calendar.",
-    "classification": "coding.complex + continuation; additive backend read model and frontend schedule cockpit surface",
+    "goal": "Clarify the visible meaning of the strongest-brain decision queue.",
+    "classification": "coding.complex + continuation; frontend cockpit usefulness repair",
     "phase": "complete",
     "constraints": [
-      "Use the existing schedule risk resolver as the source of truth.",
-      "Do not change the existing /api/schedule contract.",
+      "Do not change the strongest-brain decision queue API contract.",
       "Keep frontend styling as dense internal dark cockpit UI.",
-      "Stage and commit only intentional Phase 23 files; leave task_status.md and well-ambient.db unstaged."
+      "Stage and commit only intentional Phase 24 files; leave task_status.md and well-ambient.db unstaged."
     ],
     "decisions": [
-      "Added GET /api/schedule/risk-calendar behind demands:read.",
-      "Built week/month risk buckets and event summaries for overdue, due soon, stale_after_schedule, and missing_schedule.",
-      "Added frontend risk calendar panel with API response normalization and fallback from current schedule rows.",
-      "Closed timed-out subagents and integrated only the partial frontend changes that landed in the shared worktree."
+      "Preserved backend API compatibility and carried queue item source through frontend normalization.",
+      "Added a selected decision focus panel with decision kind, idle cost, handling entry, suggested action, and source counts.",
+      "Added per-card source, decision type, no-action cost, and clearer entry labels.",
+      "Kept non-Agenda queue items visible while labeling them as source-located work when they cannot enter the old intervention form."
     ],
     "findings": [
-      "Phase 22 strongest-brain decision queue and AI intent loop are complete at commit 2e9ea85.",
-      "Phase 23 should remain a read-model projection until a unified event ledger is implemented.",
+      "The queue's weakness was not missing data, but insufficient translation from data into decision language.",
+      "The backend already emits schedule/execution/context source fields; the frontend previously hid them as generic strongest-brain items.",
       "task_status.md and well-ambient.db are unrelated runtime/data changes for this phase."
     ],
     "touched_files": [
       "task_plan.md",
       "findings.md",
       "progress.md",
-      "internal/server/server.go",
-      "internal/server/schedule_risk_calendar_handlers.go",
-      "internal/server/schedule_risk_calendar_handlers_test.go",
-      "web/src/components/DemandKanban.svelte"
+      ".agents/state.json",
+      "web/src/components/DecisionDashboard.svelte"
     ],
     "validation": [
-      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestGetScheduleRiskCalendar|TestGetScheduleBuildsDemandTimeline' -count=1: passed.",
-      "pnpm build in web: passed with existing Svelte warnings.",
-      "git diff --check: passed."
+      "pnpm build in web: passed with existing Svelte warnings."
     ],
     "blockers": [],
-    "next": "Commit Phase 23 intentional changes and continue to the next master-plan slice."
+    "next": "Commit Phase 24 intentional changes."
   }
 }

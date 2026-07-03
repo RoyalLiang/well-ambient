@@ -2,6 +2,25 @@
 
 ## Session: 2026-07-03
 
+### Phase 24: Decision Queue Meaning
+- **Status:** complete
+- **Started:** 2026-07-03
+- Actions taken:
+  - Treated the user feedback as a cockpit usefulness gap in the Phase 22 strongest-brain decision queue.
+  - Loaded AGENTS cold-start context, planning/execution guidance, and the required frontend taste guidance.
+  - Inspected `DecisionDashboard.svelte` and the strongest-brain decision queue API projection.
+  - Preserved the backend API contract and carried backend item `source` through frontend normalization.
+  - Added a selected decision focus panel showing the current decision kind, idle cost, suggested action, handling entry, and source counts.
+  - Added per-card queue source, decision type, no-action cost, and clearer handling entry labels.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+  - `web/src/components/DecisionDashboard.svelte`
+- Validation:
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector and chunk-size warnings.
+
 ### Phase 23: Schedule Governance Risk Calendar
 - **Status:** complete
 - **Started:** 2026-07-03

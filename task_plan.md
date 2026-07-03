@@ -39,6 +39,14 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Integrate subagent work, run focused validation, and record limits
 - [x] Commit intentional Phase 23 changes
 
+## Current Task Addendum: Phase 24 Decision Queue Meaning
+- [x] Treat the feedback as a strongest-brain cockpit usefulness gap
+- [x] Preserve the existing dark operational dashboard style
+- [x] Keep backend queue contracts unchanged and improve the frontend read model projection
+- [x] Surface queue source, current decision focus, decision kind, idle cost, and handling entry
+- [x] Verify the frontend production build
+- [x] Update task memory and commit intentional changes
+
 ## Current Task Addendum: GitLab Webhook Ensure/Status MVP
 - [x] Inspect existing GitLab/Jira integration and route patterns
 - [x] Add GitLab project webhook ensure/status backend capability
@@ -53,7 +61,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Phase 23: Schedule Governance Risk Calendar
+Phase 24: Decision Queue Meaning
 
 ## Phases
 
@@ -251,6 +259,15 @@ Phase 23: Schedule Governance Risk Calendar
 - [x] Implement weekly/monthly risk calendar strip in the schedule workbench
 - [x] Add focused tests/build validation
 - [x] Update task memory and commit intentional changes
+- **Status:** complete
+
+### Phase 24: Decision Queue Meaning
+- [x] Read current decision queue UI and strongest-brain API projection
+- [x] Preserve API compatibility while carrying backend `source` into the UI
+- [x] Add a selected decision focus panel with idle-cost and handling-entry language
+- [x] Add per-card decision kind, queue source, and no-action cost
+- [x] Run frontend production build
+- [x] Update memory files and commit intentional changes
 - **Status:** complete
 
 ## Key Questions
