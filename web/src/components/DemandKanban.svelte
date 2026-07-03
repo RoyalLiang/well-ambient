@@ -1651,12 +1651,27 @@
 
   function handleDocumentClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
-    if (!target.closest('.custom-dropdown-container')) {
+    
+    if (!target.closest('#demand-assignee-container')) {
       showAssigneeDropdown = false;
+    }
+    if (!target.closest('#demand-project-container')) {
       showProjectDropdown = false;
-      showScheduleAssigneeDropdown = false;
+    }
+    if (!target.closest('#sched-assignee-container')) {
       showScheduleModalAssigneeDropdown = false;
+    }
+    if (!target.closest('.schedule-assignee-menu')) {
+      showScheduleAssigneeDropdown = false;
+    }
+    if (!target.closest('.schedule-project-menu')) {
       showScheduleProjectDropdown = false;
+    }
+    if (!target.closest('.schedule-dropdown-menu')) {
+      showScheduleDifficultyDropdown = false;
+      showRiskDropdown = false;
+      showTypeDropdown = false;
+      showSortDropdown = false;
     }
     if (!target.closest('.difficulty-select-shell')) {
       showScheduleDifficultyDropdown = false;
@@ -2581,7 +2596,7 @@
                       type="button"
                       class="dropdown-option-item new-custom-option"
                       style="color: #818cf8; font-weight: 500; border-bottom: 1px solid rgba(129, 140, 248, 0.15);"
-                      on:click={() => {
+                      on:click|stopPropagation={() => {
                         newRepo = projectSearchText.trim();
                         showProjectDropdown = false;
                       }}
@@ -2593,7 +2608,7 @@
                     <button
                       type="button"
                       class="dropdown-option-item {newRepo === project ? 'selected' : ''}"
-                      on:click={() => {
+                      on:click|stopPropagation={() => {
                         newRepo = project;
                         showProjectDropdown = false;
                       }}
@@ -2629,7 +2644,7 @@
                     <button
                       type="button"
                       class="dropdown-option-item {newAssignee === assignee ? 'selected' : ''}"
-                      on:click={() => {
+                      on:click|stopPropagation={() => {
                         newAssignee = assignee;
                         showAssigneeDropdown = false;
                       }}
@@ -2645,7 +2660,7 @@
             </div>
           </div>
 
-          <div class="form-group" class:picker-open={activeDatePicker === 'new'}>
+          <div class="form-group">
             <label for="demand-due">期望截止交付日期</label>
             <div class="date-input-shell">
               <button type="button" id="demand-due" class="date-input-display {newDueDate ? 'has-value' : ''}" on:click|stopPropagation={() => openDatePicker('new')}>
@@ -4389,6 +4404,7 @@
 
   .demand-create-modal {
     max-width: 560px;
+    overflow: visible !important;
   }
 
   .schedule-modal {
@@ -4433,11 +4449,6 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-  }
-
-  .form-group.picker-open {
-    margin-bottom: 300px;
-    transition: margin-bottom 0.16s ease-out;
   }
 
   .form-group label {
