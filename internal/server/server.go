@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/demands/archive", s.withAuth(s.handleArchiveDemand))
 	s.mux.HandleFunc("POST /api/demands/reassign", s.withAuth(s.handleReassignDemand))
 	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
+	s.mux.HandleFunc("GET /api/schedule/risk-calendar", s.withPermission("demands:read", s.handleGetScheduleRiskCalendar))
 	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
 
 	// Protected Project Configs & Brain Scores

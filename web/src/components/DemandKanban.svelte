@@ -92,6 +92,40 @@
     items: ScheduleItem[];
   }
 
+  type ScheduleRiskBucketKey = 'this_week' | 'next_week' | 'later';
+
+  interface ScheduleRiskCalendarCounts {
+    total: number;
+    overdue: number;
+    due_soon: number;
+    stale: number;
+    unscheduled: number;
+  }
+
+  interface ScheduleRiskCalendarEvent {
+    id?: string;
+    demand_id: string;
+    title: string;
+    assignee: string;
+    project_key: string;
+    week_key?: string;
+    risk_type?: string;
+    risk_level: string;
+    risk_label: string;
+    risk_reason: string;
+    due_date: string;
+    days_remaining: number;
+  }
+
+  interface ScheduleRiskCalendarBucket {
+    key: ScheduleRiskBucketKey;
+    label: string;
+    window_label: string;
+    counts: ScheduleRiskCalendarCounts;
+    events: ScheduleRiskCalendarEvent[];
+    event_ids?: string[];
+  }
+
   interface DemandOptionsResponse {
     assignees: string[];
     projects: string[];
@@ -116,6 +150,19 @@
     { value: 'unscheduled', label: '待排期' },
     { value: 'safe', label: '正常' },
     { value: 'done', label: '已交付' }
+  ];
+
+  const riskCalendarRiskTypes: Array<{ value: ScheduleRiskFilter; label: string }> = [
+    { value: 'overdue', label: '逾期' },
+    { value: 'due_soon', label: '临期' },
+    { value: 'stale', label: '滞后' },
+    { value: 'unscheduled', label: '待排期' }
+  ];
+
+  const riskCalendarBucketMeta: Array<{ key: ScheduleRiskBucketKey; label: string; window_label: string }> = [
+    { key: 'this_week', label: '本周', window_label: '本周截止与已逾期' },
+    { key: 'next_week', label: '下周', window_label: '下周到期风险' },
+    { key: 'later', label: '后续', window_label: '未排期与远期风险' }
   ];
 
   const scheduleSortModes: Array<{ value: ScheduleSortMode; label: string }> = [
@@ -143,6 +190,24 @@
       due_soon: 0,
       stale: 0
     };
+  }
+
+  function createEmptyRiskCalendarCounts(): ScheduleRiskCalendarCounts {
+    return {
+      total: 0,
+      overdue: 0,
+      due_soon: 0,
+      stale: 0,
+      unscheduled: 0
+    };
+  }
+
+  function createEmptyRiskCalendarBuckets(): ScheduleRiskCalendarBucket[] {
+    return riskCalendarBucketMeta.map((bucket) => ({
+      ...bucket,
+      counts: createEmptyRiskCalendarCounts(),
+      events: []
+    }));
   }
 
   function canManageDemand(item: Demand): boolean {
@@ -254,6 +319,12 @@
   let scheduleGeneratedAt = '';
   let scheduleLoading = false;
   let scheduleErrorMsg = '';
+  let riskCalendarBuckets: ScheduleRiskCalendarBucket[] = createEmptyRiskCalendarBuckets();
+  let riskCalendarGeneratedAt = '';
+  let riskCalendarLoading = false;
+  let riskCalendarErrorMsg = '';
+  let riskCalendarUsingFallback = false;
+  let riskCalendarRequestSeq = 0;
   let scheduleSearch = '';
   let scheduleSearchInput = '';
   let scheduleSearchDebounceTimer: any;
@@ -887,6 +958,287 @@
     return a.demand_id.localeCompare(b.demand_id);
   }
 
+  function buildScheduleQuery(includeRiskFilter = true): string {
+    const params = new URLSearchParams();
+    if (scheduleProjectFilter && scheduleProjectFilter !== 'all') {
+      params.append('project', scheduleProjectFilter);
+    }
+    if (scheduleAssigneeFilter && scheduleAssigneeFilter !== 'all') {
+      params.append('assignee', scheduleAssigneeFilter);
+    }
+    if (scheduleSearch && scheduleSearch.trim()) {
+      params.append('search', scheduleSearch.trim());
+    }
+    if (scheduleTypeFilter && scheduleTypeFilter !== 'all') {
+      params.append('type', scheduleTypeFilter);
+    }
+    if (includeRiskFilter && scheduleRiskFilter && scheduleRiskFilter !== 'all') {
+      params.append('risk', scheduleRiskFilter);
+    }
+    const queryStr = params.toString();
+    return queryStr ? '?' + queryStr : '';
+  }
+
+  function normalizeRiskLevel(value?: string): string {
+    const cleaned = (value || '').trim().toLowerCase().replace(/-/g, '_');
+    if (cleaned === 'danger') return 'overdue';
+    if (cleaned === 'warning') return 'due_soon';
+    if (cleaned.includes('overdue') || cleaned.includes('逾期')) return 'overdue';
+    if (cleaned.includes('due_soon') || cleaned.includes('soon') || cleaned.includes('临期')) return 'due_soon';
+    if (cleaned.includes('stale') || cleaned.includes('滞后')) return 'stale';
+    if (cleaned.includes('unscheduled') || cleaned.includes('待排期') || cleaned.includes('缺截止')) return 'unscheduled';
+    if (cleaned.includes('done') || cleaned.includes('交付')) return 'done';
+    if (cleaned.includes('safe') || cleaned.includes('正常')) return 'safe';
+    return cleaned || 'unscheduled';
+  }
+
+  function getRiskLevelLabel(value?: string): string {
+    const level = normalizeRiskLevel(value);
+    return scheduleRiskFilters.find((filter) => filter.value === level)?.label || '风险';
+  }
+
+  function getRiskFilterFromLevel(value?: string): ScheduleRiskFilter {
+    const level = normalizeRiskLevel(value);
+    if (level === 'overdue' || level === 'due_soon' || level === 'stale' || level === 'unscheduled' || level === 'safe' || level === 'done') {
+      return level;
+    }
+    return 'attention';
+  }
+
+  function isCalendarRiskLevel(value?: string): boolean {
+    const level = normalizeRiskLevel(value);
+    return level === 'overdue' || level === 'due_soon' || level === 'stale' || level === 'unscheduled';
+  }
+
+  function getRiskSeverityWeight(value?: string): number {
+    const level = normalizeRiskLevel(value);
+    if (level === 'overdue') return 500;
+    if (level === 'due_soon') return 400;
+    if (level === 'stale') return 300;
+    if (level === 'unscheduled') return 200;
+    return 0;
+  }
+
+  function sortRiskCalendarEvents(events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarEvent[] {
+    return [...events].sort((a, b) => {
+      const severityDiff = getRiskSeverityWeight(b.risk_level) - getRiskSeverityWeight(a.risk_level);
+      if (severityDiff !== 0) return severityDiff;
+      const dayDiff = a.days_remaining - b.days_remaining;
+      if (Number.isFinite(dayDiff) && dayDiff !== 0) return dayDiff;
+      return a.demand_id.localeCompare(b.demand_id);
+    });
+  }
+
+  function normalizeRiskCalendarEvent(raw: any): ScheduleRiskCalendarEvent {
+    const demandID = raw?.demand_id || raw?.task_id || raw?.id || '';
+    const riskLevel = normalizeRiskLevel(raw?.risk_type || raw?.risk_level || raw?.risk || raw?.level);
+    return {
+      id: raw?.id || `${riskLevel}:${demandID}`,
+      demand_id: demandID,
+      title: raw?.title || raw?.summary || demandID || '未命名需求',
+      assignee: raw?.assignee || raw?.owner || '未指派',
+      project_key: raw?.project_key || getProjectKey(demandID),
+      week_key: raw?.week_key || raw?.weekKey || '',
+      risk_type: raw?.risk_type || raw?.type || '',
+      risk_level: riskLevel,
+      risk_label: raw?.risk_label || raw?.label || getRiskLevelLabel(riskLevel),
+      risk_reason: raw?.risk_reason || raw?.reason || '',
+      due_date: raw?.due_date || raw?.deadline || '',
+      days_remaining: Number.isFinite(Number(raw?.days_remaining)) ? Number(raw.days_remaining) : 999
+    };
+  }
+
+  function normalizeRiskCalendarCounts(raw: any, events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarCounts {
+    const counts = createEmptyRiskCalendarCounts();
+    const source = raw || {};
+    counts.overdue = Number.isFinite(Number(source.overdue)) ? Number(source.overdue) : 0;
+    counts.due_soon = Number.isFinite(Number(source.due_soon)) ? Number(source.due_soon) : 0;
+    counts.stale = Number.isFinite(Number(source.stale)) ? Number(source.stale) : 0;
+    counts.unscheduled = Number.isFinite(Number(source.unscheduled))
+      ? Number(source.unscheduled)
+      : Number.isFinite(Number(source.missing_schedule))
+        ? Number(source.missing_schedule)
+        : 0;
+
+    if (counts.overdue + counts.due_soon + counts.stale + counts.unscheduled === 0 && events.length > 0) {
+      for (const event of events) {
+        const level = normalizeRiskLevel(event.risk_level);
+        if (level === 'overdue') counts.overdue += 1;
+        if (level === 'due_soon') counts.due_soon += 1;
+        if (level === 'stale') counts.stale += 1;
+        if (level === 'unscheduled') counts.unscheduled += 1;
+      }
+    }
+
+    const derivedTotal = counts.overdue + counts.due_soon + counts.stale + counts.unscheduled;
+    counts.total = Number.isFinite(Number(source.total)) && Number(source.total) > 0 ? Number(source.total) : derivedTotal;
+    return counts;
+  }
+
+  function normalizeRiskBucketKey(value: unknown, index: number): ScheduleRiskBucketKey {
+    const key = String(value || '').trim().toLowerCase().replace(/-/g, '_');
+    if (key.includes('this') || key.includes('current') || key.includes('week_0') || key.includes('本周')) return 'this_week';
+    if (key.includes('next') || key.includes('week_1') || key.includes('下周')) return 'next_week';
+    if (key.includes('later') || key.includes('future') || key.includes('upcoming') || key.includes('后续')) return 'later';
+    return riskCalendarBucketMeta[Math.min(index, riskCalendarBucketMeta.length - 1)].key;
+  }
+
+  function normalizeRiskCalendarBucket(raw: any, meta: { key: ScheduleRiskBucketKey; label: string; window_label: string }): ScheduleRiskCalendarBucket {
+    const rawEvents = raw?.events || raw?.items || raw?.risks || [];
+    const events = Array.isArray(rawEvents)
+      ? sortRiskCalendarEvents(rawEvents.map(normalizeRiskCalendarEvent).filter((event) => isCalendarRiskLevel(event.risk_level)))
+      : [];
+    const rawCounts = raw?.counts || raw?.summary || raw;
+    return {
+      key: meta.key,
+      label: raw?.label || meta.label,
+      window_label: raw?.window_label || raw?.range_label || raw?.window || meta.window_label,
+      counts: normalizeRiskCalendarCounts(rawCounts, events),
+      events,
+      event_ids: Array.isArray(raw?.event_ids) ? raw.event_ids : []
+    };
+  }
+
+  function buildRiskCalendarBucketsFromEvents(events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarBucket[] {
+    const buckets = createEmptyRiskCalendarBuckets();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekday = (today.getDay() + 6) % 7;
+    const thisWeekStart = new Date(today);
+    thisWeekStart.setDate(today.getDate() - weekday);
+    const nextWeekStart = new Date(thisWeekStart);
+    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
+    const laterStart = new Date(nextWeekStart);
+    laterStart.setDate(nextWeekStart.getDate() + 7);
+
+    for (const event of events) {
+      if (!isCalendarRiskLevel(event.risk_level)) continue;
+      let bucketKey: ScheduleRiskBucketKey = 'later';
+      const riskLevel = normalizeRiskLevel(event.risk_level);
+      const dueDate = parseDateValue(event.due_date ? event.due_date.slice(0, 10) : '');
+      if (riskLevel === 'overdue') {
+        bucketKey = 'this_week';
+      } else if (dueDate && dueDate < nextWeekStart) {
+        bucketKey = 'this_week';
+      } else if (dueDate && dueDate < laterStart) {
+        bucketKey = 'next_week';
+      }
+
+      const bucket = buckets.find((candidate) => candidate.key === bucketKey);
+      if (!bucket) continue;
+      const level = normalizeRiskLevel(event.risk_level);
+      if (level === 'overdue') bucket.counts.overdue += 1;
+      if (level === 'due_soon') bucket.counts.due_soon += 1;
+      if (level === 'stale') bucket.counts.stale += 1;
+      if (level === 'unscheduled') bucket.counts.unscheduled += 1;
+      bucket.counts.total += 1;
+      bucket.events.push(event);
+    }
+
+    return buckets.map((bucket) => ({
+      ...bucket,
+      events: sortRiskCalendarEvents(bucket.events)
+    }));
+  }
+
+  function buildFallbackRiskCalendarBuckets(): ScheduleRiskCalendarBucket[] {
+    return buildRiskCalendarBucketsFromEvents(scheduleItems.map(normalizeRiskCalendarEvent));
+  }
+
+  function normalizeRiskCalendarResponse(data: any): ScheduleRiskCalendarBucket[] {
+    const allEvents = Array.isArray(data?.events)
+      ? sortRiskCalendarEvents(data.events.map(normalizeRiskCalendarEvent).filter((event: ScheduleRiskCalendarEvent) => isCalendarRiskLevel(event.risk_level)))
+      : [];
+    const bucketArray = Array.isArray(data?.buckets)
+      ? data.buckets
+      : Array.isArray(data?.weeks)
+        ? data.weeks
+        : Array.isArray(data?.calendar)
+          ? data.calendar
+          : [];
+
+    if (bucketArray.length > 0) {
+      const bucketsByKey = new Map<ScheduleRiskBucketKey, any>();
+      bucketArray.forEach((bucket: any, index: number) => {
+        bucketsByKey.set(normalizeRiskBucketKey(bucket?.key || bucket?.bucket || bucket?.name || bucket?.label, index), bucket);
+      });
+      return riskCalendarBucketMeta.map((meta, index) => {
+        const raw = bucketsByKey.get(meta.key) || bucketArray[index] || {};
+        const bucket = normalizeRiskCalendarBucket(raw, meta);
+        if (bucket.events.length === 0 && allEvents.length > 0) {
+          const ids = new Set(bucket.event_ids || []);
+          bucket.events = sortRiskCalendarEvents(allEvents.filter((event) => {
+            if (ids.size > 0 && event.id && ids.has(event.id)) return true;
+            return raw?.key && event.week_key === raw.key;
+          })).slice(0, 4);
+        }
+        return bucket;
+      });
+    }
+
+    const directBuckets = riskCalendarBucketMeta.map((meta) => data?.[meta.key]);
+    if (directBuckets.some(Boolean)) {
+      return riskCalendarBucketMeta.map((meta, index) => normalizeRiskCalendarBucket(directBuckets[index] || {}, meta));
+    }
+
+    const rawEvents = data?.events || data?.items || data?.risks || [];
+    if (Array.isArray(rawEvents)) {
+      return buildRiskCalendarBucketsFromEvents(rawEvents.map(normalizeRiskCalendarEvent));
+    }
+
+    return createEmptyRiskCalendarBuckets();
+  }
+
+  function getBucketRiskCount(bucket: ScheduleRiskCalendarBucket, risk: ScheduleRiskFilter): number {
+    if (risk === 'overdue') return bucket.counts.overdue;
+    if (risk === 'due_soon') return bucket.counts.due_soon;
+    if (risk === 'stale') return bucket.counts.stale;
+    if (risk === 'unscheduled') return bucket.counts.unscheduled;
+    return bucket.counts.total;
+  }
+
+  function selectScheduleRiskFromCalendar(risk: ScheduleRiskFilter) {
+    scheduleRiskFilter = risk;
+    showRiskDropdown = false;
+  }
+
+  function formatRiskEventMeta(event: ScheduleRiskCalendarEvent): string {
+    const dueText = event.due_date ? formatScheduleDate(event.due_date) : '未排期';
+    return `${event.assignee || '未指派'} · ${dueText}`;
+  }
+
+  $: riskCalendarHasAny = riskCalendarBuckets.some((bucket) => bucket.counts.total > 0 || bucket.events.length > 0);
+
+  async function fetchRiskCalendar() {
+    const requestSeq = ++riskCalendarRequestSeq;
+    riskCalendarLoading = true;
+    riskCalendarErrorMsg = '';
+    riskCalendarUsingFallback = false;
+    const token = localStorage.getItem('jwt_token');
+
+    try {
+      const res = await fetch('/api/schedule/risk-calendar' + buildScheduleQuery(false), {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        throw new Error('风险日历接口暂不可用');
+      }
+      const data = await res.json();
+      if (requestSeq !== riskCalendarRequestSeq) return;
+      riskCalendarBuckets = normalizeRiskCalendarResponse(data);
+      riskCalendarGeneratedAt = data?.generated_at || scheduleGeneratedAt || '';
+    } catch (err: any) {
+      if (requestSeq !== riskCalendarRequestSeq) return;
+      riskCalendarErrorMsg = err.message || '风险日历接口暂不可用';
+      riskCalendarUsingFallback = true;
+      riskCalendarGeneratedAt = scheduleGeneratedAt;
+      riskCalendarBuckets = buildFallbackRiskCalendarBuckets();
+    } finally {
+      if (requestSeq === riskCalendarRequestSeq) {
+        riskCalendarLoading = false;
+      }
+    }
+  }
 
 
   async function fetchSchedule() {
@@ -894,24 +1246,7 @@
     scheduleErrorMsg = '';
     const token = localStorage.getItem('jwt_token');
     try {
-      const params = new URLSearchParams();
-      if (scheduleProjectFilter && scheduleProjectFilter !== 'all') {
-        params.append('project', scheduleProjectFilter);
-      }
-      if (scheduleAssigneeFilter && scheduleAssigneeFilter !== 'all') {
-        params.append('assignee', scheduleAssigneeFilter);
-      }
-      if (scheduleSearch && scheduleSearch.trim()) {
-        params.append('search', scheduleSearch.trim());
-      }
-      if (scheduleTypeFilter && scheduleTypeFilter !== 'all') {
-        params.append('type', scheduleTypeFilter);
-      }
-      if (scheduleRiskFilter && scheduleRiskFilter !== 'all') {
-        params.append('risk', scheduleRiskFilter);
-      }
-      const queryStr = params.toString() ? '?' + params.toString() : '';
-      const res = await fetch('/api/schedule' + queryStr, {
+      const res = await fetch('/api/schedule' + buildScheduleQuery(true), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -935,6 +1270,7 @@
       }));
       scheduleSummary = data.summary || createEmptyScheduleSummary();
       scheduleGeneratedAt = data.generated_at || '';
+      fetchRiskCalendar();
     } catch (err: any) {
       scheduleErrorMsg = err.message || '获取排期表失败';
     } finally {
@@ -1448,6 +1784,83 @@
           <strong>{scheduleSummary.stale}</strong>
           <em>推进滞后</em>
         </div>
+      </div>
+
+      <div class="schedule-risk-calendar-panel">
+        <div class="risk-calendar-head">
+          <div>
+            <span class="eyebrow">RISK CALENDAR</span>
+            <h3>排期风险日历</h3>
+          </div>
+          <div class="risk-calendar-meta font-mono">
+            {#if riskCalendarLoading}
+              <span>刷新中</span>
+            {:else if riskCalendarUsingFallback}
+              <span>本地排期兜底</span>
+            {:else if riskCalendarGeneratedAt}
+              <span>{riskCalendarGeneratedAt}</span>
+            {/if}
+          </div>
+        </div>
+
+        {#if riskCalendarErrorMsg && riskCalendarUsingFallback}
+          <div class="risk-calendar-warning font-mono">{riskCalendarErrorMsg}，已使用当前排期表生成临时视图。</div>
+        {/if}
+
+        {#if riskCalendarLoading && !riskCalendarHasAny}
+          <div class="risk-calendar-loading">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        {:else}
+          <div class="risk-calendar-grid">
+            {#each riskCalendarBuckets as bucket}
+              <div class="risk-calendar-bucket">
+                <div class="bucket-title-row">
+                  <div>
+                    <strong>{bucket.label}</strong>
+                    <span class="font-mono">{bucket.window_label}</span>
+                  </div>
+                  <em class="font-mono">{bucket.counts.total}</em>
+                </div>
+
+                <div class="bucket-risk-chips">
+                  {#each riskCalendarRiskTypes as risk}
+                    {@const count = getBucketRiskCount(bucket, risk.value)}
+                    <button
+                      type="button"
+                      class="bucket-risk-chip risk-{risk.value} {count > 0 ? 'has-count' : ''}"
+                      on:click={() => selectScheduleRiskFromCalendar(risk.value)}
+                      disabled={count === 0}
+                    >
+                      <span>{risk.label}</span>
+                      <strong class="font-mono">{count}</strong>
+                    </button>
+                  {/each}
+                </div>
+
+                {#if bucket.events.length > 0}
+                  <div class="bucket-event-list">
+                    {#each bucket.events.slice(0, 3) as event}
+                      <button
+                        type="button"
+                        class="bucket-event-item risk-{normalizeRiskLevel(event.risk_level)}"
+                        on:click={() => selectScheduleRiskFromCalendar(getRiskFilterFromLevel(event.risk_level))}
+                      >
+                        <span class="event-task font-mono">{event.demand_id}</span>
+                        <strong title={event.title}>{event.title}</strong>
+                        <em class="font-mono">{formatRiskEventMeta(event)}</em>
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="bucket-empty font-mono">暂无明细事件</div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <div class="schedule-control-panel">
@@ -2858,6 +3271,232 @@
     font-style: normal;
   }
 
+  .schedule-risk-calendar-panel {
+    background: rgba(10, 15, 30, 0.62);
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .risk-calendar-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .risk-calendar-head h3 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 0.98rem;
+  }
+
+  .risk-calendar-meta {
+    color: #64748b;
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+
+  .risk-calendar-warning {
+    color: #fbbf24;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.68rem;
+  }
+
+  .risk-calendar-loading,
+  .risk-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .risk-calendar-loading span {
+    min-height: 138px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, rgba(30, 41, 59, 0.52), rgba(51, 65, 85, 0.42), rgba(30, 41, 59, 0.52));
+    background-size: 180% 100%;
+    animation: calendar-shimmer 1.2s linear infinite;
+  }
+
+  @keyframes calendar-shimmer {
+    from { background-position: 0 0; }
+    to { background-position: -180% 0; }
+  }
+
+  .risk-calendar-bucket {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.62);
+    border: 1px solid rgba(71, 85, 105, 0.34);
+    border-radius: 10px;
+    padding: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .bucket-title-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .bucket-title-row strong {
+    display: block;
+    color: #f8fafc;
+    font-size: 0.9rem;
+  }
+
+  .bucket-title-row span {
+    display: block;
+    color: #64748b;
+    font-size: 0.66rem;
+    margin-top: 3px;
+  }
+
+  .bucket-title-row em {
+    color: #e2e8f0;
+    font-style: normal;
+    font-size: 1.15rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bucket-risk-chips {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .bucket-risk-chip {
+    border: 1px solid rgba(71, 85, 105, 0.38);
+    background: rgba(2, 6, 23, 0.28);
+    border-radius: 7px;
+    color: #64748b;
+    padding: 7px 6px;
+    cursor: pointer;
+    min-width: 0;
+    transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+  }
+
+  .bucket-risk-chip:disabled {
+    cursor: default;
+    opacity: 0.62;
+  }
+
+  .bucket-risk-chip span {
+    display: block;
+    font-size: 0.62rem;
+    white-space: nowrap;
+  }
+
+  .bucket-risk-chip strong {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.88rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bucket-risk-chip.has-count.risk-overdue {
+    color: #fecdd3;
+    border-color: rgba(244, 63, 94, 0.36);
+    background: rgba(244, 63, 94, 0.1);
+  }
+
+  .bucket-risk-chip.has-count.risk-due_soon {
+    color: #fde68a;
+    border-color: rgba(245, 158, 11, 0.34);
+    background: rgba(245, 158, 11, 0.09);
+  }
+
+  .bucket-risk-chip.has-count.risk-stale {
+    color: #c4b5fd;
+    border-color: rgba(167, 139, 250, 0.34);
+    background: rgba(124, 58, 237, 0.09);
+  }
+
+  .bucket-risk-chip.has-count.risk-unscheduled {
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.32);
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  .bucket-risk-chip.has-count:hover {
+    border-color: rgba(226, 232, 240, 0.42);
+    color: #f8fafc;
+  }
+
+  .bucket-event-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .bucket-event-item {
+    width: 100%;
+    text-align: left;
+    border: 1px solid rgba(51, 65, 85, 0.34);
+    background: rgba(2, 6, 23, 0.22);
+    border-left: 3px solid rgba(100, 116, 139, 0.72);
+    border-radius: 7px;
+    padding: 7px 8px;
+    color: #cbd5e1;
+    cursor: pointer;
+    min-width: 0;
+  }
+
+  .bucket-event-item.risk-overdue { border-left-color: #f43f5e; }
+  .bucket-event-item.risk-due_soon { border-left-color: #f59e0b; }
+  .bucket-event-item.risk-stale { border-left-color: #a78bfa; }
+  .bucket-event-item.risk-unscheduled { border-left-color: #60a5fa; }
+
+  .bucket-event-item:hover {
+    background: rgba(30, 41, 59, 0.54);
+  }
+
+  .bucket-event-item .event-task {
+    display: block;
+    color: #818cf8;
+    font-size: 0.62rem;
+    margin-bottom: 2px;
+  }
+
+  .bucket-event-item strong {
+    display: block;
+    color: #e2e8f0;
+    font-size: 0.73rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bucket-event-item em {
+    display: block;
+    color: #64748b;
+    font-style: normal;
+    font-size: 0.62rem;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bucket-empty {
+    color: #64748b;
+    border: 1px dashed rgba(71, 85, 105, 0.28);
+    border-radius: 7px;
+    padding: 10px;
+    text-align: center;
+    font-size: 0.66rem;
+  }
+
   .schedule-control-panel {
     display: flex;
     flex-wrap: nowrap;
@@ -3365,11 +4004,24 @@
       grid-template-columns: repeat(3, minmax(130px, 1fr));
     }
 
+    .risk-calendar-loading,
+    .risk-calendar-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 760px) {
     .schedule-summary-grid {
       grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+
+    .risk-calendar-head {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .bucket-risk-chips {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .schedule-filter-strip,

@@ -8,6 +8,7 @@
 - Current task addendum: compact the work-summary effort/AI-evaluation controls, optimize the config version audit/rollback surface, lock background scroll under modals, repair assignee/Jira/detail interactions across decision and demand boards, and make demand/task/bug status transitions feel seamless with strongest-brain recommendation guidance.
 - Current backend worker scope: implement the strongest-brain v1 backend read-model loop for EvidenceChain, DecisionQueueItem, schedule governance reuse, and AI intent recognition/summary, limited to backend server/db/telemetry files and focused tests.
 - Current Phase 22 requirement: based on `docs/strongest-brain-phased-master-plan.md`, add AI intent recognition and summarization to the plan and implementation, checkpoint all existing code first, then use subagents to land the complete strongest-brain plan as a v1 closed loop.
+- Current Phase 23 continuation: proceed into master-plan Phase 4 by adding a schedule-governance risk calendar read model and compact schedule-view surface, while preserving the existing `/api/schedule` contract.
 
 ## Research Findings
 - Git status shows the repository contents are currently untracked; avoid treating that as disposable state.
@@ -16,6 +17,10 @@
 - The active frontend design read is an internal研发协同 dark cockpit, not a marketing or landing surface; density should remain operational and UI copy should be plain, auditable, and concise.
 - Phase 22 landed a v1 strongest-brain loop: master plan addendum, decision queue API, evidence chain API, deterministic AI intent/summary API, cockpit decision queue UI, and transparent deconstructor conversation panel.
 - Full server package validation is still sandbox-limited because existing GitLab webhook tests bind a local `httptest` listener; targeted Phase 22 handler tests pass without listener binding.
+- Phase 23 should reuse `buildScheduleResponse` and `resolveScheduleRisk` instead of creating a second risk taxonomy; the new calendar is a read-model projection over existing schedule facts.
+- Current dirty `task_status.md` and `well-ambient.db` are not part of the Phase 23 scope and should remain unstaged unless explicitly requested.
+- Phase 23 subagents timed out and were closed; frontend partial work appeared in the shared worktree and was integrated by the main agent, while backend/API/test work was completed locally.
+- The Phase 23 risk calendar now returns additive week/month buckets plus event summaries, while the schedule table still consumes the existing `/api/schedule` contract.
 - Follow-up `find` showed `internal/server` and `cmd/server` do exist, but were not returned by the initial `rg --files` listing, likely due ignore rules.
 - `DemandKanban.svelte` already contains demand/subtask filtering, card progress rendering, and confirm modal classes.
 - `Deconstructor.svelte` already fetches active demands and posts `demand_id` to `/api/tasks/import`.
@@ -131,6 +136,9 @@
 | Build the strongest-brain queue as an aggregation layer over schedule and execution read models | This lands a useful v1 loop without duplicating risk logic already covered by `/api/schedule` and `/api/execution/tasks`. |
 | Use deterministic AI intent/summary fallback first | The conversation surface must remain explainable and usable when AI providers are disabled, misconfigured, or slow. |
 | Fetch Jira link config before full config in the decision cockpit | Decision users need issue links, but should not depend on `config:read` to render the queue. |
+| Implement risk calendar as additive endpoint | `/api/schedule` is already consumed by the table and tests; a new `/api/schedule/risk-calendar` avoids breaking existing filters and virtualized row rendering. |
+| Keep risk calendar as a read-model projection | Phase 4 needs visible schedule governance, but risk rules should still come from the existing schedule resolver until a unified event ledger lands. |
+| Let the frontend fall back to current schedule rows | Operators should still see a useful risk calendar if the new endpoint is temporarily unavailable or deployed behind the frontend. |
 
 ## Issues Encountered
 | Issue | Resolution |
@@ -144,6 +152,7 @@
 | Full server test suite cannot run inside the current sandbox | Existing tests using `httptest.NewServer` fail with `listen tcp6 [::1]:0: bind: operation not permitted`; targeted non-listener permission catalog test passes. |
 | `svelte-check` still fails after Settings/RBAC polish | Remaining errors are pre-existing in `TaskKanban.svelte` and `App.svelte`; touched Settings/AI/Button files no longer contribute errors, and production build passes. |
 | Phase 22 full server package test cannot be re-run outside the sandbox in this session | The required escalation was rejected due account usage limit; targeted Phase 22 Go tests, frontend build, and `git diff --check` passed. |
+| Phase 23 subagents did not return final reports before timeout | Closed all three agents, integrated the shared-worktree frontend partial, and completed backend/API/tests in the main thread. |
 
 ## Resources
 - Source plan: `/Users/eddie/.gemini/antigravity/brain/ffc6d8a3-38c0-4a9b-a458-9b51beeff27b/implementation_plan.md`

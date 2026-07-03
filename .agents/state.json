@@ -1,35 +1,40 @@
 {
   "warm_memory": {
-    "goal": "Align edit project config naming, implement endpoint whitelist filtering, and fix Jira keep-alive sync worker crash.",
-    "classification": "coding.complex; backend sync worker batch query fix and dynamic whitelist filters",
+    "goal": "Continue strongest-brain master plan by landing Phase 23 schedule governance risk calendar.",
+    "classification": "coding.complex + continuation; additive backend read model and frontend schedule cockpit surface",
     "phase": "complete",
     "constraints": [
-      "Use design-taste guidelines for visual layouts and align styles to Dark Tech aesthetics.",
-      "Unify project format to ProjectNumber-ProjectName-CarModel (Key) everywhere.",
-      "Stage and commit only intentional source modifications, leaving unrelated temp files unstaged."
+      "Use the existing schedule risk resolver as the source of truth.",
+      "Do not change the existing /api/schedule contract.",
+      "Keep frontend styling as dense internal dark cockpit UI.",
+      "Stage and commit only intentional Phase 23 files; leave task_status.md and well-ambient.db unstaged."
     ],
     "decisions": [
-      "Resolved formProjectName dynamically in startEdit using mapped project configurations in ProjectConfig.svelte.",
-      "Filtered GET /api/projects/config and GET /api/projects/scores by s.config.Jira.SyncProjects to exclude dirty items.",
-      "Restricted project scoring to keys that conform to Jira key format and are in SyncProjects.",
-      "Added strict format check (regex-like) for TaskIDs in jira_worker's keep-alive loop to prevent Jira 400 Bad Request error.",
-      "Restricted keep-alive query keys to configured SyncProjects only."
+      "Added GET /api/schedule/risk-calendar behind demands:read.",
+      "Built week/month risk buckets and event summaries for overdue, due soon, stale_after_schedule, and missing_schedule.",
+      "Added frontend risk calendar panel with API response normalization and fallback from current schedule rows.",
+      "Closed timed-out subagents and integrated only the partial frontend changes that landed in the shared worktree."
     ],
     "findings": [
-      "Jira search API throws a 400 error for the whole batch if even one key is malformed (e.g. user name or process name), causing all valid keys to fail syncing."
+      "Phase 22 strongest-brain decision queue and AI intent loop are complete at commit 2e9ea85.",
+      "Phase 23 should remain a read-model projection until a unified event ledger is implemented.",
+      "task_status.md and well-ambient.db are unrelated runtime/data changes for this phase."
     ],
     "touched_files": [
-      "internal/server/jira_worker.go",
-      "internal/server/project_handlers.go",
-      "internal/telemetry/project_scorer.go",
-      "web/src/components/config/ProjectConfig.svelte"
+      "task_plan.md",
+      "findings.md",
+      "progress.md",
+      "internal/server/server.go",
+      "internal/server/schedule_risk_calendar_handlers.go",
+      "internal/server/schedule_risk_calendar_handlers_test.go",
+      "web/src/components/DemandKanban.svelte"
     ],
     "validation": [
-      "npm run build: passed successfully.",
-      "go build check: backend build passed.",
-      "go test ./internal/telemetry ./internal/server: passed successfully."
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestGetScheduleRiskCalendar|TestGetScheduleBuildsDemandTimeline' -count=1: passed.",
+      "pnpm build in web: passed with existing Svelte warnings.",
+      "git diff --check: passed."
     ],
     "blockers": [],
-    "next": "Deliver final status to the user and prompt verification."
+    "next": "Commit Phase 23 intentional changes and continue to the next master-plan slice."
   }
 }

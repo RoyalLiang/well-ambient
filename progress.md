@@ -1,5 +1,35 @@
 # Progress Log
 
+## Session: 2026-07-03
+
+### Phase 23: Schedule Governance Risk Calendar
+- **Status:** complete
+- **Started:** 2026-07-03
+- Actions taken:
+  - Resumed after Phase 22 implementation commit `2e9ea85`.
+  - Loaded AGENTS cold-start context, planning/execution skills, and continuation memory.
+  - Selected master-plan Phase 4 as the next executable slice: schedule governance risk calendar.
+  - Spawned backend worker Fermat for `/api/schedule/risk-calendar`.
+  - Spawned frontend worker James for the demand schedule-view risk calendar surface.
+  - Spawned QA explorer Archimedes for schedule/decision/notification contract risk review.
+  - Confirmed current dirty `task_status.md` and `well-ambient.db` are outside the intended Phase 23 scope.
+  - Closed the subagents after timeout/shutdown and integrated the partial frontend work that appeared in the shared worktree.
+  - Added `/api/schedule/risk-calendar` as an additive read model over existing schedule risk rules.
+  - Added week/month risk buckets, calendar events, and summary counts for overdue, due soon, stale, and missing schedule.
+  - Added a compact risk calendar panel to the demand schedule view with fallback from current schedule rows if the API is unavailable.
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `internal/server/server.go`
+  - `internal/server/schedule_risk_calendar_handlers.go`
+  - `internal/server/schedule_risk_calendar_handlers_test.go`
+  - `web/src/components/DemandKanban.svelte`
+- Validation:
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestGetScheduleRiskCalendar|TestGetScheduleBuildsDemandTimeline' -count=1` passed.
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector and chunk-size warnings.
+  - `git diff --check` passed.
+
 ## Session: 2026-07-02
 
 ### Phase 22: Strongest Brain Master Plan Landing, Intent Recognition, And Summary

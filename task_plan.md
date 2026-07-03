@@ -30,6 +30,15 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Add focused backend tests and run targeted validation
 - [x] Return worker output for main rollout integration and commit
 
+## Current Task Addendum: Phase 23 Schedule Governance Risk Calendar
+- [x] Restore current plan context and classify the continuation as `coding.complex`
+- [x] Choose Phase 4 risk calendar as the next executable slice after Phase 22
+- [x] Spawn backend, frontend, and QA/integration subagents with disjoint scopes
+- [x] Add `/api/schedule/risk-calendar` read model without changing `/api/schedule`
+- [x] Add a compact risk calendar surface to the demand schedule view
+- [x] Integrate subagent work, run focused validation, and record limits
+- [x] Commit intentional Phase 23 changes
+
 ## Current Task Addendum: GitLab Webhook Ensure/Status MVP
 - [x] Inspect existing GitLab/Jira integration and route patterns
 - [x] Add GitLab project webhook ensure/status backend capability
@@ -44,7 +53,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Phase 22: Strongest Brain Master Plan Landing, Intent Recognition, And Summary
+Phase 23: Schedule Governance Risk Calendar
 
 ## Phases
 
@@ -232,6 +241,16 @@ Phase 22: Strongest Brain Master Plan Landing, Intent Recognition, And Summary
 - [x] Add frontend strongest-brain cockpit and transparent AI intent/summary conversation panel
 - [x] Add focused tests and run validation
 - [x] Commit intentional Phase 22 changes
+- **Status:** complete
+
+### Phase 23: Schedule Governance Risk Calendar
+- [x] Restore planning context and avoid unrelated dirty runtime files
+- [x] Read Phase 4 from the strongest-brain master plan
+- [x] Spawn backend, frontend, and QA/integration subagents
+- [x] Implement schedule risk calendar API over existing schedule risk rules
+- [x] Implement weekly/monthly risk calendar strip in the schedule workbench
+- [x] Add focused tests/build validation
+- [x] Update task memory and commit intentional changes
 - **Status:** complete
 
 ## Key Questions
