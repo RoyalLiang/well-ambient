@@ -47,6 +47,14 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Verify the frontend production build
 - [x] Update task memory and commit intentional changes
 
+## Current Task Addendum: Phase 25 Remove Decision Queue Surface
+- [x] Accept the product judgment that the visible strongest-brain decision queue remains low-value
+- [x] Remove the decision queue section from the decision dashboard
+- [x] Remove the frontend strongest-brain queue fetch and 15s polling
+- [x] Remove queue-only types, derived state, handlers, styles, and responsive rules
+- [x] Keep the existing actionable Agenda metrics, filters, and manual intervention workflow
+- [x] Verify frontend production build and commit intentional changes
+
 ## Current Task Addendum: GitLab Webhook Ensure/Status MVP
 - [x] Inspect existing GitLab/Jira integration and route patterns
 - [x] Add GitLab project webhook ensure/status backend capability
@@ -61,7 +69,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Phase 24: Decision Queue Meaning
+Phase 25: Remove Decision Queue Surface
 
 ## Phases
 
@@ -266,6 +274,15 @@ Phase 24: Decision Queue Meaning
 - [x] Preserve API compatibility while carrying backend `source` into the UI
 - [x] Add a selected decision focus panel with idle-cost and handling-entry language
 - [x] Add per-card decision kind, queue source, and no-action cost
+- [x] Run frontend production build
+- [x] Update memory files and commit intentional changes
+- **Status:** complete
+
+### Phase 25: Remove Decision Queue Surface
+- [x] Treat the latest user feedback as a removal request, not another iteration
+- [x] Remove visible strongest-brain decision queue markup from `DecisionDashboard.svelte`
+- [x] Remove frontend queue fetch, polling, queue-only state, and derived helpers
+- [x] Remove queue-only CSS and responsive remnants
 - [x] Run frontend production build
 - [x] Update memory files and commit intentional changes
 - **Status:** complete

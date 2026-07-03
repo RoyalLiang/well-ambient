@@ -2,6 +2,24 @@
 
 ## Session: 2026-07-03
 
+### Phase 25: Remove Decision Queue Surface
+- **Status:** complete
+- **Started:** 2026-07-03
+- Actions taken:
+  - Treated the latest feedback as a removal request rather than another UI explanation pass.
+  - Removed the visible strongest-brain decision queue section from the decision dashboard.
+  - Removed frontend `/api/strongest-brain/decision-queue` fetching and the 15-second queue polling path.
+  - Removed queue-only interfaces, state, derived helpers, handlers, CSS, and responsive selector remnants.
+  - Preserved the existing actionable Agenda metrics, filters, task selection, AI plan import, and manual intervention workflow.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+  - `web/src/components/DecisionDashboard.svelte`
+- Validation:
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector and chunk-size warnings.
+
 ### Phase 24: Decision Queue Meaning
 - **Status:** complete
 - **Started:** 2026-07-03

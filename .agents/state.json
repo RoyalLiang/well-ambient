@@ -1,22 +1,22 @@
 {
   "warm_memory": {
-    "goal": "Clarify the visible meaning of the strongest-brain decision queue.",
-    "classification": "coding.complex + continuation; frontend cockpit usefulness repair",
+    "goal": "Remove the visible strongest-brain decision queue surface after user judged it not useful.",
+    "classification": "coding.simple + continuation; frontend subtraction and memory update",
     "phase": "complete",
     "constraints": [
-      "Do not change the strongest-brain decision queue API contract.",
+      "Do not remove backend strongest-brain APIs unless explicitly requested.",
       "Keep frontend styling as dense internal dark cockpit UI.",
-      "Stage and commit only intentional Phase 24 files; leave task_status.md and well-ambient.db unstaged."
+      "Stage and commit only intentional Phase 25 files; leave task_status.md and well-ambient.db unstaged."
     ],
     "decisions": [
-      "Preserved backend API compatibility and carried queue item source through frontend normalization.",
-      "Added a selected decision focus panel with decision kind, idle cost, handling entry, suggested action, and source counts.",
-      "Added per-card source, decision type, no-action cost, and clearer entry labels.",
-      "Kept non-Agenda queue items visible while labeling them as source-located work when they cannot enter the old intervention form."
+      "Removed the visible strongest-brain decision queue section from DecisionDashboard.",
+      "Removed frontend fetching and 15-second polling of /api/strongest-brain/decision-queue.",
+      "Removed queue-only types, state, derived helpers, handlers, CSS, and responsive selector remnants.",
+      "Preserved the existing Agenda metrics, filters, AI plan import, and manual intervention workflow."
     ],
     "findings": [
-      "The queue's weakness was not missing data, but insufficient translation from data into decision language.",
-      "The backend already emits schedule/execution/context source fields; the frontend previously hid them as generic strongest-brain items.",
+      "The user judged the strongest-brain decision queue surface as not useful even after meaning copy was added.",
+      "The right product move for now is subtraction from the decision dashboard, while leaving backend contracts intact.",
       "task_status.md and well-ambient.db are unrelated runtime/data changes for this phase."
     ],
     "touched_files": [
@@ -30,6 +30,6 @@
       "pnpm build in web: passed with existing Svelte warnings."
     ],
     "blockers": [],
-    "next": "Commit Phase 24 intentional changes."
+    "next": "Commit Phase 25 intentional changes."
   }
 }

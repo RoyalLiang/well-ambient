@@ -10,6 +10,7 @@
 - Current Phase 22 requirement: based on `docs/strongest-brain-phased-master-plan.md`, add AI intent recognition and summarization to the plan and implementation, checkpoint all existing code first, then use subagents to land the complete strongest-brain plan as a v1 closed loop.
 - Current Phase 23 continuation: proceed into master-plan Phase 4 by adding a schedule-governance risk calendar read model and compact schedule-view surface, while preserving the existing `/api/schedule` contract.
 - Current Phase 24 feedback: the visible "最强大脑决策队列" does not yet communicate its display meaning; improve the cockpit so it shows why an item matters, what decision is needed, what happens if it is ignored, and where the operator should act.
+- Current Phase 25 feedback: the user still judges the visible "最强大脑决策队列" as not useful; remove that visible surface instead of continuing to iterate on it.
 
 ## Research Findings
 - Git status shows the repository contents are currently untracked; avoid treating that as disposable state.
@@ -24,6 +25,8 @@
 - The Phase 23 risk calendar now returns additive week/month buckets plus event summaries, while the schedule table still consumes the existing `/api/schedule` contract.
 - The decision queue API already returns source-level items from schedule, execution, and context read models, but the frontend normalized every API item as `strongest_brain`, hiding the item's origin and making the queue feel like a generic list.
 - The existing queue cards had problem/evidence/action text, but no explicit current focus, no idle-cost language, and no clear handling entry for items that do not map to the old Agenda intervention panel.
+- After adding meaning language, the user still found the strongest-brain decision queue surface useless. The better product move is subtraction: remove the surface and leave the actionable Agenda metrics/filter/intervention flow as the decision dashboard's main workflow.
+- Removing the frontend queue fetch also stops the decision dashboard from polling `/api/strongest-brain/decision-queue` every 15 seconds when the visible queue is gone.
 - Follow-up `find` showed `internal/server` and `cmd/server` do exist, but were not returned by the initial `rg --files` listing, likely due ignore rules.
 - `DemandKanban.svelte` already contains demand/subtask filtering, card progress rendering, and confirm modal classes.
 - `Deconstructor.svelte` already fetches active demands and posts `demand_id` to `/api/tasks/import`.
@@ -144,6 +147,7 @@
 | Let the frontend fall back to current schedule rows | Operators should still see a useful risk calendar if the new endpoint is temporarily unavailable or deployed behind the frontend. |
 | Treat the decision queue as a cockpit projection rather than a new backend contract | The fastest useful fix is to reveal existing queue source, decision kind, idle cost, and entry state in the frontend without changing `/api/strongest-brain/decision-queue`. |
 | Keep non-Agenda queue items visible but honest about their entry | Schedule/execution/context items may not be actionable in the old intervention form, so the UI now labels them as source-located work instead of pretending every card can be handled by the same control. |
+| Remove the strongest-brain decision queue only from the frontend dashboard for now | The user rejected the visible surface; leaving backend APIs intact avoids unnecessary churn to Phase 22 contracts/tests while removing the useless UI and polling. |
 
 ## Issues Encountered
 | Issue | Resolution |
@@ -159,6 +163,7 @@
 | Phase 22 full server package test cannot be re-run outside the sandbox in this session | The required escalation was rejected due account usage limit; targeted Phase 22 Go tests, frontend build, and `git diff --check` passed. |
 | Phase 23 subagents did not return final reports before timeout | Closed all three agents, integrated the shared-worktree frontend partial, and completed backend/API/tests in the main thread. |
 | Decision queue display meaning was unclear to the user | Added a current focus panel plus per-card source, decision type, no-action cost, and handling-entry labels. |
+| The added decision queue meaning still did not satisfy the user's usefulness threshold | Removed the queue surface and its frontend polling/state/style code. |
 
 ## Resources
 - Source plan: `/Users/eddie/.gemini/antigravity/brain/ffc6d8a3-38c0-4a9b-a458-9b51beeff27b/implementation_plan.md`
