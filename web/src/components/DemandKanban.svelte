@@ -353,6 +353,7 @@
   let showSortDropdown = false;
   let projectConfigs: any[] = [];
   $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
+  let telemetryScores: any[] = [];
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
 
@@ -513,6 +514,19 @@
     return config ? config.project_name : '';
   }
 
+  function getProjectDisplayName(projKey: string): string {
+    if (!projKey || projKey === '-') return '暂不指定项目';
+    const config = projectConfigMap.get(projKey.toUpperCase());
+    if (config && config.project_name && config.project_name !== `${projKey}项目`) {
+      return `${config.project_name} (${projKey})`;
+    }
+    const score = telemetryScores.find(s => s.project_key.toUpperCase() === projKey.toUpperCase());
+    if (score && score.project_name && score.project_name !== `${projKey}项目`) {
+      return `${score.project_name} (${projKey})`;
+    }
+    return projKey;
+  }
+
   function getPriorityWeight(p?: string): number {
     if (p === 'P0') return 600;
     if (p === 'P1') return 500;
@@ -545,6 +559,20 @@
       }
     } catch (err) {
       console.error('Failed to fetch project configs:', err);
+    }
+  }
+
+  async function fetchTelemetryScores() {
+    const token = localStorage.getItem('jwt_token');
+    try {
+      const res = await fetch('/api/projects/scores', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        telemetryScores = await res.json();
+      }
+    } catch (e) {
+      console.error('Failed to fetch telemetry scores:', e);
     }
   }
 
@@ -781,6 +809,11 @@
     projectConfigs.forEach((proj) => {
       if (proj && proj.project_key) {
         addFormOption(options, proj.project_key);
+      }
+    });
+    telemetryScores.forEach((score) => {
+      if (score && score.project_key) {
+        addFormOption(options, score.project_key);
       }
     });
     return ['-', ...sortedFormOptions(options)];
@@ -1360,6 +1393,7 @@
     showProjectDropdown = false;
     activeDatePicker = null;
     fetchDemandOptions();
+    fetchTelemetryScores();
   }
 
   function closeCreateDemandModal() {
@@ -1693,6 +1727,7 @@
     fetchDemandOptions();
     fetchJiraConfig();
     fetchProjectConfigs();
+    fetchTelemetryScores();
     fetchSystemConfig();
     document.addEventListener('click', handleDocumentClick);
 
@@ -2582,7 +2617,7 @@
                 <input
                   type="text"
                   class="dropdown-trigger-input"
-                  placeholder={displayProjectOption(newRepo)}
+                  placeholder={getProjectDisplayName(newRepo)}
                   bind:value={projectSearchText}
                   on:focus|stopPropagation={() => showProjectDropdown = true}
                   on:keydown={(e) => {
@@ -2596,7 +2631,7 @@
               </div>
               {#if showProjectDropdown}
                 <div class="dropdown-options-list glass-panel">
-                  {#if projectSearchText && !createProjectOptions.some(proj => displayProjectOption(proj).toLowerCase() === projectSearchText.toLowerCase())}
+                  {#if projectSearchText && !createProjectOptions.some(proj => getProjectDisplayName(proj).toLowerCase() === projectSearchText.toLowerCase())}
                     <button
                       type="button"
                       class="dropdown-option-item new-custom-option"
@@ -2609,7 +2644,7 @@
                       ➕ 使用新项目: "{projectSearchText}"
                     </button>
                   {/if}
-                  {#each createProjectOptions.filter(proj => !projectSearchText || displayProjectOption(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
+                  {#each createProjectOptions.filter(proj => !projectSearchText || getProjectDisplayName(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
                     <button
                       type="button"
                       class="dropdown-option-item {newRepo === project ? 'selected' : ''}"
@@ -2618,7 +2653,7 @@
                         showProjectDropdown = false;
                       }}
                     >
-                      {displayProjectOption(project)}
+                      {getProjectDisplayName(project)}
                     </button>
                   {/each}
                   {#if createProjectOptions.length <= 1 && !projectSearchText}
