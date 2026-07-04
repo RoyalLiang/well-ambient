@@ -32,12 +32,14 @@ type AgendaItem struct {
 
 // AutoDecision represents an AI autonomous operation that ran in the background
 type AutoDecision struct {
-	Time     string `json:"time"`
-	TaskID   string `json:"task_id"`
-	Message  string `json:"message"`
-	Assignee string `json:"assignee,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Branch   string `json:"branch,omitempty"`
+	Time      string `json:"time"`
+	TaskID    string `json:"task_id"`
+	Message   string `json:"message"`
+	Assignee  string `json:"assignee,omitempty"`
+	Repo      string `json:"repo,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	CommitID  string `json:"commit_id,omitempty"`
+	CommitURL string `json:"commit_url,omitempty"`
 }
 
 // EvaluateActiveTasks analyzes active tasks and computes their risk levels
@@ -146,19 +148,19 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 	for _, t := range tasks {
 		if strings.ToLower(t.Status) == "done" {
 			// Automatically logs completed tasks transition
-			logs = append(logs, AutoDecision{
+			logs = append(logs, withLatestCommitReference(AutoDecision{
 				Time:     t.LastUpdate.Format("15:04:05"),
 				TaskID:   t.TaskID,
 				Message:  "🤖 检测到事项已完成验收，AI 已自动将该任务流转至 DONE 并归档。",
 				Assignee: t.Assignee,
-			})
+			}))
 		} else if t.Status == "review" {
-			logs = append(logs, AutoDecision{
+			logs = append(logs, withLatestCommitReference(AutoDecision{
 				Time:     t.LastUpdate.Format("15:04:05"),
 				TaskID:   t.TaskID,
 				Message:  fmt.Sprintf("🤖 检测到开发者 %s 发起评审，AI 已自动流转至 Review 并提醒评审人。", t.Assignee),
 				Assignee: t.Assignee,
-			})
+			}))
 		}
 	}
 
@@ -182,4 +184,46 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 	}
 
 	return logs
+}
+
+func withLatestCommitReference(decision AutoDecision) AutoDecision {
+	commitID, commitURL := latestCommitReference(decision.TaskID)
+	decision.CommitID = commitID
+	decision.CommitURL = commitURL
+	return decision
+}
+
+func latestCommitReference(taskID string) (string, string) {
+	taskID = strings.TrimSpace(taskID)
+	if db.DB == nil || taskID == "" {
+		return "", ""
+	}
+
+	var gitLog db.GitCommitLog
+	if err := db.DB.
+		Where("task_id = ? AND action = ? AND commit_id <> ?", taskID, "git_push", "").
+		Order("created_at desc").
+		First(&gitLog).Error; err != nil {
+		return "", ""
+	}
+
+	commitID := strings.TrimSpace(gitLog.CommitID)
+	if commitID == "" {
+		return "", ""
+	}
+
+	var notification db.Notification
+	if err := db.DB.
+		Where("task_id = ? AND type = ? AND link LIKE ?", taskID, "git_push", "%"+commitID+"%").
+		Order("created_at desc").
+		First(&notification).Error; err == nil {
+		return commitID, strings.TrimSpace(notification.Link)
+	}
+
+	_ = db.DB.
+		Where("task_id = ? AND type = ? AND link <> ?", taskID, "git_push", "").
+		Order("created_at desc").
+		First(&notification).Error
+
+	return commitID, strings.TrimSpace(notification.Link)
 }

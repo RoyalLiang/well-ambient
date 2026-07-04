@@ -27,6 +27,8 @@
     task_id: string;
     message: string;
     assignee?: string;
+    commit_id?: string;
+    commit_url?: string;
   }
 
   // Pre-calculated AI resolution recommendation helper
@@ -305,6 +307,10 @@
     const key = taskId.slice(0, delimiterIndex).trim().toUpperCase();
     if (!key || key === 'TASK' || key === 'DEMAND') return '';
     return key;
+  }
+
+  function shortCommit(commitID?: string) {
+    return commitID ? commitID.slice(0, 8) : '';
   }
 
   function getRiskTypeLabel(riskType: string) {
@@ -672,6 +678,23 @@
                   <a href="{jiraBaseUrl}/browse/{dec.task_id}" target="_blank" rel="noopener noreferrer" class="task-link">#{dec.task_id}</a>
                 {:else}
                   <span class="task-link">#{dec.task_id}</span>
+                {/if}
+                {#if dec.commit_id}
+                  {#if dec.commit_url}
+                    <a
+                      href={dec.commit_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="terminal-commit-link"
+                      title={dec.commit_id}
+                    >
+                      commit {shortCommit(dec.commit_id)}
+                    </a>
+                  {:else}
+                    <span class="terminal-commit-link muted" title={dec.commit_id}>
+                      commit {shortCommit(dec.commit_id)}
+                    </span>
+                  {/if}
                 {/if}
               </div>
               <p class="msg">{dec.message}</p>
@@ -1099,6 +1122,31 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 2px;
+  }
+
+  .terminal-commit-link {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.22);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.64rem;
+    line-height: 1.35;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .terminal-commit-link:hover {
+    color: #7dd3fc;
+    border-color: rgba(125, 211, 252, 0.45);
+    background: rgba(56, 189, 248, 0.14);
+  }
+
+  .terminal-commit-link.muted {
+    color: #64748b;
+    border-color: rgba(100, 116, 139, 0.22);
+    background: rgba(100, 116, 139, 0.08);
   }
 
   .blockage-context-grid {

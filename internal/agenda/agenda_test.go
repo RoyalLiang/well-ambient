@@ -118,3 +118,78 @@ func TestEvaluateActiveTasks(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateAutonomousDecisionsIncludesCommitReference(t *testing.T) {
+	if err := db.InitDB(":memory:"); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	now := time.Now()
+	task := db.TaskTelemetry{
+		TaskID:     "TASK-COMMIT-1",
+		Title:      "Task with commit reference",
+		Assignee:   "Alice",
+		Status:     "review",
+		LastUpdate: now,
+	}
+	commitID := "abcdef1234567890"
+	commitURL := "https://gitlab.example.com/group/repo/-/commit/abcdef1234567890"
+	newerOtherCommitURL := "https://gitlab.example.com/group/repo/-/commit/deadbeef12345678"
+
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    task.TaskID,
+		Repo:      "repo",
+		Branch:    "feature/TASK-COMMIT-1",
+		CommitID:  commitID,
+		Message:   "TASK-COMMIT-1 implementation",
+		Author:    "Alice",
+		Action:    "git_push",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed git commit log: %v", err)
+	}
+	if err := db.DB.Create(&db.Notification{
+		Type:      "git_push",
+		TaskID:    task.TaskID,
+		Title:     "代码推送",
+		Message:   "Alice pushed code",
+		Assignee:  "Alice",
+		Link:      commitURL,
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed commit notification: %v", err)
+	}
+	if err := db.DB.Create(&db.Notification{
+		Type:      "git_push",
+		TaskID:    task.TaskID,
+		Title:     "代码推送",
+		Message:   "Newer unrelated commit link",
+		Assignee:  "Alice",
+		Link:      newerOtherCommitURL,
+		CreatedAt: now.Add(time.Minute),
+	}).Error; err != nil {
+		t.Fatalf("seed newer commit notification: %v", err)
+	}
+
+	decisions := GenerateAutonomousDecisions([]db.TaskTelemetry{task})
+	if len(decisions) == 0 {
+		t.Fatal("expected auto decisions")
+	}
+
+	var found *AutoDecision
+	for i := range decisions {
+		if decisions[i].TaskID == task.TaskID {
+			found = &decisions[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected decision for %s, got %+v", task.TaskID, decisions)
+	}
+	if found.CommitID != commitID {
+		t.Fatalf("CommitID = %q, want %q", found.CommitID, commitID)
+	}
+	if found.CommitURL != commitURL {
+		t.Fatalf("CommitURL = %q, want %q", found.CommitURL, commitURL)
+	}
+}
