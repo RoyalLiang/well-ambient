@@ -94,6 +94,8 @@
   let repoSelectEl: HTMLElement;
   let overrideAssigneeSelectEl: HTMLElement;
   let overrideDatePickerEl: HTMLElement;
+  let overridePanelEl: HTMLElement;
+  let overridePanelHeight = 440;
   let overrideDatePickerCursor = new Date();
 
   let assigneeSearchText = '';
@@ -539,8 +541,23 @@
       fetchAgenda();
     }, 15000);
     document.addEventListener('click', handleDocumentClick);
+
+    const syncOverridePanelHeight = () => {
+      if (!overridePanelEl) return;
+      overridePanelHeight = Math.max(440, Math.ceil(overridePanelEl.getBoundingClientRect().height));
+    };
+
+    const animationFrame = requestAnimationFrame(syncOverridePanelHeight);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(syncOverridePanelHeight);
+      if (overridePanelEl) resizeObserver.observe(overridePanelEl);
+    }
+
     return () => {
       clearInterval(interval);
+      cancelAnimationFrame(animationFrame);
+      resizeObserver?.disconnect();
       document.removeEventListener('click', handleDocumentClick);
     };
   });
@@ -600,7 +617,7 @@
     </div>
 
     <!-- Bento 2: Ambient Auto-Decisions Feed (2 Rows / 1 Column) -->
-    <div class="bento-card bento-terminal glass-panel scrollable-panel">
+    <div class="bento-card bento-terminal glass-panel scrollable-panel" style={`--override-panel-height: ${overridePanelHeight}px;`}>
       <div class="card-header-mini">
         <span class="eyebrow">AMBIENT TELEMETRY FLOW</span>
         <h3>⚡ AI 自动流转控制台</h3>
@@ -799,7 +816,7 @@
     </div>
 
     <!-- Bento 4: Human Override Console (1.5 Rows / 2 Columns) -->
-    <div class="bento-card bento-override glass-panel">
+    <div class="bento-card bento-override glass-panel" bind:this={overridePanelEl}>
       {#if selectedItem}
         <div class="override-panel-layout">
           <!-- Left Col: Telemetry detail & AI Diagnosis -->
@@ -1315,7 +1332,10 @@
   .bento-terminal {
     grid-column: 1;
     grid-row: 2;
+    align-self: start;
     min-height: 440px;
+    height: var(--override-panel-height, 440px);
+    max-height: var(--override-panel-height, 440px);
     overflow: hidden;
   }
 
@@ -2670,6 +2690,12 @@
     .bento-override {
       grid-column: 1;
       grid-row: auto;
+    }
+
+    .bento-terminal {
+      height: auto;
+      max-height: none;
+      min-height: 440px;
     }
 
   }
