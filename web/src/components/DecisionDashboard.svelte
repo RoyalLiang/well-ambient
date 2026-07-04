@@ -1308,9 +1308,9 @@
 
   /* Bento Grid Layout (3 Columns, 3 Rows equivalent height) */
   .bento-grid {
-    --agenda-tile-height: 220px;
+    --agenda-tile-height: 188px;
     --agenda-row-gap: 16px;
-    --agenda-visible-height: 464px;
+    --agenda-visible-height: 400px;
     display: grid;
     grid-template-columns: 350px 1fr 1fr;
     grid-template-rows: auto auto;
@@ -1694,12 +1694,12 @@
     background: rgba(30, 41, 59, 0.25);
     border: 1px solid rgba(51, 65, 85, 0.4);
     border-radius: 12px;
-    padding: 16px;
+    padding: 14px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
     min-height: 0;
     text-align: left;
     position: relative;
@@ -1761,7 +1761,7 @@
     font-size: 0.7rem;
     color: #64748b;
     border-top: 1px solid rgba(51, 65, 85, 0.2);
-    padding-top: 8px;
+    padding-top: 7px;
   }
 
   .tile-footer .assignee {
