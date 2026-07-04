@@ -1291,6 +1291,9 @@
 
   /* Bento Grid Layout (3 Columns, 3 Rows equivalent height) */
   .bento-grid {
+    --agenda-tile-height: 164px;
+    --agenda-row-gap: 16px;
+    --agenda-visible-height: 352px;
     display: grid;
     grid-template-columns: 350px 1fr 1fr;
     grid-template-rows: auto auto;
@@ -1312,7 +1315,11 @@
   .bento-terminal {
     grid-column: 1;
     grid-row: 2;
-    min-height: 440px;
+    align-self: start;
+    min-height: 420px;
+    height: min(100%, 560px);
+    max-height: 560px;
+    overflow: hidden;
   }
 
   .bento-agenda {
@@ -1464,6 +1471,7 @@
     border: 1px solid rgba(51, 65, 85, 0.3);
     border-radius: 10px;
     flex-grow: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1478,17 +1486,31 @@
   }
 
   .terminal-body {
-    padding: 12px;
+    position: relative;
+    padding: 14px 12px 14px 32px;
     font-size: 0.7rem;
     line-height: 1.5;
     color: #34d399;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     overflow-y: auto;
     flex-grow: 1;
+    min-height: 0;
+    overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: rgba(16, 185, 129, 0.2) transparent;
+  }
+
+  .terminal-body::before {
+    content: "";
+    position: absolute;
+    top: 18px;
+    bottom: 18px;
+    left: 17px;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.6), rgba(16, 185, 129, 0.08));
+    pointer-events: none;
   }
 
   .terminal-body::-webkit-scrollbar {
@@ -1500,9 +1522,28 @@
   }
 
   .terminal-line {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
+    background: rgba(15, 23, 42, 0.38);
+    border: 1px solid rgba(16, 185, 129, 0.1);
+    border-radius: 8px;
+    padding: 8px 10px 9px 12px;
+  }
+
+  .terminal-line::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    left: -20px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #10b981;
+    border: 2px solid #020617;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08), 0 0 12px rgba(16, 185, 129, 0.35);
+    z-index: 1;
   }
 
   .terminal-line .time {
@@ -1517,7 +1558,16 @@
   .terminal-line .msg {
     margin: 0;
     color: #10b981;
-    word-break: break-all;
+    word-break: break-word;
+  }
+
+  .blink-line {
+    border-color: rgba(129, 140, 248, 0.16);
+  }
+
+  .blink-line::before {
+    background: #818cf8;
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.12), 0 0 12px rgba(129, 140, 248, 0.4);
   }
 
   .blink-line .cursor {
@@ -1597,8 +1647,9 @@
   .agenda-scroll-container {
     flex-grow: 1;
     overflow-y: auto;
-    max-height: 200px;
+    max-height: var(--agenda-visible-height);
     padding-right: 8px;
+    overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
   }
@@ -1617,7 +1668,8 @@
   .agenda-items-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-    gap: 16px;
+    grid-auto-rows: var(--agenda-tile-height);
+    gap: var(--agenda-row-gap);
     padding: 4px 2px;
   }
 
@@ -1631,6 +1683,7 @@
     flex-direction: column;
     justify-content: space-between;
     gap: 12px;
+    min-height: 0;
     text-align: left;
     position: relative;
     overflow: hidden;
