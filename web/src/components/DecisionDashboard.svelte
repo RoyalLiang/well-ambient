@@ -1291,9 +1291,9 @@
 
   /* Bento Grid Layout (3 Columns, 3 Rows equivalent height) */
   .bento-grid {
-    --agenda-tile-height: 164px;
+    --agenda-tile-height: 220px;
     --agenda-row-gap: 16px;
-    --agenda-visible-height: 352px;
+    --agenda-visible-height: 464px;
     display: grid;
     grid-template-columns: 350px 1fr 1fr;
     grid-template-rows: auto auto;
@@ -1315,10 +1315,7 @@
   .bento-terminal {
     grid-column: 1;
     grid-row: 2;
-    align-self: start;
-    min-height: 420px;
-    height: min(100%, 560px);
-    max-height: 560px;
+    min-height: 440px;
     overflow: hidden;
   }
 
@@ -1668,7 +1665,7 @@
   .agenda-items-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-    grid-auto-rows: var(--agenda-tile-height);
+    grid-auto-rows: minmax(var(--agenda-tile-height), max-content);
     gap: var(--agenda-row-gap);
     padding: 4px 2px;
   }
@@ -1734,11 +1731,7 @@
     color: #e2e8f0;
     font-weight: 600;
     line-height: 1.4;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    height: 2.8em;
+    overflow-wrap: anywhere;
   }
 
   .tile-footer {
