@@ -424,6 +424,8 @@
   let scheduleContainerHeight = 550;
   let scheduleContainerEl: HTMLDivElement;
   const scheduleItemHeight = 76;
+  const scheduleTableHeaderHeight = 38;
+  const scheduleEmptyStateHeight = 96;
 
   let collapsedProjects: {[key: string]: boolean} = {};
 
@@ -489,6 +491,7 @@
   $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
   $: scheduleViewportHeight = scheduleContainerHeight > 0 ? scheduleContainerHeight : 550;
   $: scheduleVirtualRowCount = flatRenderList.length;
+  $: scheduleTableContentHeight = scheduleTableHeaderHeight + (scheduleVirtualRowCount > 0 ? scheduleVirtualRowCount * scheduleItemHeight : scheduleEmptyStateHeight);
   $: scheduleMaxScrollTop = Math.max(0, scheduleVirtualRowCount * scheduleItemHeight - scheduleViewportHeight);
   $: if (scheduleContainerEl && scheduleScrollTop > scheduleMaxScrollTop) {
     scheduleScrollTop = scheduleMaxScrollTop;
@@ -2154,7 +2157,7 @@
             </div>
             <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
           </div>
-          <div class="schedule-table-wrapper" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
+          <div class="schedule-table-wrapper" style="--schedule-content-height: {scheduleTableContentHeight}px;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
             <div class="grid-table">
               <div class="grid-thead">
                 <div class="grid-tr">
@@ -3738,14 +3741,16 @@
   }
 
   .schedule-table-wrapper {
-    height: clamp(360px, calc(100vh - 320px), 620px);
-    height: clamp(360px, calc(100dvh - 320px), 620px);
+    height: var(--schedule-content-height, 620px);
+    max-height: clamp(360px, calc(100vh - 320px), 620px);
+    max-height: clamp(360px, calc(100dvh - 320px), 620px);
     overflow: auto;
     overflow-anchor: none;
     overscroll-behavior: contain;
     scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
     scrollbar-color: rgba(129, 140, 248, 0.62) rgba(15, 23, 42, 0.72);
+    transition: height 0.16s ease, max-height 0.16s ease;
   }
 
   .schedule-table-wrapper::-webkit-scrollbar {
