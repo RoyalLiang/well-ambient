@@ -199,7 +199,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			}
 			commitLink := ""
 			if payload.Project.WebURL != "" && lastCommitID != "" {
-				commitLink = fmt.Sprintf("%s/-/commit/%s", strings.TrimSuffix(payload.Project.WebURL, "/"), lastCommitID)
+				commitLink = fmt.Sprintf("%s/commit/%s", strings.TrimSuffix(payload.Project.WebURL, "/"), lastCommitID)
 			}
 			notif := db.Notification{
 				Type:      "git_push",

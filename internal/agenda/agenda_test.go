@@ -133,8 +133,8 @@ func TestGenerateAutonomousDecisionsIncludesCommitReference(t *testing.T) {
 		LastUpdate: now,
 	}
 	commitID := "abcdef1234567890"
-	commitURL := "https://gitlab.example.com/group/repo/-/commit/abcdef1234567890"
-	newerOtherCommitURL := "https://gitlab.example.com/group/repo/-/commit/deadbeef12345678"
+	commitURL := "https://gitlab.example.com/group/repo/commit/abcdef1234567890"
+	newerOtherCommitURL := "https://gitlab.example.com/group/repo/commit/deadbeef12345678"
 
 	if err := db.DB.Create(&db.GitCommitLog{
 		TaskID:    task.TaskID,

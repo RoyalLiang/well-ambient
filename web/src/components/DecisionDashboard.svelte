@@ -318,11 +318,12 @@
   function normalizedCommitUrl(rawUrl?: string) {
     const url = (rawUrl || '').trim();
     if (!url || /^about:blank$/i.test(url)) return '';
-    if (/^https?:\/\//i.test(url)) return url;
-    if (url.startsWith('//')) return `https:${url}`;
-    if (url.startsWith('/') && gitlabBaseUrl) return `${gitlabBaseUrl}${url}`;
-    if (url.includes('/-/commit/') && gitlabBaseUrl) return `${gitlabBaseUrl}/${url.replace(/^\/+/, '')}`;
-    if (/^[\w.-]+(?::\d+)?\//.test(url)) return `https://${url}`;
+    const commitUrl = url.replace(/\/-\/commit\//g, '/commit/');
+    if (/^https?:\/\//i.test(commitUrl)) return commitUrl;
+    if (commitUrl.startsWith('//')) return `https:${commitUrl}`;
+    if (commitUrl.startsWith('/') && gitlabBaseUrl) return `${gitlabBaseUrl}${commitUrl}`;
+    if (commitUrl.includes('/commit/') && gitlabBaseUrl) return `${gitlabBaseUrl}/${commitUrl.replace(/^\/+/, '')}`;
+    if (/^[\w.-]+(?::\d+)?\//.test(commitUrl)) return `https://${commitUrl}`;
     return '';
   }
 

@@ -80,7 +80,8 @@ func TestProcessWebhookEvent(t *testing.T) {
 		"ref": "refs/heads/dev/task-104-log-opt",
 		"user_name": "Antigravity",
 		"project": {
-			"name": "backend-core"
+			"name": "backend-core",
+			"web_url": "https://gitlab.example.com/group/backend-core"
 		},
 		"commits": [
 			{
@@ -111,6 +112,14 @@ func TestProcessWebhookEvent(t *testing.T) {
 	}
 	if !strings.Contains(tele104.LastCommit, "feat(#task-104): optimize log memory usage") {
 		t.Errorf("Expected last commit to match push message, got %q", tele104.LastCommit)
+	}
+	var pushNotif db.Notification
+	if err := db.DB.Where("task_id = ? AND type = ?", "task-104", "git_push").First(&pushNotif).Error; err != nil {
+		t.Fatalf("Failed to find git push notification: %v", err)
+	}
+	expectedCommitLink := "https://gitlab.example.com/group/backend-core/commit/1a2b3c4d5e"
+	if pushNotif.Link != expectedCommitLink {
+		t.Fatalf("Notification link = %q, want %q", pushNotif.Link, expectedCommitLink)
 	}
 
 	// Verify Markdown file
