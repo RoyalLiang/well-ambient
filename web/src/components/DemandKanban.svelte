@@ -423,12 +423,13 @@
   let scheduleScrollTop = 0;
   let scheduleContainerHeight = 550;
   let scheduleContainerEl: HTMLDivElement;
+  let scheduleWorkbenchEl: HTMLDivElement;
   let scheduleTablePanelEl: HTMLDivElement;
   const scheduleItemHeight = 76;
   const scheduleTableHeaderHeight = 38;
   const scheduleEmptyStateHeight = 96;
-  let lastScheduleTableContentHeight = 0;
-  let scheduleViewportStabilizeSeq = 0;
+  let lastScheduleLayoutSignature = '';
+  let scheduleLayoutStabilizeSeq = 0;
 
   let collapsedProjects: {[key: string]: boolean} = {};
 
@@ -495,7 +496,19 @@
   $: scheduleViewportHeight = scheduleContainerHeight > 0 ? scheduleContainerHeight : 550;
   $: scheduleVirtualRowCount = flatRenderList.length;
   $: scheduleTableContentHeight = scheduleTableHeaderHeight + (scheduleVirtualRowCount > 0 ? scheduleVirtualRowCount * scheduleItemHeight : scheduleEmptyStateHeight);
-  $: stabilizeScheduleViewport(scheduleTableContentHeight);
+  $: scheduleLayoutSignature = [
+    activeDemandView,
+    scheduleLoading ? 'schedule-loading' : 'schedule-idle',
+    scheduleErrorMsg ? 'schedule-error' : 'schedule-ok',
+    riskCalendarLoading ? 'risk-loading' : 'risk-idle',
+    riskCalendarUsingFallback ? 'fallback' : 'live',
+    riskCalendarErrorMsg ? 'risk-error' : 'risk-ok',
+    scheduleItems.length,
+    scheduleVirtualRowCount,
+    scheduleTableContentHeight,
+    riskCalendarBuckets.map((bucket) => `${bucket.key}:${bucket.counts.total}:${bucket.events.length}`).join('|')
+  ].join('~');
+  $: stabilizeScheduleLayout(scheduleLayoutSignature);
   $: scheduleMaxScrollTop = Math.max(0, scheduleVirtualRowCount * scheduleItemHeight - scheduleViewportHeight);
   $: if (scheduleContainerEl && scheduleScrollTop > scheduleMaxScrollTop) {
     scheduleScrollTop = scheduleMaxScrollTop;
@@ -512,30 +525,40 @@
     scheduleScrollTop = target.scrollTop;
   }
 
-  async function stabilizeScheduleViewport(nextContentHeight: number) {
-    if (!isMounted || activeDemandView !== 'schedule' || !scheduleTablePanelEl || typeof window === 'undefined') {
-      lastScheduleTableContentHeight = nextContentHeight;
+  async function stabilizeScheduleLayout(nextSignature: string) {
+    if (!isMounted || activeDemandView !== 'schedule' || !scheduleWorkbenchEl || typeof window === 'undefined') {
+      lastScheduleLayoutSignature = nextSignature;
       return;
     }
-    if (lastScheduleTableContentHeight === nextContentHeight) return;
+    if (lastScheduleLayoutSignature === nextSignature) return;
 
-    const rectBefore = scheduleTablePanelEl.getBoundingClientRect();
+    const scrollBefore = window.scrollY || document.documentElement.scrollTop || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const tableRectBefore = scheduleTablePanelEl?.getBoundingClientRect();
+    const anchorEl = tableRectBefore && tableRectBefore.top < viewportHeight ? scheduleTablePanelEl : scheduleWorkbenchEl;
+    const rectBefore = anchorEl.getBoundingClientRect();
     const shouldPreserveViewport = rectBefore.top < viewportHeight;
 
-    lastScheduleTableContentHeight = nextContentHeight;
+    lastScheduleLayoutSignature = nextSignature;
     if (!shouldPreserveViewport) return;
 
     const topBefore = rectBefore.top;
-    const seq = ++scheduleViewportStabilizeSeq;
+    const seq = ++scheduleLayoutStabilizeSeq;
     await tick();
 
     requestAnimationFrame(() => {
-      if (seq !== scheduleViewportStabilizeSeq || !scheduleTablePanelEl) return;
-      const topAfter = scheduleTablePanelEl.getBoundingClientRect().top;
-      const delta = topAfter - topBefore;
-      if (Math.abs(delta) > 1) {
-        window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+      if (seq !== scheduleLayoutStabilizeSeq || !anchorEl.isConnected) return;
+      const rectAfter = anchorEl.getBoundingClientRect();
+      const heightDelta = rectAfter.height - rectBefore.height;
+
+      if (rectBefore.bottom <= 0 && Math.abs(heightDelta) > 1) {
+        window.scrollTo({ top: Math.max(0, scrollBefore + heightDelta), left: 0, behavior: 'auto' });
+        return;
+      }
+
+      const topDelta = rectAfter.top - topBefore;
+      if (Math.abs(topDelta) > 1) {
+        window.scrollBy({ top: topDelta, left: 0, behavior: 'auto' });
       }
     });
   }
@@ -1874,7 +1897,7 @@
   {:else if errorMsg && activeDemandView === 'board'}
     <div class="state-msg error-msg font-mono">❌ {errorMsg}</div>
   {:else if activeDemandView === 'schedule'}
-    <div class="schedule-workbench">
+    <div class="schedule-workbench" bind:this={scheduleWorkbenchEl}>
       <div class="schedule-summary-grid">
         <div class="schedule-summary-cell">
           <span class="summary-label font-mono">TOTAL</span>
@@ -3363,6 +3386,7 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    overflow-anchor: none;
   }
 
   .schedule-summary-grid {
