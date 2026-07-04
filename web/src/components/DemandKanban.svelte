@@ -318,19 +318,6 @@
   let scheduleSummary: ScheduleSummary = createEmptyScheduleSummary();
   let scheduleGeneratedAt = '';
   let scheduleLoading = false;
-  $: assigneeCapacities = (() => {
-    const caps: Record<string, { totalHours: number, count: number }> = {};
-    (scheduleItems || []).forEach(item => {
-      if (!item.assignee || item.assignee === '未分配' || item.assignee === '无部门') return;
-      if (!caps[item.assignee]) {
-        caps[item.assignee] = { totalHours: 0, count: 0 };
-      }
-      const hours = item.estimate_hours || (item.estimate_days ? item.estimate_days * 8 : 0) || 0;
-      caps[item.assignee].totalHours += hours;
-      caps[item.assignee].count += 1;
-    });
-    return caps;
-  })();
   let scheduleErrorMsg = '';
   let riskCalendarBuckets: ScheduleRiskCalendarBucket[] = createEmptyRiskCalendarBuckets();
   let riskCalendarGeneratedAt = '';
@@ -1849,30 +1836,6 @@
           <span class="summary-label font-mono">STALE</span>
           <strong>{scheduleSummary.stale}</strong>
           <em>推进滞后</em>
-        </div>
-      </div>
-
-      <!-- 负责人开发容量监控 -->
-      <div class="capacity-monitor-panel glass-panel">
-        <div class="capacity-monitor-head">
-          <span class="eyebrow">DEVELOPMENT CAPACITY WORKLOAD (WEEKLY BASIS)</span>
-          <h3>👥 开发人效容量监控（周度/40h额度）</h3>
-        </div>
-        <div class="capacity-monitor-grid">
-          {#each Object.entries(assigneeCapacities) as [assignee, cap]}
-            {@const percentage = Math.min(100, Math.round((cap.totalHours / 40) * 100))}
-            {@const isOverload = cap.totalHours > 40}
-            <div class="capacity-item {isOverload ? 'is-overload' : ''}">
-              <div class="capacity-meta">
-                <span class="assignee-name font-mono">👤 {assignee}</span>
-                <span class="hours-ratio font-mono">{cap.totalHours.toFixed(1)}h / 40h ({percentage}%)</span>
-              </div>
-              <div class="capacity-progress-bg">
-                <div class="capacity-progress-fill" style="width: {percentage}%; background-color: {isOverload ? '#f87171' : percentage > 80 ? '#fbbf24' : '#34d399'};"></div>
-              </div>
-              <div class="capacity-tasks-count font-mono">{cap.count} 个排期中需求</div>
-            </div>
-          {/each}
         </div>
       </div>
 
@@ -6091,71 +6054,5 @@
   }
   .score-risk {
     color: #f87171 !important;
-  }
-
-  /* 负责人开发容量监控样式 */
-  .capacity-monitor-panel {
-    background: rgba(15, 23, 42, 0.45);
-    border: 1px solid rgba(51, 65, 85, 0.45);
-    padding: 16px;
-    border-radius: 12px;
-    margin-bottom: 24px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-  }
-  .capacity-monitor-head {
-    margin-bottom: 14px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
-    padding-bottom: 8px;
-  }
-  .capacity-monitor-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 16px;
-  }
-  .capacity-item {
-    background: rgba(30, 41, 59, 0.25);
-    border: 1px solid rgba(51, 65, 85, 0.25);
-    padding: 12px;
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    transition: all 0.2s;
-  }
-  .capacity-item:hover {
-    background: rgba(30, 41, 59, 0.4);
-    border-color: rgba(99, 102, 241, 0.3);
-  }
-  .capacity-item.is-overload {
-    border-color: rgba(248, 113, 113, 0.3);
-    background: rgba(248, 113, 113, 0.05);
-  }
-  .capacity-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.8rem;
-  }
-  .assignee-name {
-    font-weight: 700;
-    color: #f1f5f9;
-  }
-  .hours-ratio {
-    color: #94a3b8;
-  }
-  .capacity-progress-bg {
-    height: 6px;
-    background: rgba(15, 23, 42, 0.6);
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-  .capacity-progress-fill {
-    height: 100%;
-    border-radius: 9999px;
-    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .capacity-tasks-count {
-    font-size: 0.7rem;
-    color: #64748b;
   }
 </style>
