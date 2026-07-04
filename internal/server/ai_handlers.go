@@ -55,12 +55,13 @@ type DeconstructAnalysis struct {
 }
 
 type DeconstructResponse struct {
-	MappedRepos    []string            `json:"mappedRepos"`
-	Tasks          []TaskDetail        `json:"tasks"`
-	Analysis       DeconstructAnalysis `json:"analysis"`
-	ContextPackID  uint                `json:"context_pack_id,omitempty"`
-	ContextPackKey string              `json:"context_pack_key,omitempty"`
-	IsMock         bool                `json:"is_mock,omitempty"`
+	MappedRepos    []string                `json:"mappedRepos"`
+	Tasks          []TaskDetail            `json:"tasks"`
+	Analysis       DeconstructAnalysis     `json:"analysis"`
+	ContextPackID  uint                    `json:"context_pack_id,omitempty"`
+	ContextPackKey string                  `json:"context_pack_key,omitempty"`
+	Trace          *AIOutputTraceReadModel `json:"trace,omitempty"`
+	IsMock         bool                    `json:"is_mock,omitempty"`
 }
 
 // handleDeconstruct processes deconstruction requests
@@ -354,6 +355,12 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 	}
 	result.ContextPackID = contextPackID
 	result.ContextPackKey = contextPackKey
+	trace, err := s.buildAIOutputTraceFromOutput(db.DB, nil, req.Text, "", "", contextPackID, aiTraceOutputFromDeconstructResponse(result), time.Now())
+	if err != nil {
+		log.Printf("[AI Deconstruct] Trace response assembly failed: %v", err)
+	} else {
+		result.Trace = &trace
+	}
 
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
@@ -845,6 +852,9 @@ func getMockDeconstructResponse() DeconstructResponse {
 }
 
 func createDeconstructArchive(tx *gorm.DB, inputText string, demandID string, taskGroupID string, contextPackID uint, result DeconstructResponse, now time.Time) (uint, error) {
+	if contextPackID == 0 {
+		return 0, fmt.Errorf("context_pack_id is required for deconstruct archive")
+	}
 	mappedReposJSON, err := json.Marshal(result.MappedRepos)
 	if err != nil {
 		return 0, err
@@ -1070,9 +1080,13 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		taskGroupID = fmt.Sprintf("group-%d", now.Unix())
 	}
 
+	archiveInputText := strings.TrimSpace(req.InputText)
+	if archiveInputText == "" {
+		archiveInputText = buildImportInputSnapshot(demandID, normalizedImport)
+	}
 	contextPackID := req.ContextPackID
-	if contextPackID == 0 && strings.TrimSpace(req.InputText) != "" {
-		contextPack, err := s.buildContextPack(tx, strings.TrimSpace(req.InputText), defaultContextTokenBudget, "import_archive", true)
+	if contextPackID == 0 && archiveInputText != "" {
+		contextPack, err := s.buildContextPack(tx, archiveInputText, defaultContextTokenBudget, "import_archive", true)
 		if err != nil {
 			tx.Rollback()
 			http.Error(w, fmt.Sprintf("Failed to archive context pack: %v", err), http.StatusInternalServerError)
@@ -1081,10 +1095,16 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		contextPackID = contextPack.ID
 	}
 
-	archiveID, err := createDeconstructArchive(tx, strings.TrimSpace(req.InputText), demandID, taskGroupID, contextPackID, normalizedImport, now)
+	archiveID, err := createDeconstructArchive(tx, archiveInputText, demandID, taskGroupID, contextPackID, normalizedImport, now)
 	if err != nil {
 		tx.Rollback()
 		http.Error(w, fmt.Sprintf("Failed to archive deconstruction estimate: %v", err), http.StatusInternalServerError)
+		return
+	}
+	trace, err := s.buildAIOutputTraceReadModel(tx, aiTraceQuery{ArchiveID: archiveID})
+	if err != nil {
+		tx.Rollback()
+		http.Error(w, fmt.Sprintf("Failed to build AI output trace: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -1214,7 +1234,11 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("Successfully imported %d tasks", importedCount),
+		"success":         true,
+		"message":         fmt.Sprintf("Successfully imported %d tasks", importedCount),
+		"imported_count":  importedCount,
+		"archive_id":      archiveID,
+		"context_pack_id": contextPackID,
+		"trace":           trace,
 	})
 }

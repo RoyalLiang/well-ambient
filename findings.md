@@ -1,6 +1,10 @@
 # Findings & Decisions
 
 ## Requirements
+- Current rollout requirement: commit all uncommitted code, then use subagents to start implementing every phase from `docs/strongest-brain-delivery-transformation-plan.md`.
+- New baseline commit before rollout: `adcc981 chore: capture strongest brain baseline`.
+- Current worker split: Worker A owns backend evidence/exception/weekly decision read-model helpers, Worker B owns AI trace/readiness/context-pack backend helpers, Worker C owns frontend delivery cockpit integration.
+- Phase 26 rollout is now implemented as a cross-phase delivery cockpit plus supporting read models, not as a revived visible decision queue.
 - Check and repair the repository according to `/Users/eddie/.gemini/antigravity/brain/ffc6d8a3-38c0-4a9b-a458-9b51beeff27b/implementation_plan.md`.
 - Planned areas: confirmation modal styling, WellOS department extraction, select dropdown truncation, AI deconstruction to demand association, demand card shadow task progress, targeted tests/builds.
 - Follow-up requirements: require `taste-skill` for frontend UI work, explain/deepen demand scheduling and AI deconstruction binding, fix user department display, and fix the native-looking new-demand due-date style.
@@ -97,6 +101,13 @@
 - The config version audit panel now filters by section, but selection can still point at a version from another section and the two-column diff layout consumes too much height on integration pages.
 - Final Phase 21 fix: expose only Jira `base_url` through authenticated `/api/jira/link-config`, allow authenticated demand users to load assignee/project options, preserve recent local assignee override logs from Jira sync for 24 hours, compact the schedule estimate strip, make config-version audit section-specific and lower height, and use card-level detail fallback on demand cards.
 - Current Phase 22 backend constraint: this worker should not modify frontend files and must not revert changes made by parallel agents.
+- Worker B Phase 26: `db.DeconstructArchive` already stores `context_pack_id`, `input_text`, deconstruction output JSON, confidence, completeness, and archive timestamps; `db.ContextPack` stores model, prompt template version, token budget/count, summary, hash, and item count.
+- Worker B Phase 26: `/api/deconstruct` currently assembles and persists a context pack and returns `context_pack_id`, but it does not create a deconstruction archive because import/demand linkage happens later.
+- Worker B Phase 26: before this slice, `/api/tasks/import` archived deconstruction output with `context_pack_id` and auto-built an `import_archive` context pack only when the request omitted one but included `input_text`; the MVP now also derives an input snapshot from imported tasks and returns archive/trace metadata.
+- Phase 26 backend now exposes a consolidated strongest-brain delivery cockpit that aggregates evidence health, exception-only progress signals, weekly decision questions, schedule risks, AI trace metadata, override audit events, authorization explanation summaries, and concrete entry points.
+- Phase 26 evidence read models now distinguish completed-without-evidence, merged-but-not-completed, scheduled-but-stale, due-soon, overdue, missing links, chain status, and evidence completeness.
+- Phase 26 AI trace work keeps every generated recommendation replayable by `archive_id`, `context_pack_id`, prompt/source version metadata, confidence, completeness, selected context facts, and deterministic missing-question buckets.
+- Phase 26 frontend mounts the new delivery cockpit above the existing decision dashboard and intentionally does not restore the rejected visible strongest-brain decision queue or its 15-second polling loop.
 
 ## Technical Decisions
 | Decision | Rationale |
@@ -148,6 +159,12 @@
 | Treat the decision queue as a cockpit projection rather than a new backend contract | The fastest useful fix is to reveal existing queue source, decision kind, idle cost, and entry state in the frontend without changing `/api/strongest-brain/decision-queue`. |
 | Keep non-Agenda queue items visible but honest about their entry | Schedule/execution/context items may not be actionable in the old intervention form, so the UI now labels them as source-located work instead of pretending every card can be handled by the same control. |
 | Remove the strongest-brain decision queue only from the frontend dashboard for now | The user rejected the visible surface; leaving backend APIs intact avoids unnecessary churn to Phase 22 contracts/tests while removing the useless UI and polling. |
+| Worker B Phase 26 uses `DeconstructArchive + ContextPack` as the AI trace MVP source of truth | The existing schema already stores archive output, input snapshot, confidence, context pack metadata, prompt template version, and selected pack items, so a read model avoids new migrations during the parallel rollout. |
+| Worker B Phase 26 leaves trace/clarification route registration to the main agent | `server.go` is being edited by another worker; helper handlers are implemented but not registered to avoid route ownership conflicts. |
+| Worker B Phase 26 derives missing-question tiers deterministically from deconstruction analysis | `missing_info` becomes must-answer, dependencies become can-defer, and meeting questions are classified by readiness/keywords so tests stay stable without external AI calls. |
+| Implement the strongest-brain "all phases" request as one evidence cockpit plus focused read APIs | The pain points are connected by the same proof chain, so the first landing slice should consolidate status, decisions, readiness, schedule risk, override audit, traceability, and permission explanation rather than scatter new pages. |
+| Keep the old decision queue hidden | The user explicitly rejected that visible surface; the new cockpit surfaces only exception and decision prompts with evidence and entry points. |
+| Keep AI trace/readiness deterministic for MVP tests | Deterministic read models make replay, audit, and missing-question behavior stable without depending on external model calls. |
 
 ## Issues Encountered
 | Issue | Resolution |
@@ -164,6 +181,9 @@
 | Phase 23 subagents did not return final reports before timeout | Closed all three agents, integrated the shared-worktree frontend partial, and completed backend/API/tests in the main thread. |
 | Decision queue display meaning was unclear to the user | Added a current focus panel plus per-card source, decision type, no-action cost, and handling-entry labels. |
 | The added decision queue meaning still did not satisfy the user's usefulness threshold | Removed the queue surface and its frontend polling/state/style code. |
+| Worker-owned helper names conflicted during integration | Kept the richer shared strongest-brain helpers in `strongest_brain_handlers.go`, renamed delivery-only helpers, and removed the duplicate temporary helper file. |
+| Full internal Go validation failed inside the sandbox because `httptest` could not bind loopback | Reran the same `go test ./internal/... -count=1` with approved non-sandbox execution and it passed. |
+| `task_status.md` and `well-ambient.db` changed during validation/runtime side effects | Kept those generated/runtime changes out of the Phase 26 implementation commit instead of mixing operational data with source changes. |
 
 ## Resources
 - Source plan: `/Users/eddie/.gemini/antigravity/brain/ffc6d8a3-38c0-4a9b-a458-9b51beeff27b/implementation_plan.md`

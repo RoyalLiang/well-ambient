@@ -3,6 +3,17 @@
 ## Goal
 Inspect the repository against the provided implementation plan and apply the needed fixes that fit the current codebase, including the follow-up fixes for frontend skill rules, department display, demand scheduling date styling, and AI deconstruction binding.
 
+## Current Task Addendum: Strongest Brain Delivery Transformation Rollout
+- [x] Commit all uncommitted workspace changes as a baseline before implementation
+- [x] Load complex-task planning/execution guidance and frontend design constraints
+- [x] Spawn subagents for backend evidence/exception, AI trace/readiness, and frontend cockpit slices
+- [x] Inventory existing strongest-brain, context, policy, schedule, and dashboard surfaces
+- [x] Integrate backend delivery cockpit/read-model APIs across evidence, exceptions, weekly decisions, AI trace, override, and authz explanation
+- [x] Integrate frontend strongest-brain delivery cockpit without reviving the rejected old decision-queue surface
+- [x] Add focused tests for new read-model contracts
+- [x] Run targeted Go validation and frontend build
+- [x] Update task memory and commit implementation changes
+
 ## Current Task Addendum: Board Cohesion, Audit Panel, And Modal Lock Polish
 - [x] Inspect demand/task/bug/decision board components and shared state flow
 - [x] Compact the effort summary and AI evaluation controls
@@ -69,7 +80,7 @@ Inspect the repository against the provided implementation plan and apply the ne
 - [x] Split schedule, delivery evidence, and update time into clear table columns
 
 ## Current Phase
-Phase 25: Remove Decision Queue Surface
+Phase 26: Strongest Brain Delivery Transformation Rollout
 
 ## Phases
 
@@ -285,6 +296,16 @@ Phase 25: Remove Decision Queue Surface
 - [x] Remove queue-only CSS and responsive remnants
 - [x] Run frontend production build
 - [x] Update memory files and commit intentional changes
+- **Status:** complete
+
+### Phase 26: Worker B AI Trace And Requirement Clarification Backend Slice
+- [x] Follow AGENTS cold start and classify as `coding.complex`
+- [x] Read strongest-brain delivery plan and current AI/context archive handlers
+- [x] Add AI output trace/context-pack replay read model without route registration
+- [x] Add requirement clarification read model
+- [x] Return archive/context trace fields from import/deconstruct responses where available
+- [x] Add focused non-external-AI tests
+- [x] Run targeted validation after parallel strongest-brain compile blockers are resolved
 - **Status:** complete
 
 ## Key Questions

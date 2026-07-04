@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import StrongestBrainDeliveryCockpit from './StrongestBrainDeliveryCockpit.svelte';
   export let currentUser = '';
 
   interface TelemetrySnippet {
@@ -632,6 +633,8 @@
 </script>
 
 <div class="decision-war-room font-sans">
+  <StrongestBrainDeliveryCockpit />
+
   <!-- Bento Grid Container -->
   <div class="bento-grid">
     

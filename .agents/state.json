@@ -1,31 +1,59 @@
 {
   "schema_version": "1.0",
-  "updated_at": null,
+  "updated_at": "2026-07-04T22:05:00+08:00",
   "active_task": {
-    "goal": null,
-    "intent": null,
-    "complexity": null,
-    "continuity": null,
-    "freshness": null,
-    "risk": null,
-    "phase": null,
+    "goal": "Strongest Brain delivery transformation rollout across evidence, decisions, AI trace, override audit, and permission explanation",
+    "intent": "coding",
+    "complexity": "multi_step",
+    "continuity": "subagent_integrated",
+    "freshness": "local_repo",
+    "risk": "medium",
+    "phase": "complete",
     "loaded_modules": []
   },
   "warm_memory": {
-    "summary": null,
-    "constraints": [],
+    "summary": "Phase 26 landed the strongest-brain delivery cockpit and supporting read models: evidence completeness, exception-only progress, weekly decision prompts, schedule risks, AI trace replay, override audit, and authorization explanation summaries.",
+    "constraints": [
+      "Do not revive the rejected visible decision-queue surface",
+      "Keep runtime/generated `task_status.md` and `well-ambient.db` changes out of source commits unless explicitly requested",
+      "Prefer additive read models over breaking existing schedule, execution, and AI archive contracts"
+    ],
     "decisions": [],
-    "findings": [],
-    "touched_files": [],
-    "validation": [],
+    "findings": [
+      "Delivery cockpit aggregates schedule, execution, decision, AI archive, override, and authz evidence behind `/api/strongest-brain/delivery-cockpit`.",
+      "Evidence chain and decision queue read models now expose missing links, chain status, evidence completeness, exception summary, and weekly decision cards.",
+      "AI trace/readiness/context-pack replay uses DeconstructArchive plus ContextPack without requiring a new schema migration.",
+      "Frontend mounts `StrongestBrainDeliveryCockpit` above the decision dashboard and avoids the old rejected queue polling path."
+    ],
+    "touched_files": [
+      "internal/server/ai_handlers.go",
+      "internal/server/ai_trace_helpers.go",
+      "internal/server/ai_trace_helpers_test.go",
+      "internal/server/server.go",
+      "internal/server/strongest_brain_delivery_handlers.go",
+      "internal/server/strongest_brain_handlers.go",
+      "internal/server/strongest_brain_handlers_test.go",
+      "web/src/components/DecisionDashboard.svelte",
+      "web/src/components/StrongestBrainDeliveryCockpit.svelte",
+      "task_plan.md",
+      "findings.md",
+      "progress.md",
+      ".agents/state.json"
+    ],
+    "validation": [
+      "git diff --check passed",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(StrongestBrainDeliveryCockpit|StrongestBrainDecisionQueue|StrongestBrainEvidenceChain|AIIntentSummary|AIOutputTraceReadModelReplaysArchiveContextPack|RequirementClarificationReadModelClassifiesQuestions|ImportTasksAutoArchivesContextPackAndTrace|ImportTasksArchivesContextPackID|ParseDeconstructResponseContent)' -count=1 passed",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/... -count=1 passed with approved non-sandbox rerun",
+      "pnpm build in web passed with existing Svelte warnings"
+    ],
     "blockers": [],
-    "next_action": null
+    "next_action": "Use the new cockpit APIs for product review, then decide whether any source-specific detail pages are worth splitting out."
   },
   "compression": {
-    "meaningful_tool_calls": 0,
+    "meaningful_tool_calls": 20,
     "turns_on_task": 0,
-    "last_compressed_at": null,
-    "last_trigger": null
+    "last_compressed_at": "2026-07-04T21:38:00+08:00",
+    "last_trigger": "before_final_complex_task"
   },
   "long_memory_index": {
     "root": "./.agents/memory",

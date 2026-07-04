@@ -171,6 +171,136 @@ func TestStrongestBrainDecisionQueueFlagsWeakSemanticEvidence(t *testing.T) {
 	}
 }
 
+func TestStrongestBrainDecisionQueueAddsEvidenceChainFieldsAndRules(t *testing.T) {
+	token := seedStrongestBrainUser(t)
+	now := time.Now()
+	dueSoon := now.AddDate(0, 0, 2)
+	future := now.AddDate(0, 0, 10)
+	staleUpdate := now.AddDate(0, 0, -5)
+
+	rows := []db.TaskTelemetry{
+		{
+			TaskID:        "DEMAND-DUE",
+			Title:         "临期证据不完整需求",
+			IssueType:     "demand",
+			Status:        "progress",
+			Assignee:      "Brain User",
+			Branch:        "feature/due",
+			DueDate:       &dueSoon,
+			TaskGroupID:   "brain-due",
+			TaskCreatedAt: now.AddDate(0, 0, -4),
+			LastUpdate:    now.AddDate(0, 0, -1),
+		},
+		{
+			TaskID:        "TASK-DONE",
+			Title:         "完成但无结果证据",
+			IssueType:     "task",
+			Status:        "done",
+			Assignee:      "Brain User",
+			Branch:        "feature/due",
+			TaskGroupID:   "brain-due",
+			TaskCreatedAt: now.AddDate(0, 0, -3),
+			LastUpdate:    now.AddDate(0, 0, -1),
+		},
+		{
+			TaskID:        "DEMAND-MR",
+			Title:         "MR 已合并父需求",
+			IssueType:     "demand",
+			Status:        "progress",
+			Assignee:      "Brain User",
+			Branch:        "feature/mr",
+			DueDate:       &future,
+			TaskGroupID:   "brain-mr",
+			TaskCreatedAt: now.AddDate(0, 0, -4),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "TASK-MR",
+			Title:         "MR 已合并但状态未完成",
+			IssueType:     "task",
+			Status:        "review",
+			Assignee:      "Brain User",
+			Branch:        "feature/mr",
+			TaskGroupID:   "brain-mr",
+			TaskCreatedAt: now.AddDate(0, 0, -3),
+			LastUpdate:    now,
+		},
+		{
+			TaskID:        "DEMAND-STALE",
+			Title:         "已排期但无推进",
+			IssueType:     "demand",
+			Status:        "progress",
+			Assignee:      "Brain User",
+			Branch:        "feature/stale",
+			DueDate:       &future,
+			TaskGroupID:   "brain-stale",
+			TaskCreatedAt: now.AddDate(0, 0, -8),
+			LastUpdate:    staleUpdate,
+		},
+	}
+	for _, row := range rows {
+		if err := db.DB.Create(&row).Error; err != nil {
+			t.Fatalf("seed task %s: %v", row.TaskID, err)
+		}
+	}
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    "TASK-MR",
+		Repo:      "well-ambient",
+		Branch:    "feature/mr",
+		Action:    "mr_merge",
+		MrURL:     "https://gitlab.example/mr/42",
+		CreatedAt: now.Add(-1 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("seed mr log: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/decision-queue", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response StrongestBrainDecisionQueueResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	doneWithoutEvidence := requireStrongestBrainDecision(t, response.Items, "TASK-DONE", "evidence_missing")
+	if doneWithoutEvidence.DecisionOwner == "" || doneWithoutEvidence.Deadline == "" || doneWithoutEvidence.RecommendedAction == "" {
+		t.Fatalf("done-without-evidence item missing decision fields: %+v", doneWithoutEvidence)
+	}
+	if doneWithoutEvidence.ChainStatus != "mismatch" || !strongestBrainStringsContain(doneWithoutEvidence.MissingLinks, "completion_evidence") {
+		t.Fatalf("done-without-evidence chain fields mismatch: %+v", doneWithoutEvidence)
+	}
+
+	mrMismatch := requireStrongestBrainDecision(t, response.Items, "TASK-MR", "status_mismatch")
+	if mrMismatch.ChainStatus != "mismatch" || mrMismatch.EvidenceCompleteness == 0 {
+		t.Fatalf("MR mismatch chain fields missing: %+v", mrMismatch)
+	}
+
+	stale := requireStrongestBrainDecision(t, response.Items, "DEMAND-STALE", "stale_after_schedule")
+	if stale.DecisionOwner != "Brain User" || stale.ChainStatus != "mismatch" {
+		t.Fatalf("stale decision fields mismatch: %+v", stale)
+	}
+
+	dueSoonIncomplete := requireStrongestBrainDecision(t, response.Items, "DEMAND-DUE", "due_soon")
+	if dueSoonIncomplete.EvidenceCompleteness >= 80 || !strongestBrainStringsContain(dueSoonIncomplete.MissingLinks, "merge_request") {
+		t.Fatalf("due-soon incomplete chain not exposed: %+v", dueSoonIncomplete)
+	}
+
+	if response.Summary.EvidenceIncomplete == 0 || response.Summary.StatusMismatch == 0 || response.Summary.StaleAfterSchedule == 0 || response.Summary.DeadlineChainRisks == 0 {
+		t.Fatalf("summary did not count evidence/status/stale/deadline risks: %+v", response.Summary)
+	}
+	if response.ExceptionSummary.ByType["evidence_missing"] == 0 || response.ExceptionSummary.ByType["status_mismatch"] == 0 {
+		t.Fatalf("exception summary missing type counts: %+v", response.ExceptionSummary)
+	}
+	if len(response.WeeklyDecisions) == 0 || response.WeeklyDecisions[0].DecisionOwner == "" || len(response.WeeklyDecisions[0].EvidenceRefs) == 0 {
+		t.Fatalf("weekly decisions missing read model fields: %+v", response.WeeklyDecisions)
+	}
+}
+
 func TestStrongestBrainEvidenceChainReturnsRelatedTasksAndLogs(t *testing.T) {
 	token := seedStrongestBrainUser(t)
 	now := time.Now()
@@ -215,6 +345,9 @@ func TestStrongestBrainEvidenceChainReturnsRelatedTasksAndLogs(t *testing.T) {
 	if response.Summary.RelatedTasks != 2 || response.Summary.Commits != 1 {
 		t.Fatalf("unexpected evidence chain summary: %+v", response.Summary)
 	}
+	if response.ChainStatus == "" || response.EvidenceCompleteness == 0 || !strongestBrainStringsContain(response.MissingLinks, "merge_request") {
+		t.Fatalf("evidence chain fields missing: %+v", response)
+	}
 }
 
 func TestAIIntentSummaryDeterministicFallback(t *testing.T) {
@@ -238,6 +371,113 @@ func TestAIIntentSummaryDeterministicFallback(t *testing.T) {
 	}
 	if response.Summary == "" || len(response.NextQuestions) == 0 || response.Source != "deterministic" {
 		t.Fatalf("unexpected intent response: %+v", response)
+	}
+}
+
+func TestStrongestBrainDeliveryCockpitAggregatesPhaseSignals(t *testing.T) {
+	token := seedStrongestBrainUser(t)
+	now := time.Now()
+	due := now.AddDate(0, 0, -1)
+	demand := db.TaskTelemetry{
+		TaskID:        "DEMAND-DELIVERY",
+		Title:         "交付驾驶舱需求",
+		IssueType:     "demand",
+		Status:        "progress",
+		Assignee:      "Brain User",
+		Branch:        "feature/delivery",
+		DueDate:       &due,
+		TaskGroupID:   "brain-delivery",
+		TaskCreatedAt: now.AddDate(0, 0, -5),
+		LastUpdate:    now.AddDate(0, 0, -4),
+	}
+	child := db.TaskTelemetry{
+		TaskID:        "TASK-DELIVERY",
+		Title:         "合并后待回写",
+		IssueType:     "task",
+		Status:        "review",
+		Assignee:      "Brain User",
+		Repo:          "well-ambient",
+		Branch:        "feature/delivery",
+		TaskGroupID:   "brain-delivery",
+		TaskCreatedAt: now.AddDate(0, 0, -4),
+		LastUpdate:    now.AddDate(0, 0, -3),
+	}
+	if err := db.DB.Create(&demand).Error; err != nil {
+		t.Fatalf("seed demand: %v", err)
+	}
+	if err := db.DB.Create(&child).Error; err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    child.TaskID,
+		Repo:      child.Repo,
+		Branch:    child.Branch,
+		Action:    "mr_merge",
+		MrURL:     "https://gitlab.example/mr/7",
+		CreatedAt: now.Add(-3 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("seed merge log: %v", err)
+	}
+	pack := db.ContextPack{
+		Purpose:               "deconstruct",
+		Model:                 "test-model",
+		PromptTemplateVersion: "context-pack-v1",
+		Summary:               "测试上下文包",
+		TokenBudget:           1800,
+		TokenCount:            32,
+		ContextHash:           "ctx-hash",
+		CreatedAt:             now,
+	}
+	if err := db.DB.Create(&pack).Error; err != nil {
+		t.Fatalf("seed context pack: %v", err)
+	}
+	if err := db.DB.Create(&db.DeconstructArchive{
+		DemandID:          demand.TaskID,
+		TaskGroupID:       demand.TaskGroupID,
+		ContextPackID:     pack.ID,
+		InputText:         "实现交付驾驶舱，需要权限解释和 AI 回放",
+		AnalysisJSON:      `{"completeness_score":66,"missing_info":["验收口径"],"risks":["权限边界不清"],"acceptance_criteria":["能看到 AI 回放"]}`,
+		CompletenessScore: 66,
+		Confidence:        0.72,
+		CreatedAt:         now,
+	}).Error; err != nil {
+		t.Fatalf("seed deconstruct archive: %v", err)
+	}
+	if err := db.DB.Create(&db.DecisionEvent{
+		TaskID:    demand.TaskID,
+		Actor:     "Brain User",
+		Action:    "override_reassign",
+		OldValue:  "Brain User",
+		NewValue:  "朱家聪",
+		Reason:    "临近交付需要协助",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed decision event: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/delivery-cockpit", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response StrongestBrainDeliveryCockpitResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Evidence.TotalRequirements != 1 || response.Evidence.MergedButStatusOpen == 0 {
+		t.Fatalf("unexpected evidence summary: %+v", response.Evidence)
+	}
+	if response.Exceptions.P0 == 0 || response.WeeklyDecisions.Total == 0 {
+		t.Fatalf("expected critical exception and weekly decision: exceptions=%+v weekly=%+v", response.Exceptions, response.WeeklyDecisions)
+	}
+	if response.AITrace.TraceableOutputs != 1 || len(response.AITrace.Latest) != 1 || response.AITrace.Latest[0].ContextPackID != pack.ID {
+		t.Fatalf("unexpected AI trace summary: %+v", response.AITrace)
+	}
+	if response.Override.Recent == 0 || !response.Authorization.ExplainPanelAvailable {
+		t.Fatalf("expected override and authorization summaries: override=%+v authorization=%+v", response.Override, response.Authorization)
 	}
 }
 
@@ -309,4 +549,24 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	if event.Action != "override_reassign" || event.Actor != "Brain User" || event.NewValue != "朱家聪" || event.Reason != "需要朱家聪协助攻坚" {
 		t.Fatalf("unexpected event log: %+v", event)
 	}
+}
+
+func requireStrongestBrainDecision(t *testing.T, items []StrongestBrainDecisionItem, taskID string, riskType string) StrongestBrainDecisionItem {
+	t.Helper()
+	for _, item := range items {
+		if item.TaskID == taskID && item.RiskType == riskType {
+			return item
+		}
+	}
+	t.Fatalf("decision %s/%s not found in %+v", taskID, riskType, items)
+	return StrongestBrainDecisionItem{}
+}
+
+func strongestBrainStringsContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -14,60 +14,83 @@ import (
 )
 
 type StrongestBrainDecisionQueueResponse struct {
-	GeneratedAt string                         `json:"generated_at"`
-	Summary     StrongestBrainDecisionSummary  `json:"summary"`
-	Items       []StrongestBrainDecisionItem   `json:"items"`
-	Evidence    []StrongestBrainEvidenceDigest `json:"evidence"`
+	GeneratedAt      string                         `json:"generated_at"`
+	Summary          StrongestBrainDecisionSummary  `json:"summary"`
+	ExceptionSummary StrongestBrainExceptionSummary `json:"exception_summary"`
+	WeeklyDecisions  []StrongestBrainWeeklyDecision `json:"weekly_decisions"`
+	Items            []StrongestBrainDecisionItem   `json:"items"`
+	Evidence         []StrongestBrainEvidenceDigest `json:"evidence"`
 }
 
 type StrongestBrainDecisionSummary struct {
-	Total         int `json:"total"`
-	Critical      int `json:"critical"`
-	Warning       int `json:"warning"`
-	Open          int `json:"open"`
-	ScheduleRisks int `json:"schedule_risks"`
-	EvidenceRisks int `json:"evidence_risks"`
-	ContextGaps   int `json:"context_gaps"`
+	Total               int `json:"total"`
+	Critical            int `json:"critical"`
+	Warning             int `json:"warning"`
+	Open                int `json:"open"`
+	ScheduleRisks       int `json:"schedule_risks"`
+	EvidenceRisks       int `json:"evidence_risks"`
+	ContextGaps         int `json:"context_gaps"`
+	EvidenceIncomplete  int `json:"evidence_incomplete"`
+	StatusMismatch      int `json:"status_mismatch"`
+	MissingSchedule     int `json:"missing_schedule"`
+	StaleAfterSchedule  int `json:"stale_after_schedule"`
+	DeadlineChainRisks  int `json:"deadline_chain_risks"`
+	WeeklyDecisionCount int `json:"weekly_decision_count"`
 }
 
 type StrongestBrainDecisionItem struct {
-	ID              string   `json:"id"`
-	TaskID          string   `json:"task_id"`
-	Title           string   `json:"title"`
-	Problem         string   `json:"problem"`
-	Evidence        []string `json:"evidence"`
-	SuggestedAction string   `json:"suggested_action"`
-	ImpactScope     string   `json:"impact_scope"`
-	JumpLabel       string   `json:"jump_label"`
-	JumpURL         string   `json:"jump_url"`
-	RiskLevel       string   `json:"risk_level"`
-	RiskType        string   `json:"risk_type"`
-	Status          string   `json:"status"`
-	Assignee        string   `json:"assignee"`
-	Project         string   `json:"project"`
-	IssueType       string   `json:"issue_type"`
-	UpdatedAt       string   `json:"updated_at"`
-	Source          string   `json:"source"`
-	Rank            int      `json:"rank"`
+	ID                   string   `json:"id"`
+	TaskID               string   `json:"task_id"`
+	Title                string   `json:"title"`
+	Problem              string   `json:"problem"`
+	Evidence             []string `json:"evidence"`
+	EvidenceRefs         []string `json:"evidence_refs"`
+	MissingLinks         []string `json:"missing_links"`
+	SuggestedAction      string   `json:"suggested_action"`
+	RecommendedAction    string   `json:"recommended_action"`
+	DecisionOwner        string   `json:"decision_owner"`
+	Deadline             string   `json:"deadline"`
+	ImpactScope          string   `json:"impact_scope"`
+	JumpLabel            string   `json:"jump_label"`
+	JumpURL              string   `json:"jump_url"`
+	RiskLevel            string   `json:"risk_level"`
+	RiskType             string   `json:"risk_type"`
+	Status               string   `json:"status"`
+	Assignee             string   `json:"assignee"`
+	Project              string   `json:"project"`
+	IssueType            string   `json:"issue_type"`
+	UpdatedAt            string   `json:"updated_at"`
+	Source               string   `json:"source"`
+	ChainStatus          string   `json:"chain_status"`
+	EvidenceCompleteness int      `json:"evidence_completeness"`
+	Rank                 int      `json:"rank"`
 }
 
 type StrongestBrainEvidenceDigest struct {
-	TaskID       string   `json:"task_id"`
-	TaskGroupID  string   `json:"task_group_id"`
-	CommitCount  int      `json:"commit_count"`
-	MRCount      int      `json:"mr_count"`
-	LastEvidence string   `json:"last_evidence"`
-	Signals      []string `json:"signals"`
+	TaskID               string   `json:"task_id"`
+	TaskGroupID          string   `json:"task_group_id"`
+	CommitCount          int      `json:"commit_count"`
+	MRCount              int      `json:"mr_count"`
+	LastEvidence         string   `json:"last_evidence"`
+	Signals              []string `json:"signals"`
+	EvidenceRefs         []string `json:"evidence_refs"`
+	MissingLinks         []string `json:"missing_links"`
+	ChainStatus          string   `json:"chain_status"`
+	EvidenceCompleteness int      `json:"evidence_completeness"`
 }
 
 type StrongestBrainEvidenceChainResponse struct {
-	GeneratedAt string                     `json:"generated_at"`
-	TaskID      string                     `json:"task_id"`
-	TaskGroupID string                     `json:"task_group_id"`
-	Root        *StrongestBrainChainTask   `json:"root,omitempty"`
-	Related     []StrongestBrainChainTask  `json:"related"`
-	Evidence    []StrongestBrainChainLog   `json:"evidence"`
-	Summary     StrongestBrainChainSummary `json:"summary"`
+	GeneratedAt          string                     `json:"generated_at"`
+	TaskID               string                     `json:"task_id"`
+	TaskGroupID          string                     `json:"task_group_id"`
+	Root                 *StrongestBrainChainTask   `json:"root,omitempty"`
+	Related              []StrongestBrainChainTask  `json:"related"`
+	Evidence             []StrongestBrainChainLog   `json:"evidence"`
+	EvidenceRefs         []string                   `json:"evidence_refs"`
+	MissingLinks         []string                   `json:"missing_links"`
+	ChainStatus          string                     `json:"chain_status"`
+	EvidenceCompleteness int                        `json:"evidence_completeness"`
+	Summary              StrongestBrainChainSummary `json:"summary"`
 }
 
 type StrongestBrainChainTask struct {
@@ -94,11 +117,47 @@ type StrongestBrainChainLog struct {
 }
 
 type StrongestBrainChainSummary struct {
-	RelatedTasks  int      `json:"related_tasks"`
-	Commits       int      `json:"commits"`
-	MergeRequests int      `json:"merge_requests"`
-	MergedMRs     int      `json:"merged_mrs"`
-	Signals       []string `json:"signals"`
+	RelatedTasks         int      `json:"related_tasks"`
+	Commits              int      `json:"commits"`
+	MergeRequests        int      `json:"merge_requests"`
+	MergedMRs            int      `json:"merged_mrs"`
+	Signals              []string `json:"signals"`
+	MissingLinks         []string `json:"missing_links"`
+	StatusMismatches     []string `json:"status_mismatches"`
+	ChainStatus          string   `json:"chain_status"`
+	EvidenceCompleteness int      `json:"evidence_completeness"`
+}
+
+type StrongestBrainExceptionSummary struct {
+	Total              int            `json:"total"`
+	Critical           int            `json:"critical"`
+	Warning            int            `json:"warning"`
+	Open               int            `json:"open"`
+	ByType             map[string]int `json:"by_type"`
+	ByOwner            map[string]int `json:"by_owner"`
+	EvidenceIncomplete int            `json:"evidence_incomplete"`
+	StatusMismatch     int            `json:"status_mismatch"`
+	MissingSchedule    int            `json:"missing_schedule"`
+	StaleAfterSchedule int            `json:"stale_after_schedule"`
+	DeadlineChainRisks int            `json:"deadline_chain_risks"`
+}
+
+type StrongestBrainWeeklyDecision struct {
+	ID                   string   `json:"id"`
+	SourceItemID         string   `json:"source_item_id"`
+	TaskID               string   `json:"task_id"`
+	DecisionType         string   `json:"decision_type"`
+	Question             string   `json:"question"`
+	RiskLevel            string   `json:"risk_level"`
+	DecisionOwner        string   `json:"decision_owner"`
+	Deadline             string   `json:"deadline"`
+	RecommendedAction    string   `json:"recommended_action"`
+	Options              []string `json:"options"`
+	EvidenceRefs         []string `json:"evidence_refs"`
+	MissingLinks         []string `json:"missing_links"`
+	ImpactScope          string   `json:"impact_scope"`
+	ChainStatus          string   `json:"chain_status"`
+	EvidenceCompleteness int      `json:"evidence_completeness"`
 }
 
 type AIIntentRequest struct {
@@ -144,54 +203,15 @@ func (s *Server) handleGetStrongestBrainDecisionQueue(w http.ResponseWriter, r *
 		return
 	}
 
-	items := make([]StrongestBrainDecisionItem, 0)
-	for _, item := range schedule.Items {
-		if item.RiskLevel == "safe" || item.RiskLevel == "done" {
-			continue
-		}
-		items = append(items, decisionFromScheduleItem(item))
-	}
-	for _, item := range execution.Items {
-		if item.RiskLevel == "safe" || item.RiskLevel == "done" {
-			continue
-		}
-		items = append(items, decisionFromExecutionItem(item))
-	}
-	items = append(items, semanticEvidenceReviewDecisions(now)...)
-
-	items = append(items, contextGapDecisions(now)...)
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Rank != items[j].Rank {
-			return items[i].Rank > items[j].Rank
-		}
-		return items[i].UpdatedAt > items[j].UpdatedAt
-	})
-
-	summary := StrongestBrainDecisionSummary{Total: len(items)}
-	for _, item := range items {
-		if item.RiskLevel == "critical" {
-			summary.Critical++
-		} else if item.RiskLevel == "warning" {
-			summary.Warning++
-		}
-		if item.Status == "open" {
-			summary.Open++
-		}
-		switch item.Source {
-		case "schedule":
-			summary.ScheduleRisks++
-		case "execution":
-			summary.EvidenceRisks++
-		case "context":
-			summary.ContextGaps++
-		}
-	}
+	readModel := buildStrongestBrainDecisionReadModel(schedule, execution, logs, now)
 
 	response := StrongestBrainDecisionQueueResponse{
-		GeneratedAt: formatDateTime(now),
-		Summary:     summary,
-		Items:       items,
-		Evidence:    buildEvidenceDigest(logs),
+		GeneratedAt:      formatDateTime(now),
+		Summary:          readModel.Summary,
+		ExceptionSummary: readModel.ExceptionSummary,
+		WeeklyDecisions:  readModel.WeeklyDecisions,
+		Items:            readModel.Items,
+		Evidence:         readModel.Evidence,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -240,9 +260,10 @@ func (s *Server) handleGetStrongestBrainEvidenceChain(w http.ResponseWriter, r *
 		}
 	}
 
+	now := time.Now()
 	rootDTO := chainTaskDTO(root)
 	response := StrongestBrainEvidenceChainResponse{
-		GeneratedAt: formatDateTime(time.Now()),
+		GeneratedAt: formatDateTime(now),
 		TaskID:      taskID,
 		TaskGroupID: groupID,
 		Root:        &rootDTO,
@@ -274,6 +295,15 @@ func (s *Server) handleGetStrongestBrainEvidenceChain(w http.ResponseWriter, r *
 		}
 	}
 	response.Summary.RelatedTasks = len(response.Related)
+	profile := buildStrongestBrainEvidenceChainProfile(root, related, logs, now)
+	response.EvidenceRefs = profile.EvidenceRefs
+	response.MissingLinks = profile.MissingLinks
+	response.ChainStatus = profile.ChainStatus
+	response.EvidenceCompleteness = profile.EvidenceCompleteness
+	response.Summary.MissingLinks = profile.MissingLinks
+	response.Summary.StatusMismatches = profile.StatusMismatches
+	response.Summary.ChainStatus = profile.ChainStatus
+	response.Summary.EvidenceCompleteness = profile.EvidenceCompleteness
 	response.Summary.Signals = evidenceChainSignals(response)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -346,6 +376,349 @@ func buildStrongestBrainExecutionSnapshot(now time.Time) (ExecutionTasksResponse
 	return buildExecutionTasksResponse(tasks, logs, users, now), logs, nil
 }
 
+type strongestBrainDecisionReadModel struct {
+	Summary          StrongestBrainDecisionSummary
+	ExceptionSummary StrongestBrainExceptionSummary
+	WeeklyDecisions  []StrongestBrainWeeklyDecision
+	Items            []StrongestBrainDecisionItem
+	Evidence         []StrongestBrainEvidenceDigest
+}
+
+type strongestBrainEvidenceProfile struct {
+	TaskID               string
+	TaskGroupID          string
+	IsDemand             bool
+	HasIssue             bool
+	HasParentDemand      bool
+	HasBranch            bool
+	HasDueDate           bool
+	HasExecutionTask     bool
+	HasCommit            bool
+	HasMR                bool
+	HasMergedMR          bool
+	HasDoneStatus        bool
+	StaleAfterSchedule   bool
+	DeadlineChainRisk    bool
+	DueDate              string
+	LastEvidence         string
+	EvidenceRefs         []string
+	MissingLinks         []string
+	StatusMismatches     []string
+	ChainStatus          string
+	EvidenceCompleteness int
+}
+
+type strongestBrainLogStats struct {
+	HasCommit    bool
+	HasMR        bool
+	HasMergedMR  bool
+	LastEvidence string
+	EvidenceRefs []string
+}
+
+func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog, now time.Time) strongestBrainDecisionReadModel {
+	profiles := buildStrongestBrainEvidenceProfiles(schedule, execution, logs)
+	items := make([]StrongestBrainDecisionItem, 0)
+
+	for _, item := range schedule.Items {
+		if item.RiskLevel == "safe" || item.RiskLevel == "done" {
+			continue
+		}
+		items = append(items, decisionFromScheduleItem(item))
+	}
+	for _, item := range execution.Items {
+		if item.RiskLevel == "safe" || item.RiskLevel == "done" {
+			continue
+		}
+		items = append(items, decisionFromExecutionItem(item))
+	}
+	items = append(items, strictEvidenceChainConsistencyDecisions(execution, now)...)
+	items = append(items, semanticEvidenceReviewDecisions(now)...)
+	items = append(items, contextGapDecisions(now)...)
+
+	items = enrichStrongestBrainDecisionItems(items, profiles, now)
+	items = dedupeStrongestBrainDecisionItems(items)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Rank != items[j].Rank {
+			return items[i].Rank > items[j].Rank
+		}
+		return items[i].UpdatedAt > items[j].UpdatedAt
+	})
+
+	weeklyDecisions := buildStrongestBrainWeeklyDecisions(items)
+	summary := buildStrongestBrainDecisionSummary(items, len(weeklyDecisions))
+	return strongestBrainDecisionReadModel{
+		Summary:          summary,
+		ExceptionSummary: buildStrongestBrainExceptionSummary(items),
+		WeeklyDecisions:  weeklyDecisions,
+		Items:            items,
+		Evidence:         buildEvidenceDigest(logs, profiles),
+	}
+}
+
+func buildStrongestBrainEvidenceProfiles(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog) map[string]strongestBrainEvidenceProfile {
+	logStats := strongestBrainLogStatsByTask(logs)
+	profiles := make(map[string]*strongestBrainEvidenceProfile)
+
+	for _, item := range schedule.Items {
+		taskID := strings.TrimSpace(item.DemandID)
+		if taskID == "" {
+			continue
+		}
+		profile := ensureStrongestBrainProfile(profiles, taskID)
+		profile.IsDemand = true
+		profile.HasIssue = true
+		profile.TaskGroupID = firstNonEmpty(profile.TaskGroupID, item.TaskGroupID)
+		profile.HasBranch = profile.HasBranch || hasScheduleBranch(item.Branch)
+		profile.HasDueDate = profile.HasDueDate || strings.TrimSpace(item.DueDate) != ""
+		profile.HasExecutionTask = profile.HasExecutionTask || item.SubtaskTotal > 0
+		profile.HasDoneStatus = profile.HasDoneStatus || strings.EqualFold(strings.TrimSpace(item.Status), "done")
+		profile.StaleAfterSchedule = profile.StaleAfterSchedule || item.RiskLevel == "stale"
+		profile.DeadlineChainRisk = profile.DeadlineChainRisk || item.RiskLevel == "due_soon" || item.RiskLevel == "overdue"
+		profile.DueDate = firstNonEmpty(profile.DueDate, item.DueDate)
+		profile.EvidenceRefs = append(profile.EvidenceRefs, strongestBrainScheduleEvidenceRefs(item)...)
+		applyStrongestBrainLogStats(profile, logStats[taskID])
+	}
+
+	for _, item := range execution.Items {
+		taskID := strings.TrimSpace(item.TaskID)
+		if taskID == "" {
+			continue
+		}
+		profile := ensureStrongestBrainProfile(profiles, taskID)
+		profile.HasIssue = true
+		profile.HasParentDemand = strings.TrimSpace(item.ParentDemandID) != ""
+		profile.TaskGroupID = firstNonEmpty(profile.TaskGroupID, item.TaskGroupID)
+		profile.HasBranch = profile.HasBranch || hasScheduleBranch(item.Branch)
+		profile.HasExecutionTask = true
+		profile.HasCommit = profile.HasCommit || item.CommitCount > 0 || firstNonEmpty(item.LastCommit) != ""
+		profile.HasMR = profile.HasMR || item.MRCount > 0 || strings.TrimSpace(item.MRURL) != "" || item.MRIID > 0
+		profile.HasMergedMR = profile.HasMergedMR || item.MergedMRCount > 0
+		profile.HasDoneStatus = profile.HasDoneStatus || strings.EqualFold(strings.TrimSpace(item.Status), "done")
+		profile.StaleAfterSchedule = profile.StaleAfterSchedule || executionItemIndicatesStaleAfterSchedule(item)
+		profile.EvidenceRefs = append(profile.EvidenceRefs, strongestBrainExecutionEvidenceRefs(item)...)
+		applyStrongestBrainLogStats(profile, logStats[taskID])
+
+		parentID := strings.TrimSpace(item.ParentDemandID)
+		if parentID == "" {
+			continue
+		}
+		parent := ensureStrongestBrainProfile(profiles, parentID)
+		parent.HasExecutionTask = true
+		parent.HasCommit = parent.HasCommit || profile.HasCommit
+		parent.HasMR = parent.HasMR || profile.HasMR
+		parent.HasMergedMR = parent.HasMergedMR || profile.HasMergedMR
+		parent.StaleAfterSchedule = parent.StaleAfterSchedule || profile.StaleAfterSchedule
+		parent.LastEvidence = latestFormattedTime(parent.LastEvidence, profile.LastEvidence)
+		parent.EvidenceRefs = append(parent.EvidenceRefs, "task:"+taskID)
+		parent.EvidenceRefs = append(parent.EvidenceRefs, strongestBrainExecutionEvidenceRefs(item)...)
+		if strings.EqualFold(strings.TrimSpace(item.Status), "done") && !executionItemHasCodeResultEvidence(item) {
+			parent.StatusMismatches = append(parent.StatusMismatches, "child_completed_without_commit_or_mr:"+taskID)
+		}
+		if item.MergedMRCount > 0 && !strings.EqualFold(strings.TrimSpace(item.Status), "done") {
+			parent.StatusMismatches = append(parent.StatusMismatches, "child_merged_mr_status_not_done:"+taskID)
+		}
+		if executionItemIndicatesStaleAfterSchedule(item) {
+			parent.StatusMismatches = append(parent.StatusMismatches, "child_scheduled_without_progress:"+taskID)
+		}
+	}
+
+	finalized := make(map[string]strongestBrainEvidenceProfile, len(profiles))
+	for key, profile := range profiles {
+		finalized[key] = finalizeStrongestBrainEvidenceProfile(*profile)
+	}
+	return finalized
+}
+
+func ensureStrongestBrainProfile(profiles map[string]*strongestBrainEvidenceProfile, taskID string) *strongestBrainEvidenceProfile {
+	taskID = strings.TrimSpace(taskID)
+	profile := profiles[taskID]
+	if profile == nil {
+		profile = &strongestBrainEvidenceProfile{
+			TaskID:       taskID,
+			HasIssue:     taskID != "",
+			EvidenceRefs: []string{"task:" + taskID},
+		}
+		profiles[taskID] = profile
+	}
+	return profile
+}
+
+func strongestBrainLogStatsByTask(logs []db.GitCommitLog) map[string]strongestBrainLogStats {
+	statsByTask := make(map[string]strongestBrainLogStats)
+	for _, log := range logs {
+		taskID := strings.TrimSpace(log.TaskID)
+		if taskID == "" {
+			continue
+		}
+		stats := statsByTask[taskID]
+		if log.Action == "git_push" {
+			stats.HasCommit = true
+		}
+		if strings.HasPrefix(log.Action, "mr_") {
+			stats.HasMR = true
+		}
+		if log.Action == "mr_merge" {
+			stats.HasMergedMR = true
+		}
+		createdAt := formatDateTime(log.CreatedAt)
+		stats.LastEvidence = latestFormattedTime(stats.LastEvidence, createdAt)
+		stats.EvidenceRefs = append(stats.EvidenceRefs, strongestBrainLogEvidenceRef(log))
+		statsByTask[taskID] = stats
+	}
+	return statsByTask
+}
+
+func applyStrongestBrainLogStats(profile *strongestBrainEvidenceProfile, stats strongestBrainLogStats) {
+	profile.HasCommit = profile.HasCommit || stats.HasCommit
+	profile.HasMR = profile.HasMR || stats.HasMR
+	profile.HasMergedMR = profile.HasMergedMR || stats.HasMergedMR
+	profile.LastEvidence = latestFormattedTime(profile.LastEvidence, stats.LastEvidence)
+	profile.EvidenceRefs = append(profile.EvidenceRefs, stats.EvidenceRefs...)
+}
+
+func finalizeStrongestBrainEvidenceProfile(profile strongestBrainEvidenceProfile) strongestBrainEvidenceProfile {
+	missing := append([]string{}, profile.MissingLinks...)
+	if profile.IsDemand {
+		if !profile.HasBranch {
+			missing = append(missing, "branch")
+		}
+		if !profile.HasDueDate {
+			missing = append(missing, "deadline")
+		}
+		if !profile.HasExecutionTask {
+			missing = append(missing, "execution_task")
+		}
+	} else {
+		if !profile.HasParentDemand {
+			missing = append(missing, "parent_demand")
+		}
+		if !profile.HasBranch && !profile.HasCommit && !profile.HasMR {
+			missing = append(missing, "branch")
+		}
+	}
+	if !profile.HasCommit {
+		missing = append(missing, "commit")
+	}
+	if !profile.HasMR {
+		missing = append(missing, "merge_request")
+	}
+	if profile.HasDoneStatus && (!profile.HasCommit || !profile.HasMR) {
+		missing = append(missing, "completion_evidence")
+		profile.StatusMismatches = append(profile.StatusMismatches, "completed_without_commit_or_mr")
+	}
+	if profile.HasMergedMR && !profile.HasDoneStatus {
+		missing = append(missing, "status_update")
+		profile.StatusMismatches = append(profile.StatusMismatches, "merged_mr_status_not_done")
+	}
+	if profile.StaleAfterSchedule {
+		profile.StatusMismatches = append(profile.StatusMismatches, "scheduled_without_progress")
+	}
+
+	profile.MissingLinks = compactStrings(missing, 10)
+	profile.StatusMismatches = compactStrings(profile.StatusMismatches, 10)
+	profile.EvidenceRefs = compactStrings(profile.EvidenceRefs, 12)
+	profile.EvidenceCompleteness = strongestBrainEvidenceCompleteness(profile)
+	if profile.DeadlineChainRisk && profile.EvidenceCompleteness < 80 {
+		profile.StatusMismatches = compactStrings(append(profile.StatusMismatches, "deadline_at_risk_incomplete_chain"), 10)
+	}
+	profile.ChainStatus = strongestBrainChainStatus(profile)
+	return profile
+}
+
+func strongestBrainEvidenceCompleteness(profile strongestBrainEvidenceProfile) int {
+	score := 0
+	if profile.HasIssue {
+		score += 20
+	}
+	if profile.IsDemand {
+		if profile.HasBranch {
+			score += 10
+		}
+		if profile.HasDueDate {
+			score += 10
+		}
+		if profile.HasExecutionTask {
+			score += 15
+		}
+	} else {
+		if profile.HasParentDemand {
+			score += 15
+		}
+		if profile.HasBranch {
+			score += 15
+		}
+	}
+	if profile.HasCommit {
+		score += 25
+	}
+	if profile.HasMR {
+		score += 15
+	}
+	if profile.HasMergedMR || (profile.HasDoneStatus && profile.HasCommit && profile.HasMR) {
+		score += 10
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func strongestBrainChainStatus(profile strongestBrainEvidenceProfile) string {
+	if len(profile.StatusMismatches) > 0 {
+		return "mismatch"
+	}
+	if profile.DeadlineChainRisk && profile.EvidenceCompleteness < 80 {
+		return "deadline_at_risk"
+	}
+	if profile.StaleAfterSchedule {
+		return "stale"
+	}
+	if profile.EvidenceCompleteness >= 80 {
+		return "complete"
+	}
+	if profile.EvidenceCompleteness >= 50 {
+		return "partial"
+	}
+	return "incomplete"
+}
+
+func strictEvidenceChainConsistencyDecisions(execution ExecutionTasksResponseDTO, now time.Time) []StrongestBrainDecisionItem {
+	items := make([]StrongestBrainDecisionItem, 0)
+	for _, item := range execution.Items {
+		if !strings.EqualFold(strings.TrimSpace(item.Status), "done") {
+			continue
+		}
+		if executionItemHasCodeResultEvidence(item) {
+			continue
+		}
+		if item.RiskLevel != "safe" && item.RiskLevel != "done" {
+			continue
+		}
+		items = append(items, StrongestBrainDecisionItem{
+			ID:              fmt.Sprintf("execution:%s:completed-without-code-result", item.TaskID),
+			TaskID:          item.TaskID,
+			Title:           item.Title,
+			Problem:         "任务已完成，但缺少 commit 或 MR 结果证据",
+			Evidence:        []string{fmt.Sprintf("状态 %s，commit %d，MR %d", item.Status, item.CommitCount, item.MRCount), "分支只能证明进入排期，不能证明交付结果"},
+			SuggestedAction: "要求负责人补齐 commit、MR 或验收证据；无法补齐时回退完成状态并记录原因",
+			ImpactScope:     executionImpactScope(item),
+			JumpLabel:       firstNonEmpty(item.ParentDemandID, item.TaskID),
+			JumpURL:         item.MRURL,
+			RiskLevel:       "critical",
+			RiskType:        "evidence_missing",
+			Status:          "open",
+			Assignee:        item.Assignee,
+			Project:         firstNonEmpty(item.Repo, "未归属"),
+			IssueType:       item.IssueType,
+			UpdatedAt:       firstNonEmpty(item.LastEvidenceAt, item.LastUpdate, formatDateTime(now)),
+			Source:          "execution",
+			Rank:            94,
+		})
+	}
+	return items
+}
+
 func decisionFromScheduleItem(item ScheduleItemDTO) StrongestBrainDecisionItem {
 	riskLevel := "warning"
 	if item.RiskLevel == "overdue" {
@@ -354,6 +727,8 @@ func decisionFromScheduleItem(item ScheduleItemDTO) StrongestBrainDecisionItem {
 	riskType := item.RiskLevel
 	if item.RiskLevel == "unscheduled" {
 		riskType = "missing_schedule"
+	} else if item.RiskLevel == "stale" {
+		riskType = "stale_after_schedule"
 	}
 	return StrongestBrainDecisionItem{
 		ID:              fmt.Sprintf("schedule:%s:%s", item.DemandID, riskType),
@@ -392,7 +767,7 @@ func decisionFromExecutionItem(item ExecutionTaskItemDTO) StrongestBrainDecision
 		JumpLabel:       firstNonEmpty(item.ParentDemandID, item.TaskID),
 		JumpURL:         item.MRURL,
 		RiskLevel:       riskLevel,
-		RiskType:        firstNonEmpty(firstRiskTag(item.RiskTags), item.RiskLevel),
+		RiskType:        executionDecisionRiskType(item),
 		Status:          "open",
 		Assignee:        item.Assignee,
 		Project:         firstNonEmpty(item.Repo, "未归属"),
@@ -565,6 +940,127 @@ func executionImpactScope(item ExecutionTaskItemDTO) string {
 	return fmt.Sprintf("影响未归属执行任务 %s，难以进入需求复盘", item.TaskID)
 }
 
+func executionDecisionRiskType(item ExecutionTaskItemDTO) string {
+	switch item.RiskLabel {
+	case "完成无证据":
+		return "evidence_missing"
+	case "状态不一致":
+		return "status_mismatch"
+	case "未启动", "推进停滞":
+		return "stale_after_schedule"
+	case "未绑定需求":
+		return "orphan_execution"
+	}
+	tag := firstRiskTag(item.RiskTags)
+	switch tag {
+	case "state_mismatch":
+		return "status_mismatch"
+	case "missing_evidence":
+		return "evidence_missing"
+	case "stale":
+		return "stale_after_schedule"
+	case "orphan":
+		return "orphan_execution"
+	default:
+		return firstNonEmpty(tag, item.RiskLevel)
+	}
+}
+
+func executionItemHasCodeResultEvidence(item ExecutionTaskItemDTO) bool {
+	return item.CommitCount > 0 ||
+		item.MRCount > 0 ||
+		item.MergedMRCount > 0 ||
+		firstNonEmpty(item.LastCommit) != "" ||
+		strings.TrimSpace(item.MRURL) != "" ||
+		item.MRIID > 0
+}
+
+func executionItemIndicatesStaleAfterSchedule(item ExecutionTaskItemDTO) bool {
+	if item.RiskLabel == "未启动" || item.RiskLabel == "推进停滞" {
+		return true
+	}
+	for _, tag := range item.RiskTags {
+		if tag == "stale" || tag == "missing_evidence" {
+			return true
+		}
+	}
+	return false
+}
+
+func strongestBrainScheduleEvidenceRefs(item ScheduleItemDTO) []string {
+	refs := []string{"task:" + strings.TrimSpace(item.DemandID)}
+	if item.TaskGroupID != "" {
+		refs = append(refs, "task_group:"+item.TaskGroupID)
+	}
+	if item.Branch != "" {
+		refs = append(refs, "branch:"+item.Branch)
+	}
+	if item.DueDate != "" {
+		refs = append(refs, "deadline:"+item.DueDate)
+	}
+	if item.MRURL != "" {
+		refs = append(refs, "mr:"+item.MRURL)
+	}
+	return compactStrings(refs, 8)
+}
+
+func strongestBrainExecutionEvidenceRefs(item ExecutionTaskItemDTO) []string {
+	refs := []string{"task:" + strings.TrimSpace(item.TaskID)}
+	if item.ParentDemandID != "" {
+		refs = append(refs, "parent_demand:"+item.ParentDemandID)
+	}
+	if item.TaskGroupID != "" {
+		refs = append(refs, "task_group:"+item.TaskGroupID)
+	}
+	if firstNonEmpty(item.LastCommit) != "" {
+		refs = append(refs, "commit:"+shortEvidenceToken(item.LastCommit))
+	}
+	if item.MRURL != "" {
+		refs = append(refs, "mr:"+item.MRURL)
+	} else if item.MRIID > 0 {
+		refs = append(refs, fmt.Sprintf("mr_iid:%d", item.MRIID))
+	}
+	return compactStrings(refs, 8)
+}
+
+func strongestBrainLogEvidenceRef(log db.GitCommitLog) string {
+	switch {
+	case strings.HasPrefix(log.Action, "mr_") && strings.TrimSpace(log.MrURL) != "":
+		return "mr:" + strings.TrimSpace(log.MrURL)
+	case strings.HasPrefix(log.Action, "mr_") && log.MrIID > 0:
+		return fmt.Sprintf("mr_iid:%d", log.MrIID)
+	case strings.TrimSpace(log.CommitID) != "":
+		return "commit:" + shortEvidenceToken(log.CommitID)
+	case strings.TrimSpace(log.Action) != "":
+		return "git_event:" + strings.TrimSpace(log.Action)
+	default:
+		return "git_event"
+	}
+}
+
+func shortEvidenceToken(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
+}
+
+func latestFormattedTime(current string, candidate string) string {
+	current = strings.TrimSpace(current)
+	candidate = strings.TrimSpace(candidate)
+	if current == "" {
+		return candidate
+	}
+	if candidate == "" {
+		return current
+	}
+	if candidate > current {
+		return candidate
+	}
+	return current
+}
+
 func decisionStatusFromLogs(reason string) string {
 	if strings.Contains(reason, "尚未") || strings.Contains(reason, "缺少") {
 		return "open"
@@ -579,7 +1075,266 @@ func firstRiskTag(tags []string) string {
 	return strings.TrimSpace(tags[0])
 }
 
-func buildEvidenceDigest(logs []db.GitCommitLog) []StrongestBrainEvidenceDigest {
+func enrichStrongestBrainDecisionItems(items []StrongestBrainDecisionItem, profiles map[string]strongestBrainEvidenceProfile, now time.Time) []StrongestBrainDecisionItem {
+	enriched := make([]StrongestBrainDecisionItem, 0, len(items))
+	for _, item := range items {
+		profile, hasProfile := profiles[item.TaskID]
+		if item.RecommendedAction == "" {
+			item.RecommendedAction = item.SuggestedAction
+		}
+		if item.DecisionOwner == "" {
+			item.DecisionOwner = decisionOwnerForStrongestBrainItem(item)
+		}
+		if item.Deadline == "" {
+			item.Deadline = decisionDeadlineForStrongestBrainItem(item, profile, hasProfile, now)
+		}
+		if len(item.EvidenceRefs) == 0 {
+			if hasProfile {
+				item.EvidenceRefs = profile.EvidenceRefs
+			} else {
+				item.EvidenceRefs = fallbackEvidenceRefsForStrongestBrainItem(item)
+			}
+		}
+		if len(item.MissingLinks) == 0 && hasProfile {
+			item.MissingLinks = profile.MissingLinks
+		}
+		if item.ChainStatus == "" && hasProfile {
+			item.ChainStatus = profile.ChainStatus
+		}
+		if item.EvidenceCompleteness == 0 && hasProfile {
+			item.EvidenceCompleteness = profile.EvidenceCompleteness
+		}
+		if item.RecommendedAction == "" {
+			item.RecommendedAction = "确认事实证据后决定处理动作"
+		}
+		if item.SuggestedAction == "" {
+			item.SuggestedAction = item.RecommendedAction
+		}
+		item.EvidenceRefs = compactStrings(item.EvidenceRefs, 12)
+		item.MissingLinks = compactStrings(item.MissingLinks, 10)
+		enriched = append(enriched, item)
+	}
+	return enriched
+}
+
+func dedupeStrongestBrainDecisionItems(items []StrongestBrainDecisionItem) []StrongestBrainDecisionItem {
+	seen := make(map[string]bool, len(items))
+	deduped := make([]StrongestBrainDecisionItem, 0, len(items))
+	for _, item := range items {
+		key := firstNonEmpty(item.ID, item.Source+":"+item.TaskID+":"+item.RiskType)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, item)
+	}
+	return deduped
+}
+
+func buildStrongestBrainDecisionSummary(items []StrongestBrainDecisionItem, weeklyDecisionCount int) StrongestBrainDecisionSummary {
+	summary := StrongestBrainDecisionSummary{Total: len(items), WeeklyDecisionCount: weeklyDecisionCount}
+	for _, item := range items {
+		if item.RiskLevel == "critical" {
+			summary.Critical++
+		} else if item.RiskLevel == "warning" {
+			summary.Warning++
+		}
+		if item.Status == "open" {
+			summary.Open++
+		}
+		switch item.Source {
+		case "schedule":
+			summary.ScheduleRisks++
+		case "execution":
+			summary.EvidenceRisks++
+		case "context":
+			summary.ContextGaps++
+		}
+		accumulateStrongestBrainExceptionCounters(&summary.EvidenceIncomplete, &summary.StatusMismatch, &summary.MissingSchedule, &summary.StaleAfterSchedule, &summary.DeadlineChainRisks, item)
+	}
+	return summary
+}
+
+func buildStrongestBrainExceptionSummary(items []StrongestBrainDecisionItem) StrongestBrainExceptionSummary {
+	summary := StrongestBrainExceptionSummary{
+		Total:   len(items),
+		ByType:  make(map[string]int),
+		ByOwner: make(map[string]int),
+	}
+	for _, item := range items {
+		if item.RiskLevel == "critical" {
+			summary.Critical++
+		} else if item.RiskLevel == "warning" {
+			summary.Warning++
+		}
+		if item.Status == "open" {
+			summary.Open++
+		}
+		riskType := firstNonEmpty(item.RiskType, "unknown")
+		summary.ByType[riskType]++
+		owner := firstNonEmpty(item.DecisionOwner, item.Assignee, "未分配")
+		summary.ByOwner[owner]++
+		accumulateStrongestBrainExceptionCounters(&summary.EvidenceIncomplete, &summary.StatusMismatch, &summary.MissingSchedule, &summary.StaleAfterSchedule, &summary.DeadlineChainRisks, item)
+	}
+	return summary
+}
+
+func accumulateStrongestBrainExceptionCounters(evidenceIncomplete *int, statusMismatch *int, missingSchedule *int, staleAfterSchedule *int, deadlineChainRisks *int, item StrongestBrainDecisionItem) {
+	countedEvidence := false
+	if item.EvidenceCompleteness > 0 && item.EvidenceCompleteness < 80 {
+		*evidenceIncomplete = *evidenceIncomplete + 1
+		countedEvidence = true
+	}
+	switch item.RiskType {
+	case "evidence_missing":
+		if !countedEvidence {
+			*evidenceIncomplete = *evidenceIncomplete + 1
+		}
+	case "status_mismatch":
+		*statusMismatch = *statusMismatch + 1
+	case "missing_schedule":
+		*missingSchedule = *missingSchedule + 1
+	case "stale_after_schedule":
+		*staleAfterSchedule = *staleAfterSchedule + 1
+	case "due_soon", "overdue":
+		if item.ChainStatus == "deadline_at_risk" || len(item.MissingLinks) > 0 {
+			*deadlineChainRisks = *deadlineChainRisks + 1
+		}
+	}
+	if item.ChainStatus == "mismatch" && item.RiskType != "status_mismatch" {
+		*statusMismatch = *statusMismatch + 1
+	}
+}
+
+func buildStrongestBrainWeeklyDecisions(items []StrongestBrainDecisionItem) []StrongestBrainWeeklyDecision {
+	cards := make([]StrongestBrainWeeklyDecision, 0, 8)
+	for _, item := range items {
+		if item.Status != "open" {
+			continue
+		}
+		if item.Rank < 60 && item.RiskLevel != "critical" {
+			continue
+		}
+		cards = append(cards, StrongestBrainWeeklyDecision{
+			ID:                   "weekly:" + item.ID,
+			SourceItemID:         item.ID,
+			TaskID:               item.TaskID,
+			DecisionType:         weeklyDecisionTypeForRisk(item.RiskType),
+			Question:             weeklyDecisionQuestion(item),
+			RiskLevel:            item.RiskLevel,
+			DecisionOwner:        item.DecisionOwner,
+			Deadline:             item.Deadline,
+			RecommendedAction:    item.RecommendedAction,
+			Options:              weeklyDecisionOptions(item.RiskType),
+			EvidenceRefs:         item.EvidenceRefs,
+			MissingLinks:         item.MissingLinks,
+			ImpactScope:          item.ImpactScope,
+			ChainStatus:          item.ChainStatus,
+			EvidenceCompleteness: item.EvidenceCompleteness,
+		})
+		if len(cards) >= 8 {
+			break
+		}
+	}
+	return cards
+}
+
+func decisionOwnerForStrongestBrainItem(item StrongestBrainDecisionItem) string {
+	if assignee := normalizeAssignee(item.Assignee); assignee != "" && assignee != "未分配" {
+		return assignee
+	}
+	switch item.RiskType {
+	case "missing_schedule", "context_missing":
+		return "PM / 需求负责人"
+	case "status_mismatch", "overdue":
+		return "研发负责人"
+	default:
+		return "需求负责人"
+	}
+}
+
+func decisionDeadlineForStrongestBrainItem(item StrongestBrainDecisionItem, profile strongestBrainEvidenceProfile, hasProfile bool, now time.Time) string {
+	if hasProfile && profile.DueDate != "" && (item.RiskType == "due_soon" || item.RiskType == "overdue") {
+		return profile.DueDate
+	}
+	if item.RiskLevel == "critical" {
+		return formatOptionalDatePtr(now.AddDate(0, 0, 1))
+	}
+	return formatOptionalDatePtr(now.AddDate(0, 0, 3))
+}
+
+func fallbackEvidenceRefsForStrongestBrainItem(item StrongestBrainDecisionItem) []string {
+	refs := []string{}
+	if item.TaskID != "" {
+		refs = append(refs, "task:"+item.TaskID)
+	}
+	if item.JumpURL != "" {
+		refs = append(refs, "url:"+item.JumpURL)
+	}
+	if item.Source != "" {
+		refs = append(refs, "source:"+item.Source)
+	}
+	return compactStrings(refs, 6)
+}
+
+func weeklyDecisionTypeForRisk(riskType string) string {
+	switch riskType {
+	case "missing_schedule":
+		return "补排期"
+	case "due_soon", "overdue":
+		return "延期或拆分"
+	case "stale_after_schedule":
+		return "升级阻塞"
+	case "evidence_missing", "status_mismatch", "semantic_evidence_review":
+		return "状态证据对齐"
+	case "context_missing":
+		return "补充需求信息"
+	default:
+		return "人工决策"
+	}
+}
+
+func weeklyDecisionQuestion(item StrongestBrainDecisionItem) string {
+	switch item.RiskType {
+	case "missing_schedule":
+		return fmt.Sprintf("%s 是否进入本周排期并承诺截止日？", item.TaskID)
+	case "due_soon":
+		return fmt.Sprintf("%s 临近截止，是否需要拆分范围或调整合并窗口？", item.TaskID)
+	case "overdue":
+		return fmt.Sprintf("%s 已逾期，是否延期、转派或缩减范围？", item.TaskID)
+	case "stale_after_schedule":
+		return fmt.Sprintf("%s 已排期但无推进，是否升级阻塞处理？", item.TaskID)
+	case "status_mismatch":
+		return fmt.Sprintf("%s MR/Jira 状态不一致，本周由谁拍板回写？", item.TaskID)
+	case "evidence_missing":
+		return fmt.Sprintf("%s 完成状态缺证据，是否接受或回退完成结论？", item.TaskID)
+	default:
+		return firstNonEmpty(item.Problem, item.Title)
+	}
+}
+
+func weeklyDecisionOptions(riskType string) []string {
+	switch riskType {
+	case "missing_schedule":
+		return []string{"补齐负责人/分支/截止日", "退回需求澄清", "挂起并记录原因"}
+	case "due_soon", "overdue":
+		return []string{"延期并记录原因", "拆分范围先交付核心", "转派/加人协助"}
+	case "stale_after_schedule":
+		return []string{"升级阻塞", "重新承诺下一次证据时间", "调整负责人"}
+	case "evidence_missing":
+		return []string{"补齐 commit/MR", "回退完成状态", "记录人工验收证据"}
+	case "status_mismatch":
+		return []string{"回写 Jira 完成", "回退 MR/任务状态", "补充验收后再关闭"}
+	default:
+		return []string{"接受推荐动作", "人工改派", "挂起观察"}
+	}
+}
+
+func buildEvidenceDigest(logs []db.GitCommitLog, profileSets ...map[string]strongestBrainEvidenceProfile) []StrongestBrainEvidenceDigest {
+	profiles := map[string]strongestBrainEvidenceProfile{}
+	if len(profileSets) > 0 && profileSets[0] != nil {
+		profiles = profileSets[0]
+	}
 	byTask := make(map[string]*StrongestBrainEvidenceDigest)
 	for _, log := range logs {
 		taskID := strings.TrimSpace(log.TaskID)
@@ -606,6 +1361,13 @@ func buildEvidenceDigest(logs []db.GitCommitLog) []StrongestBrainEvidenceDigest 
 	}
 	items := make([]StrongestBrainEvidenceDigest, 0, len(byTask))
 	for _, item := range byTask {
+		if profile, ok := profiles[item.TaskID]; ok {
+			item.TaskGroupID = profile.TaskGroupID
+			item.EvidenceRefs = profile.EvidenceRefs
+			item.MissingLinks = profile.MissingLinks
+			item.ChainStatus = profile.ChainStatus
+			item.EvidenceCompleteness = profile.EvidenceCompleteness
+		}
 		items = append(items, *item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -631,6 +1393,78 @@ func chainTaskDTO(task db.TaskTelemetry) StrongestBrainChainTask {
 	}
 }
 
+func buildStrongestBrainEvidenceChainProfile(root db.TaskTelemetry, related []db.TaskTelemetry, logs []db.GitCommitLog, now time.Time) strongestBrainEvidenceProfile {
+	profile := strongestBrainEvidenceProfile{
+		TaskID:        strings.TrimSpace(root.TaskID),
+		TaskGroupID:   normalizedTaskGroupID(root.TaskGroupID),
+		IsDemand:      normalizeIssueType(root.IssueType) == "demand" || normalizeIssueType(root.IssueType) == "bug",
+		HasIssue:      strings.TrimSpace(root.TaskID) != "",
+		HasBranch:     hasScheduleBranch(root.Branch),
+		HasDueDate:    root.DueDate != nil && !root.DueDate.IsZero(),
+		HasDoneStatus: strings.EqualFold(strings.TrimSpace(root.Status), "done"),
+		DueDate:       formatOptionalDate(root.DueDate),
+		EvidenceRefs:  []string{"task:" + strings.TrimSpace(root.TaskID)},
+	}
+	if profile.TaskGroupID != "" {
+		profile.EvidenceRefs = append(profile.EvidenceRefs, "task_group:"+profile.TaskGroupID)
+	}
+	if profile.HasBranch {
+		profile.EvidenceRefs = append(profile.EvidenceRefs, "branch:"+strings.TrimSpace(root.Branch))
+	}
+	if profile.HasDueDate {
+		profile.EvidenceRefs = append(profile.EvidenceRefs, "deadline:"+profile.DueDate)
+		profile.DeadlineChainRisk = strongestBrainDueDateAtRisk(*root.DueDate, now)
+	}
+
+	for _, task := range related {
+		issueType := normalizeIssueType(task.IssueType)
+		if strings.TrimSpace(task.TaskID) != strings.TrimSpace(root.TaskID) && issueType != "demand" && issueType != "bug" {
+			profile.HasExecutionTask = true
+			profile.EvidenceRefs = append(profile.EvidenceRefs, "task:"+strings.TrimSpace(task.TaskID))
+		}
+		profile.HasBranch = profile.HasBranch || hasScheduleBranch(task.Branch)
+		profile.HasDoneStatus = profile.HasDoneStatus || strings.EqualFold(strings.TrimSpace(task.Status), "done")
+		if strings.TrimSpace(task.LastCommit) != "" && strings.TrimSpace(task.LastCommit) != "-" {
+			profile.HasCommit = true
+			profile.EvidenceRefs = append(profile.EvidenceRefs, "commit:"+shortEvidenceToken(task.LastCommit))
+		}
+		if strings.TrimSpace(task.MrURL) != "" || task.MrIID > 0 {
+			profile.HasMR = true
+			if strings.TrimSpace(task.MrURL) != "" {
+				profile.EvidenceRefs = append(profile.EvidenceRefs, "mr:"+strings.TrimSpace(task.MrURL))
+			} else {
+				profile.EvidenceRefs = append(profile.EvidenceRefs, fmt.Sprintf("mr_iid:%d", task.MrIID))
+			}
+		}
+	}
+
+	stats := strongestBrainLogStatsByTask(logs)
+	for _, stat := range stats {
+		applyStrongestBrainLogStats(&profile, stat)
+	}
+	for _, log := range logs {
+		var task db.TaskTelemetry
+		for _, candidate := range related {
+			if strings.TrimSpace(candidate.TaskID) == strings.TrimSpace(log.TaskID) {
+				task = candidate
+				break
+			}
+		}
+		if log.Action == "mr_merge" && !strings.EqualFold(strings.TrimSpace(task.Status), "done") {
+			profile.StatusMismatches = append(profile.StatusMismatches, "merged_mr_status_not_done:"+strings.TrimSpace(log.TaskID))
+		}
+	}
+	if profile.IsDemand && !profile.HasExecutionTask && profile.HasBranch && !profile.HasCommit && !profile.HasMR {
+		profile.StaleAfterSchedule = now.Sub(scheduleActivityTime(root)) > 72*time.Hour
+	}
+	return finalizeStrongestBrainEvidenceProfile(profile)
+}
+
+func strongestBrainDueDateAtRisk(due time.Time, now time.Time) bool {
+	daysRemaining := int(startOfDay(due).Sub(startOfDay(now)).Hours() / 24)
+	return daysRemaining <= 3
+}
+
 func evidenceChainSignals(response StrongestBrainEvidenceChainResponse) []string {
 	signals := []string{}
 	if response.Summary.RelatedTasks == 0 {
@@ -641,6 +1475,12 @@ func evidenceChainSignals(response StrongestBrainEvidenceChainResponse) []string
 	}
 	if response.Summary.MergedMRs > 0 {
 		signals = append(signals, "已有 MR 合并证据")
+	}
+	if len(response.Summary.MissingLinks) > 0 {
+		signals = append(signals, "证据链缺口："+strings.Join(response.Summary.MissingLinks, " / "))
+	}
+	if len(response.Summary.StatusMismatches) > 0 {
+		signals = append(signals, "状态不一致："+strings.Join(response.Summary.StatusMismatches, " / "))
 	}
 	if len(signals) == 0 {
 		signals = append(signals, "证据链正常回流")
