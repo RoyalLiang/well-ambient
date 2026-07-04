@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/telemetry"
 )
 
 type StrongestBrainDecisionQueueResponse struct {
@@ -156,6 +157,7 @@ func (s *Server) handleGetStrongestBrainDecisionQueue(w http.ResponseWriter, r *
 		}
 		items = append(items, decisionFromExecutionItem(item))
 	}
+	items = append(items, semanticEvidenceReviewDecisions(now)...)
 
 	items = append(items, contextGapDecisions(now)...)
 	sort.SliceStable(items, func(i, j int) bool {
@@ -426,6 +428,66 @@ func contextGapDecisions(now time.Time) []StrongestBrainDecisionItem {
 		Source:          "context",
 		Rank:            58,
 	}}
+}
+
+func semanticEvidenceReviewDecisions(now time.Time) []StrongestBrainDecisionItem {
+	var notifications []db.Notification
+	if err := db.DB.
+		Where("type = ?", telemetry.SemanticLinkerType).
+		Order("created_at desc").
+		Limit(80).
+		Find(&notifications).Error; err != nil || len(notifications) == 0 {
+		return nil
+	}
+
+	items := make([]StrongestBrainDecisionItem, 0)
+	seenLogs := make(map[uint]bool)
+	for _, notification := range notifications {
+		taskID := strings.TrimSpace(notification.TaskID)
+		if taskID == "" {
+			continue
+		}
+
+		var log db.GitCommitLog
+		if err := db.DB.
+			Where("task_id = ? AND action = ? AND created_at BETWEEN ? AND ?", taskID, "git_push", notification.CreatedAt.Add(-10*time.Minute), notification.CreatedAt.Add(10*time.Minute)).
+			Order("created_at desc").
+			First(&log).Error; err != nil || log.ID == 0 || seenLogs[log.ID] {
+			continue
+		}
+		if !telemetry.IsWeakSemanticCommit(taskID, log) {
+			continue
+		}
+		seenLogs[log.ID] = true
+
+		var task db.TaskTelemetry
+		_ = db.DB.Where("task_id = ?", taskID).First(&task).Error
+		shortCommit := strings.TrimSpace(log.CommitID)
+		if len(shortCommit) > 8 {
+			shortCommit = shortCommit[:8]
+		}
+
+		items = append(items, StrongestBrainDecisionItem{
+			ID:              fmt.Sprintf("execution:%s:semantic-evidence:%d", taskID, log.ID),
+			TaskID:          taskID,
+			Title:           firstNonEmpty(task.Title, "弱语义证据待核验"),
+			Problem:         fmt.Sprintf("commit %s 通过 AI 语义猜测挂到 %s，但分支和提交信息均未显式携带 Jira 号", firstNonEmpty(shortCommit, "-"), taskID),
+			Evidence:        []string{fmt.Sprintf("repo=%s / branch=%s", firstNonEmpty(log.Repo, "-"), firstNonEmpty(log.Branch, "-")), fmt.Sprintf("author=%s / assignee=%s", firstNonEmpty(log.Author, "-"), firstNonEmpty(task.Assignee, "-")), "semantic_linker 仅作为候选证据，需人工确认归属"},
+			SuggestedAction: "人工复核 commit 所属项目、分支和负责人；确认误绑后移除错误证据或恢复任务状态",
+			ImpactScope:     fmt.Sprintf("影响 %s 的完成/评审自动流转可信度", taskID),
+			JumpLabel:       taskID,
+			RiskLevel:       "critical",
+			RiskType:        "semantic_evidence_review",
+			Status:          "open",
+			Assignee:        normalizeAssignee(firstNonEmpty(task.Assignee, notification.Assignee)),
+			Project:         firstNonEmpty(task.Repo, log.Repo, "未归属"),
+			IssueType:       firstNonEmpty(normalizeIssueType(task.IssueType), "task"),
+			UpdatedAt:       firstNonEmpty(formatDateTime(log.CreatedAt), formatDateTime(now)),
+			Source:          "execution",
+			Rank:            97,
+		})
+	}
+	return items
 }
 
 func scheduleEvidenceLines(item ScheduleItemDTO) []string {
@@ -870,7 +932,7 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 		} else {
 			oldVal = ""
 		}
-		
+
 		t, err := time.Parse("2006-01-02", req.Value)
 		if err != nil {
 			t2, err2 := time.Parse(time.RFC3339, req.Value)
@@ -880,7 +942,7 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 			}
 			t = t2
 		}
-		
+
 		task.DueDate = &t
 		task.LastUpdate = time.Now()
 	case "link_repo":

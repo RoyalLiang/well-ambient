@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"well-ambient/internal/db"
+	"well-ambient/internal/telemetry"
 )
 
 // TelemetrySnippet holds brief task freshness status for UI presentation
@@ -187,43 +188,64 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 }
 
 func withLatestCommitReference(decision AutoDecision) AutoDecision {
-	commitID, commitURL := latestCommitReference(decision.TaskID)
+	commitID, commitURL, hasWeakSemanticEvidence := latestCommitReference(decision.TaskID)
 	decision.CommitID = commitID
 	decision.CommitURL = commitURL
+	if commitID == "" && hasWeakSemanticEvidence {
+		decision.Message = weakSemanticEvidenceMessage(decision.Message)
+	}
 	return decision
 }
 
-func latestCommitReference(taskID string) (string, string) {
+func latestCommitReference(taskID string) (string, string, bool) {
 	taskID = strings.TrimSpace(taskID)
 	if db.DB == nil || taskID == "" {
-		return "", ""
+		return "", "", false
 	}
 
-	var gitLog db.GitCommitLog
+	var gitLogs []db.GitCommitLog
 	if err := db.DB.
 		Where("task_id = ? AND action = ? AND commit_id <> ?", taskID, "git_push", "").
 		Order("created_at desc").
-		First(&gitLog).Error; err != nil {
-		return "", ""
+		Limit(20).
+		Find(&gitLogs).Error; err != nil || len(gitLogs) == 0 {
+		return "", "", false
 	}
 
-	commitID := strings.TrimSpace(gitLog.CommitID)
-	if commitID == "" {
-		return "", ""
+	hasWeakSemanticEvidence := false
+	for _, gitLog := range gitLogs {
+		if telemetry.IsWeakSemanticCommit(taskID, gitLog) {
+			hasWeakSemanticEvidence = true
+			continue
+		}
+
+		commitID := strings.TrimSpace(gitLog.CommitID)
+		if commitID == "" {
+			continue
+		}
+
+		var notification db.Notification
+		if err := db.DB.
+			Where("task_id = ? AND type = ? AND link LIKE ?", taskID, "git_push", "%"+commitID+"%").
+			Order("created_at desc").
+			First(&notification).Error; err == nil {
+			return commitID, strings.TrimSpace(notification.Link), hasWeakSemanticEvidence
+		}
+
+		_ = db.DB.
+			Where("task_id = ? AND type = ? AND link <> ?", taskID, "git_push", "").
+			Order("created_at desc").
+			First(&notification).Error
+
+		return commitID, strings.TrimSpace(notification.Link), hasWeakSemanticEvidence
 	}
 
-	var notification db.Notification
-	if err := db.DB.
-		Where("task_id = ? AND type = ? AND link LIKE ?", taskID, "git_push", "%"+commitID+"%").
-		Order("created_at desc").
-		First(&notification).Error; err == nil {
-		return commitID, strings.TrimSpace(notification.Link)
+	return "", "", hasWeakSemanticEvidence
+}
+
+func weakSemanticEvidenceMessage(message string) string {
+	if strings.Contains(message, "DONE") || strings.Contains(message, "归档") {
+		return "⚠️ 检测到事项为 DONE，但最近 commit 来自弱语义关联，AI 已暂停自动归档并转入人工复核。"
 	}
-
-	_ = db.DB.
-		Where("task_id = ? AND type = ? AND link <> ?", taskID, "git_push", "").
-		Order("created_at desc").
-		First(&notification).Error
-
-	return commitID, strings.TrimSpace(notification.Link)
+	return "⚠️ 检测到事项状态变化，但最近 commit 归属置信度不足，AI 已暂停自动流转并转入人工复核。"
 }

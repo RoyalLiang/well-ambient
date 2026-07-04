@@ -105,6 +105,72 @@ func TestStrongestBrainDecisionQueueBuildsScheduleAndEvidenceItems(t *testing.T)
 	}
 }
 
+func TestStrongestBrainDecisionQueueFlagsWeakSemanticEvidence(t *testing.T) {
+	token := seedStrongestBrainUser(t)
+	now := time.Now()
+	task := db.TaskTelemetry{
+		TaskID:     "NS2-1692",
+		Title:      "南沙二期配置中心点位",
+		IssueType:  "task",
+		Status:     "done",
+		Assignee:   "梁志远",
+		Repo:       "PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2)",
+		Branch:     "baiyun_dev",
+		LastUpdate: now,
+	}
+	if err := db.DB.Create(&task).Error; err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	if err := db.DB.Create(&db.Notification{
+		Type:      "semantic_linker",
+		TaskID:    task.TaskID,
+		Title:     "AI semantic link",
+		Message:   "AI 自动将推送分支/Commit关联到未完成任务",
+		Assignee:  "haoliang.jiang",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed semantic notification: %v", err)
+	}
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    task.TaskID,
+		Repo:      "task_executor",
+		Branch:    "baiyun_dev",
+		CommitID:  "43ee9ba4ef611a45fec78fac46290a0f827be1cd",
+		Message:   "feat: 适配新的配置中心点位",
+		Author:    "haoliang.jiang",
+		Action:    "git_push",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed git log: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/decision-queue", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var response StrongestBrainDecisionQueueResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	found := false
+	for _, item := range response.Items {
+		if item.TaskID == task.TaskID && item.RiskType == "semantic_evidence_review" {
+			found = true
+			if item.RiskLevel != "critical" {
+				t.Fatalf("risk level = %q, want critical", item.RiskLevel)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected semantic evidence review decision, got %+v", response.Items)
+	}
+}
+
 func TestStrongestBrainEvidenceChainReturnsRelatedTasksAndLogs(t *testing.T) {
 	token := seedStrongestBrainUser(t)
 	now := time.Now()
@@ -177,7 +243,7 @@ func TestAIIntentSummaryDeterministicFallback(t *testing.T) {
 
 func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	_ = seedStrongestBrainUser(t) // 初始化 db 和基础用户
-	
+
 	var u userdb.User
 	if err := db.DB.Where("username = ?", "brain-user").First(&u).Error; err != nil {
 		t.Fatalf("query user: %v", err)
@@ -196,19 +262,19 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	}
 	now := time.Now()
 	task := db.TaskTelemetry{
-		TaskID:        "DEMAND-3",
-		Title:         "待转派需求",
-		IssueType:     "demand",
-		Status:        "progress",
-		Assignee:      "Brain User",
-		LastUpdate:    now,
+		TaskID:     "DEMAND-3",
+		Title:      "待转派需求",
+		IssueType:  "demand",
+		Status:     "progress",
+		Assignee:   "Brain User",
+		LastUpdate: now,
 	}
 	if err := db.DB.Create(&task).Error; err != nil {
 		t.Fatalf("seed task: %v", err)
 	}
 
 	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
-	
+
 	// 测试 reassign 动作
 	body := bytes.NewBufferString(`{
 		"task_id": "DEMAND-3",
@@ -219,7 +285,7 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/strongest-brain/intervention", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

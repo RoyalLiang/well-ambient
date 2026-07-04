@@ -1,9 +1,11 @@
 package agenda
 
 import (
+	"strings"
 	"testing"
 	"time"
 	"well-ambient/internal/db"
+	"well-ambient/internal/telemetry"
 )
 
 func TestEvaluateActiveTasks(t *testing.T) {
@@ -191,5 +193,54 @@ func TestGenerateAutonomousDecisionsIncludesCommitReference(t *testing.T) {
 	}
 	if found.CommitURL != commitURL {
 		t.Fatalf("CommitURL = %q, want %q", found.CommitURL, commitURL)
+	}
+}
+
+func TestGenerateAutonomousDecisionsSkipsWeakSemanticCommitReference(t *testing.T) {
+	if err := db.InitDB(":memory:"); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	now := time.Now()
+	task := db.TaskTelemetry{
+		TaskID:     "NS2-1692",
+		Title:      "南沙二期配置中心点位",
+		Assignee:   "梁志远",
+		Status:     "done",
+		LastUpdate: now,
+	}
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    task.TaskID,
+		Repo:      "task_executor",
+		Branch:    "baiyun_dev",
+		CommitID:  "43ee9ba4ef611a45fec78fac46290a0f827be1cd",
+		Message:   "feat: 适配新的配置中心点位",
+		Author:    "haoliang.jiang",
+		Action:    "git_push",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed weak semantic commit: %v", err)
+	}
+	if err := db.DB.Create(&db.Notification{
+		Type:      telemetry.SemanticLinkerType,
+		TaskID:    task.TaskID,
+		Title:     "AI semantic link",
+		Message:   "AI 自动将推送分支/Commit关联到未完成任务",
+		Assignee:  "haoliang.jiang",
+		CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed semantic notification: %v", err)
+	}
+
+	decisions := GenerateAutonomousDecisions([]db.TaskTelemetry{task})
+	if len(decisions) == 0 {
+		t.Fatal("expected auto decisions")
+	}
+	decision := decisions[0]
+	if decision.CommitID != "" || decision.CommitURL != "" {
+		t.Fatalf("weak semantic commit should not be exposed, got %+v", decision)
+	}
+	if !strings.Contains(decision.Message, "暂停自动归档") {
+		t.Fatalf("expected manual review message, got %q", decision.Message)
 	}
 }

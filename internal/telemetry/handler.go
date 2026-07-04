@@ -141,13 +141,13 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 
 		// AI Semantic Linker fallback if taskID is not specified
 		if taskID == "" && cfg.AI.Enabled && db.DB != nil {
-			taskID = trySemanticLink(cfg, branchName, lastCommit, repoName)
+			taskID = trySemanticLink(cfg, branchName, lastCommit, repoName, assigneeName)
 			if taskID != "" {
 				notif := db.Notification{
-					Type:      "semantic_linker",
+					Type:      SemanticLinkerType,
 					TaskID:    taskID,
 					Title:     "🤖 AI 语义无感关联",
-					Message:   fmt.Sprintf("AI 自动将推送分支/Commit关联到未完成任务: %s", taskID),
+					Message:   fmt.Sprintf("AI 自动将推送分支/Commit关联到未完成任务: %s（已通过证据一致性校验）", taskID),
 					Assignee:  assigneeName,
 					Link:      "",
 					CreatedAt: time.Now(),
@@ -256,13 +256,13 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 
 		// AI Semantic Linker fallback if taskID is not specified
 		if taskID == "" && cfg.AI.Enabled && db.DB != nil {
-			taskID = trySemanticLink(cfg, branchName, mrTitle, repoName)
+			taskID = trySemanticLink(cfg, branchName, mrTitle, repoName, assigneeName)
 			if taskID != "" {
 				notif := db.Notification{
-					Type:      "semantic_linker",
+					Type:      SemanticLinkerType,
 					TaskID:    taskID,
 					Title:     "🤖 AI 语义无感关联",
-					Message:   fmt.Sprintf("AI 自动将 MR (!%d) 关联到任务: %s", mrIID, taskID),
+					Message:   fmt.Sprintf("AI 自动将 MR (!%d) 关联到任务: %s（已通过证据一致性校验）", mrIID, taskID),
 					Assignee:  assigneeName,
 					Link:      mrURL,
 					CreatedAt: time.Now(),
@@ -525,7 +525,7 @@ func SyncStatusToJira(cfg *config.Config, taskID string, newStatus string) {
 var OnNotificationBroadcast func()
 
 // trySemanticLink matches an untracked commit/branch to an active Jira task via LLM semantic analysis
-func trySemanticLink(cfg *config.Config, branchName, lastCommit, repoName string) string {
+func trySemanticLink(cfg *config.Config, branchName, lastCommit, repoName, assigneeName string) string {
 	var activeTasks []db.TaskTelemetry
 	if err := db.DB.Where("status != 'done'").Order("last_update desc").Limit(30).Find(&activeTasks).Error; err != nil || len(activeTasks) == 0 {
 		return ""
@@ -573,6 +573,12 @@ func trySemanticLink(cfg *config.Config, branchName, lastCommit, repoName string
 
 	if !valid {
 		log.Printf("Semantic Linker: AI matched a hallucinated TaskID: %s", matched)
+		return ""
+	}
+
+	if ok, reason := semanticLinkTrustReason(matched, branchName, repoName, assigneeName); !ok {
+		log.Printf("Semantic Linker: AI matched %s but evidence guard rejected it: %s", matched, reason)
+		createSemanticReviewNotification(matched, branchName, lastCommit, repoName, assigneeName, reason)
 		return ""
 	}
 
