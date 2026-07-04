@@ -123,6 +123,7 @@
   }
 
   let jiraBaseUrl = '';
+  let gitlabBaseUrl = '';
 
   async function fetchConfig() {
     try {
@@ -140,6 +141,7 @@
           if (!jiraBaseUrl) {
             jiraBaseUrl = data?.jira?.base_url ? data.jira.base_url.replace(/\/+$/, '') : '';
           }
+          gitlabBaseUrl = data?.gitlab?.base_url ? data.gitlab.base_url.replace(/\/+$/, '') : '';
         }
       }
     } catch (e) {
@@ -311,6 +313,27 @@
 
   function shortCommit(commitID?: string) {
     return commitID ? commitID.slice(0, 8) : '';
+  }
+
+  function normalizedCommitUrl(rawUrl?: string) {
+    const url = (rawUrl || '').trim();
+    if (!url || /^about:blank$/i.test(url)) return '';
+    if (/^https?:\/\//i.test(url)) return url;
+    if (url.startsWith('//')) return `https:${url}`;
+    if (url.startsWith('/') && gitlabBaseUrl) return `${gitlabBaseUrl}${url}`;
+    if (url.includes('/-/commit/') && gitlabBaseUrl) return `${gitlabBaseUrl}/${url.replace(/^\/+/, '')}`;
+    if (/^[\w.-]+(?::\d+)?\//.test(url)) return `https://${url}`;
+    return '';
+  }
+
+  function openCommitUrl(event: MouseEvent, rawUrl?: string) {
+    const url = normalizedCommitUrl(rawUrl);
+    if (!url) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    window.open(url, '_blank', 'noopener,noreferrer');
   }
 
   function getRiskTypeLabel(riskType: string) {
@@ -674,28 +697,32 @@
             <div class="terminal-line">
               <div class="terminal-meta-row">
                 <span class="time">[{dec.time}]</span>
-                {#if jiraBaseUrl && dec.task_id && !dec.task_id.startsWith('TASK-')}
-                  <a href="{jiraBaseUrl}/browse/{dec.task_id}" target="_blank" rel="noopener noreferrer" class="task-link">#{dec.task_id}</a>
-                {:else}
-                  <span class="task-link">#{dec.task_id}</span>
-                {/if}
-                {#if dec.commit_id}
-                  {#if dec.commit_url}
-                    <a
-                      href={dec.commit_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="terminal-commit-link"
-                      title={dec.commit_id}
-                    >
-                      commit {shortCommit(dec.commit_id)}
-                    </a>
+                <span class="terminal-id-group">
+                  {#if jiraBaseUrl && dec.task_id && !dec.task_id.startsWith('TASK-')}
+                    <a href="{jiraBaseUrl}/browse/{dec.task_id}" target="_blank" rel="noopener noreferrer" class="task-link">#{dec.task_id}</a>
                   {:else}
-                    <span class="terminal-commit-link muted" title={dec.commit_id}>
-                      commit {shortCommit(dec.commit_id)}
-                    </span>
+                    <span class="task-link">#{dec.task_id}</span>
                   {/if}
-                {/if}
+                  {#if dec.commit_id}
+                    <span class="terminal-id-separator">/</span>
+                    {#if normalizedCommitUrl(dec.commit_url)}
+                      <a
+                        href={normalizedCommitUrl(dec.commit_url)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="terminal-commit-link"
+                        title={dec.commit_id}
+                        on:click={(event) => openCommitUrl(event, dec.commit_url)}
+                      >
+                        {shortCommit(dec.commit_id)}
+                      </a>
+                    {:else}
+                      <span class="terminal-commit-link muted" title={dec.commit_id}>
+                        {shortCommit(dec.commit_id)}
+                      </span>
+                    {/if}
+                  {/if}
+                </span>
               </div>
               <p class="msg">{dec.message}</p>
             </div>
@@ -1118,35 +1145,52 @@
   /* 自动流转终端元信息与标签样式 */
   .terminal-meta-row {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 8px;
     margin-bottom: 2px;
+    min-width: 0;
+  }
+
+  .terminal-meta-row .time {
+    flex: none;
+  }
+
+  .terminal-id-group {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .terminal-id-separator {
+    color: #334155;
+    font-weight: 700;
+    flex: none;
   }
 
   .terminal-commit-link {
     color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-    border: 1px solid rgba(56, 189, 248, 0.22);
-    border-radius: 4px;
-    padding: 1px 5px;
-    font-size: 0.64rem;
-    line-height: 1.35;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.35);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.2;
     text-decoration: none;
     white-space: nowrap;
+    flex: none;
     transition: all 0.2s;
   }
 
   .terminal-commit-link:hover {
     color: #7dd3fc;
-    border-color: rgba(125, 211, 252, 0.45);
-    background: rgba(56, 189, 248, 0.14);
+    border-color: rgba(125, 211, 252, 0.7);
   }
 
   .terminal-commit-link.muted {
     color: #64748b;
-    border-color: rgba(100, 116, 139, 0.22);
-    background: rgba(100, 116, 139, 0.08);
+    border-color: rgba(100, 116, 139, 0.35);
   }
 
   .blockage-context-grid {
