@@ -112,8 +112,8 @@ progressive_loading:
 compression:
   module: "./.agents/runtime/memory.yaml"
   triggers:
-    - "meaningful_tool_calls > 8"
-    - "touched_files > 5"
+    - "meaningful_tool_calls > 6"
+    - "touched_files > 3"
     - "turns_on_task > 2"
     - "before requesting user input on a multi-step task"
     - "after discovering a durable project fact"

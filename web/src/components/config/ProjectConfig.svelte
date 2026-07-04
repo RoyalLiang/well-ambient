@@ -230,7 +230,7 @@
     <div class="card-header flex-header">
       <div>
         <h2>📝 项目集成与优先级管理</h2>
-        <p>配置并同步 Jira 项目键（Project Key）的全局基准优先级（P0 - P5）与当前项目运作阶段。最强大脑将自动执行权重置顶和健康监控。</p>
+        <p>配置并同步 Jira 项目键（Project Key）的全局基准优先级（P0 - P5）与当前项目运作阶段。自动执行权重置顶和健康监控。</p>
       </div>
       <Button variant="primary" on:click={startCreate}>➕ 新建项目集成</Button>
     </div>

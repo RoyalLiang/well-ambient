@@ -1,3 +1,0 @@
-{"scope":"agent_rules","latest":"task-20260608-003","status":"resolved","summary":"Cold boot compression layer landed and passed line-budget validation.","files":["./.agents/memory/tasks.jsonl"]}
-{"scope":"project","latest":"project-20260608-001","status":"active","summary":"AGENTS.md bootstraps YAML-based .agents rule system.","files":["./.agents/memory/project.jsonl"]}
-{"scope":"lessons","latest":"lesson-20260608-001","status":"active","summary":"Use capability-based tool routing instead of hardcoded host tool names.","files":["./.agents/memory/lessons.jsonl"]}

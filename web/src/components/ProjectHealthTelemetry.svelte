@@ -502,7 +502,7 @@
                 </div>
               </div>
 
-              <!-- 🧠 最强大脑改进建议 -->
+              <!-- 🧠 大脑改进建议 -->
               <div class="detail-section" style="margin-top: 15px;">
                 <h4>🧠 大脑行动建议</h4>
                 <div class="action-recommendations">

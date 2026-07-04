@@ -28,9 +28,22 @@ Use `.agents/registry.yaml` as the path index. A stable rule set should satisfy:
 - JSON files parse
 - JSONL memory records parse line by line
 - router references do not point to missing required files
+- memory lite-index records resolve to concrete long-memory records
 
 Run:
 
 ```bash
-ruby scripts/validate-agent-rules.rb
+python3 -B scripts/validate-agent-rules.py
+```
+
+The validator uses only Python's standard library. If PyYAML is installed, it
+performs strict YAML parsing; otherwise it performs dependency-free YAML syntax
+and path-reference checks.
+`-B` keeps Python from writing `__pycache__` files in macOS-mounted remote
+workspaces.
+
+The same check is wired into pre-commit as the local hook `validate-agent-rules`:
+
+```bash
+pre-commit run validate-agent-rules --all-files
 ```

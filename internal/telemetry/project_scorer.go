@@ -241,7 +241,7 @@ func computeScheduleHealth(tasks []db.TaskTelemetry, now time.Time) float64 {
 	for _, task := range tasks {
 		issueT := strings.ToLower(task.IssueType)
 		isDemand := issueT == "demand" || strings.Contains(issueT, "需求") || strings.HasPrefix(task.TaskID, "DEMAND-")
-		
+
 		if isDemand {
 			totalDemands++
 			if task.DueDate != nil {
@@ -276,7 +276,7 @@ func computeEngineeringQuality(tasks []db.TaskTelemetry) float64 {
 	for _, task := range tasks {
 		issueT := strings.ToLower(task.IssueType)
 		isBugOrDemand := issueT == "demand" || issueT == "bug" || strings.Contains(issueT, "需求") || strings.Contains(issueT, "缺陷") || strings.HasPrefix(task.TaskID, "DEMAND-") || strings.HasPrefix(task.TaskID, "BUG-")
-		
+
 		if isBugOrDemand && task.Status != "backlog" {
 			activeDevTasks++
 			cleanedBranch := strings.TrimSpace(task.Branch)
@@ -292,7 +292,7 @@ func computeEngineeringQuality(tasks []db.TaskTelemetry) float64 {
 	}
 
 	// We assume a standard Unit Test success rate of 95% as telemetry is mock-fed
-	tr := 0.95 
+	tr := 0.95
 
 	return 100.0 * (0.6*cr + 0.4*tr)
 }
@@ -319,7 +319,7 @@ func computeCollaborationEfficiency(tasks []db.TaskTelemetry) float64 {
 		}
 		sort.Float64s(values)
 		n := float64(len(values))
-		
+
 		var sumOfX float64
 		for _, x := range values {
 			sumOfX += x
@@ -504,10 +504,10 @@ func generateDiagnostic(projKey, priority string, sh, eq, ce, si float64, tasks 
 	}
 
 	if len(warnings) == 0 {
-		return fmt.Sprintf("最强大脑诊断：当前【%s】项目交付极为健康，进度、代码和协作各项指标优异，请继续保持。", projKey)
+		return fmt.Sprintf("大脑诊断：当前【%s】项目交付极为健康，进度、代码和协作各项指标优异，请继续保持。", projKey)
 	}
 
-	diag := fmt.Sprintf("最强大脑诊断：当前【%s】项目综合健康指数处于警戒阶段。核心问题包括：\n", projKey)
+	diag := fmt.Sprintf("大脑诊断：当前【%s】项目综合健康指数处于警戒阶段。核心问题包括：\n", projKey)
 	for i, w := range warnings {
 		diag += fmt.Sprintf("  %d) %s；\n", i+1, w)
 	}

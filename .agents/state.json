@@ -1,35 +1,38 @@
 {
+  "schema_version": "1.0",
+  "updated_at": null,
+  "active_task": {
+    "goal": null,
+    "intent": null,
+    "complexity": null,
+    "continuity": null,
+    "freshness": null,
+    "risk": null,
+    "phase": null,
+    "loaded_modules": []
+  },
   "warm_memory": {
-    "goal": "Remove the visible strongest-brain decision queue surface after user judged it not useful.",
-    "classification": "coding.simple + continuation; frontend subtraction and memory update",
-    "phase": "complete",
-    "constraints": [
-      "Do not remove backend strongest-brain APIs unless explicitly requested.",
-      "Keep frontend styling as dense internal dark cockpit UI.",
-      "Stage and commit only intentional Phase 25 files; leave task_status.md and well-ambient.db unstaged."
-    ],
-    "decisions": [
-      "Removed the visible strongest-brain decision queue section from DecisionDashboard.",
-      "Removed frontend fetching and 15-second polling of /api/strongest-brain/decision-queue.",
-      "Removed queue-only types, state, derived helpers, handlers, CSS, and responsive selector remnants.",
-      "Preserved the existing Agenda metrics, filters, AI plan import, and manual intervention workflow."
-    ],
-    "findings": [
-      "The user judged the strongest-brain decision queue surface as not useful even after meaning copy was added.",
-      "The right product move for now is subtraction from the decision dashboard, while leaving backend contracts intact.",
-      "task_status.md and well-ambient.db are unrelated runtime/data changes for this phase."
-    ],
-    "touched_files": [
-      "task_plan.md",
-      "findings.md",
-      "progress.md",
-      ".agents/state.json",
-      "web/src/components/DecisionDashboard.svelte"
-    ],
-    "validation": [
-      "pnpm build in web: passed with existing Svelte warnings."
-    ],
+    "summary": null,
+    "constraints": [],
+    "decisions": [],
+    "findings": [],
+    "touched_files": [],
+    "validation": [],
     "blockers": [],
-    "next": "Commit Phase 25 intentional changes."
+    "next_action": null
+  },
+  "compression": {
+    "meaningful_tool_calls": 0,
+    "turns_on_task": 0,
+    "last_compressed_at": null,
+    "last_trigger": null
+  },
+  "long_memory_index": {
+    "root": "./.agents/memory",
+    "files": [
+      "./.agents/memory/project.jsonl",
+      "./.agents/memory/tasks.jsonl",
+      "./.agents/memory/lessons.jsonl"
+    ]
   }
 }

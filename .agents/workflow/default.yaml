@@ -26,7 +26,7 @@ workflow_default:
 compression_hooks:
   before_execute: "Compress if analysis produced durable decisions or a user decision point."
   after_verify: "Compress validation status for multi-step or high-risk work."
-  before_deliver: "Compress when the task touched >5 files, used >8 meaningful tool calls, or may continue."
+  before_deliver: "Compress when the task touched >3 files, used >6 meaningful tool calls, or may continue."
 
 validation_levels:
   targeted: "Single focused check for narrow edits."

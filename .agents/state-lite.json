@@ -1,26 +1,12 @@
 {
-  "goal": "Optimize database index, implement frontend O(1) Map config indexing, resolve line breaks in DemandKanban priority badges, remove redundant Details button, add Jira reverse synchronization for assignee scheduling changes, optimize Kanban subtask query performance, flatten schedule table layout, merge filters into a single row, enlarge the search input, fix the dropdown options overflow issue, resolve the 3-5s lag on task kanban filters with reactive assigneeTasksMap, and optimize execution/tasks fetch with query parameters and IN-clause scoped GitLogs to eliminate the 10s refresh delay.",
-  "phase": "Completed",
-  "constraints": "Frontend design taste-skill used, git commit generated successfully",
-  "findings": {
-    "modified_files": [
-      "internal/telemetry/jira_client.go",
-      "internal/server/jira_worker.go",
-      "internal/server/demand_handlers.go",
-      "web/src/components/ProjectHealthTelemetry.svelte",
-      "web/src/components/SettingsPanel.svelte",
-      "web/src/components/DemandKanban.svelte",
-      "web/src/components/TaskKanban.svelte",
-      "internal/server/server.go",
-      "internal/server/execution_handlers.go"
-    ],
-    "git_blocker": ""
+  "schema_version": "1.0",
+  "updated_at": null,
+  "active_task": {
+    "scope": null,
+    "goal": null,
+    "phase": null,
+    "next": null,
+    "full_state": "./.agents/state.json"
   },
-  "validation": "Unit tests fully passed, frontend build verified, git commit generated successfully"
+  "memory_index": "./.agents/memory/lite-index.jsonl"
 }
-
-
-
-
-
-

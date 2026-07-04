@@ -36,7 +36,6 @@
 | TPY-6623 | 人工岸桥吊具与理货不匹配修复-取消箱型校验 | PRJ23029-天津太平洋-IGV (TPY) | 朱家聪 | - | - |
 | TPY-6616 | 【现需要tos将指令确认到车上之后，可以刷新为正确的箱子尺寸，并自动执行指令】PM324车因卸船箱型与岸桥设置不符，导致车辆自己拒掉指令 | PRJ23029-天津太平洋-IGV (TPY) | 朱家聪 | - | - |
 | TPY-6615 | 在下引桥区域增加大路口逻辑上报调度系统，接口见附件链接 | PRJ23029-天津太平洋-IGV (TPY) | 刘子翔 | - | - |
-| TH-2559 | 轮吊首堆场转场时封闭区过大影响泛亚主干道上作业的车辆，封闭区不需要延伸到泛亚一路上 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | - | - |
 | TH-2465 | 6车在5桥卸完箱去6桥装箱会在码头起始泊位掉头去6桥重派后后退去6桥 | COP25050-中远海运南通通海IGV项目 (TH) | 纵涵 | - | - |
 | RZ-3938 | 装船车辆在堆场完成装箱任务后从作业道变超车道后异常停车无路径，sim-web上显示禁行必经道路 | COP25026-日照港-IGV (RZ) | 白凌云 | - | - |
 | RZ-3935 | 208路径规划错误，在G区设置一经一路二路向北走，208路径规划向南走 | COP25026-日照港-IGV (RZ) | 白凌云 | - | - |
@@ -107,7 +106,6 @@
 | NS2-932 | 前端FMS页面变道显示的路径异常,没有推islcp字段 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 王财和 | - | - |
 | TH-2578 | 岸桥在向后移动时车辆不会跟随岸桥移动 | COP25050-中远海运南通通海IGV项目 (TH) | 张晨 | - | - |
 | HR-4100 | 【待用户确认】【P2】警告龙门吊功能 | PRJ21087-厦门海润-IGV (HR) | 梁志远 | - | - |
-| MDL-1545 | 蒙方出入境地磅等待区域绘制（后面的车会顶上无法回退） | PRJ23075-满都拉-IGV (MDL) | 纵涵 | - | - |
 | ZK-925 | 3.3.2.364版本，FMS-19560 吊具禁行区适配版本，要优化，不同的厂家的场桥有差异，要做不同的适配 | PRJ25092-周口港6台Qtruck交付项目 (ZK) | 白凌云 | - | - |
 | FEL-9210 | 【7车被15车挡住，15车被estop了】【实船】AT07在Zone8下方主干道 经过TL17时检测到黄色石墩——人工拉车 | PRJ22014-英国Felixstowe-QTruck (FEL) | jira公用-现场交付团队 | - | - |
 | QZ-1690 | 钦州互拖，单车当前任务未终止，重派待执行任务进闸"EN"任务，会直接消失，作业指令里已处理未存储这个任务。TOS补发作业指令恢复 | PRJ24102-北部湾钦州盛港码头 (QZ) | 张路路 | - | - |
@@ -132,7 +130,6 @@
 | FEL-9213 | 【实船】AT33 在空箱区WT7点位靠前10ft | PRJ22014-英国Felixstowe-QTruck (FEL) | jira公用-现场交付团队 | - | - |
 | FEL-9160 | 【实船】空箱区WT9-276 40尺 summon点位不正确 | PRJ22014-英国Felixstowe-QTruck (FEL) | jira公用-英国费列克斯托 | - | - |
 | TH-2605 | 1车装船任务进行时，前箱卸了，车辆示对位完成，不会跳转卸后箱任务，需要地面手动派发igv任务 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | prod_develop_lmj_tangshan | 二次调度优化 |
-| DL-4210 | 【日志】dlqt2车辆作完业未优先走超车道 | COP24027-大连DCT-QTruck (DL) | jira公用账号-大连DCT | dev_dalian | remove some unused code; |
 | ZPU-2815 | 【点位文件次序混乱，导致UGI上次序混乱】需求：FMS(GUI)上点位有序排列 | COP25099-易浦嘉兴运营项目 (ZPU) | 张路路 | - | - |
 | ZK-938 | 【回放】【日志】堆场多车作业时，在超车道排队的车会插队行驶，9003车在9005车之前变道，提前变进作业道，可能会导致场桥作业任务混乱 | PRJ25092-周口港6台Qtruck交付项目 (ZK) | 熊峰 | - | - |
 | QZ-1622 | 【OSM缺少RTGC车道】钦州3车，互拖作业，单车在BJS5A送箱完成后触发一层。 | PRJ24102-北部湾钦州盛港码头 (QZ) | 刘雪健 | - | - |
@@ -173,8 +170,6 @@
 | TH-2508 | 【回放】【日志】4车在002a堆场卸了一个前箱后，没有后退，绕圈去了，路径不合理 | COP25050-中远海运南通通海IGV项目 (TH) | 曹之悦 | - | - |
 | ICA-10812 | 【请现场确认下是不是配置错误】VPBs 045 and 057 did not generate route | PRJ22013-墨西哥ICAVE-QTruck (ICA) | jira公用-墨西哥韦拉克鲁斯ICA | - | - |
 | TH-2536 | RTGC转过场时推送附近有安全风险的车辆信息到RTG终端 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | - | - |
-| ICA-10814 | VPBs 003 and 004 couldn't generate route to TS22 | PRJ22013-墨西哥ICAVE-QTruck (ICA) | 王玉珏 | - | - |
-| ZK-941 | 【需要fms确认导航任务终点是否合理】9001车在岸桥作业时，车辆在岸桥下一直处于工作中，车辆不动 | PRJ25092-周口港6台Qtruck交付项目 (ZK) | 白凌云 | - | - |
 | FEL-9250 | 【实船】AT06到达QC20 L4 后20尺 VSLD 点位靠前6m | PRJ22014-英国Felixstowe-QTruck (FEL) | 李厚奇 | - | - |
 | RZ-3994 | 【逼停测试】118车在H06作业车道尾贝，出栏驶入纵向1车道，被围栏逼停 | COP25026-日照港-IGV (RZ) | 岳颖颖 | - | - |
 | HKAA-565 | 修改闸口禁停区 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 岳颖颖 | - | - |
@@ -211,7 +206,6 @@
 | FEL-9252 | 【GUI】GUI上突然生成了不存在的RTG99的禁行区 | PRJ22014-英国Felixstowe-QTruck (FEL) | 李厚奇 | - | - |
 | FZ-2257 | 堆高机防堵功能（详见描述） | COP25048-福州江阴港IGV项目 (FZ) | 梁志远 | - | - |
 | TPY-6913 | 车在H19堆场低贝位作业时，车辆不按照规定去1道排队等待作业，却自主变道绕H17堆场绕圈 | PRJ23029-天津太平洋-IGV (TPY) | Qomolo Planning | - | - |
-| QUZ-481 | 衢州港码头二期数据孪生 | PRJ24087-衢州港二期2台Qtruck POC (QUZ) | 白凌云 | - | - |
 | FEL-9251 | 【GUI】GUI上RTG的禁行脚发生偏移 | PRJ22014-英国Felixstowe-QTruck (FEL) | 李厚奇 | - | - |
 | NS2-1675 | VX117在EG堆场进行手动变道后，路径显示有问题，也不能变道 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 袁梦莎 | baiyun_dev | fix:   尝试修复显示问题 |
 | FEL2WD-1199 | 【生产】CT4 RTG12下错误生成了吊具锁闭区 阻挡AT67 | 英国二期 (FEL2WD) | 李厚奇 | - | - |
@@ -231,12 +225,24 @@
 | HIT-956 | FMS config支持限速功能 | PRJ25053_HIT香港Q-Truck二期 (HIT) | 路遥 | - | - |
 | YH-6658 | 东风车辆914,915,916在FMS端无定位显示 | PRJ23046-厦门远海-IGV (YH) | 熊峰 | - | - |
 | HKAA-622 | 201车5.3.478p124-test；15:20-15:23隧道内收不到任务 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
-| YH-6681 | 【回放】【日志】985(所有车)在2026/7/01/23:51左右时无短路径车不走(后续删除东风928幽灵车后恢复) | PRJ23046-厦门远海-IGV (YH) | 朱祥 | - | - |
 | TH-2606 | 【增加了日志，现场观察下如复现重新提下jira】9车单托上岸桥，不出路径 | COP25050-中远海运南通通海IGV项目 (TH) | jira公用账号-南通通海 | baiyun_dev | feat:  透传拖挂类型 |
-| NS2-1662 | 【二阶段堆场测试】VX116在FMS上发送装船任务去HJ堆场，VX116不显示路径，simweb上有路径 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 袁梦莎 | - | - |
 | AB-3583 | 【怀疑是FMS作业点位问题或则定位问题，规划按照作业点位到达。】【日志】AT04 在D2.10贝位停车位置偏差大于99cm，并且对位失败。 | COP24114-阿联酋AbuDhabi-QTruck WellDriver (AB) | jira公用-现场交付团队 | - | - |
 | ICA-10829 | 【hotfix: QP-42944 due: 2026/07/02】【回放】【日志】AT04 was not able to create a route when it was at 7D-46 below the RTG | PRJ22013-墨西哥ICAVE-QTruck (ICA) | 李惠 | - | - |
-| ML-259 | 【回放】【日志】【机场5.6.101版本】车辆到停车点后rch没有弹停车完成，Simweb无下段路径。 | 海口美兰机场1台Q-Tractor POC项目 (ML) | 姜昊良 | - | - |
+| TH-2619 | 车辆堆场上岸桥 会先回停车位而不上直接去岸桥，到达停车位后才跳出去岸桥的命令 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | - | - |
+| DL-4210 | 【日志】dlqt2车辆作完业未优先走超车道 | COP24027-大连DCT-QTruck (DL) | jira公用账号-大连DCT | dev_dalian | remove some unused code; |
+| ICA-10814 | VPBs 003 and 004 couldn't generate route to TS22 | PRJ22013-墨西哥ICAVE-QTruck (ICA) | jira公用-墨西哥韦拉克鲁斯ICA | - | - |
+| TH-2559 | 轮吊首堆场转场时封闭区过大影响泛亚主干道上作业的车辆，封闭区不需要延伸到泛亚一路上 | COP25050-中远海运南通通海IGV项目 (TH) | 熊峰 | - | - |
+| HIT-989 | AT08在BQ装完前箱后，BQ移动后试图装后箱没成功触发吊具保护且短路径停车 | PRJ25053_HIT香港Q-Truck二期 (HIT) | jira公用-现场交付团队 | - | - |
+| MDL-1545 | 蒙方出入境地磅等待区域绘制（后面的车会顶上无法回退） | PRJ23075-满都拉-IGV (MDL) | 高桢鹏 | - | - |
+| ZK-941 | 【需要fms确认导航任务终点是否合理】9001车在岸桥作业时，车辆在岸桥下一直处于工作中，车辆不动 | PRJ25092-周口港6台Qtruck交付项目 (ZK) | 林凯 | yaoqiang_dev | feat:   随机导航id |
+| YH-6686 | 全场车辆不出现短路径 | PRJ23046-厦门远海-IGV (YH) | 纵涵 | - | - |
+| YH-6685 | 全场车辆不出现短路径 | PRJ23046-厦门远海-IGV (YH) | 纵涵 | - | - |
+| YH-6684 | 全场车辆不出现短路径 | PRJ23046-厦门远海-IGV (YH) | 纵涵 | - | - |
+| ML-259 | 【回放】【日志】【机场5.6.101版本】车辆到停车点后rch没有弹停车完成，Simweb无下段路径。 | 海口美兰机场1台Q-Tractor POC项目 (ML) | 姜昊良 | yaoqiang_dev | feat:   遥墙导航功能的停车点适配 |
+| HIT-991 | AT07到达RTG下不进对位，一直卡在导航中 | PRJ25053_HIT香港Q-Truck二期 (HIT) | 李厚奇 | dev_psa_rtg_ech_V3 | Fix ECH workflow |
+| YH-6681 | 【回放】【日志】985(所有车)在2026/7/01/23:51左右时无短路径车不走 | PRJ23046-厦门远海-IGV (YH) | 朱祥 | - | - |
+| NS2-1662 | 【二阶段堆场测试】VX116在FMS上发送装船任务去HJ堆场，VX116不显示路径，simweb上有路径 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 袁梦莎 | dev_nansha2 | fixed generate task failed;  fixed reshuffle choice failed; |
+| DEMAND-001 | PSA DR灾备改造 | PRJ23096 | 梁志远 | - | - |
 
 ## 进行中 (In Progress)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -270,8 +276,8 @@
 | ICA-10677 | fms 对不同的qc使用不同的vpb | PRJ22013-墨西哥ICAVE-QTruck (ICA) | jira公用-墨西哥韦拉克鲁斯ICA | - | - |
 | HKAA-534 | AA STOP点过闸输密码 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 孙海峰 | release_hk_airport | hk_1.4.0.6 |
 | ICA-10826 | Rail discharge task workflow have to be modified | PRJ22013-墨西哥ICAVE-QTruck (ICA) | 陈伟华 | release | 卸船 |
-| middleq-20260701 | Merge remote-tracking branch 'origin/prod_develop_lmj_tangs' into prod_develop_lmj_tangs | task_executor | zhujiacong | prod_develop_lmj_tangshan | Merge remote-tracking branch 'origin/prod_develop_lmj_tangshan' into prod_develop_lmj_tangshan |
 | TPY-6920 | jtos适配字段的Commodity “C”  改为小写 | PRJ23029-天津太平洋-IGV (TPY) | 刘子翔 | meilan_dev | fix:   根据现场返回格式调整 |
+| middleq-20260701 | Merge remote-tracking branch 'origin/prod_develop_lmj_tangs' into prod_develop_lmj_tangs | vehicle_manager | MiddleQ | feat-busan-vmt-middleq-20260701 | fix: 移除vehicle_type的默认值 |
 
 ## 代码评审 (In Review)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -317,3 +323,6 @@
 | HIT-983 | AT长时间停车出现短路径停车不走 | PRJ25053_HIT香港Q-Truck二期 (HIT) | jira公用-现场交付团队 | - | - |
 | TH-2561 | 7号桥吊移动时锁闭区不会对应的动态变长 | COP25050-中远海运南通通海IGV项目 (TH) | jira公用-质量团队 | - | - |
 | TH-2566 | 007rtgc转场，现场监控上看，和fms上显示的位置，有1-2秒延时误差 | COP25050-中远海运南通通海IGV项目 (TH) | jira公用账号-南通通海 | - | - |
+| QUZ-481 | 衢州港码头二期数据孪生 | PRJ24087-衢州港二期2台Qtruck POC (QUZ) | 白凌云 | - | - |
+| HKAA-631 | 【日志】AET205到达终点前有语音播报 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | jira公用账号-Q-Tractor | - | - |
+| ML-261 | 【需要fms看任务没及时更新问题】【日志】【机场5.6.101版本】车辆无故异常缓停后再起步加速 | 海口美兰机场1台Q-Tractor POC项目 (ML) | jira公用-海口美兰机场 | - | - |

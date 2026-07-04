@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "kind": "clean_latest",
+  "created_at": "2026-07-04T15:00:41.971179+08:00",
+  "source_project": "/Volumes/Media/projects/fms/tos_interface_general",
+  "contents": [
+    "AGENTS.md",
+    ".agents/**",
+    ".pre-commit-config.yaml",
+    "scripts/validate-agent-rules.py",
+    "gitignore-agent-rules.snippet"
+  ],
+  "excluded": [
+    "*.pyc",
+    "*.pyo",
+    ".AppleDouble/",
+    ".DS_Store",
+    "._*",
+    "__pycache__"
+  ],
+  "validation": "Run python3 -B scripts/validate-agent-rules.py from this directory."
+}

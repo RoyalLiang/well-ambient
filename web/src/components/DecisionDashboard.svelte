@@ -945,7 +945,7 @@
 
             <div class="brain-flow-box">
               <div class="brain-flow-head">
-                <span class="font-mono">最强大脑流转建议</span>
+                <span class="font-mono">流转建议</span>
                 <strong>{selectedItem.risk_type === 'none' ? '静默托管' : '需要干预'}</strong>
               </div>
               <div class="brain-flow-grid font-mono">

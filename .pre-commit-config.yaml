@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: validate-agent-rules
+        name: Validate agent rule files
+        entry: python3 -B scripts/validate-agent-rules.py
+        language: system
+        pass_filenames: false
+        always_run: true

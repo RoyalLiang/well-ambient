@@ -23,6 +23,4 @@ compression_points:
 
 frontend_extra:
   trigger: "frontend UI, visual refactor, dashboard, or Tailwind work"
-  required_skill: "taste-skill"
-  fallback_when_unavailable: "If taste-skill is not available in the current skill list, state the fallback and use frontend-design for the UI work."
   load: "./FRONTEND_RULES.md if present"

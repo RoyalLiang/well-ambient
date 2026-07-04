@@ -9,8 +9,8 @@
 - Current backend worker scope: implement the strongest-brain v1 backend read-model loop for EvidenceChain, DecisionQueueItem, schedule governance reuse, and AI intent recognition/summary, limited to backend server/db/telemetry files and focused tests.
 - Current Phase 22 requirement: based on `docs/strongest-brain-phased-master-plan.md`, add AI intent recognition and summarization to the plan and implementation, checkpoint all existing code first, then use subagents to land the complete strongest-brain plan as a v1 closed loop.
 - Current Phase 23 continuation: proceed into master-plan Phase 4 by adding a schedule-governance risk calendar read model and compact schedule-view surface, while preserving the existing `/api/schedule` contract.
-- Current Phase 24 feedback: the visible "最强大脑决策队列" does not yet communicate its display meaning; improve the cockpit so it shows why an item matters, what decision is needed, what happens if it is ignored, and where the operator should act.
-- Current Phase 25 feedback: the user still judges the visible "最强大脑决策队列" as not useful; remove that visible surface instead of continuing to iterate on it.
+- Current Phase 24 feedback: the visible "决策队列" does not yet communicate its display meaning; improve the cockpit so it shows why an item matters, what decision is needed, what happens if it is ignored, and where the operator should act.
+- Current Phase 25 feedback: the user still judges the visible "决策队列" as not useful; remove that visible surface instead of continuing to iterate on it.
 
 ## Research Findings
 - Git status shows the repository contents are currently untracked; avoid treating that as disposable state.
