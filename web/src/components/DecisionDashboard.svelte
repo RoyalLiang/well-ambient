@@ -624,7 +624,7 @@
                 {#if dec.repo}
                   <span class="terminal-repo">[{dec.repo}]</span>
                 {/if}
-                {#if dec.branch}
+                {#if dec.branch && dec.branch !== '-'}
                   <span class="terminal-branch">({dec.branch})</span>
                 {/if}
               </div>
@@ -1486,7 +1486,7 @@
     flex-direction: column;
     gap: 8px;
     overflow-y: auto;
-    max-height: 360px;
+    flex-grow: 1;
     scrollbar-width: thin;
     scrollbar-color: rgba(16, 185, 129, 0.2) transparent;
   }

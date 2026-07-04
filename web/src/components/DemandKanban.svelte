@@ -1424,6 +1424,12 @@
     activeDatePicker = null;
   }
 
+  function handleBackdropClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) {
+      closeCreateDemandModal();
+    }
+  }
+
   async function handleCreateDemand() {
     if (!newTitle.trim() || !newAssignee) {
       alert('需求标题与指派负责人不能为空');
@@ -2613,8 +2619,8 @@
 
   <!-- Create Demand Modal -->
   {#if showCreateModal}
-    <div class="modal-backdrop" on:click={closeCreateDemandModal}>
-      <div class="modal-content demand-create-modal glass-panel" on:click|stopPropagation>
+    <div class="modal-backdrop" on:click={handleBackdropClick}>
+      <div class="modal-content demand-create-modal glass-panel">
         <div class="modal-header">
           <h3>📋 录入新产品需求</h3>
           <button class="close-btn" on:click={closeCreateDemandModal}>&times;</button>
@@ -2632,7 +2638,7 @@
           </div>
 
           <div class="form-group">
-            <label for="demand-project">所属项目 / 仓库</label>
+            <label for="demand-project">所属项目</label>
             <div class="custom-dropdown-container" id="demand-project-container">
               <div class="combobox-trigger-wrapper">
                 <input
