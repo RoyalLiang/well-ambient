@@ -439,8 +439,8 @@
     return taskID.substring(0, idx).toUpperCase();
   }
 
-  function computeCompositeWeight(item: ScheduleItem): number {
-    const priority = item.project_priority || getProjectPriority(item.demand_id);
+  function computeCompositeWeight(item: ScheduleItem, priorityOverride?: string): number {
+    const priority = priorityOverride || item.project_priority || getProjectPriority(item.demand_id);
     let baseWeight = 40; // Default P2
     if (priority === 'P0') baseWeight = 60;
     else if (priority === 'P1') baseWeight = 50;
@@ -487,20 +487,22 @@
   })();
 
   $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
-  $: scheduleEndIndex = Math.min(flatRenderList.length, Math.ceil((scheduleScrollTop + scheduleContainerHeight) / scheduleItemHeight) + 2);
+  $: scheduleViewportHeight = scheduleContainerHeight > 0 ? scheduleContainerHeight : 550;
+  $: scheduleVirtualRowCount = flatRenderList.length;
+  $: scheduleMaxScrollTop = Math.max(0, scheduleVirtualRowCount * scheduleItemHeight - scheduleViewportHeight);
+  $: if (scheduleContainerEl && scheduleScrollTop > scheduleMaxScrollTop) {
+    scheduleScrollTop = scheduleMaxScrollTop;
+    scheduleContainerEl.scrollTop = scheduleMaxScrollTop;
+  }
+  $: scheduleEndIndex = Math.min(flatRenderList.length, Math.ceil((scheduleScrollTop + scheduleViewportHeight) / scheduleItemHeight) + 2);
   $: visibleScheduleRows = flatRenderList.slice(scheduleStartIndex, scheduleEndIndex);
   $: scheduleTopPadding = scheduleStartIndex * scheduleItemHeight;
   $: scheduleBottomPadding = (flatRenderList.length - scheduleEndIndex) * scheduleItemHeight;
 
   function handleScheduleScroll(e: Event) {
-    scheduleScrollTop = (e.target as HTMLDivElement).scrollTop;
-  }
-
-  $: if (scheduleSearch || scheduleTypeFilter || scheduleAssigneeFilter || scheduleRiskFilter) {
-    if (scheduleContainerEl) {
-      scheduleContainerEl.scrollTop = 0;
-      scheduleScrollTop = 0;
-    }
+    const target = e.target as HTMLDivElement;
+    scheduleContainerHeight = target.clientHeight || scheduleContainerHeight;
+    scheduleScrollTop = target.scrollTop;
   }
 
   function getProjectPriority(taskID: string): string {
@@ -2152,7 +2154,7 @@
             </div>
             <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
           </div>
-          <div class="schedule-table-wrapper" style="max-height: 600px; overflow-y: auto;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl}>
+          <div class="schedule-table-wrapper" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
             <div class="grid-table">
               <div class="grid-thead">
                 <div class="grid-tr">
@@ -3736,8 +3738,12 @@
   }
 
   .schedule-table-wrapper {
-    max-height: 620px;
+    height: clamp(360px, calc(100vh - 320px), 620px);
+    height: clamp(360px, calc(100dvh - 320px), 620px);
     overflow: auto;
+    overflow-anchor: none;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
     scrollbar-color: rgba(129, 140, 248, 0.62) rgba(15, 23, 42, 0.72);
   }
@@ -3783,6 +3789,11 @@
     grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 1.1fr) 80px 120px 80px 110px 100px 100px 130px 120px;
     align-items: center;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .grid-tbody .grid-tr {
+    height: 76px;
+    min-height: 76px;
   }
 
   .grid-tr.project-group-header {
