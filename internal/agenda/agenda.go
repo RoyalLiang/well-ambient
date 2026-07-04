@@ -7,7 +7,7 @@ import (
 	"well-ambient/internal/db"
 )
 
-// TelemetrySnippet holds brief git status for UI presentation
+// TelemetrySnippet holds brief task freshness status for UI presentation
 type TelemetrySnippet struct {
 	Branch     string    `json:"branch"`
 	LastCommit string    `json:"last_commit"`
@@ -16,19 +16,18 @@ type TelemetrySnippet struct {
 
 // AgendaItem represents a task/bug diagnosed with risk/delay in meeting
 type AgendaItem struct {
-	TaskID           string            `json:"task_id"`
-	Title            string            `json:"title"`
-	Assignee         string            `json:"assignee"`
-	Repo             string            `json:"repo"`
-	Status           string            `json:"status"`
-	IssueType        string            `json:"issue_type"` // bug, task
-	RiskLevel        string            `json:"risk_level"`  // critical, warning, safe
-	RiskType         string            `json:"risk_type"`   // no_commit_48h, overdue, potential_conflict, none
-	Desc             string            `json:"desc"`
-	TelemetrySnippet TelemetrySnippet  `json:"telemetry_snippet"`
-	DueDate          *time.Time        `json:"due_date"`
-	DecisionLogs     string            `json:"decision_logs"`
-	GitLogs          []db.GitCommitLog `json:"git_logs"` // 关联的真实 Git 日志与 MR 行为
+	TaskID           string           `json:"task_id"`
+	Title            string           `json:"title"`
+	Assignee         string           `json:"assignee"`
+	Repo             string           `json:"repo"`
+	Status           string           `json:"status"`
+	IssueType        string           `json:"issue_type"` // bug, task
+	RiskLevel        string           `json:"risk_level"` // critical, warning, safe
+	RiskType         string           `json:"risk_type"`  // no_commit_48h, overdue, potential_conflict, none
+	Desc             string           `json:"desc"`
+	TelemetrySnippet TelemetrySnippet `json:"telemetry_snippet"`
+	DueDate          *time.Time       `json:"due_date"`
+	DecisionLogs     string           `json:"decision_logs"`
 }
 
 // AutoDecision represents an AI autonomous operation that ran in the background
@@ -71,7 +70,6 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 			RiskType:     "none",
 			DueDate:      t.DueDate,
 			DecisionLogs: t.DecisionLogs,
-			GitLogs:      []db.GitCommitLog{},
 			TelemetrySnippet: TelemetrySnippet{
 				Branch:     t.Branch,
 				LastCommit: t.LastCommit,
@@ -105,9 +103,9 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 				item.RiskLevel = "critical"
 				item.RiskType = "no_commit_48h"
 				if t.IssueType == "bug" {
-					item.Desc = fmt.Sprintf("故障处于修复中，但已连续 %d 小时无任何代码提交，可能卡在本地环境或复现困难。", int(now.Sub(t.LastUpdate).Hours()))
+					item.Desc = fmt.Sprintf("故障处于修复中，但已连续 %d 小时无有效流转，可能卡在本地环境、复现路径或责任边界。", int(now.Sub(t.LastUpdate).Hours()))
 				} else {
-					item.Desc = fmt.Sprintf("需求开发中，但已连续 %d 小时无任何 Git 提交，疑似遭遇联调阻塞或方案重构。", int(now.Sub(t.LastUpdate).Hours()))
+					item.Desc = fmt.Sprintf("需求推进中，但已连续 %d 小时无有效流转，疑似遭遇联调阻塞、口径分歧或方案重构。", int(now.Sub(t.LastUpdate).Hours()))
 				}
 			}
 		}
@@ -116,12 +114,10 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 		if item.RiskLevel == "safe" && t.Status == "progress" && t.Repo != "" {
 			siblings := repoTasks[t.Repo]
 			hasConflict := false
-			var conflictingBranch string
 			var conflictingAssignee string
 			for _, sib := range siblings {
 				if sib.TaskID != t.TaskID && sib.Status == "progress" && sib.Branch != "" && sib.Branch != t.Branch {
 					hasConflict = true
-					conflictingBranch = sib.Branch
 					conflictingAssignee = sib.Assignee
 					break
 				}
@@ -129,7 +125,7 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 			if hasConflict {
 				item.RiskLevel = "warning"
 				item.RiskType = "potential_conflict"
-				item.Desc = fmt.Sprintf("与 %s 的分支 (%s) 均在修改同一代码仓，存在潜在的合并冲突风险。", conflictingAssignee, conflictingBranch)
+				item.Desc = fmt.Sprintf("与 %s 的并行事项存在协作路径重叠，需提前对齐责任边界与验收顺序。", conflictingAssignee)
 			}
 		}
 
@@ -145,7 +141,7 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 	var logs []AutoDecision
 	now := time.Now()
 
-	// Static base mock logs to simulate continuous ambient actions if no real logs yet, 
+	// Static base mock logs to simulate continuous ambient actions if no real logs yet,
 	// mixed with dynamic telemetry states to show a truly living system
 	for _, t := range tasks {
 		if strings.ToLower(t.Status) == "done" {
@@ -153,19 +149,15 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 			logs = append(logs, AutoDecision{
 				Time:     t.LastUpdate.Format("15:04:05"),
 				TaskID:   t.TaskID,
-				Message:  fmt.Sprintf("🤖 检测到分支 %s 已被合入，AI 已自动将该任务流转至 DONE 并归档。", t.Branch),
+				Message:  "🤖 检测到事项已完成验收，AI 已自动将该任务流转至 DONE 并归档。",
 				Assignee: t.Assignee,
-				Repo:     t.Repo,
-				Branch:   t.Branch,
 			})
 		} else if t.Status == "review" {
 			logs = append(logs, AutoDecision{
 				Time:     t.LastUpdate.Format("15:04:05"),
 				TaskID:   t.TaskID,
-				Message:  fmt.Sprintf("🤖 检测到开发者 %s 提交了 Merge Request，AI 已自动流转至 Review 并提醒评审人。", t.Assignee),
+				Message:  fmt.Sprintf("🤖 检测到开发者 %s 发起评审，AI 已自动流转至 Review 并提醒评审人。", t.Assignee),
 				Assignee: t.Assignee,
-				Repo:     t.Repo,
-				Branch:   t.Branch,
 			})
 		}
 	}
@@ -175,17 +167,17 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 		logs = append(logs, AutoDecision{
 			Time:    now.Add(-12 * time.Minute).Format("15:04:05"),
 			TaskID:  "JIRA-AUTO",
-			Message: "🤖 [Jira 同步] 定时检测到 2 个新 Bug 关联，已自动匹配代码仓并生成影子任务。",
+			Message: "🤖 [Jira 同步] 定时检测到 2 个新 Bug 关联，已自动生成影子任务。",
 		})
 		logs = append(logs, AutoDecision{
 			Time:    now.Add(-45 * time.Minute).Format("15:04:05"),
 			TaskID:  "SYSTEM",
-			Message: "🤖 [飞书机器人] 已对 48h 无提交的卡点任务自动向负责人推送交互式卡片以了解阻碍原因。",
+			Message: "🤖 [飞书机器人] 已对 48h 无有效流转的卡点任务自动向负责人推送交互式卡片以了解阻碍原因。",
 		})
 		logs = append(logs, AutoDecision{
 			Time:    now.Add(-2 * time.Hour).Format("15:04:05"),
 			TaskID:  "LARK-AUTO",
-			Message: "🤖 [状态对齐] 开发者 Eddie 修改了多维表格状态，AI 自动同步转派 GitLab 关联任务。",
+			Message: "🤖 [状态对齐] 开发者 Eddie 修改了多维表格状态，AI 自动同步更新关联任务。",
 		})
 	}
 

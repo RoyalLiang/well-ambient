@@ -1300,6 +1300,16 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed task telemetry: %v", err)
 	}
+	if err := db.DB.Create(&db.ProjectConfig{
+		ProjectKey:   "AMB",
+		ProjectName:  "Ambient Control",
+		BasePriority: "P1",
+		ProjectPhase: "交付",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("seed project config: %v", err)
+	}
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{Port: 9097, Host: "127.0.0.1"},
@@ -1333,9 +1343,14 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 			t.Fatalf("assignees missing %q: %+v", want, response.Assignees)
 		}
 	}
-	for _, want := range []string{"platform-core", "legacy-web", "CFG", "OPS", "APP-X"} {
+	for _, want := range []string{"AMB", "Ambient Control", "CFG", "OPS", "APP-X"} {
 		if !stringSliceContains(response.Projects, want) {
 			t.Fatalf("projects missing %q: %+v", want, response.Projects)
+		}
+	}
+	for _, notWant := range []string{"platform-core", "legacy-web", "group/platform-core", "42"} {
+		if stringSliceContains(response.Projects, notWant) {
+			t.Fatalf("projects should not include repo candidate %q: %+v", notWant, response.Projects)
 		}
 	}
 }
@@ -2243,5 +2258,3 @@ func TestGetTaskCommitsCombinesGitAndJiraLogs(t *testing.T) {
 		t.Errorf("Expected second item to be Git push, got %+v", activities[1])
 	}
 }
-
-

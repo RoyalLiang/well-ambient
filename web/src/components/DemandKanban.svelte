@@ -773,7 +773,7 @@
       `需求标题：${selectedDemand.title}`,
       `需求描述：${selectedDemand.description || '暂无补充描述'}`,
       `负责人：${selectedDemand.assignee || '未指定'}`,
-      `所属项目/仓库：${displayRepo(selectedDemand.repo)}`,
+      `所属项目：${displayRepo(selectedDemand.repo)}`,
       `开发分支：${detectedScheduleBranch(selectedDemand) || '由提交自动检测'}`,
       `计划截止日：${schedDueDate || '尚未设置'}`,
       `任务组：${schedTaskGroupID || getEffectiveTaskGroupId(selectedDemand)}`,
@@ -815,9 +815,6 @@
   ) {
     const options = new Set<string>();
     (_optionProjects || []).forEach((project) => addFormOption(options, project));
-    (_demands || []).forEach((demand) => addFormOption(options, demand.repo));
-    (_tasks || []).forEach((task) => addFormOption(options, task.repo));
-    (_schedule || []).forEach((item) => addFormOption(options, item.repo));
     (_configs || []).forEach((proj) => {
       if (proj) {
         if (proj.project_key) addFormOption(options, proj.project_key);
@@ -2684,12 +2681,12 @@
                     </button>
                   {/each}
                   {#if createProjectOptions.length <= 1 && !projectSearchText}
-                    <div class="dropdown-empty">暂无项目候选，请先配置 GitLab/Jira 项目或等待 Jira 同步。</div>
+                    <div class="dropdown-empty">暂无项目候选，请先配置项目或等待 Jira 同步。</div>
                   {/if}
                 </div>
               {/if}
             </div>
-            <span class="field-hint">用于后续排期、代码证据和需求归属聚合；口头需求可先暂不指定。</span>
+            <span class="field-hint">用于后续排期和需求归属聚合；口头需求可先暂不指定。</span>
           </div>
 
           <div class="form-group">

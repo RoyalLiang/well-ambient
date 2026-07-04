@@ -39,16 +39,6 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 
 	items := EvaluateActiveTasks(allTasks)
 
-	// Fetch git logs for each active item to link physical branch status
-	for i := range items {
-		var gitLogs []db.GitCommitLog
-		if err := db.DB.Where("task_id = ?", items[i].TaskID).Order("created_at desc").Limit(10).Find(&gitLogs).Error; err == nil {
-			items[i].GitLogs = gitLogs
-		} else {
-			items[i].GitLogs = []db.GitCommitLog{}
-		}
-	}
-
 	// Calculate counts from active tasks (status != done)
 	redZoneCount := 0
 	activeBugCount := 0

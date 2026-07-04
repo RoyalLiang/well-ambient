@@ -62,14 +62,18 @@ func (s *Server) handleGetDemandOptions(w http.ResponseWriter, r *http.Request) 
 	if err := db.DB.Select("assignee", "repo").Find(&tasks).Error; err == nil {
 		for _, task := range tasks {
 			addDemandOption(assignees, task.Assignee)
-			addDemandOption(projects, task.Repo)
+		}
+	}
+
+	var projectConfigs []db.ProjectConfig
+	if err := db.DB.Select("project_key", "project_name").Find(&projectConfigs).Error; err == nil {
+		for _, project := range projectConfigs {
+			addDemandOption(projects, project.ProjectKey)
+			addDemandOption(projects, project.ProjectName)
 		}
 	}
 
 	if s.config != nil {
-		for _, repo := range s.config.GitLab.Repos {
-			addDemandOption(projects, firstNonBlank(repo.Name, repo.Path, repo.ProjectID))
-		}
 		for _, project := range s.config.Jira.SyncProjects {
 			addDemandOption(projects, project)
 		}

@@ -4,22 +4,7 @@
 
   interface TelemetrySnippet {
     branch: string;
-    last_commit: string;
     last_update: string;
-  }
-
-  interface GitCommitLog {
-    id: number;
-    task_id: string;
-    repo: string;
-    branch: string;
-    commit_id: string;
-    message: string;
-    author: string;
-    mr_iid: number;
-    mr_url: string;
-    action: string;
-    created_at: string;
   }
 
   interface AgendaItem {
@@ -35,7 +20,6 @@
     telemetry_snippet: TelemetrySnippet;
     due_date: string | null;
     decision_logs: string;
-    git_logs?: GitCommitLog[]; // 新增：底层关联的真实 Git 历史轨迹
   }
 
   interface AutoDecision {
@@ -43,8 +27,6 @@
     task_id: string;
     message: string;
     assignee?: string;
-    repo?: string; // 新增：仓储名
-    branch?: string; // 新增：分支名
   }
 
   // Pre-calculated AI resolution recommendation helper
@@ -189,7 +171,7 @@
   $: projectList = [
     'all',
     ...Array.from(new Set([
-      ...filteredAgendaItems.map(item => item.repo).filter((repo): repo is string => !!repo)
+      ...filteredAgendaItems.map(item => getAgendaProjectKey(item)).filter((project): project is string => !!project)
     ]))
   ];
   $: aiPlan = getAiResolvePlan(selectedItem);
@@ -212,7 +194,7 @@
       if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
       
       // 3. Project Filter
-      if (selectedRepo !== 'all' && item.repo !== selectedRepo) return false;
+      if (selectedRepo !== 'all' && getAgendaProjectKey(item) !== selectedRepo) return false;
       
       // 4. Severity Filter (only show risk items vs show all active items)
       if (showRiskLevel === 'risks' && item.risk_level === 'safe') return false;
@@ -299,6 +281,61 @@
       month: '2-digit',
       day: '2-digit'
     });
+  }
+
+  function getStatusDisplay(status: string) {
+    switch ((status || '').toLowerCase()) {
+      case 'backlog':
+        return '待排期';
+      case 'progress':
+        return '推进中';
+      case 'review':
+        return '评审中';
+      case 'done':
+        return '已完成';
+      default:
+        return status ? status.toUpperCase() : '未知';
+    }
+  }
+
+  function getAgendaProjectKey(item: AgendaItem) {
+    const taskId = (item.task_id || '').trim();
+    const delimiterIndex = taskId.indexOf('-');
+    if (delimiterIndex <= 0) return '';
+    const key = taskId.slice(0, delimiterIndex).trim().toUpperCase();
+    if (!key || key === 'TASK' || key === 'DEMAND') return '';
+    return key;
+  }
+
+  function getRiskTypeLabel(riskType: string) {
+    switch (riskType) {
+      case 'no_commit_48h':
+        return '连续静默';
+      case 'overdue':
+        return '周期超时';
+      case 'potential_conflict':
+        return '协作冲突';
+      default:
+        return '常规观察';
+    }
+  }
+
+  function getStaleHours(item: AgendaItem) {
+    if (!item.telemetry_snippet.last_update) return 0;
+    return Math.max(0, Math.round((Date.now() - new Date(item.telemetry_snippet.last_update).getTime()) / 36e5));
+  }
+
+  function getBlockageContext(item: AgendaItem): Array<{ label: string; value: string; tone: 'safe' | 'warn' | 'danger' | 'info' }> {
+    const staleHours = getStaleHours(item);
+    const dueText = item.due_date ? formatDateLabel(item.due_date.slice(0, 10)) : '未设置';
+    return [
+      { label: '流转状态', value: getStatusDisplay(item.status), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
+      { label: '静默时长', value: staleHours > 0 ? `${staleHours}h 未更新` : '等待更新', tone: staleHours > 48 ? 'danger' : staleHours > 24 ? 'warn' : 'info' },
+      { label: '截止压力', value: dueText, tone: item.risk_type === 'overdue' ? 'danger' : 'info' },
+      { label: '负责人', value: item.assignee || '未指派', tone: item.assignee ? 'safe' : 'warn' },
+      { label: '卡点类型', value: getRiskTypeLabel(item.risk_type), tone: item.risk_level === 'critical' ? 'danger' : 'warn' },
+      { label: '事项类型', value: item.issue_type === 'bug' ? '缺陷修复' : '功能需求', tone: 'info' }
+    ];
   }
 
   function parseDateValue(value: string) {
@@ -484,7 +521,7 @@
     if (item.issue_type === 'bug') {
       switch (item.risk_type) {
         case 'no_commit_48h':
-          return '🤖 AI 自动诊断 (Bug)：该缺陷在“修复中”已 48h 无提交，本地可能重现失败。建议：安排技术专家加入协同排查，或一键导入下方的 AI 推荐调停预案。';
+          return '🤖 AI 自动诊断 (Bug)：该缺陷在“修复中”已 48h 未出现有效流转，可能卡在复现、定位或责任边界。建议：安排技术专家加入协同排查，或一键导入下方的 AI 推荐调停预案。';
         case 'overdue':
           return '🤖 AI 自动诊断 (Bug)：该故障已超出解决时效。建议：调停并转派有经验的开发，避开核心发版窗口。';
         default:
@@ -493,11 +530,11 @@
     } else {
       switch (item.risk_type) {
         case 'no_commit_48h':
-          return '🤖 AI 自动诊断 (需求)：需求分支代码已搁置超 48 小时。建议：询问开发是否因依赖第三方接口受阻。可一键导入下方调停建议。';
+          return '🤖 AI 自动诊断 (需求)：该需求已超过 48 小时未出现有效推进。建议：确认是否因依赖、口径或资源排队受阻。可一键导入下方调停建议。';
         case 'overdue':
           return '🤖 AI 自动诊断 (需求)：需求工期超过预期。建议：调整计划或考虑将该需求部分范围剥离为下个迭代的影子卡片。';
         case 'potential_conflict':
-          return '🤖 AI 自动诊断 (需求)：代码仓存在多分支并行开发，有潜在合并冲突。建议：指定一人作为主合入人。';
+          return '🤖 AI 自动诊断 (需求)：当前存在并行协作路径，可能带来责任边界或验收顺序冲突。建议：指定一人统一协调验收与推进节奏。';
         default:
           return '🤖 AI 自动诊断 (需求)：任务开发进度偏慢，请对齐是否存在需求蔓延。';
       }
@@ -505,12 +542,10 @@
   }
 
   function getBrainFlowSignals(item: AgendaItem): Array<{ label: string; value: string; tone: 'safe' | 'warn' | 'danger' | 'info' }> {
-    const staleHours = item.telemetry_snippet.last_update
-      ? Math.max(0, Math.round((Date.now() - new Date(item.telemetry_snippet.last_update).getTime()) / 36e5))
-      : 0;
+    const staleHours = getStaleHours(item);
     const dueText = item.due_date ? formatDateLabel(item.due_date.slice(0, 10)) : '未设置';
     return [
-      { label: '事实证据', value: item.telemetry_snippet.branch ? '有分支证据' : '缺少开发入口', tone: item.telemetry_snippet.branch ? 'safe' : 'warn' },
+      { label: '当前状态', value: getStatusDisplay(item.status), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
       { label: '静默时长', value: staleHours > 0 ? `${staleHours}h 未更新` : '等待首个事件', tone: staleHours > 48 ? 'danger' : staleHours > 24 ? 'warn' : 'info' },
       { label: 'Jira/看板', value: item.status.toUpperCase(), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
       { label: '截止压力', value: dueText, tone: item.risk_type === 'overdue' ? 'danger' : 'info' },
@@ -521,7 +556,7 @@
 
   function getBrainFlowSuggestion(item: AgendaItem): string {
     if (item.risk_type === 'no_commit_48h') {
-      return '建议先确认阻塞事实，再执行转派或结对协作；保留原负责人上下文，新增协助人承接下一次提交证据。';
+      return '建议先确认阻塞事实，再执行转派或结对协作；保留原负责人上下文，新增协助人承接下一次状态更新。';
     }
     if (item.risk_type === 'overdue') {
       return item.issue_type === 'bug'
@@ -529,7 +564,7 @@
         : '建议拆分交付范围，将可独立验收部分继续推进，争议范围进入下一轮影子任务。';
     }
     if (item.risk_type === 'potential_conflict') {
-      return '建议指定主合入人，先做分支同步和冲突预检，再进入 Review，避免看板状态早于代码事实。';
+      return '建议指定统一协调人，先对齐范围、验收顺序和责任边界，再进入评审，避免看板状态早于交付事实。';
     }
     return '建议保持后台自动同步，只有在事实缺口、负责人变更、延期或验收风险出现时打断人工。';
   }
@@ -638,12 +673,6 @@
                 {:else}
                   <span class="task-link">#{dec.task_id}</span>
                 {/if}
-                {#if dec.repo}
-                  <span class="terminal-repo">[{dec.repo}]</span>
-                {/if}
-                {#if dec.branch && dec.branch !== '-'}
-                  <span class="terminal-branch">({dec.branch})</span>
-                {/if}
               </div>
               <p class="msg">{dec.message}</p>
             </div>
@@ -651,7 +680,7 @@
           <div class="terminal-line blink-line">
             <span class="time">[{new Date().toLocaleTimeString()}]</span>
             <span class="cursor">_</span>
-            <p class="msg">监听 GitLab telemetry Webhook 中...</p>
+            <p class="msg">监听需求流转事件中...</p>
           </div>
         </div>
       </div>
@@ -760,7 +789,7 @@
       <!-- Scrollable Bento Grid container for vertical flat tiling -->
       <div class="agenda-scroll-container">
         {#if loading && agendaItems.length === 0}
-          <div class="state-msg">正在扫描 Git Telemetry 轨迹并诊断异常...</div>
+          <div class="state-msg">正在扫描需求流转与排期异常...</div>
         {:else if errorMsg}
           <div class="state-msg error-msg">❌ 加载异常: {errorMsg}</div>
         {:else if filteredItems.length === 0}
@@ -829,9 +858,6 @@
               {:else}
                 <span class="task-id-badge font-mono">{selectedItem.task_id}</span>
               {/if}
-              {#if selectedItem.repo && selectedItem.repo !== '-'}
-                <span class="project-tag font-mono" title={selectedItem.repo}>📁 {selectedItem.repo}</span>
-              {/if}
               <span class="type-badge {selectedItem.issue_type === 'bug' ? 'badge-bug' : 'badge-task'}">
                 {selectedItem.issue_type === 'bug' ? '缺陷修复' : '功能需求'}
               </span>
@@ -839,47 +865,16 @@
             
             <h3 class="override-title">{selectedItem.title}</h3>
             
-            <div class="git-telemetry-timeline font-mono">
-              <div class="timeline-meta-status">
-                <span>流转状态: <code>{selectedItem.status.toLowerCase() === 'progress' && selectedItem.issue_type === 'bug' ? 'INVESTIGATION' : selectedItem.status.toUpperCase()}</code></span>
-                {#if selectedItem.repo && selectedItem.repo !== '-'}
-                  <span>当前追踪仓库: <code>{selectedItem.repo}</code></span>
-                {/if}
-              </div>
-
-              {#if !selectedItem.git_logs || selectedItem.git_logs.length === 0}
-                <div class="git-empty-alert">
-                  <span class="icon">⚠️</span>
-                  <div class="alert-content">
-                    <strong>未检测到实际代码提交轨迹</strong>
-                    <p>代码仓库中尚未检测到该任务的提交记录。AI 怀疑开发分支入口缺失，或开发工作尚未正式开始。</p>
+            <div class="blockage-context-panel font-mono">
+              <div class="blockage-context-grid">
+                {#each getBlockageContext(selectedItem) as signal}
+                  <div class="context-chip signal-{signal.tone}">
+                    <span>{signal.label}</span>
+                    <strong>{signal.value}</strong>
                   </div>
-                </div>
-              {:else}
-                <div class="git-timeline-list">
-                  <span class="timeline-title-mini">📁 关联开发轨迹（最新最多10条记录）：</span>
-                  {#each selectedItem.git_logs as log}
-                    <div class="git-timeline-item action-{log.action}">
-                      <div class="item-meta">
-                        <span class="action-badge">{log.action.replace('git_', '').replace('mr_', '').toUpperCase()}</span>
-                        <span class="repo-tag" title={log.repo}>{log.repo}</span>
-                        <span class="branch-tag" title={log.branch}>{log.branch}</span>
-                        {#if log.commit_id}
-                          <span class="commit-hash"><code>{log.commit_id.slice(0, 7)}</code></span>
-                        {/if}
-                        <span class="author-tag">@{log.author}</span>
-                        <span class="time-tag">{new Date(log.created_at).toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}</span>
-                      </div>
-                      <p class="commit-msg">{log.message}</p>
-                      {#if log.mr_url}
-                        <a href="{log.mr_url}" target="_blank" rel="noopener noreferrer" class="mr-action-link">
-                          🔗 查看合并请求 !{log.mr_iid}
-                        </a>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
+                {/each}
+              </div>
+              <p class="context-summary">{selectedItem.desc || '该事项需要在会中确认下一步推进动作。'}</p>
             </div>
 
             <!-- AI Diagnosed Advice -->
@@ -1105,168 +1100,42 @@
     gap: 8px;
     margin-bottom: 2px;
   }
-  .terminal-repo {
-    color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-    border: 1px solid rgba(56, 189, 248, 0.2);
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 0.65rem;
-  }
-  .terminal-branch {
-    color: #a78bfa;
-    background: rgba(167, 139, 250, 0.08);
-    border: 1px solid rgba(167, 139, 250, 0.2);
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-size: 0.65rem;
+
+  .blockage-context-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
   }
 
-  /* Git Telemetry Timeline 样式 */
-  .timeline-meta-status {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 12px;
-    color: #94a3b8;
-    font-size: 0.75rem;
-  }
-  .timeline-meta-status code {
-    color: #38bdf8;
-  }
-  .git-empty-alert {
-    background: rgba(244, 63, 94, 0.06);
-    border: 1px dashed rgba(244, 63, 94, 0.35);
+  .context-chip {
+    min-width: 0;
+    background: rgba(15, 23, 42, 0.48);
+    border: 1px solid rgba(51, 65, 85, 0.35);
     border-radius: 8px;
-    padding: 12px 16px;
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-  }
-  .git-empty-alert .icon {
-    font-size: 1.1rem;
-    line-height: 1;
-  }
-  .git-empty-alert .alert-content strong {
-    display: block;
-    color: #f43f5e;
-    font-size: 0.75rem;
-    margin-bottom: 4px;
-  }
-  .git-empty-alert .alert-content p {
-    margin: 0;
-    font-size: 0.7rem;
-    color: #94a3b8;
-    line-height: 1.4;
-  }
-  .git-timeline-list {
+    padding: 9px 10px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    max-height: 180px;
-    overflow-y: auto;
-    background: rgba(2, 6, 23, 0.5);
-    border: 1px solid rgba(51, 65, 85, 0.3);
-    border-radius: 8px;
-    padding: 12px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+    gap: 4px;
   }
-  .git-timeline-list::-webkit-scrollbar {
-    width: 4px;
-  }
-  .git-timeline-list::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.25);
-    border-radius: 2px;
-  }
-  .timeline-title-mini {
-    font-size: 0.7rem;
+
+  .context-chip span {
     color: #64748b;
+    font-size: 0.64rem;
     font-weight: 700;
   }
-  .git-timeline-item {
-    background: rgba(15, 23, 42, 0.4);
-    border-left: 3px solid #64748b;
-    border-radius: 4px;
-    padding: 8px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .git-timeline-item.action-git_push { border-left-color: #3b82f6; }
-  .git-timeline-item.action-mr_open { border-left-color: #a855f7; }
-  .git-timeline-item.action-mr_merge { border-left-color: #10b981; }
-  .git-timeline-item.action-ai_review { border-left-color: #06b6d4; background: rgba(6, 182, 212, 0.04); }
-  
-  .git-timeline-item .item-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    font-size: 0.65rem;
-  }
-  .action-badge {
-    font-size: 0.55rem;
-    font-weight: 800;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: #475569;
-    color: #cbd5e1;
-  }
-  .action-git_push .action-badge { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
-  .action-mr_open .action-badge { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
-  .action-mr_merge .action-badge { background: rgba(16, 185, 129, 0.15); color: #34d399; }
-  .action-ai_review .action-badge { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
 
-  .repo-tag {
-    color: #38bdf8;
-    max-width: 100px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .branch-tag {
-    color: #a78bfa;
-    max-width: 100px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .commit-hash {
-    color: #cbd5e1;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 0px 4px;
-    border-radius: 3px;
-  }
-  .author-tag {
+  .context-chip strong {
     color: #e2e8f0;
+    font-size: 0.72rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
   }
-  .time-tag {
-    color: #475569;
-    margin-left: auto;
-  }
-  .commit-msg {
-    margin: 0;
+
+  .context-summary {
+    margin: 10px 0 0 0;
+    color: #94a3b8;
     font-size: 0.7rem;
-    color: #cbd5e1;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .mr-action-link {
-    font-size: 0.65rem;
-    color: #c084fc;
-    text-decoration: none;
-    align-self: flex-start;
-    border-bottom: 1px dashed rgba(192, 132, 252, 0.4);
-    padding-bottom: 1px;
-    transition: all 0.2s;
-  }
-  .mr-action-link:hover {
-    color: #d8b4fe;
-    border-bottom-color: #d8b4fe;
+    line-height: 1.45;
   }
 
   .tile-project {
@@ -1860,22 +1729,12 @@
     line-height: 1.4;
   }
 
-  .git-telemetry-timeline {
+  .blockage-context-panel {
     background: rgba(2, 6, 23, 0.4);
     border-radius: 8px;
     padding: 10px 14px;
     font-size: 0.7rem;
     color: #64748b;
-  }
-
-  .timeline-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .timeline-meta code {
-    color: #cbd5e1;
   }
 
   .ai-diagnose-box {
