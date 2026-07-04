@@ -795,9 +795,9 @@
     return Array.from(options).sort((a, b) => a.localeCompare(b));
   }
 
-  function buildCreateAssigneeOptions() {
+  function buildCreateAssigneeOptions(members: Set<string>) {
     const options = new Set<string>();
-    coreMembers.forEach((name) => {
+    (members || new Set()).forEach((name) => {
       if (name && name !== '未指派' && name !== '-' && name !== 'Unassigned') {
         addFormOption(options, name);
       }
@@ -805,19 +805,26 @@
     return sortedFormOptions(options);
   }
 
-  function buildCreateProjectOptions() {
+  function buildCreateProjectOptions(
+    _optionProjects: string[],
+    _demands: Demand[],
+    _tasks: any[],
+    _schedule: any[],
+    _configs: any[],
+    _scores: any[]
+  ) {
     const options = new Set<string>();
-    demandOptionProjects.forEach((project) => addFormOption(options, project));
-    demands.forEach((demand) => addFormOption(options, demand.repo));
-    allSubTasks.forEach((task) => addFormOption(options, task.repo));
-    scheduleItems.forEach((item) => addFormOption(options, item.repo));
-    projectConfigs.forEach((proj) => {
+    (_optionProjects || []).forEach((project) => addFormOption(options, project));
+    (_demands || []).forEach((demand) => addFormOption(options, demand.repo));
+    (_tasks || []).forEach((task) => addFormOption(options, task.repo));
+    (_schedule || []).forEach((item) => addFormOption(options, item.repo));
+    (_configs || []).forEach((proj) => {
       if (proj) {
         if (proj.project_key) addFormOption(options, proj.project_key);
         if (proj.project_name) addFormOption(options, proj.project_name);
       }
     });
-    telemetryScores.forEach((score) => {
+    (_scores || []).forEach((score) => {
       if (score) {
         if (score.project_key) addFormOption(options, score.project_key);
         if (score.project_name) addFormOption(options, score.project_name);
@@ -914,8 +921,15 @@
   $: inProgressDemands = demands.filter(d => isCoreMember(d.assignee) && (d.status === 'progress' || d.status === 'review') && d.branch !== '' && d.branch !== '-').sort((a, b) => compareDemandsByPriority(a, b));
   $: deliveredDemands = demands.filter(d => isCoreMember(d.assignee) && d.status === 'done').sort((a, b) => compareDemandsByPriority(a, b));
   $: demandsById = new Map(demands.map((d) => [d.task_id, d]));
-  $: createAssigneeOptions = buildCreateAssigneeOptions();
-  $: createProjectOptions = buildCreateProjectOptions();
+  $: createAssigneeOptions = buildCreateAssigneeOptions(coreMembers);
+  $: createProjectOptions = buildCreateProjectOptions(
+    demandOptionProjects,
+    demands,
+    allSubTasks,
+    scheduleItems,
+    projectConfigs,
+    telemetryScores
+  );
   $: scheduleAssigneeOptions = [...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)), "外部协同"];
   $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
   $: scheduleItemsWithWeights = scheduleItems.map(item => {
