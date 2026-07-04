@@ -872,8 +872,8 @@
     datePickerCursor = parseDateValue(currentValue) || new Date();
   }
 
-  function getCalendarDays(value: string) {
-    const base = datePickerCursor;
+  function getCalendarDays(value: string, cursor = datePickerCursor) {
+    const base = cursor;
     const year = base.getFullYear();
     const month = base.getMonth();
     const first = new Date(year, month, 1);
@@ -901,8 +901,11 @@
     return { label: `${base.getFullYear()} ${monthNames[base.getMonth()]}`, days };
   }
 
-  function moveDateMonth(delta: number) {
-    datePickerCursor = new Date(datePickerCursor.getFullYear(), datePickerCursor.getMonth() + delta, 1);
+  function moveDateMonth(delta: number, event?: MouseEvent) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const cursor = datePickerCursor || new Date();
+    datePickerCursor = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
   }
 
   function selectDate(kind: 'new' | 'schedule', value: string) {
@@ -2737,12 +2740,12 @@
                 <span class="date-input-icon"></span>
               </button>
               {#if activeDatePicker === 'new'}
-                {@const calendar = getCalendarDays(newDueDate)}
+                {@const calendar = getCalendarDays(newDueDate, datePickerCursor)}
                 <div class="date-picker-panel">
                   <div class="date-picker-head">
-                    <button type="button" on:click={() => moveDateMonth(-1)} aria-label="上个月">‹</button>
+                    <button type="button" on:click={(event) => moveDateMonth(-1, event)} aria-label="上个月">‹</button>
                     <strong>{calendar.label}</strong>
-                    <button type="button" on:click={() => moveDateMonth(1)} aria-label="下个月">›</button>
+                    <button type="button" on:click={(event) => moveDateMonth(1, event)} aria-label="下个月">›</button>
                   </div>
                   <div class="date-week-grid font-mono">
                     {#each weekdayNames as day}<span>{day}</span>{/each}
@@ -2752,15 +2755,15 @@
                       <button
                         type="button"
                         class="date-cell {day.muted ? 'muted' : ''} {day.today ? 'today' : ''} {day.selected ? 'selected' : ''}"
-                        on:click={() => selectDate('new', day.value)}
+                        on:click|stopPropagation={() => selectDate('new', day.value)}
                       >
                         {day.label}
                       </button>
                     {/each}
                   </div>
                   <div class="date-picker-foot">
-                    <button type="button" on:click={() => clearDate('new')}>清空日期</button>
-                    <button type="button" on:click={() => selectDate('new', toDateValue(new Date()))}>今天</button>
+                    <button type="button" on:click|stopPropagation={() => clearDate('new')}>清空日期</button>
+                    <button type="button" on:click|stopPropagation={() => selectDate('new', toDateValue(new Date()))}>今天</button>
                   </div>
                 </div>
               {/if}
@@ -2901,12 +2904,12 @@
                 <span class="date-input-icon"></span>
               </button>
               {#if activeDatePicker === 'schedule'}
-                {@const calendar = getCalendarDays(schedDueDate)}
+                {@const calendar = getCalendarDays(schedDueDate, datePickerCursor)}
                 <div class="date-picker-panel">
                   <div class="date-picker-head">
-                    <button type="button" on:click={() => moveDateMonth(-1)} aria-label="上个月">‹</button>
+                    <button type="button" on:click={(event) => moveDateMonth(-1, event)} aria-label="上个月">‹</button>
                     <strong>{calendar.label}</strong>
-                    <button type="button" on:click={() => moveDateMonth(1)} aria-label="下个月">›</button>
+                    <button type="button" on:click={(event) => moveDateMonth(1, event)} aria-label="下个月">›</button>
                   </div>
                   <div class="date-week-grid font-mono">
                     {#each weekdayNames as day}<span>{day}</span>{/each}
@@ -2916,15 +2919,15 @@
                       <button
                         type="button"
                         class="date-cell {day.muted ? 'muted' : ''} {day.today ? 'today' : ''} {day.selected ? 'selected' : ''}"
-                        on:click={() => selectDate('schedule', day.value)}
+                        on:click|stopPropagation={() => selectDate('schedule', day.value)}
                       >
                         {day.label}
                       </button>
                     {/each}
                   </div>
                   <div class="date-picker-foot">
-                    <button type="button" on:click={() => clearDate('schedule')}>清空日期</button>
-                    <button type="button" on:click={() => selectDate('schedule', toDateValue(new Date()))}>今天</button>
+                    <button type="button" on:click|stopPropagation={() => clearDate('schedule')}>清空日期</button>
+                    <button type="button" on:click|stopPropagation={() => selectDate('schedule', toDateValue(new Date()))}>今天</button>
                   </div>
                 </div>
               {/if}

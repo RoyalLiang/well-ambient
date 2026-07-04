@@ -388,8 +388,8 @@
     overrideDatePickerCursor = parseDateValue(newDueDate) || new Date();
   }
 
-  function getOverrideCalendarDays(value: string) {
-    const base = overrideDatePickerCursor;
+  function getOverrideCalendarDays(value: string, cursor = overrideDatePickerCursor) {
+    const base = cursor;
     const year = base.getFullYear();
     const month = base.getMonth();
     const first = new Date(year, month, 1);
@@ -417,8 +417,11 @@
     return { label: `${base.getFullYear()} ${monthNames[base.getMonth()]}`, days };
   }
 
-  function moveOverrideDateMonth(delta: number) {
-    overrideDatePickerCursor = new Date(overrideDatePickerCursor.getFullYear(), overrideDatePickerCursor.getMonth() + delta, 1);
+  function moveOverrideDateMonth(delta: number, event?: MouseEvent) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const cursor = overrideDatePickerCursor || new Date();
+    overrideDatePickerCursor = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
   }
 
   function selectOverrideDueDate(value: string) {
@@ -1028,12 +1031,12 @@
                       <span class="date-input-icon"></span>
                     </button>
                     {#if showOverrideDatePicker}
-                      {@const calendar = getOverrideCalendarDays(newDueDate)}
+                      {@const calendar = getOverrideCalendarDays(newDueDate, overrideDatePickerCursor)}
                       <div class="override-date-picker-panel">
                         <div class="override-date-picker-head">
-                          <button type="button" aria-label="上个月" on:click={() => moveOverrideDateMonth(-1)}>‹</button>
+                          <button type="button" aria-label="上个月" on:click={(event) => moveOverrideDateMonth(-1, event)}>‹</button>
                           <strong>{calendar.label}</strong>
-                          <button type="button" aria-label="下个月" on:click={() => moveOverrideDateMonth(1)}>›</button>
+                          <button type="button" aria-label="下个月" on:click={(event) => moveOverrideDateMonth(1, event)}>›</button>
                         </div>
                         <div class="override-date-week-grid font-mono">
                           {#each weekdayNames as day}
@@ -1045,15 +1048,15 @@
                             <button
                               type="button"
                               class="override-date-cell {day.muted ? 'muted' : ''} {day.today ? 'today' : ''} {day.selected ? 'selected' : ''}"
-                              on:click={() => selectOverrideDueDate(day.value)}
+                              on:click|stopPropagation={() => selectOverrideDueDate(day.value)}
                             >
                               {day.label}
                             </button>
                           {/each}
                         </div>
                         <div class="override-date-picker-foot">
-                          <button type="button" on:click={() => selectOverrideDueDate(toDateValue(new Date()))}>今天</button>
-                          <button type="button" on:click={clearOverrideDueDate}>清空</button>
+                          <button type="button" on:click|stopPropagation={() => selectOverrideDueDate(toDateValue(new Date()))}>今天</button>
+                          <button type="button" on:click|stopPropagation={clearOverrideDueDate}>清空</button>
                         </div>
                       </div>
                     {/if}
