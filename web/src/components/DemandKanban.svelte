@@ -352,7 +352,11 @@
   let showTypeDropdown = false;
   let showSortDropdown = false;
   let projectConfigs: any[] = [];
-  $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
+  $: projectConfigMap = new Map<string, any>(
+    projectConfigs
+      .filter(c => c && c.project_key)
+      .map(c => [c.project_key.toUpperCase(), c])
+  );
   let telemetryScores: any[] = [];
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
@@ -516,11 +520,12 @@
 
   function getProjectDisplayName(projKey: string): string {
     if (!projKey || projKey === '-') return '暂不指定项目';
-    const config = projectConfigMap.get(projKey.toUpperCase());
+    const keyUpper = projKey.toUpperCase();
+    const config = projectConfigMap.get(keyUpper);
     if (config && config.project_name && config.project_name !== `${projKey}项目`) {
       return `${config.project_name} (${projKey})`;
     }
-    const score = telemetryScores.find(s => s.project_key.toUpperCase() === projKey.toUpperCase());
+    const score = telemetryScores.find(s => s && s.project_key && s.project_key.toUpperCase() === keyUpper);
     if (score && score.project_name && score.project_name !== `${projKey}项目`) {
       return `${score.project_name} (${projKey})`;
     }
@@ -807,13 +812,15 @@
     allSubTasks.forEach((task) => addFormOption(options, task.repo));
     scheduleItems.forEach((item) => addFormOption(options, item.repo));
     projectConfigs.forEach((proj) => {
-      if (proj && proj.project_key) {
-        addFormOption(options, proj.project_key);
+      if (proj) {
+        if (proj.project_key) addFormOption(options, proj.project_key);
+        if (proj.project_name) addFormOption(options, proj.project_name);
       }
     });
     telemetryScores.forEach((score) => {
-      if (score && score.project_key) {
-        addFormOption(options, score.project_key);
+      if (score) {
+        if (score.project_key) addFormOption(options, score.project_key);
+        if (score.project_name) addFormOption(options, score.project_name);
       }
     });
     return ['-', ...sortedFormOptions(options)];
@@ -2644,7 +2651,7 @@
                       ➕ 使用新项目: "{projectSearchText}"
                     </button>
                   {/if}
-                  {#each createProjectOptions.filter(proj => !projectSearchText || getProjectDisplayName(proj).toLowerCase().includes(projectSearchText.toLowerCase())) as project}
+                  {#each (projectSearchText && projectSearchText.trim() ? createProjectOptions.filter(proj => getProjectDisplayName(proj).toLowerCase().includes(projectSearchText.trim().toLowerCase())) : createProjectOptions) as project}
                     <button
                       type="button"
                       class="dropdown-option-item {newRepo === project ? 'selected' : ''}"
