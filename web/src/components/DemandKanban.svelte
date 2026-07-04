@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { slide } from 'svelte/transition';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
@@ -423,9 +423,12 @@
   let scheduleScrollTop = 0;
   let scheduleContainerHeight = 550;
   let scheduleContainerEl: HTMLDivElement;
+  let scheduleTablePanelEl: HTMLDivElement;
   const scheduleItemHeight = 76;
   const scheduleTableHeaderHeight = 38;
   const scheduleEmptyStateHeight = 96;
+  let lastScheduleTableContentHeight = 0;
+  let scheduleViewportStabilizeSeq = 0;
 
   let collapsedProjects: {[key: string]: boolean} = {};
 
@@ -492,6 +495,7 @@
   $: scheduleViewportHeight = scheduleContainerHeight > 0 ? scheduleContainerHeight : 550;
   $: scheduleVirtualRowCount = flatRenderList.length;
   $: scheduleTableContentHeight = scheduleTableHeaderHeight + (scheduleVirtualRowCount > 0 ? scheduleVirtualRowCount * scheduleItemHeight : scheduleEmptyStateHeight);
+  $: stabilizeScheduleViewport(scheduleTableContentHeight);
   $: scheduleMaxScrollTop = Math.max(0, scheduleVirtualRowCount * scheduleItemHeight - scheduleViewportHeight);
   $: if (scheduleContainerEl && scheduleScrollTop > scheduleMaxScrollTop) {
     scheduleScrollTop = scheduleMaxScrollTop;
@@ -506,6 +510,34 @@
     const target = e.target as HTMLDivElement;
     scheduleContainerHeight = target.clientHeight || scheduleContainerHeight;
     scheduleScrollTop = target.scrollTop;
+  }
+
+  async function stabilizeScheduleViewport(nextContentHeight: number) {
+    if (!isMounted || activeDemandView !== 'schedule' || !scheduleTablePanelEl || typeof window === 'undefined') {
+      lastScheduleTableContentHeight = nextContentHeight;
+      return;
+    }
+    if (lastScheduleTableContentHeight === nextContentHeight) return;
+
+    const rectBefore = scheduleTablePanelEl.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const shouldPreserveViewport = rectBefore.top < viewportHeight;
+
+    lastScheduleTableContentHeight = nextContentHeight;
+    if (!shouldPreserveViewport) return;
+
+    const topBefore = rectBefore.top;
+    const seq = ++scheduleViewportStabilizeSeq;
+    await tick();
+
+    requestAnimationFrame(() => {
+      if (seq !== scheduleViewportStabilizeSeq || !scheduleTablePanelEl) return;
+      const topAfter = scheduleTablePanelEl.getBoundingClientRect().top;
+      const delta = topAfter - topBefore;
+      if (Math.abs(delta) > 1) {
+        window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+      }
+    });
   }
 
   function getProjectPriority(taskID: string): string {
@@ -2152,7 +2184,7 @@
       {:else if scheduleErrorMsg}
         <div class="state-msg error-msg font-mono">❌ {scheduleErrorMsg}</div>
       {:else}
-        <div class="schedule-table-panel">
+        <div class="schedule-table-panel" bind:this={scheduleTablePanelEl}>
           <div class="schedule-table-head">
             <div>
               <span class="eyebrow">SCHEDULE WORKTABLE</span>
@@ -3720,6 +3752,7 @@
     border: 1px solid rgba(51, 65, 85, 0.34);
     border-radius: 12px;
     overflow: hidden;
+    overflow-anchor: none;
     min-width: 0;
   }
 
@@ -3753,7 +3786,6 @@
     scrollbar-gutter: stable both-edges;
     scrollbar-width: thin;
     scrollbar-color: rgba(129, 140, 248, 0.62) rgba(15, 23, 42, 0.72);
-    transition: height 0.16s ease, max-height 0.16s ease;
   }
 
   .schedule-table-wrapper::-webkit-scrollbar {
