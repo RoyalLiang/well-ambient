@@ -23,4 +23,10 @@ compression_points:
 
 frontend_extra:
   trigger: "frontend UI, visual refactor, dashboard, or Tailwind work"
-  load: "./FRONTEND_RULES.md if present"
+  default_skill: "ui-skill"
+  fallback_chain:
+    - "ui-skill"
+    - "finesse-skill"
+    - "taste-skill"
+  load: "Use the global ui-skill by default for all UI-related changes; then load ./FRONTEND_RULES.md if present."
+  fallback: "If ui-skill cannot be loaded in the active session, state that explicitly and fall back in order: finesse-skill, then taste-skill."

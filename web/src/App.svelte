@@ -1,15 +1,143 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CryptoJS from 'crypto-js';
-  import TaskKanban from './components/TaskKanban.svelte';
-  import Deconstructor from './components/Deconstructor.svelte';
-  import ProjectHealthTelemetry from './components/ProjectHealthTelemetry.svelte';
   import DecisionDashboard from './components/DecisionDashboard.svelte';
-  import SettingsPanel from './components/SettingsPanel.svelte';
   import DemandKanban from './components/DemandKanban.svelte';
+  import ProjectHealthTelemetry from './components/ProjectHealthTelemetry.svelte';
+  import Deconstructor from './components/Deconstructor.svelte';
+  import TaskKanban from './components/TaskKanban.svelte';
+  import KPIKanban from './components/KPIKanban.svelte';
+  import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
+  import FunctionalAdminShell from './components/prototype/FunctionalAdminShell.svelte';
+  import FunctionalWorkspace from './components/prototype/FunctionalWorkspace.svelte';
 
-  let activeTab = 'decision'; // 'decision' | 'schedule' | 'evidence' | 'settings'
+  type AppTab = 'decision' | 'schedule' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
+  type SettingsSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit';
+  type DemandView = 'board' | 'schedule';
+  type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
+  type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
+
+  interface WorkspaceAction {
+    label: string;
+    route: Exclude<AppTab, 'no_permission'>;
+    kind?: 'primary' | 'secondary';
+  }
+
+  interface WorkspacePresentation {
+    kicker: string;
+    title: string;
+    summary: string;
+    statusLabel: string;
+    tone: WorkspaceTone;
+    actions: WorkspaceAction[];
+  }
+
+  interface WorkspaceSignal {
+    label: string;
+    value: string;
+    tone?: SignalTone;
+  }
+
+  const consoleTabs: AppTab[] = ['decision', 'schedule', 'evidence', 'tasks', 'kpi', 'settings'];
+  const tabPermissions: Record<Exclude<AppTab, 'no_permission'>, string[]> = {
+    decision: ['decision:read'],
+    schedule: ['demands:read'],
+    evidence: ['dashboard:read'],
+    tasks: ['dashboard:read'],
+    kpi: ['kpi:read'],
+    settings: ['config:read', 'users:read', 'kpi:read', 'ai_context:read']
+  };
+
+  const settingsSectionPermissions: Record<SettingsSection, string[]> = {
+    gitlab: ['config:read'],
+    feishu: ['config:read'],
+    jira: ['config:read'],
+    projects: ['config:read'],
+    ai: ['config:read'],
+    ai_context: ['ai_context:read', 'config:read'],
+    kpi: ['kpi:read'],
+    users: ['users:read'],
+    matrix: ['users:read'],
+    policies: ['users:read'],
+    audit: ['users:read']
+  };
+
+  const settingsSectionOrder: SettingsSection[] = ['gitlab', 'ai_context', 'kpi', 'users'];
+
+  const workspacePresentations: Record<Exclude<AppTab, 'no_permission'>, WorkspacePresentation> = {
+    decision: {
+      kicker: 'DECISION BOARD',
+      title: '决策看板',
+      summary: '聚焦会议议程、阻塞处理和人工调停，让 well-ambient 从发现问题进入可执行决策。',
+      statusLabel: 'Agenda 已接入',
+      tone: 'cyan',
+      actions: [
+        { label: '查看排期风险', route: 'schedule', kind: 'primary' },
+        { label: '打开证据链', route: 'evidence' }
+      ]
+    },
+    schedule: {
+      kicker: 'SCHEDULE CONTROL',
+      title: '排期治理',
+      summary: '承载需求池、风险日历、负责人指派和交付截止日，是交付治理的主要操作区。',
+      statusLabel: 'Jira 需求同步',
+      tone: 'green',
+      actions: [
+        { label: '进入任务跟踪', route: 'tasks', kind: 'primary' },
+        { label: '查看健康诊断', route: 'evidence' }
+      ]
+    },
+    evidence: {
+      kicker: 'EVIDENCE GRAPH',
+      title: '证据链',
+      summary: '把项目健康、AI 需求解构、仓库映射和影子任务聚合到同一个事实工作区。',
+      statusLabel: 'Telemetry 已聚合',
+      tone: 'amber',
+      actions: [
+        { label: '回到排期治理', route: 'schedule', kind: 'primary' },
+        { label: '查看任务闭环', route: 'tasks' }
+      ]
+    },
+    tasks: {
+      kicker: 'EXECUTION LOOP',
+      title: '任务跟踪',
+      summary: '按状态、负责人和执行风险观察任务闭环，连接 Jira、GitLab、MR 与代码提交证据。',
+      statusLabel: '执行面板在线',
+      tone: 'rose',
+      actions: [
+        { label: '查看排期治理', route: 'schedule', kind: 'primary' },
+        { label: '打开 KPI 洞察', route: 'kpi' }
+      ]
+    },
+    kpi: {
+      kicker: 'PERFORMANCE FACTS',
+      title: '度量洞察',
+      summary: '把个人、部门、风险和证据完整性沉淀为可追溯的绩效事实，而不是单一总分。',
+      statusLabel: '日报周报可预览',
+      tone: 'violet',
+      actions: [
+        { label: '打开配置中心', route: 'settings', kind: 'primary' },
+        { label: '回到任务跟踪', route: 'tasks' }
+      ]
+    },
+    settings: {
+      kicker: 'CONTROL CENTER',
+      title: '配置中心',
+      summary: '维护权限、项目、集成、KPI 权重和 AI 策略，所有治理规则从这里进入系统。',
+      statusLabel: '权限受控',
+      tone: 'slate',
+      actions: [
+        { label: '查看 KPI 洞察', route: 'kpi', kind: 'primary' },
+        { label: '回到决策看板', route: 'decision' }
+      ]
+    }
+  };
+
+  let activeTab: AppTab = 'decision';
+  let activeSettingsSection: SettingsSection = 'gitlab';
+  let activeDemandView: DemandView = 'schedule';
+  let availableRoutes: AppTab[] = [];
 
   interface Alert {
     id: number;
@@ -47,6 +175,7 @@
   } catch (e) {
     currentUserPermissions = [];
   }
+  let permissionsHydrated = !jwtToken || currentUserPermissions.length > 0;
   let showUserDropdown = false;
 
   function normalizeDepartment(department: unknown): string {
@@ -67,41 +196,114 @@
     return currentUserPermissions.includes(p);
   }
 
+  function getWorkspacePresentation(tab: AppTab): WorkspacePresentation {
+    if (tab === 'no_permission') {
+      return workspacePresentations.decision;
+    }
+    return workspacePresentations[tab];
+  }
+
+  function getRoleLabel(role: string): string {
+    if (role === 'super_admin') return '超级管理员';
+    if (role === 'admin') return '系统管理员';
+    return '成员';
+  }
+
+  function canAccessTab(tab: AppTab): boolean {
+    if (tab === 'no_permission') return false;
+    return tabPermissions[tab].some((permission) => hasPermission(permission));
+  }
+
+  function applyAuthClaims(token: string) {
+    const claims = parseJwt(token);
+    if (!claims) return;
+
+    if (claims.avatar && !currentUserAvatar) {
+      currentUserAvatar = claims.avatar;
+      localStorage.setItem('current_user_avatar', currentUserAvatar);
+    }
+    if (claims.name && !currentUserName) {
+      currentUserName = claims.name;
+      localStorage.setItem('current_user_name', currentUserName);
+    }
+    if (claims.user_id && !currentUserEmail) {
+      currentUserEmail = claims.user_id;
+      localStorage.setItem('current_user_email', currentUserEmail);
+    }
+    const claimDepartment = normalizeDepartment(claims.department);
+    if (claimDepartment && currentUserDepartment !== claimDepartment) {
+      currentUserDepartment = claimDepartment;
+      localStorage.setItem('current_user_department', currentUserDepartment);
+    }
+    if (Array.isArray(claims.permissions)) {
+      currentUserPermissions = claims.permissions;
+      permissionsHydrated = true;
+      localStorage.setItem('current_user_permissions', JSON.stringify(currentUserPermissions));
+    }
+    if (Array.isArray(claims.groups) && currentUserRole === 'member') {
+      if (claims.groups.includes('super_admin')) {
+        currentUserRole = 'super_admin';
+      } else if (claims.groups.includes('admin')) {
+        currentUserRole = 'admin';
+      }
+      localStorage.setItem('current_user_role', currentUserRole);
+    }
+  }
+
+  function isSettingsSection(section: string): section is SettingsSection {
+    return section in settingsSectionPermissions;
+  }
+
+  function canAccessSettingsSection(section: SettingsSection): boolean {
+    return settingsSectionPermissions[section].some((permission) => hasPermission(permission));
+  }
+
+  function firstAccessibleSettingsSection(): SettingsSection {
+    return settingsSectionOrder.find(canAccessSettingsSection) || 'gitlab';
+  }
+
+  $: availableRoutes = jwtToken && !permissionsHydrated ? consoleTabs : consoleTabs.filter(canAccessTab);
+  $: if (jwtToken && permissionsHydrated && activeTab === 'settings' && !canAccessSettingsSection(activeSettingsSection)) {
+    activeSettingsSection = firstAccessibleSettingsSection();
+  }
+  $: activeWorkspace = getWorkspacePresentation(activeTab);
+  $: workspaceActions = activeWorkspace.actions.filter((action) => availableRoutes.includes(action.route));
+  $: workspaceSignals = [
+    {
+      label: '会话状态',
+      value: authDegraded ? '临时会话' : '正常',
+      tone: authDegraded ? 'warn' : 'good'
+    },
+    {
+      label: '未读遥测',
+      value: `${activeAlerts.length}`,
+      tone: activeAlerts.length > 0 ? 'danger' : 'neutral'
+    },
+    {
+      label: '当前身份',
+      value: getRoleLabel(currentUserRole),
+      tone: 'info'
+    }
+  ] satisfies WorkspaceSignal[];
+  $: workspaceBreadcrumbs = activeTab === 'schedule'
+    ? ['管理台', '排期治理', activeDemandView === 'board' ? '流转看板' : '排期看板']
+    : ['管理台', activeWorkspace.title];
+  $: workspaceContextMeta = `未读遥测 ${activeAlerts.length}`;
+
   // Redirect to first available tab based on permissions
   function autoRedirectTab() {
     if (!jwtToken) return;
-    
-    // Define tabs and their corresponding required permissions
-    const tabPermissions: Record<string, string> = {
-      'decision': 'decision:read',
-      'schedule': 'demands:read',
-      'evidence': 'dashboard:read',
-      'settings': 'config:read'
-    };
+    if (!permissionsHydrated) return;
 
-    const requiredPerm = tabPermissions[activeTab];
-    if (activeTab === 'settings') {
-      if (hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')) {
-        return;
-      }
-    } else if (requiredPerm && hasPermission(requiredPerm)) {
+    if (canAccessTab(activeTab)) {
       return;
     }
     
     // Otherwise look for first allowed tab
-    const orderedTabs = ['decision', 'schedule', 'evidence', 'settings'];
-    for (const tab of orderedTabs) {
-      if (tab === 'settings') {
-        if (hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')) {
-          activeTab = tab;
-          return;
-        }
-      } else {
-        const perm = tabPermissions[tab];
-        if (hasPermission(perm)) {
-          activeTab = tab;
-          return;
-        }
+    for (const tab of consoleTabs) {
+      if (canAccessTab(tab)) {
+        activeTab = tab;
+        return;
       }
     }
     
@@ -178,6 +380,7 @@
     currentUserRole = 'member';
     currentUserDepartment = '';
     currentUserPermissions = [];
+    permissionsHydrated = false;
     localStorage.removeItem('jwt_token');
     localStorage.removeItem('current_user_name');
     localStorage.removeItem('current_user_email');
@@ -195,7 +398,7 @@
     }
     alerts = [];
     showUserDropdown = false;
-    activeTab = 'dashboard';
+    activeTab = 'decision';
   }
 
   async function handleLoginSubmit(e: Event) {
@@ -231,10 +434,12 @@
         currentUserAvatar = data.user.avatar || '';
         currentUserRole = data.user.role || 'member';
         currentUserDepartment = normalizeDepartment(data.user.department);
-        currentUserPermissions = data.user.permissions || [];
+        currentUserPermissions = Array.isArray(data.user.permissions) ? data.user.permissions : [];
+        permissionsHydrated = Array.isArray(data.user.permissions);
         authDegraded = data.degraded === true;
         authDegradedMessage = data.degraded ? (data.message || 'WellOS 维护中，已使用本地临时会话登录') : '';
         loginNotice = data.degraded ? (data.message || 'WellOS 维护中，已使用本地临时会话登录') : '';
+        applyAuthClaims(jwtToken);
         
         localStorage.setItem('jwt_token', jwtToken);
         localStorage.setItem('current_user_name', currentUserName);
@@ -246,6 +451,7 @@
         localStorage.setItem('auth_degraded', authDegraded ? 'true' : 'false');
         localStorage.setItem('auth_degraded_message', authDegradedMessage);
         
+        autoRedirectTab();
         await refreshCurrentUserProfile();
         autoRedirectTab();
         
@@ -349,9 +555,50 @@
 
   function handleNavigateToSettings(event: CustomEvent<{ section: string }>) {
     activeTab = 'settings';
+    if (isSettingsSection(event.detail.section)) {
+      activeSettingsSection = event.detail.section;
+    }
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('focus-settings-section', { detail: event.detail.section }));
+      window.dispatchEvent(new CustomEvent('focus-settings-section', { detail: activeSettingsSection }));
     }, 50);
+  }
+
+  function handleConsoleNavigate(tab: string) {
+    if (!consoleTabs.includes(tab as AppTab)) return;
+    const nextTab = tab as AppTab;
+    if (canAccessTab(nextTab)) {
+      activeTab = nextTab;
+      if (nextTab === 'settings') {
+        const section = canAccessSettingsSection(activeSettingsSection)
+          ? activeSettingsSection
+          : firstAccessibleSettingsSection();
+        activeSettingsSection = section;
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('focus-settings-section', { detail: section }));
+        }, 50);
+      }
+    }
+  }
+
+  function handleScheduleNavigate(view: DemandView) {
+    if (!hasPermission('demands:read')) return;
+    activeDemandView = view;
+    activeTab = 'schedule';
+  }
+
+  function handleSettingsNavigate(section: string) {
+    if (!isSettingsSection(section) || !canAccessSettingsSection(section)) return;
+    activeSettingsSection = section;
+    activeTab = 'settings';
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('focus-settings-section', { detail: section }));
+    }, 50);
+  }
+
+  function handleSettingsSectionChange(section: string) {
+    if (isSettingsSection(section)) {
+      activeSettingsSection = section;
+    }
   }
 
   function formatTimeAgo(timeStr: string): string {
@@ -394,6 +641,7 @@
       if (Array.isArray(user.permissions)) {
         currentUserPermissions = user.permissions;
       }
+      permissionsHydrated = true;
 
       localStorage.setItem('current_user_name', currentUserName);
       localStorage.setItem('current_user_email', currentUserEmail);
@@ -404,6 +652,8 @@
       autoRedirectTab();
     } catch (e) {
       console.error('Failed to refresh current user profile:', e);
+      permissionsHydrated = true;
+      autoRedirectTab();
     }
   }
 
@@ -456,38 +706,7 @@
 
   onMount(() => {
     if (jwtToken) {
-      const claims = parseJwt(jwtToken);
-      if (claims) {
-        if (claims.avatar && !currentUserAvatar) {
-          currentUserAvatar = claims.avatar;
-          localStorage.setItem('current_user_avatar', currentUserAvatar);
-        }
-        if (claims.name && !currentUserName) {
-          currentUserName = claims.name;
-          localStorage.setItem('current_user_name', currentUserName);
-        }
-        if (claims.user_id && !currentUserEmail) {
-          currentUserEmail = claims.user_id;
-          localStorage.setItem('current_user_email', currentUserEmail);
-        }
-        const claimDepartment = normalizeDepartment(claims.department);
-        if (claimDepartment && currentUserDepartment !== claimDepartment) {
-          currentUserDepartment = claimDepartment;
-          localStorage.setItem('current_user_department', currentUserDepartment);
-        }
-        if (Array.isArray(claims.permissions) && currentUserPermissions.length === 0) {
-          currentUserPermissions = claims.permissions;
-          localStorage.setItem('current_user_permissions', JSON.stringify(currentUserPermissions));
-        }
-        if (Array.isArray(claims.groups) && currentUserRole === 'member') {
-          if (claims.groups.includes('super_admin')) {
-            currentUserRole = 'super_admin';
-          } else if (claims.groups.includes('admin')) {
-            currentUserRole = 'admin';
-          }
-          localStorage.setItem('current_user_role', currentUserRole);
-        }
-      }
+      applyAuthClaims(jwtToken);
       refreshCurrentUserProfile();
       loadConfig();
       connectSSE();
@@ -539,7 +758,7 @@
       <form on:submit={handleLoginSubmit} class="login-form">
         {#if loginError}
           <div class="login-error-alert">
-            ❌ {loginError}
+            登录失败 · {loginError}
           </div>
         {/if}
         
@@ -572,16 +791,85 @@
         
         <button type="submit" class="login-submit-btn" disabled={loggingIn}>
           {#if loggingIn}
-            <span class="spinner-mini"></span> 正在鉴权中...
+            <span class="spinner-mini"></span> 正在鉴权中
           {:else}
-            🚀 立即登陆
+            立即登录
           {/if}
         </button>
       </form>
     </div>
   </div>
+{:else if activeTab !== 'no_permission'}
+  <FunctionalAdminShell
+    activeRoute={activeTab}
+    availableRoutes={availableRoutes}
+    currentUserName={currentUserName}
+    currentUserEmail={currentUserEmail}
+    currentUserAvatar={currentUserAvatar}
+    currentUserRole={currentUserRole}
+    currentUserDepartment={currentUserDepartment}
+    currentUserPermissions={currentUserPermissions}
+    alertCount={activeAlerts.length}
+    alerts={activeAlerts}
+    activeSettingsSection={activeSettingsSection}
+    activeScheduleView={activeDemandView}
+    authDegraded={authDegraded}
+    authDegradedMessage={authDegradedMessage}
+    onNavigate={handleConsoleNavigate}
+    onSettingsNavigate={handleSettingsNavigate}
+    onScheduleNavigate={handleScheduleNavigate}
+    onLogout={logout}
+    onClearAlerts={clearAllAlerts}
+    onDismissAlert={dismissAlert}
+    onRefreshProfile={refreshCurrentUserProfile}
+  >
+    <FunctionalWorkspace
+      kicker={activeWorkspace.kicker}
+      title={activeWorkspace.title}
+      summary={activeWorkspace.summary}
+      statusLabel={activeWorkspace.statusLabel}
+      tone={activeWorkspace.tone}
+      signals={workspaceSignals}
+      actions={workspaceActions}
+      showBreadcrumbBar={activeTab !== 'settings'}
+      breadcrumbs={workspaceBreadcrumbs}
+      contextStatus={activeWorkspace.statusLabel}
+      contextMeta={workspaceContextMeta}
+      onNavigate={handleConsoleNavigate}
+    >
+      {#if activeTab === 'decision'}
+        <DecisionDashboard currentUser={currentUserName} />
+      {:else if activeTab === 'schedule'}
+        <DemandKanban
+          currentUserPermissions={currentUserPermissions}
+          currentUserName={currentUserName}
+          currentUserEmail={currentUserEmail}
+          currentUserDepartment={currentUserDepartment}
+          activeDemandView={activeDemandView}
+        />
+      {:else if activeTab === 'evidence'}
+        <div class="console-functional-stack">
+          <ProjectHealthTelemetry />
+          <Deconstructor />
+        </div>
+      {:else if activeTab === 'tasks'}
+        <TaskKanban />
+      {:else if activeTab === 'kpi'}
+        <KPIKanban />
+      {:else if activeTab === 'settings'}
+        {#key activeSettingsSection}
+          <SettingsPanel
+            currentUserEmail={currentUserEmail}
+            currentUserPermissions={currentUserPermissions}
+            activeSettingsSection={activeSettingsSection}
+            onSectionChange={handleSettingsSectionChange}
+          />
+        {/key}
+      {/if}
+    </FunctionalWorkspace>
+  </FunctionalAdminShell>
 {:else}
-<main class="app-container {activeTab === 'settings' ? 'settings-mode' : ''}">
+<main class="app-container settings-mode">
   <!-- Header -->
   <header class="app-header {authDegraded ? 'has-maintenance-banner' : ''}">
     <div class="brand">
@@ -613,7 +901,7 @@
         {#if showNotifications}
           <div class="notifications-dropdown">
             <div class="dropdown-header">
-              <h3>⚡ 协同遥测中心 ({activeAlerts.length > 99 ? '99+' : activeAlerts.length})</h3>
+              <h3>协同遥测中心 ({activeAlerts.length > 99 ? '99+' : activeAlerts.length})</h3>
               {#if activeAlerts.length > 0}
                 <button class="clear-all-btn" on:click={clearAllAlerts}>全部忽略</button>
               {/if}
@@ -621,7 +909,7 @@
             <div class="dropdown-body">
               {#if activeAlerts.length === 0}
                 <div class="empty-alerts">
-                  <span>🎉 暂无未读遥测通知</span>
+                  <span>暂无未读遥测通知</span>
                 </div>
               {:else}
                 {#each activeAlerts as alert}
@@ -631,7 +919,7 @@
                         <div class="title-meta-left">
                           <span class="alert-type-badge type-{alert.type}">{getNotificationTypeLabel(alert.type)}</span>
                           <span class="alert-task-id">{alert.task_id}</span>
-                          <span class="alert-assignee">👤 {alert.assignee}</span>
+                          <span class="alert-assignee">{alert.assignee}</span>
                         </div>
                         <div class="alert-title-right">
                           <span class="alert-time-ago font-mono">{formatTimeAgo(alert.created_at)}</span>
@@ -640,7 +928,7 @@
                       </div>
                       <p class="alert-message">{alert.title}</p>
                       <span class="alert-desc">{alert.message}</span>
-                      <span class="alert-action-hint">点击跳转 GitLab 🔗</span>
+                      <span class="alert-action-hint">打开 GitLab</span>
                     </a>
                   {:else}
                     <div class="alert-item alert-{alert.type}">
@@ -648,7 +936,7 @@
                         <div class="title-meta-left">
                           <span class="alert-type-badge type-{alert.type}">{getNotificationTypeLabel(alert.type)}</span>
                           <span class="alert-task-id">{alert.task_id}</span>
-                          <span class="alert-assignee">👤 {alert.assignee}</span>
+                          <span class="alert-assignee">{alert.assignee}</span>
                         </div>
                         <div class="alert-title-right">
                           <span class="alert-time-ago font-mono">{formatTimeAgo(alert.created_at)}</span>
@@ -657,7 +945,7 @@
                       </div>
                       <p class="alert-message">{alert.title}</p>
                       {#if alert.type === 'delay'}
-                        <span class="alert-delay">⚠️ 已延期 {alert.delay_days} 天</span>
+                        <span class="alert-delay">已延期 {alert.delay_days} 天</span>
                       {:else}
                         <span class="alert-desc">{alert.message}</span>
                       {/if}
@@ -718,73 +1006,43 @@
   <!-- Tab Navigation -->
   <div class="tabs-navigation font-mono">
     {#if hasPermission('decision:read')}
-      <button class="tab-btn {activeTab === 'decision' ? 'active' : ''}" on:click={() => activeTab = 'decision'}>
-        ⚡ 决策队列
+      <button class="tab-btn" on:click={() => activeTab = 'decision'}>
+        总览
       </button>
     {/if}
     {#if hasPermission('demands:read')}
-      <button class="tab-btn {activeTab === 'schedule' ? 'active' : ''}" on:click={() => activeTab = 'schedule'}>
-        🗓️ 排期治理台
+      <button class="tab-btn" on:click={() => activeTab = 'schedule'}>
+        交付治理
       </button>
     {/if}
     {#if hasPermission('dashboard:read')}
-      <button class="tab-btn {activeTab === 'evidence' ? 'active' : ''}" on:click={() => activeTab = 'evidence'}>
-        🔍 证据观测台
+      <button class="tab-btn" on:click={() => activeTab = 'evidence'}>
+        证据链
       </button>
     {/if}
     {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}
-      <button class="tab-btn {activeTab === 'settings' ? 'active' : ''}" on:click={() => activeTab = 'settings'}>
-        ⚙️ 系统配置
+      <button class="tab-btn" on:click={() => activeTab = 'settings'}>
+        配置中心
       </button>
     {/if}
   </div>
 
   <!-- Core Dashboard Layout -->
   <section class="app-content-shell">
-    {#if activeTab === 'decision'}
-      <DecisionDashboard currentUser={currentUserName} />
-    {:else if activeTab === 'schedule'}
-      <DemandKanban
-        currentUserPermissions={currentUserPermissions}
-        currentUserName={currentUserName}
-        currentUserEmail={currentUserEmail}
-        currentUserDepartment={currentUserDepartment}
-      />
-    {:else if activeTab === 'evidence'}
-      <div class="dashboard-content">
-        <!-- Project Health Telemetry -->
-        <ProjectHealthTelemetry />
-
-        <!-- AI Deconstructor -->
-        <Deconstructor />
-
-        <!-- Kanban -->
-        <TaskKanban />
-      </div>
-    {:else if activeTab === 'settings'}
-      <SettingsPanel
-        currentUserRole={currentUserRole}
-        currentUserEmail={currentUserEmail}
-        currentUserPermissions={currentUserPermissions}
-      />
-    {:else if activeTab === 'no_permission'}
-      <div class="no-permission-warning glass-panel">
-        <div class="warning-icon">🔒</div>
-        <h2>访问受限</h2>
-        <p>您当前没有访问该系统的任何页面权限。</p>
-        <p class="sub-text">请联系系统管理员分配权限组或配置查看作用域。</p>
-        <button class="logout-btn font-mono" on:click={logout}>退出登录</button>
-      </div>
-    {/if}
+    <div class="no-permission-warning glass-panel">
+      <div class="warning-icon">🔒</div>
+      <h2>访问受限</h2>
+      <p>您当前没有访问该系统的任何页面权限。</p>
+      <p class="sub-text">请联系系统管理员分配权限组或配置查看作用域。</p>
+      <button class="logout-btn font-mono" on:click={logout}>退出登录</button>
+    </div>
   </section>
 
   <!-- Footer -->
-  {#if activeTab !== 'settings'}
-    <footer class="app-footer">
-      <p>© 2026 well-ambient Sync System. All rights reserved.</p>
-      <p class="font-mono text-muted">v0.1.0-alpha | Embedded Svelte Dashboard</p>
-    </footer>
-  {/if}
+  <footer class="app-footer">
+    <p>© 2026 well-ambient Sync System. All rights reserved.</p>
+    <p class="font-mono text-muted">v0.1.0-alpha | Embedded Svelte Dashboard</p>
+  </footer>
 </main>
 {/if}
 
@@ -826,6 +1084,12 @@
   }
 
   .app-content-shell {
+    min-width: 0;
+  }
+
+  .console-functional-stack {
+    display: grid;
+    gap: 18px;
     min-width: 0;
   }
 

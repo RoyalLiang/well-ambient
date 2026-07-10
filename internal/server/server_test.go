@@ -161,6 +161,139 @@ func TestServerEndpoints(t *testing.T) {
 	}
 }
 
+func TestGetTasksFiltersNonCoreMemberData(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "task-reader@westwell-lab.com", "Task Reader", []string{"dashboard:read"})
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+		Jira:   config.JiraConfig{SyncUsers: []string{"Alice"}},
+	}
+	srv := NewServer(cfg, "")
+
+	tasks := []db.TaskTelemetry{
+		{TaskID: "CORE-1", Title: "Core task", Assignee: "Alice", Status: "progress", IssueType: "task", LastUpdate: time.Now()},
+		{TaskID: "EXT-1", Title: "External task", Assignee: "Vendor", Status: "progress", IssueType: "task", LastUpdate: time.Now()},
+	}
+	for _, task := range tasks {
+		if err := db.DB.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %s: %v", task.TaskID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response []db.TaskTelemetry
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode tasks response: %v", err)
+	}
+	if len(response) != 1 || response[0].TaskID != "CORE-1" {
+		t.Fatalf("non-core task should not be returned: %+v", response)
+	}
+
+	externalReq := httptest.NewRequest(http.MethodGet, "/api/tasks?assignee=外部协同", nil)
+	externalReq.Header.Set("Authorization", "Bearer "+token)
+	externalRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(externalRR, externalReq)
+	if externalRR.Code != http.StatusOK {
+		t.Fatalf("GET /api/tasks?assignee=外部协同 status = %d", externalRR.Code)
+	}
+	var externalResponse []db.TaskTelemetry
+	if err := json.NewDecoder(externalRR.Body).Decode(&externalResponse); err != nil {
+		t.Fatalf("decode external response: %v", err)
+	}
+	if len(externalResponse) != 0 {
+		t.Fatalf("external assignee filter should not return non-core data: %+v", externalResponse)
+	}
+}
+
+func TestGetScheduleFiltersNonCoreMemberData(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "schedule-reader@westwell-lab.com", "Schedule Reader", []string{"demands:read"})
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+		Jira:   config.JiraConfig{SyncUsers: []string{"Alice"}},
+	}
+	srv := NewServer(cfg, "")
+
+	now := time.Now()
+	tasks := []db.TaskTelemetry{
+		{TaskID: "CORE-DEMAND", Title: "Core demand", Assignee: "Alice", Status: "progress", IssueType: "demand", TaskGroupID: "group-core", LastUpdate: now},
+		{TaskID: "EXT-DEMAND", Title: "External demand", Assignee: "Vendor", Status: "progress", IssueType: "demand", LastUpdate: now},
+		{TaskID: "EXT-SUBTASK", Title: "External subtask", Assignee: "Vendor", Status: "progress", IssueType: "task", TaskGroupID: "group-core", LastUpdate: now},
+	}
+	for _, task := range tasks {
+		if err := db.DB.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %s: %v", task.TaskID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/schedule status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response ScheduleResponseDTO
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode schedule response: %v", err)
+	}
+	if response.Summary.Total != 1 || len(response.Items) != 1 || response.Items[0].DemandID != "CORE-DEMAND" {
+		t.Fatalf("non-core demand should not be returned: %+v", response)
+	}
+	if response.Items[0].SubtaskTotal != 0 {
+		t.Fatalf("non-core subtask should not participate in schedule display stats: %+v", response.Items[0])
+	}
+}
+
+func TestGetExecutionTasksFiltersNonCoreMemberData(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "execution-reader@westwell-lab.com", "Execution Reader", []string{"dashboard:read"})
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+		Jira:   config.JiraConfig{SyncUsers: []string{"Bob"}},
+	}
+	srv := NewServer(cfg, "")
+
+	now := time.Now()
+	tasks := []db.TaskTelemetry{
+		{TaskID: "DEMAND-CORE", Title: "Core parent demand", Assignee: "Bob", Status: "progress", IssueType: "demand", TaskGroupID: "group-core", LastUpdate: now},
+		{TaskID: "EXEC-CORE", Title: "Core execution with hidden external child owner", Assignee: "Vendor", Status: "progress", IssueType: "task", TaskGroupID: "group-core", LastUpdate: now},
+		{TaskID: "EXEC-EXT", Title: "External execution", Assignee: "Vendor", Status: "progress", IssueType: "task", LastUpdate: now},
+	}
+	for _, task := range tasks {
+		if err := db.DB.Create(&task).Error; err != nil {
+			t.Fatalf("seed task %s: %v", task.TaskID, err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/execution/tasks", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/execution/tasks status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response ExecutionTasksResponseDTO
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode execution response: %v", err)
+	}
+	if response.Summary.Total != 1 || len(response.Items) != 1 || response.Items[0].TaskID != "EXEC-CORE" {
+		t.Fatalf("non-core execution item should not be returned: %+v", response)
+	}
+	if response.Items[0].ExecutionAssignee != "" {
+		t.Fatalf("non-core child execution assignee should not be returned: %+v", response.Items[0])
+	}
+}
+
 func TestConfigAPI(t *testing.T) {
 	// Create a temporary file for config.yaml
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
@@ -783,6 +916,16 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 			LastUpdate:    now,
 		},
 		{
+			TaskID:        "DEMAND-DONE",
+			Title:         "Jira parent demand completed after reassignment",
+			Assignee:      "Bob",
+			Status:        "done",
+			IssueType:     "demand",
+			TaskGroupID:   "group-jira-done",
+			TaskCreatedAt: now.AddDate(0, 0, -7),
+			LastUpdate:    doneAt,
+		},
+		{
 			TaskID:        "JIRA-101",
 			Title:         "Bound task with commit",
 			Repo:          "platform-core",
@@ -825,6 +968,18 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 			LastUpdate:    staleUpdate,
 		},
 		{
+			TaskID:        "JIRA-106",
+			Title:         "Execution task follows completed Jira parent",
+			Repo:          "platform-core",
+			Assignee:      "Alice",
+			Branch:        "feat/JIRA-106",
+			Status:        "progress",
+			IssueType:     "task",
+			TaskGroupID:   "group-jira-done",
+			TaskCreatedAt: now.AddDate(0, 0, -2),
+			LastUpdate:    now,
+		},
+		{
 			TaskID:        "BUG-105",
 			Title:         "Bug with evidence",
 			Assignee:      "Bob",
@@ -844,6 +999,7 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 	logs := []db.GitCommitLog{
 		{TaskID: "JIRA-101", Repo: "platform-core", Branch: "feat/JIRA-101", CommitID: "abc123", Message: "JIRA-101 implementation", Author: "Alice", Action: "git_push", CreatedAt: now},
 		{TaskID: "JIRA-103", Repo: "platform-core", Branch: "feat/JIRA-103", MrIID: 42, MrURL: "https://gitlab/mr/42", Message: "JIRA-103 MR", Author: "Alice", Action: "mr_merge", CreatedAt: now},
+		{TaskID: "JIRA-106", Repo: "platform-core", Branch: "feat/JIRA-106", CommitID: "fed789", Message: "JIRA-106 implementation", Author: "Alice", Action: "git_push", CreatedAt: now},
 		{TaskID: "BUG-105", Repo: "platform-core", Branch: "fix/BUG-105", CommitID: "def456", Message: "BUG-105 fix", Author: "Bob", Action: "git_push", CreatedAt: now},
 	}
 	for _, logRow := range logs {
@@ -866,7 +1022,7 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 		t.Fatalf("decode execution response: %v", err)
 	}
 
-	if response.Summary.Total != 5 || response.Summary.Bound != 1 || response.Summary.Orphan != 4 || response.Summary.HighRisk != 2 {
+	if response.Summary.Total != 6 || response.Summary.Bound != 2 || response.Summary.Orphan != 4 || response.Summary.HighRisk != 2 {
 		t.Fatalf("unexpected execution summary: %+v", response.Summary)
 	}
 
@@ -887,8 +1043,33 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 	if byID["JIRA-104"].RiskLabel != "推进停滞" {
 		t.Fatalf("stale task risk mismatch: %+v", byID["JIRA-104"])
 	}
+	if byID["JIRA-106"].Assignee != "Bob" || byID["JIRA-106"].ExecutionAssignee != "Alice" || byID["JIRA-106"].JiraAssignee != "Bob" {
+		t.Fatalf("Jira parent assignee should drive execution display while preserving execution assignee: %+v", byID["JIRA-106"])
+	}
+	if byID["JIRA-106"].Status != "done" || byID["JIRA-106"].JiraStatus != "done" || byID["JIRA-106"].ResultState != "jira_done" || byID["JIRA-106"].RiskLevel != "done" {
+		t.Fatalf("Jira parent completion should drive execution status/result: %+v", byID["JIRA-106"])
+	}
 	if byID["BUG-105"].IssueType != "bug" || byID["BUG-105"].EvidenceScore == 0 {
 		t.Fatalf("bug evidence mismatch: %+v", byID["BUG-105"])
+	}
+
+	filterReq := httptest.NewRequest(http.MethodGet, "/api/execution/tasks?assignee=Bob", nil)
+	filterReq.Header.Set("Authorization", "Bearer "+token)
+	filterRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(filterRR, filterReq)
+	if filterRR.Code != http.StatusOK {
+		t.Fatalf("GET /api/execution/tasks?assignee=Bob status = %d, body = %s", filterRR.Code, filterRR.Body.String())
+	}
+	var filteredResponse ExecutionTasksResponseDTO
+	if err := json.NewDecoder(filterRR.Body).Decode(&filteredResponse); err != nil {
+		t.Fatalf("decode filtered execution response: %v", err)
+	}
+	filteredByID := make(map[string]ExecutionTaskItemDTO)
+	for _, item := range filteredResponse.Items {
+		filteredByID[item.TaskID] = item
+	}
+	if _, ok := filteredByID["JIRA-106"]; !ok {
+		t.Fatalf("effective Jira assignee filter should include JIRA-106 after parent reassignment, got %+v", filteredResponse.Items)
 	}
 }
 

@@ -1,6 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import StrongestBrainDeliveryCockpit from './StrongestBrainDeliveryCockpit.svelte';
+  import type {
+    AdminInspectorRecord,
+    AdminMetric,
+    AdminTableColumn,
+    AdminTableRow,
+    AdminTone
+  } from '../lib/admin-console/contract';
+  import {
+    ADMIN_TONE_CLASS,
+    formatAdminDate,
+    toneForRisk,
+    toneForStatus
+  } from '../lib/admin-console/contract';
+  import Alert from './shared/Alert.svelte';
+  import DatePicker from './shared/DatePicker.svelte';
+  import Select from './shared/Select.svelte';
+
   export let currentUser = '';
 
   interface TelemetrySnippet {
@@ -14,7 +30,7 @@
     assignee: string;
     repo?: string;
     status: string;
-    issue_type: string; // bug, task
+    issue_type: string;
     risk_level: string;
     risk_type: string;
     desc: string;
@@ -32,17 +48,34 @@
     commit_url?: string;
   }
 
-  // Pre-calculated AI resolution recommendation helper
-  interface AiResolvePlan {
+  interface ResolutionDraft {
     assignee: string;
     due_date: string;
     note: string;
-    impact: string;
   }
+
+  interface AgendaAdminRow extends AdminTableRow {
+    source: AgendaItem;
+  }
+
+  interface ProjectConfigRecord {
+    project_key: string;
+    project_name: string;
+  }
+
+  const agendaColumns: AdminTableColumn[] = [
+    { key: 'task_id', label: '事项', width: '132px' },
+    { key: 'title', label: '标题', width: '34%' },
+    { key: 'owner', label: '负责人', width: '112px' },
+    { key: 'risk', label: '风险', width: '96px' },
+    { key: 'due', label: '计划日', width: '116px' },
+    { key: 'status', label: '状态', width: '96px' }
+  ];
 
   let agendaItems: AgendaItem[] = [];
   let autoDecisions: AutoDecision[] = [];
   let loading = true;
+  let configReady = false;
   let errorMsg = '';
 
   let selectedItem: AgendaItem | null = null;
@@ -50,58 +83,147 @@
   let decisionSuccess = '';
   let decisionError = '';
 
-  // Human intervention overrides
   let newAssignee = '';
   let newDueDate = '';
   let decisionNote = '';
   let operator = '';
+  let localDecisions: string[] = [];
 
-  // 绑定当前登录用户作为默认的调停人
+  let currentFilter: 'all' | 'task' | 'bug' = 'all';
+  let selectedAssignee = 'all';
+  let selectedRepo = 'all';
+  let showRiskLevel: 'all' | 'risks' = 'risks';
+  let searchText = '';
+  let inspectorContentEl: HTMLElement;
+  let decisionPanelHeight = 'clamp(640px, calc(100dvh - 112px), 820px)';
+
+  let coreMembers = new Set([
+    '梁志远',
+    '朱家聪',
+    '岳颖颖',
+    'Yue Yingying',
+    '姜昊良',
+    '白凌云',
+    '陈伟华',
+    '李厚奇',
+    '鲁俊',
+    '刘子翔',
+    '张路路',
+    'qiang.deng',
+    'MiddleQ',
+    'zhongkou.chang',
+    'Eddie',
+    'Antigravity'
+  ]);
+
+  let jiraBaseUrl = '';
+  let gitlabBaseUrl = '';
+  let projectNamesMap: Record<string, string> = {};
+
   $: if (currentUser && !operator) {
     operator = currentUser;
   }
 
-  // Live interventions in current meeting
-  let localDecisions: string[] = [];
+  $: filteredAgendaItems = configReady ? agendaItems.filter((item) => isVisibleAgendaItem(item)) : [];
+  $: filteredAutoDecisions = autoDecisions.filter((dec) => !dec.assignee || isCoreMember(dec.assignee));
 
-  // Multi-Criteria Filters
-  let currentFilter: 'all' | 'task' | 'bug' = 'all';
-  let selectedAssignee = 'all';
-  let selectedRepo = 'all';
-  let showRiskLevel: 'all' | 'risks' = 'risks'; // 'risks' or 'all'
+  $: activeBugCount = filteredAgendaItems.filter((item) => item.issue_type === 'bug').length;
+  $: activeTaskCount = filteredAgendaItems.filter((item) => item.issue_type !== 'bug').length;
+  $: redZoneCount = filteredAgendaItems.filter((item) => item.risk_level === 'critical').length;
+  $: warningCount = filteredAgendaItems.filter((item) => item.risk_level === 'warning').length;
+  $: visibleRiskCount = filteredAgendaItems.filter((item) => item.risk_level !== 'safe').length;
+  $: totalActiveTasks = activeBugCount + activeTaskCount;
+  $: decisionHealthPercent =
+    totalActiveTasks > 0
+      ? Math.max(8, Math.round(((totalActiveTasks - redZoneCount) / totalActiveTasks) * 100))
+      : 100;
+  $: decisionHealthLabel = redZoneCount > 0 ? `${redZoneCount} 个高风险待处理` : '暂无高风险';
 
-  // Custom select states
-  let showAssigneeDropdown = false;
-  let showRepoDropdown = false;
-  let showOverrideAssigneeDropdown = false;
-  let showOverrideDatePicker = false;
-  let assigneeSelectEl: HTMLElement;
-  let repoSelectEl: HTMLElement;
-  let overrideAssigneeSelectEl: HTMLElement;
-  let overrideDatePickerEl: HTMLElement;
-  let overridePanelEl: HTMLElement;
-  let overridePanelHeight = 440;
-  let overrideDatePickerCursor = new Date();
+  $: assigneesList = [
+    'all',
+    ...Array.from(new Set(filteredAgendaItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) =>
+      a.localeCompare(b)
+    )
+  ];
+  $: projectList = [
+    'all',
+    ...Array.from(
+      new Set(filteredAgendaItems.map((item) => getAgendaProjectKey(item)).filter((project): project is string => !!project))
+    ).sort((a, b) => a.localeCompare(b))
+  ];
+  $: assigneeOptions = assigneesList.map((name) => ({
+    value: name,
+    label: name === 'all' ? '全部负责人' : name
+  }));
+  $: projectOptions = projectList.map((project) => ({
+    value: project,
+    label: project === 'all' ? '全部项目' : getProjectDisplayName(project)
+  }));
+  $: if (selectedRepo !== 'all' && !projectList.includes(selectedRepo)) {
+    selectedRepo = 'all';
+  }
+  $: if (selectedAssignee !== 'all' && !assigneesList.includes(selectedAssignee)) {
+    selectedAssignee = 'all';
+  }
+  $: overrideAssigneeOptions = Array.from(
+    new Set([
+      selectedItem?.assignee,
+      ...Array.from(coreMembers),
+      ...assigneesList.filter((name) => name !== 'all')
+    ].filter(Boolean) as string[])
+  ).sort((a, b) => a.localeCompare(b));
+  $: overrideAssigneeSelectOptions = [
+    { value: '', label: '选择负责人' },
+    ...overrideAssigneeOptions.map((name) => ({ value: name, label: name }))
+  ];
 
-  let assigneeSearchText = '';
-  let projectSearchText = '';
+  $: filteredItems = filteredAgendaItems
+    .filter((item) => {
+      if (currentFilter === 'task' && item.issue_type === 'bug') return false;
+      if (currentFilter === 'bug' && item.issue_type !== 'bug') return false;
+      if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
+      if (selectedRepo !== 'all' && getAgendaProjectKey(item) !== selectedRepo) return false;
+      if (showRiskLevel === 'risks' && item.risk_level === 'safe') return false;
 
-  $: if (!showAssigneeDropdown) assigneeSearchText = '';
-  $: if (!showRepoDropdown) projectSearchText = '';
+      const needle = searchText.trim().toLowerCase();
+      if (needle) {
+        const haystack = [
+          item.task_id,
+          item.title,
+          item.assignee,
+          item.status,
+          getAgendaProjectKey(item),
+          getAgendaProjectLabel(item)
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
 
-  const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
-  const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
+      return true;
+    })
+    .sort((a, b) => riskPriority(b) - riskPriority(a));
 
-  // 核心成员白名单
-  let coreMembers = new Set([
-    "梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
-    "李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
-    "Eddie", "Antigravity"
-  ]);
+  $: adminMetrics = adaptMetrics();
+  $: agendaRows = filteredItems.map(adaptAgendaRow);
+  $: inspectorRecord = selectedItem ? adaptInspectorRecord(selectedItem) : null;
+  $: resolutionDraft = getResolutionDraft(selectedItem);
 
   function isCoreMember(name: string): boolean {
     if (!name) return false;
     return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
+  }
+
+  function isStableJiraIssueKey(taskId: string): boolean {
+    const value = (taskId || '').trim();
+    const match = value.match(/^([A-Z][A-Z0-9_]*)-\d+$/);
+    if (!match) return false;
+    const projectKey = match[1];
+    return projectKey !== 'TASK' && projectKey !== 'DEMAND';
+  }
+
+  function isVisibleAgendaItem(item: AgendaItem): boolean {
+    return isStableJiraIssueKey(item.task_id) && isCoreMember(item.assignee);
   }
 
   function updateCoreMembers(config: any) {
@@ -116,15 +238,12 @@
         }
       }
     }
-    
+
     if (users.length > 0) {
-      users = users.filter(name => name !== '未指派' && name !== '-');
+      users = users.filter((name) => name !== '未指派' && name !== '-');
       coreMembers = new Set(users);
     }
   }
-
-  let jiraBaseUrl = '';
-  let gitlabBaseUrl = '';
 
   async function fetchConfig() {
     try {
@@ -145,147 +264,308 @@
           gitlabBaseUrl = data?.gitlab?.base_url ? data.gitlab.base_url.replace(/\/+$/, '') : '';
         }
       }
+
+      const projectsRes = await fetch('/api/projects/config');
+      if (projectsRes.ok) {
+        const projects: ProjectConfigRecord[] = await projectsRes.json();
+        projectNamesMap = Array.isArray(projects)
+          ? projects.reduce((acc, project) => {
+              const key = normalizeProjectKey(project.project_key);
+              const name = cleanProjectName(project.project_name);
+              if (key && name) acc[key] = name;
+              return acc;
+            }, {} as Record<string, string>)
+          : {};
+      }
     } catch (e) {
       console.error('Failed to fetch config on dashboard:', e);
+    } finally {
+      configReady = true;
     }
   }
 
-  // 响应式过滤外部协同/非核心成员
-  $: filteredAgendaItems = agendaItems.filter(item => isCoreMember(item.assignee));
-  $: filteredAutoDecisions = autoDecisions.filter(dec => !dec.assignee || isCoreMember(dec.assignee));
+  async function fetchAgenda() {
+    loading = true;
+    errorMsg = '';
+    try {
+      const res = await fetch('/api/agenda/summary');
+      if (!res.ok) throw new Error('加载决策看板数据失败');
+      const data = await res.json();
 
-  // 响应式计算指标（仅包含核心成员）
-  $: activeBugCount = filteredAgendaItems.filter(item => item.issue_type === 'bug').length;
-  $: activeTaskCount = filteredAgendaItems.filter(item => item.issue_type !== 'bug').length;
-  $: redZoneCount = filteredAgendaItems.filter(item => item.risk_level === 'critical').length;
-  $: totalActiveTasks = activeBugCount + activeTaskCount;
-  $: decisionHealthPercent = totalActiveTasks > 0
-    ? Math.max(8, Math.round(((totalActiveTasks - redZoneCount) / totalActiveTasks) * 100))
-    : 100;
-  $: decisionHealthLabel = redZoneCount > 0 ? 'ATTENTION' : 'SAFE';
+      const nextAgendaItems: AgendaItem[] = Array.isArray(data.agenda_items) ? data.agenda_items : [];
+      const nextAutoDecisions: AutoDecision[] = Array.isArray(data.auto_decisions) ? data.auto_decisions : [];
+      const visible = nextAgendaItems.filter((item) => isVisibleAgendaItem(item));
 
-  $: hasShadowAgenda = false; // 既然完全剥离，就不存在外部协同任务的快捷方式了
+      agendaItems = nextAgendaItems;
+      autoDecisions = nextAutoDecisions;
 
-  // Dynamic filter option lists
-  $: assigneesList = [
-    'all', 
-    ...Array.from(new Set([
-      ...filteredAgendaItems.map(item => item.assignee).filter(Boolean)
-    ]))
-  ];
-  $: projectList = [
-    'all',
-    ...Array.from(new Set([
-      ...filteredAgendaItems.map(item => getAgendaProjectKey(item)).filter((project): project is string => !!project)
-    ]))
-  ];
-  $: aiPlan = getAiResolvePlan(selectedItem);
-  $: overrideAssigneeOptions = Array.from(new Set([
-    selectedItem?.assignee,
-    aiPlan.assignee,
-    ...Array.from(coreMembers),
-    ...assigneesList.filter(name => name !== 'all')
-  ].filter(Boolean) as string[]));
-  $: newDueDateDisplay = formatDateLabel(newDueDate);
+      if (visible.length > 0 && !selectedItem) {
+        selectItem(visible[0]);
+      } else if (selectedItem) {
+        const updated = visible.find((item) => item.task_id === selectedItem?.task_id);
+        selectedItem = updated || visible[0] || null;
+        if (selectedItem) syncInterventionDraft(selectedItem);
+      }
+    } catch (err: any) {
+      errorMsg = err.message || '网络连接异常';
+    } finally {
+      loading = false;
+    }
+  }
 
-  // Combined filter with automatic risk-priority sorting (critical > warning > safe)
-  $: filteredItems = filteredAgendaItems
-    .filter(item => {
-      // 1. Issue Type Filter (Story vs Bug)
-      if (currentFilter === 'task' && item.issue_type === 'bug') return false;
-      if (currentFilter === 'bug' && item.issue_type !== 'bug') return false;
-      
-      // 2. Assignee Filter
-      if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
-      
-      // 3. Project Filter
-      if (selectedRepo !== 'all' && getAgendaProjectKey(item) !== selectedRepo) return false;
-      
-      // 4. Severity Filter (only show risk items vs show all active items)
-      if (showRiskLevel === 'risks' && item.risk_level === 'safe') return false;
-      
-      return true;
-    })
-    .sort((a, b) => {
-      const getPriority = (lvl: string) => {
-        if (lvl === 'critical') return 3;
-        if (lvl === 'warning') return 2;
-        return 1;
-      };
-      return getPriority(b.risk_level) - getPriority(a.risk_level);
-    });
-  function getAiResolvePlan(item: AgendaItem | null): AiResolvePlan {
-    if (!item) return { assignee: '', due_date: '', note: '', impact: '' };
-    
-    // Fallback tomorrow or next week
-    const nextWeek = new Date();
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    const dateStr = nextWeek.toISOString().split('T')[0];
+  function selectItem(item: AgendaItem) {
+    selectedItem = item;
+    syncInterventionDraft(item);
+    decisionSuccess = '';
+    decisionError = '';
+  }
 
-    if (item.issue_type === 'bug') {
-      return {
-        assignee: item.assignee === '朱家聪' ? '白凌云' : '朱家聪', // Recommend swapping to another expert
-        due_date: dateStr,
-        note: `自动调停：该缺陷修复受阻，转派专家协助并顺延截止时间。`,
-        impact: '🪲 阻碍影响：此 Bug 若不解决，将直接导致 2 个关联下游 Story 无法进行合并测试。'
-      };
+  function syncInterventionDraft(item: AgendaItem) {
+    newAssignee = item.assignee || '';
+    const dueDate = item.due_date ? formatAdminDate(item.due_date) : '';
+    newDueDate = dueDate === '-' ? '' : dueDate;
+    decisionNote = '';
+  }
+
+  async function submitDecision(action: 'reassign' | 'reschedule') {
+    if (!selectedItem) return;
+    decisionLoading = true;
+    decisionSuccess = '';
+    decisionError = '';
+
+    let value = '';
+    if (action === 'reassign') {
+      if (!newAssignee.trim()) {
+        decisionError = '请输入转派负责人';
+        decisionLoading = false;
+        return;
+      }
+      value = newAssignee;
     } else {
-      return {
-        assignee: '陈伟华',
-        due_date: dateStr,
-        note: `自动调停：开发进度遭遇卡点，转派陈伟华协助并重新对齐交付节点。`,
-        impact: '🚀 交付影响：此需求挂起或延期，将导致 [FMS-Malaysia] 版本交付节点顺延约 1.5 天。'
-      };
+      if (!newDueDate) {
+        decisionError = '请选择新的截止时间';
+        decisionLoading = false;
+        return;
+      }
+      value = newDueDate;
+    }
+
+    try {
+      const res = await fetch('/api/strongest-brain/intervention', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task_id: selectedItem.task_id,
+          action,
+          value,
+          reason: decisionNote || '人工调停干预'
+        })
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || '提交人工干预指令失败');
+      }
+
+      await res.json();
+      decisionSuccess = '人工干预已记录至事件账本并更新状态。';
+
+      const actionName = action === 'reassign' ? '覆盖指派' : '调整截止期';
+      localDecisions = [
+        `[${new Date().toLocaleTimeString()}] ${operator || '系统管理员'} 调停 ${selectedItem.task_id}：${actionName}`,
+        ...localDecisions
+      ];
+
+      await fetchAgenda();
+    } catch (err: any) {
+      decisionError = err.message || '提交干预请求时出错';
+    } finally {
+      decisionLoading = false;
     }
   }
 
-  function applyAiPlan() {
-    if (!aiPlan) return;
-    newAssignee = aiPlan.assignee;
-    newDueDate = aiPlan.due_date;
-    decisionNote = aiPlan.note;
-    decisionSuccess = '已一键导入 AI 智能调停预案，请确认并提交干预。';
+  function adaptMetrics(): AdminMetric[] {
+    return [
+      {
+        label: '决策事项',
+        value: filteredAgendaItems.length,
+        helper: `需求 ${activeTaskCount} / 缺陷 ${activeBugCount}`,
+        tone: 'info'
+      },
+      {
+        label: '高风险',
+        value: redZoneCount,
+        helper: warningCount > 0 ? `另有 ${warningCount} 个中风险` : 'critical 卡点',
+        tone: redZoneCount > 0 ? 'danger' : 'success'
+      },
+      {
+        label: '流转健康度',
+        value: `${decisionHealthPercent}%`,
+        helper: decisionHealthLabel,
+        tone: decisionHealthPercent < 80 ? 'warning' : 'success'
+      },
+      {
+        label: '自动记录',
+        value: filteredAutoDecisions.length,
+        helper: '核心成员可见事件',
+        tone: 'neutral'
+      }
+    ];
   }
 
-  function selectAssignee(name: string) {
-    selectedAssignee = name;
-    showAssigneeDropdown = false;
+  function adaptAgendaRow(item: AgendaItem): AgendaAdminRow {
+    const tone = toneForAgendaItem(item);
+    return {
+      id: item.task_id,
+      title: item.title || item.task_id,
+      status: getStatusDisplay(item.status),
+      tone,
+      owner: item.assignee || '-',
+      dueDate: formatAdminDate(item.due_date),
+      priority: getIssueTypeLabel(item.issue_type),
+      risk: getRiskLevelLabel(item.risk_level),
+      source: item,
+      cells: {
+        task_id: item.task_id,
+        title: item.title || '-',
+        priority: getIssueTypeLabel(item.issue_type),
+        owner: item.assignee || '-',
+        risk: getRiskLevelLabel(item.risk_level),
+        due: formatAdminDate(item.due_date),
+        status: getStatusDisplay(item.status),
+        stale: getStaleText(item)
+      }
+    };
   }
 
-  function selectRepo(r: string) {
-    selectedRepo = r;
-    showRepoDropdown = false;
+  function adaptInspectorRecord(item: AgendaItem): AdminInspectorRecord {
+    const logs = splitDecisionLogs(item.decision_logs);
+    return {
+      id: item.task_id,
+      title: item.title || item.task_id,
+      status: getStatusDisplay(item.status),
+      tone: toneForAgendaItem(item),
+      facts: [
+        { label: '负责人', value: item.assignee || '-' },
+        { label: '所属项目', value: getAgendaProjectLabel(item) || '-' },
+        { label: '事项类型', value: getIssueTypeLabel(item.issue_type) },
+        { label: '风险类型', value: getRiskTypeLabel(item.risk_type) },
+        { label: '计划完成日', value: formatAdminDate(item.due_date) },
+        { label: '静默时长', value: getStaleText(item) }
+      ],
+      sections: [
+        {
+          title: '需求描述',
+          body: item.desc || '后端暂无描述。'
+        },
+        {
+          title: '处置建议',
+          items: [getTriageRecommendation(item)]
+        },
+        {
+          title: '流转摘要',
+          items: [
+            getFlowSuggestion(item),
+            `当前负责人 ${item.assignee || '未指派'}，风险类型为 ${getRiskTypeLabel(item.risk_type)}。`,
+            item.telemetry_snippet?.branch ? `关联分支：${item.telemetry_snippet.branch}` : '暂无关联分支信息。'
+          ]
+        },
+        {
+          title: '人工干预记录',
+          items: logs.length > 0 ? logs : ['暂无人工干预记录']
+        }
+      ],
+      actions: [
+        { label: '覆盖指派', kind: 'primary' },
+        { label: '调整截止', kind: 'secondary' }
+      ]
+    };
   }
 
-  function selectOverrideAssignee(name: string) {
-    newAssignee = name;
-    showOverrideAssigneeDropdown = false;
+  function getResolutionDraft(item: AgendaItem | null): ResolutionDraft {
+    if (!item) return { assignee: '', due_date: '', note: '' };
+    const existingDue = item.due_date ? formatAdminDate(item.due_date) : '';
+    return {
+      assignee: item.assignee || '',
+      due_date: existingDue && existingDue !== '-' ? existingDue : '',
+      note:
+        item.risk_level === 'critical'
+          ? '会中确认阻塞事实，并明确下一位负责人或新的截止时间。'
+          : '会中确认推进节奏，补齐下一次状态更新时间。'
+    };
   }
 
-  function toggleAssigneeDropdown() {
-    showAssigneeDropdown = !showAssigneeDropdown;
-    showRepoDropdown = false;
+  function applyResolutionDraft() {
+    if (!selectedItem) return;
+    newAssignee = resolutionDraft.assignee;
+    newDueDate = resolutionDraft.due_date;
+    decisionNote = resolutionDraft.note;
+    decisionSuccess = '已带入处置草稿，尚未提交。';
+    decisionError = '';
   }
 
-  function toggleRepoDropdown() {
-    showRepoDropdown = !showRepoDropdown;
-    showAssigneeDropdown = false;
+  function getAgendaProjectKey(item: AgendaItem) {
+    const taskId = (item.task_id || '').trim();
+    const delimiterIndex = taskId.indexOf('-');
+    if (delimiterIndex <= 0) return '';
+    const key = taskId.slice(0, delimiterIndex).trim().toUpperCase();
+    if (!key || key === 'TASK' || key === 'DEMAND') return '';
+    return key;
   }
 
-  function toggleOverrideAssigneeDropdown() {
-    showOverrideAssigneeDropdown = !showOverrideAssigneeDropdown;
-    showOverrideDatePicker = false;
+  function normalizeProjectKey(value: string | undefined) {
+    return (value || '').trim().toUpperCase();
   }
 
-  function formatDateLabel(dateValue: string) {
-    if (!dateValue) return '';
-    const date = new Date(`${dateValue}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return dateValue;
-    return date.toLocaleDateString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    });
+  function cleanProjectName(value: string | undefined) {
+    const name = (value || '').trim();
+    return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  }
+
+  function getProjectDisplayName(projectKey: string) {
+    const key = normalizeProjectKey(projectKey);
+    if (!key || key === 'ALL') return '';
+    const configuredName = cleanProjectName(projectNamesMap[key]);
+    if (configuredName && configuredName !== `${key}项目`) return configuredName;
+    return key;
+  }
+
+  function getAgendaProjectLabel(item: AgendaItem) {
+    const key = getAgendaProjectKey(item);
+    if (!key) return item.repo || '';
+    return getProjectDisplayName(key) || item.repo || key;
+  }
+
+  function getIssueTypeLabel(issueType: string) {
+    return issueType === 'bug' ? '缺陷' : '需求';
+  }
+
+  function getRiskLevelLabel(riskLevel: string) {
+    switch (riskLevel) {
+      case 'critical':
+        return '高风险';
+      case 'warning':
+        return '中风险';
+      case 'safe':
+        return '低风险';
+      default:
+        return riskLevel || '未分级';
+    }
+  }
+
+  function getRiskTypeLabel(riskType: string) {
+    switch (riskType) {
+      case 'no_commit_48h':
+        return '连续静默';
+      case 'overdue':
+        return '周期超时';
+      case 'potential_conflict':
+        return '协作冲突';
+      case 'none':
+        return '常规观察';
+      default:
+        return riskType || '常规观察';
+    }
   }
 
   function getStatusDisplay(status: string) {
@@ -303,13 +583,70 @@
     }
   }
 
-  function getAgendaProjectKey(item: AgendaItem) {
-    const taskId = (item.task_id || '').trim();
-    const delimiterIndex = taskId.indexOf('-');
-    if (delimiterIndex <= 0) return '';
-    const key = taskId.slice(0, delimiterIndex).trim().toUpperCase();
-    if (!key || key === 'TASK' || key === 'DEMAND') return '';
-    return key;
+  function getStaleHours(item: AgendaItem) {
+    const lastUpdate = item.telemetry_snippet?.last_update;
+    if (!lastUpdate) return 0;
+    const timestamp = new Date(lastUpdate).getTime();
+    if (Number.isNaN(timestamp)) return 0;
+    return Math.max(0, Math.round((Date.now() - timestamp) / 36e5));
+  }
+
+  function getStaleText(item: AgendaItem) {
+    const staleHours = getStaleHours(item);
+    return staleHours > 0 ? `${staleHours}h` : '等待更新';
+  }
+
+  function riskPriority(item: AgendaItem) {
+    if (item.risk_level === 'critical') return 3;
+    if (item.risk_level === 'warning') return 2;
+    return 1;
+  }
+
+  function toneForAgendaItem(item: AgendaItem): AdminTone {
+    if (item.risk_level === 'critical') return 'danger';
+    if (item.risk_level === 'warning') return 'warning';
+    if (item.risk_level === 'safe') return 'success';
+    return toneForRisk(item.risk_type || item.risk_level);
+  }
+
+  function toneClass(tone: AdminTone | undefined) {
+    return ADMIN_TONE_CLASS[tone || 'neutral'];
+  }
+
+  function getStatusToneClass(status: string) {
+    return toneClass(toneForStatus(status));
+  }
+
+  function getTriageRecommendation(item: AgendaItem): string {
+    if (item.risk_type === 'no_commit_48h') {
+      return '先确认是否存在依赖、口径或责任边界阻塞，再决定是否转派或增加协助人。';
+    }
+    if (item.risk_type === 'overdue') {
+      return item.issue_type === 'bug'
+        ? '优先拆出复现、定位、修复、回归四段，并锁定当天可验证的下一步。'
+        : '先拆分可独立验收的范围，把争议范围移入下一轮确认。';
+    }
+    if (item.risk_type === 'potential_conflict') {
+      return '指定统一协调人，对齐范围、验收顺序和责任边界后再推进。';
+    }
+    return '保持后台同步，只有事实缺口、负责人变更、延期或验收风险出现时再人工介入。';
+  }
+
+  function getFlowSuggestion(item: AgendaItem): string {
+    const dueText = item.due_date ? formatAdminDate(item.due_date) : '未设置截止日';
+    return `当前状态为 ${getStatusDisplay(item.status)}，计划完成日 ${dueText}，建议在下一次状态更新前保留这条看板记录。`;
+  }
+
+  function splitDecisionLogs(value: string) {
+    return (value || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function getJiraUrl(taskId: string) {
+    if (!jiraBaseUrl || !taskId || taskId.startsWith('TASK-')) return '';
+    return `${jiraBaseUrl}/browse/${taskId}`;
   }
 
   function shortCommit(commitID?: string) {
@@ -338,2358 +675,1563 @@
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
-  function getRiskTypeLabel(riskType: string) {
-    switch (riskType) {
-      case 'no_commit_48h':
-        return '连续静默';
-      case 'overdue':
-        return '周期超时';
-      case 'potential_conflict':
-        return '协作冲突';
-      default:
-        return '常规观察';
-    }
-  }
-
-  function getStaleHours(item: AgendaItem) {
-    if (!item.telemetry_snippet.last_update) return 0;
-    return Math.max(0, Math.round((Date.now() - new Date(item.telemetry_snippet.last_update).getTime()) / 36e5));
-  }
-
-  function getBlockageContext(item: AgendaItem): Array<{ label: string; value: string; tone: 'safe' | 'warn' | 'danger' | 'info' }> {
-    const staleHours = getStaleHours(item);
-    const dueText = item.due_date ? formatDateLabel(item.due_date.slice(0, 10)) : '未设置';
-    return [
-      { label: '流转状态', value: getStatusDisplay(item.status), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
-      { label: '静默时长', value: staleHours > 0 ? `${staleHours}h 未更新` : '等待更新', tone: staleHours > 48 ? 'danger' : staleHours > 24 ? 'warn' : 'info' },
-      { label: '截止压力', value: dueText, tone: item.risk_type === 'overdue' ? 'danger' : 'info' },
-      { label: '负责人', value: item.assignee || '未指派', tone: item.assignee ? 'safe' : 'warn' },
-      { label: '卡点类型', value: getRiskTypeLabel(item.risk_type), tone: item.risk_level === 'critical' ? 'danger' : 'warn' },
-      { label: '事项类型', value: item.issue_type === 'bug' ? '缺陷修复' : '功能需求', tone: 'info' }
-    ];
-  }
-
-  function parseDateValue(value: string) {
-    if (!value) return null;
-    const [year, month, day] = value.split('-').map(Number);
-    if (!year || !month || !day) return null;
-    return new Date(year, month - 1, day);
-  }
-
-  function toDateValue(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  function toggleOverrideDatePicker() {
-    showOverrideDatePicker = !showOverrideDatePicker;
-    showOverrideAssigneeDropdown = false;
-    overrideDatePickerCursor = parseDateValue(newDueDate) || new Date();
-  }
-
-  function getOverrideCalendarDays(value: string, cursor = overrideDatePickerCursor) {
-    const base = cursor;
-    const year = base.getFullYear();
-    const month = base.getMonth();
-    const first = new Date(year, month, 1);
-    const last = new Date(year, month + 1, 0);
-    const leading = (first.getDay() + 6) % 7;
-    const todayValue = toDateValue(new Date());
-    const days: { value: string; label: number; muted: boolean; today: boolean; selected: boolean }[] = [];
-
-    for (let i = leading - 1; i >= 0; i--) {
-      const date = new Date(year, month, -i);
-      const dateValue = toDateValue(date);
-      days.push({ value: dateValue, label: date.getDate(), muted: true, today: dateValue === todayValue, selected: dateValue === value });
-    }
-    for (let day = 1; day <= last.getDate(); day++) {
-      const date = new Date(year, month, day);
-      const dateValue = toDateValue(date);
-      days.push({ value: dateValue, label: day, muted: false, today: dateValue === todayValue, selected: dateValue === value });
-    }
-    while (days.length % 7 !== 0) {
-      const date = new Date(year, month, days.length - leading + 1);
-      const dateValue = toDateValue(date);
-      days.push({ value: dateValue, label: date.getDate(), muted: true, today: dateValue === todayValue, selected: dateValue === value });
-    }
-
-    return { label: `${base.getFullYear()} ${monthNames[base.getMonth()]}`, days };
-  }
-
-  function moveOverrideDateMonth(delta: number, event?: MouseEvent) {
-    event?.preventDefault();
-    event?.stopPropagation();
-    const cursor = overrideDatePickerCursor || new Date();
-    overrideDatePickerCursor = new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1);
-  }
-
-  function selectOverrideDueDate(value: string) {
-    newDueDate = value;
-    showOverrideDatePicker = false;
-  }
-
-  function clearOverrideDueDate() {
-    newDueDate = '';
-    showOverrideDatePicker = false;
-  }
-
-  function handleDocumentClick(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    if (showAssigneeDropdown && assigneeSelectEl && !assigneeSelectEl.contains(target)) {
-      showAssigneeDropdown = false;
-    }
-    if (showRepoDropdown && repoSelectEl && !repoSelectEl.contains(target)) {
-      showRepoDropdown = false;
-    }
-    if (showOverrideAssigneeDropdown && overrideAssigneeSelectEl && !overrideAssigneeSelectEl.contains(target)) {
-      showOverrideAssigneeDropdown = false;
-    }
-    if (showOverrideDatePicker && overrideDatePickerEl && !overrideDatePickerEl.contains(target)) {
-      showOverrideDatePicker = false;
-    }
-  }
-
-  async function fetchAgenda() {
-    loading = true;
-    errorMsg = '';
-    try {
-      const res = await fetch('/api/agenda/summary');
-      if (!res.ok) throw new Error('加载自决策大屏数据失败');
-      const data = await res.json();
-      
-      const filtered = (data.agenda_items || []).filter((item: AgendaItem) => isCoreMember(item.assignee));
-      agendaItems = data.agenda_items || [];
-      autoDecisions = data.auto_decisions || [];
-      
-      // Auto-select first item if available
-      if (filtered.length > 0 && !selectedItem) {
-        selectItem(filtered[0]);
-      } else if (selectedItem) {
-        const updated = filtered.find((item: AgendaItem) => item.task_id === selectedItem?.task_id);
-        if (updated) {
-          selectedItem = updated;
-        } else {
-          selectedItem = filtered.length > 0 ? filtered[0] : null;
-        }
-      }
-    } catch (err: any) {
-      errorMsg = err.message || '网络连接异常';
-    } finally {
-      loading = false;
-    }
-  }
-
-  function selectItem(item: AgendaItem) {
-    selectedItem = item;
-    newAssignee = item.assignee || '';
-    newDueDate = item.due_date ? new Date(item.due_date).toISOString().split('T')[0] : '';
-    decisionNote = '';
-    decisionSuccess = '';
-    decisionError = '';
-  }
-
-  async function submitDecision(action: string) {
-    if (!selectedItem) return;
-    decisionLoading = true;
-    decisionSuccess = '';
-    decisionError = '';
-
-    let value = '';
-    if (action === 'reassign') {
-      if (!newAssignee.trim()) {
-        decisionError = '请输入转派负责人';
-        decisionLoading = false;
-        return;
-      }
-      value = newAssignee;
-    } else if (action === 'reschedule') {
-      if (!newDueDate) {
-        decisionError = '请选择新的截止时间';
-        decisionLoading = false;
-        return;
-      }
-      value = newDueDate;
-    } else {
-      decisionError = `不支持的干预动作: ${action}`;
-      decisionLoading = false;
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/strongest-brain/intervention', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_id: selectedItem.task_id,
-          action,
-          value,
-          reason: decisionNote || '人工调停干预'
-        })
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || '提交人工干预指令失败');
-      }
-
-      const result = await res.json();
-      decisionSuccess = '人工干预成功！已记录至事件账本并更新状态。';
-      
-      const actionName = action === 'reassign' ? '覆盖指派' : '调整截止期';
-      localDecisions = [
-        `[${new Date().toLocaleTimeString()}] 主管 ${operator} 调停 ${selectedItem.task_id}：执行了「${actionName}」干预。`,
-        ...localDecisions
-      ];
-
-      await fetchAgenda();
-    } catch (err: any) {
-      decisionError = err.message || '提交干预请求时出错';
-    } finally {
-      decisionLoading = false;
-    }
-  }
-
-  function getAiRecommendation(item: AgendaItem): string {
-    if (item.issue_type === 'bug') {
-      switch (item.risk_type) {
-        case 'no_commit_48h':
-          return '🤖 AI 自动诊断 (Bug)：该缺陷在“修复中”已 48h 未出现有效流转，可能卡在复现、定位或责任边界。建议：安排技术专家加入协同排查，或一键导入下方的 AI 推荐调停预案。';
-        case 'overdue':
-          return '🤖 AI 自动诊断 (Bug)：该故障已超出解决时效。建议：调停并转派有经验的开发，避开核心发版窗口。';
-        default:
-          return '🤖 AI 自动诊断 (Bug)：故障滞留时间较长，建议在会中口头对齐是否存在设计冲突。';
-      }
-    } else {
-      switch (item.risk_type) {
-        case 'no_commit_48h':
-          return '🤖 AI 自动诊断 (需求)：该需求已超过 48 小时未出现有效推进。建议：确认是否因依赖、口径或资源排队受阻。可一键导入下方调停建议。';
-        case 'overdue':
-          return '🤖 AI 自动诊断 (需求)：需求工期超过预期。建议：调整计划或考虑将该需求部分范围剥离为下个迭代的影子卡片。';
-        case 'potential_conflict':
-          return '🤖 AI 自动诊断 (需求)：当前存在并行协作路径，可能带来责任边界或验收顺序冲突。建议：指定一人统一协调验收与推进节奏。';
-        default:
-          return '🤖 AI 自动诊断 (需求)：任务开发进度偏慢，请对齐是否存在需求蔓延。';
-      }
-    }
-  }
-
-  function getBrainFlowSignals(item: AgendaItem): Array<{ label: string; value: string; tone: 'safe' | 'warn' | 'danger' | 'info' }> {
-    const staleHours = getStaleHours(item);
-    const dueText = item.due_date ? formatDateLabel(item.due_date.slice(0, 10)) : '未设置';
-    return [
-      { label: '当前状态', value: getStatusDisplay(item.status), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
-      { label: '静默时长', value: staleHours > 0 ? `${staleHours}h 未更新` : '等待首个事件', tone: staleHours > 48 ? 'danger' : staleHours > 24 ? 'warn' : 'info' },
-      { label: 'Jira/看板', value: item.status.toUpperCase(), tone: item.risk_level === 'critical' ? 'danger' : 'info' },
-      { label: '截止压力', value: dueText, tone: item.risk_type === 'overdue' ? 'danger' : 'info' },
-      { label: '负责人负载', value: item.assignee || '未指派', tone: item.assignee ? 'safe' : 'warn' },
-      { label: '验收/回滚', value: item.issue_type === 'bug' ? '优先补复现与回归' : '拆范围或补验收口径', tone: 'info' }
-    ];
-  }
-
-  function getBrainFlowSuggestion(item: AgendaItem): string {
-    if (item.risk_type === 'no_commit_48h') {
-      return '建议先确认阻塞事实，再执行转派或结对协作；保留原负责人上下文，新增协助人承接下一次状态更新。';
-    }
-    if (item.risk_type === 'overdue') {
-      return item.issue_type === 'bug'
-        ? '建议把缺陷切成“复现、定位、修复、回归”四段，先锁定复现负责人和当天回归窗口。'
-        : '建议拆分交付范围，将可独立验收部分继续推进，争议范围进入下一轮影子任务。';
-    }
-    if (item.risk_type === 'potential_conflict') {
-      return '建议指定统一协调人，先对齐范围、验收顺序和责任边界，再进入评审，避免看板状态早于交付事实。';
-    }
-    return '建议保持后台自动同步，只有在事实缺口、负责人变更、延期或验收风险出现时打断人工。';
-  }
-
   onMount(() => {
-    fetchAgenda();
-    fetchConfig();
-    const interval = setInterval(() => {
-      fetchAgenda();
-    }, 15000);
-    document.addEventListener('click', handleDocumentClick);
+    let disposed = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let measureFrame = 0;
 
-    const syncOverridePanelHeight = () => {
-      if (!overridePanelEl) return;
-      overridePanelHeight = Math.max(440, Math.ceil(overridePanelEl.getBoundingClientRect().height));
+    const syncDecisionPanelHeight = () => {
+      if (measureFrame) {
+        window.cancelAnimationFrame(measureFrame);
+      }
+      measureFrame = window.requestAnimationFrame(() => {
+        if (!inspectorContentEl) return;
+        const panelChromeHeight = 34;
+        const nextHeight = Math.max(620, Math.ceil(inspectorContentEl.scrollHeight + panelChromeHeight));
+        decisionPanelHeight = `${nextHeight}px`;
+      });
     };
 
-    const animationFrame = requestAnimationFrame(syncOverridePanelHeight);
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(syncOverridePanelHeight);
-      if (overridePanelEl) resizeObserver.observe(overridePanelEl);
+    const bootstrapDashboard = async () => {
+      await fetchConfig();
+      if (disposed) return;
+      await fetchAgenda();
+      if (disposed) return;
+      syncDecisionPanelHeight();
+      interval = setInterval(() => {
+        fetchAgenda();
+      }, 15000);
+    };
+
+    syncDecisionPanelHeight();
+    if (typeof ResizeObserver !== 'undefined' && inspectorContentEl) {
+      resizeObserver = new ResizeObserver(syncDecisionPanelHeight);
+      resizeObserver.observe(inspectorContentEl);
     }
+    window.addEventListener('resize', syncDecisionPanelHeight);
+
+    bootstrapDashboard();
 
     return () => {
-      clearInterval(interval);
-      cancelAnimationFrame(animationFrame);
-      resizeObserver?.disconnect();
-      document.removeEventListener('click', handleDocumentClick);
+      disposed = true;
+      if (interval) clearInterval(interval);
+      if (resizeObserver) resizeObserver.disconnect();
+      if (measureFrame) window.cancelAnimationFrame(measureFrame);
+      window.removeEventListener('resize', syncDecisionPanelHeight);
     };
   });
 </script>
 
-<div class="decision-war-room font-sans">
-  <StrongestBrainDeliveryCockpit />
-
-  <!-- Bento Grid Container -->
-  <div class="bento-grid">
-    
-    <!-- Bento 1: Metrics Dashboard (1 Row / 1 Column) -->
-    <div class="bento-card bento-metrics glass-panel">
-      <div class="card-header-mini">
-        <span class="eyebrow">DIAGNOSTIC STATUS</span>
-        <h3>📊 遥测分类指标</h3>
+<div class="decision-admin">
+  <section class="decision-command-strip wa-glass" aria-label="决策看板概览">
+    <div class="command-copy">
+      <span class="command-kicker">实时 Agenda</span>
+      <h2>核心决策流转</h2>
+      <span class="command-subline">{decisionHealthLabel}</span>
+    </div>
+    <div class="command-signal-grid">
+      <div class="command-signal">
+        <span>可见事项</span>
+        <strong>{agendaRows.length}</strong>
       </div>
-      
-      <div class="metrics-grid">
-        <div class="metric-item border-blue-dim">
-          <span class="metric-label">🚀 进行中需求</span>
-          <div class="metric-value-row">
-            <span class="metric-val text-blue font-mono">{activeTaskCount}</span>
-            <span class="unit">个</span>
-          </div>
-        </div>
-        <div class="metric-item border-rose-dim">
-          <span class="metric-label">🪲 进行中故障</span>
-          <div class="metric-value-row">
-            <span class="metric-val text-rose font-mono">{activeBugCount}</span>
-            <span class="unit">个</span>
-          </div>
-        </div>
-        <div class="metric-item border-purple-dim">
-          <span class="metric-label">🚨 触发警告任务</span>
-          <div class="metric-value-row">
-            <span class="metric-val text-orange font-mono">{filteredAgendaItems.length}</span>
-            <span class="unit">个</span>
-          </div>
-        </div>
-        <div class="metric-item border-green-dim">
-          <span class="metric-label">🤖 AI 自动流转率</span>
-          <div class="metric-value-row">
-            <span class="metric-val text-green font-mono">89%</span>
-            <span class="unit">无感</span>
-          </div>
-        </div>
+      <div class="command-signal tone-danger">
+        <span>高风险</span>
+        <strong>{visibleRiskCount}</strong>
       </div>
-
-      <div class="overall-progress">
-        <div class="progress-labels">
-          <span>迭代健康指数</span>
-          <span class="font-mono text-green">91.4% SAFE</span>
-        </div>
-        <div class="progress-bar-bg">
-          <div class="progress-bar-fill" style="width: 91.4%"></div>
-        </div>
+      <div class="command-signal tone-info">
+        <span>自动记录</span>
+        <strong>{filteredAutoDecisions.length}</strong>
       </div>
     </div>
+  </section>
 
-    <!-- Bento 2: Ambient Auto-Decisions Feed (2 Rows / 1 Column) -->
-    <div class="bento-card bento-terminal glass-panel scrollable-panel" style={`--override-panel-height: ${overridePanelHeight}px;`}>
-      <div class="card-header-mini">
-        <span class="eyebrow">AMBIENT TELEMETRY FLOW</span>
-        <h3>⚡ AI 自动流转控制台</h3>
-        <span class="pulse-indicator"></span>
+  <section class="decision-metrics" aria-label="决策看板指标">
+    {#each adminMetrics as metric}
+      <article class="wa-admin-card wa-admin-metric decision-metric metric-{metric.tone || 'neutral'}">
+        <div class="metric-topline">
+          <span>{metric.label}</span>
+          <i aria-hidden="true"></i>
+        </div>
+        <strong>{metric.value}</strong>
+        <small>{metric.helper}</small>
+      </article>
+    {/each}
+  </section>
+
+  <section class="decision-stage-strip" aria-label="状态分段">
+    <button
+      type="button"
+      class="stage-chip {currentFilter === 'all' && showRiskLevel === 'all' ? 'active' : ''}"
+      on:click={() => {
+        currentFilter = 'all';
+        showRiskLevel = 'all';
+      }}
+    >
+      <span>全部活跃</span>
+      <strong>{filteredAgendaItems.length}</strong>
+    </button>
+    <button
+      type="button"
+      class="stage-chip {showRiskLevel === 'risks' ? 'active' : ''}"
+      on:click={() => {
+        currentFilter = 'all';
+        showRiskLevel = 'risks';
+      }}
+    >
+      <span>待处理风险</span>
+      <strong>{visibleRiskCount}</strong>
+    </button>
+    <button
+      type="button"
+      class="stage-chip {currentFilter === 'task' ? 'active' : ''}"
+      on:click={() => {
+        currentFilter = 'task';
+        showRiskLevel = 'all';
+      }}
+    >
+      <span>需求</span>
+      <strong>{activeTaskCount}</strong>
+    </button>
+    <button
+      type="button"
+      class="stage-chip {currentFilter === 'bug' ? 'active' : ''}"
+      on:click={() => {
+        currentFilter = 'bug';
+        showRiskLevel = 'all';
+      }}
+    >
+      <span>缺陷</span>
+      <strong>{activeBugCount}</strong>
+    </button>
+  </section>
+
+  <div class="decision-main-grid" style={`--decision-panel-height: ${decisionPanelHeight};`}>
+    <section class="wa-admin-section decision-table-section" aria-label="决策事项列表">
+      <div class="wa-admin-toolbar decision-toolbar">
+        <div class="toolbar-copy">
+          <span>Selection</span>
+          <strong>事项选择列表</strong>
+          {#if loading}
+            <small>正在刷新</small>
+          {:else}
+            <small>{agendaRows.length} / {filteredAgendaItems.length} 条可见事项</small>
+          {/if}
+        </div>
+
+        <div class="toolbar-controls">
+          <input class="wa-control search-control" type="search" bind:value={searchText} placeholder="搜索编号、标题、负责人" />
+          <div class="toolbar-select">
+            <Select
+              bind:value={selectedAssignee}
+              options={assigneeOptions}
+              placeholder="全部负责人"
+              searchPlaceholder="搜索负责人"
+              compact={true}
+            />
+          </div>
+          <div class="toolbar-select project-select">
+            <Select
+              bind:value={selectedRepo}
+              options={projectOptions}
+              placeholder="全部项目"
+              searchPlaceholder="搜索项目名"
+              compact={true}
+            />
+          </div>
+          <button class="wa-admin-action secondary" type="button" on:click={fetchAgenda} disabled={loading}>
+            刷新
+          </button>
+        </div>
       </div>
-      
-      <div class="terminal-container font-mono">
-        <div class="terminal-header">
-          <span>well-ambient-v0.1.0-agent-kernel logs</span>
-        </div>
-        <div class="terminal-body font-mono">
-          {#each filteredAutoDecisions as dec}
-            <div class="terminal-line">
-              <div class="terminal-meta-row">
-                <span class="time">[{dec.time}]</span>
-                <span class="terminal-id-group">
-                  {#if jiraBaseUrl && dec.task_id && !dec.task_id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{dec.task_id}" target="_blank" rel="noopener noreferrer" class="task-link">#{dec.task_id}</a>
-                  {:else}
-                    <span class="task-link">#{dec.task_id}</span>
-                  {/if}
-                  {#if dec.commit_id}
-                    <span class="terminal-id-separator">/</span>
-                    {#if normalizedCommitUrl(dec.commit_url)}
-                      <a
-                        href={normalizedCommitUrl(dec.commit_url)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="terminal-commit-link"
-                        title={dec.commit_id}
-                        on:click={(event) => openCommitUrl(event, dec.commit_url)}
-                      >
-                        {shortCommit(dec.commit_id)}
-                      </a>
-                    {:else}
-                      <span class="terminal-commit-link muted" title={dec.commit_id}>
-                        {shortCommit(dec.commit_id)}
-                      </span>
-                    {/if}
-                  {/if}
-                </span>
-              </div>
-              <p class="msg">{dec.message}</p>
-            </div>
-          {/each}
-          <div class="terminal-line blink-line">
-            <span class="time">[{new Date().toLocaleTimeString()}]</span>
-            <span class="cursor">_</span>
-            <p class="msg">监听需求流转事件中...</p>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Bento 3: Risk Diagnostics Router (1.5 Rows / 2 Columns) -->
-    <div class="bento-card bento-agenda glass-panel" style={(showAssigneeDropdown || showRepoDropdown) ? 'z-index: 50; overflow: visible !important;' : ''}>
-      <div class="panel-header-row">
-        <div>
-          <span class="eyebrow">RED-ZONE DECISIONS</span>
-          <h2>⚠️ 红区卡点诊断盘</h2>
-        </div>
-        
-        <div class="filter-bar font-mono">
-          <!-- 1. Category Filter -->
-          <div class="filter-group">
-            <span class="filter-label-inline">分类:</span>
-            <div class="filter-tabs">
-              <button class="filter-btn {currentFilter === 'all' ? 'active' : ''}" on:click={() => currentFilter = 'all'}>
-                ALL ({filteredAgendaItems.length})
-              </button>
-              <button class="filter-btn {currentFilter === 'task' ? 'active' : ''}" on:click={() => currentFilter = 'task'}>
-                🚀 需求 ({filteredAgendaItems.filter(i=>i.issue_type!=='bug').length})
-              </button>
-              <button class="filter-btn {currentFilter === 'bug' ? 'active' : ''}" on:click={() => currentFilter = 'bug'}>
-                🪲 故障 ({filteredAgendaItems.filter(i=>i.issue_type==='bug').length})
-              </button>
-            </div>
-          </div>
+      {#if errorMsg}
+        <Alert type="error" message={errorMsg} />
+      {/if}
 
-          <!-- 2. Health/Risk Filter -->
-          <div class="filter-group">
-            <span class="filter-label-inline">健康度:</span>
-            <div class="filter-tabs">
-              <button class="filter-btn {showRiskLevel === 'risks' ? 'active' : ''}" on:click={() => showRiskLevel = 'risks'}>
-                🚨 仅卡点 ({filteredAgendaItems.filter(i=>i.risk_level!=='safe').length})
-              </button>
-              <button class="filter-btn {showRiskLevel === 'all' ? 'active' : ''}" on:click={() => showRiskLevel = 'all'}>
-                🌐 全活跃 ({filteredAgendaItems.length})
-              </button>
-            </div>
-          </div>
-
-          <!-- 3. Assignee Select -->
-          <div class="filter-group select-group">
-            <span class="filter-label-inline">负责人:</span>
-            <div class="custom-select-container" bind:this={assigneeSelectEl} style={showAssigneeDropdown ? 'z-index: 30;' : 'z-index: 20;'}>
-              <div class="custom-select-trigger combobox-trigger">
-                <span class="filter-icon">👤</span>
-                <input 
-                  type="text" 
-                  class="combobox-trigger-input"
-                  placeholder={selectedAssignee === 'all' ? '全部' : selectedAssignee}
-                  bind:value={assigneeSearchText}
-                  on:focus|stopPropagation={() => showAssigneeDropdown = true}
-                />
-                <span class="select-arrow">{showAssigneeDropdown ? '▲' : '▼'}</span>
-              </div>
-              {#if showAssigneeDropdown}
-                <div class="custom-select-options">
-                  {#each assigneesList.filter(name => name === 'all' || !assigneeSearchText || name.toLowerCase().includes(assigneeSearchText.toLowerCase())) as name}
-                    <button 
-                      class="custom-option {selectedAssignee === name ? 'active' : ''}" 
-                      on:click={() => selectAssignee(name)}
-                    >
-                      {name === 'all' ? '全部' : name}
-                    </button>
+      <div class="wa-admin-table-shell decision-table-shell">
+        <table class="wa-admin-table">
+          <thead>
+            <tr>
+              <th class="select-col" aria-label="选择"></th>
+              {#each agendaColumns as column}
+                <th
+                  class:sticky-status-col={column.key === 'status'}
+                  style={column.width ? `width: ${column.width}` : undefined}
+                >
+                  {column.label}
+                </th>
+              {/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#if loading && agendaRows.length === 0}
+              <tr>
+                <td colspan={agendaColumns.length + 1}>
+                  <div class="table-state">正在加载真实 Agenda 数据...</div>
+                </td>
+              </tr>
+            {:else if agendaRows.length === 0}
+              <tr>
+                <td colspan={agendaColumns.length + 1}>
+                  <div class="table-state">当前过滤条件下没有可见决策事项。</div>
+                </td>
+              </tr>
+            {:else}
+              {#each agendaRows as row}
+                <tr
+                  class:is-selected={selectedItem?.task_id === row.id}
+                  on:click={() => selectItem(row.source)}
+                  on:keydown={(event) => event.key === 'Enter' && selectItem(row.source)}
+                  role="button"
+                  tabindex="0"
+                >
+                  <td class="select-col">
+                    <span class="row-check" class:checked={selectedItem?.task_id === row.id}></span>
+                  </td>
+                  {#each agendaColumns as column}
+                    <td class="cell-{column.key}" class:sticky-status-col={column.key === 'status'}>
+                      {#if column.key === 'task_id'}
+                        {@const jiraUrl = getJiraUrl(row.id)}
+                        {#if jiraUrl}
+                          <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                            {row.cells.task_id}
+                          </a>
+                        {:else}
+                          <span class="table-id">{row.cells.task_id}</span>
+                        {/if}
+                      {:else if column.key === 'title'}
+                        <div class="title-stack">
+                          <strong>{row.title}</strong>
+                        </div>
+                      {:else if column.key === 'risk'}
+                        <span class="wa-admin-pill {toneClass(row.tone)}">{row.risk}</span>
+                      {:else if column.key === 'status'}
+                        <span class="wa-admin-pill {getStatusToneClass(row.status)}">{row.status}</span>
+                      {:else}
+                        <span>{row.cells[column.key]}</span>
+                      {/if}
+                    </td>
                   {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-
-          <!-- 4. Project Select -->
-          <div class="filter-group select-group">
-            <span class="filter-label-inline">项目:</span>
-            <div class="custom-select-container" bind:this={repoSelectEl} style={showRepoDropdown ? 'z-index: 30;' : 'z-index: 20;'}>
-              <div class="custom-select-trigger combobox-trigger">
-                <span class="filter-icon">📁</span>
-                <input 
-                  type="text" 
-                  class="combobox-trigger-input"
-                  placeholder={selectedRepo === 'all' ? '全部' : selectedRepo}
-                  bind:value={projectSearchText}
-                  on:focus|stopPropagation={() => showRepoDropdown = true}
-                />
-                <span class="select-arrow">{showRepoDropdown ? '▲' : '▼'}</span>
-              </div>
-              {#if showRepoDropdown}
-                <div class="custom-select-options">
-                  {#each projectList.filter(r => r === 'all' || !projectSearchText || r.toLowerCase().includes(projectSearchText.toLowerCase())) as r}
-                    <button 
-                      class="custom-option {selectedRepo === r ? 'active' : ''}" 
-                      on:click={() => selectRepo(r)}
-                    >
-                      {r === 'all' ? '全部' : r}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </div>
-        </div>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
       </div>
+    </section>
 
-      <!-- Scrollable Bento Grid container for vertical flat tiling -->
-      <div class="agenda-scroll-container">
-        {#if loading && agendaItems.length === 0}
-          <div class="state-msg">正在扫描需求流转与排期异常...</div>
-        {:else if errorMsg}
-          <div class="state-msg error-msg">❌ 加载异常: {errorMsg}</div>
-        {:else if filteredItems.length === 0}
-          <div class="state-msg safe-msg font-mono">
-            🎉 当前过滤器下无卡点任务，AI 已自动托管流转
+    <aside class="wa-admin-card wa-admin-inspector decision-inspector" aria-label="事项详情">
+      <div class="inspector-content" bind:this={inspectorContentEl}>
+        {#if inspectorRecord && selectedItem}
+          <div class="inspector-head">
+            <div>
+              <span class="inspector-kicker">需求详情</span>
+              <h2>{inspectorRecord.title}</h2>
+            </div>
+            <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{inspectorRecord.status}</span>
           </div>
-        {:else}
-          <div class="agenda-items-grid">
-            {#each filteredItems as item}
-              <div 
-                class="agenda-tile-card {item.risk_level === 'critical' ? 'tile-red' : 'tile-yellow'} {selectedItem?.task_id === item.task_id ? 'selected' : ''}"
-                on:click={() => selectItem(item)}
-                on:keydown={(e) => e.key === 'Enter' && selectItem(item)}
-                role="button"
-                tabindex="0"
-              >
-                <div class="tile-header">
-                  <div class="type-badge-col">
-                    {#if item.issue_type === 'bug'}
-                      <span class="type-icon type-bug">🪲 BUG</span>
-                    {:else}
-                      <span class="type-icon type-task">🚀 STORY</span>
-                    {/if}
-                  </div>
-                  <span class="risk-label-mini {item.risk_level === 'critical' ? 'text-rose' : 'text-orange'} font-mono">
-                    {item.risk_level === 'critical' ? '危急卡点' : '排期预警'}
-                  </span>
-                </div>
 
-                {#if item.task_id}
-                  {#if jiraBaseUrl && !item.task_id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{item.task_id}" target="_blank" rel="noopener noreferrer" class="tile-project font-mono jira-id-link" on:click|stopPropagation>
-                      🎫 {item.task_id}
-                    </a>
-                  {:else}
-                    <span class="tile-project font-mono">🎫 {item.task_id}</span>
-                  {/if}
-                {/if}
-                
-                <h4 class="tile-title">{item.title}</h4>
-                
-                <div class="tile-footer font-mono">
-                  <span class="assignee">👤 {item.assignee}</span>
-                </div>
-                {#if item.risk_level === 'critical'}
-                  <div class="tile-pulse-glow"></div>
-                {/if}
+          <div class="inspector-id-row">
+            {#if getJiraUrl(inspectorRecord.id)}
+              <a class="table-link" href={getJiraUrl(inspectorRecord.id)} target="_blank" rel="noopener noreferrer">{inspectorRecord.id}</a>
+            {:else}
+              <strong>{inspectorRecord.id}</strong>
+            {/if}
+            <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{getRiskLevelLabel(selectedItem.risk_level)}</span>
+          </div>
+
+          <dl class="fact-grid">
+            {#each inspectorRecord.facts as fact}
+              <div>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
               </div>
             {/each}
-          </div>
-        {/if}
-      </div>
-    </div>
+          </dl>
 
-    <!-- Bento 4: Human Override Console (1.5 Rows / 2 Columns) -->
-    <div class="bento-card bento-override glass-panel" bind:this={overridePanelEl}>
-      {#if selectedItem}
-        <div class="override-panel-layout">
-          <!-- Left Col: Telemetry detail & AI Diagnosis -->
-          <div class="override-info">
-            <div class="override-title-row">
-              {#if jiraBaseUrl && !selectedItem.task_id.startsWith('TASK-')}
-                <a href="{jiraBaseUrl}/browse/{selectedItem.task_id}" target="_blank" rel="noopener noreferrer" class="task-id-badge font-mono jira-id-link">
-                  {selectedItem.task_id}
-                </a>
-              {:else}
-                <span class="task-id-badge font-mono">{selectedItem.task_id}</span>
-              {/if}
-              <span class="type-badge {selectedItem.issue_type === 'bug' ? 'badge-bug' : 'badge-task'}">
-                {selectedItem.issue_type === 'bug' ? '缺陷修复' : '功能需求'}
-              </span>
-            </div>
-            
-            <h3 class="override-title">{selectedItem.title}</h3>
-            
-            <div class="blockage-context-panel font-mono">
-              <div class="blockage-context-grid">
-                {#each getBlockageContext(selectedItem) as signal}
-                  <div class="context-chip signal-{signal.tone}">
-                    <span>{signal.label}</span>
-                    <strong>{signal.value}</strong>
-                  </div>
-                {/each}
-              </div>
-              <p class="context-summary">{selectedItem.desc || '该事项需要在会中确认下一步推进动作。'}</p>
-            </div>
-
-            <!-- AI Diagnosed Advice -->
-            <div class="ai-diagnose-box">
-              <p class="ai-msg">{getAiRecommendation(selectedItem)}</p>
-              <span class="ai-reason font-mono">诊断归因: {selectedItem.desc}</span>
-            </div>
-
-            <!-- Dynamic AI Impact Analysis Simulation -->
-            <div class="impact-box font-mono">
-              <span class="impact-title">⚠️ AI 影响链条仿真 (Impact Simulation)</span>
-              <p class="impact-desc">{aiPlan.impact}</p>
-            </div>
-
-            <div class="brain-flow-box">
-              <div class="brain-flow-head">
-                <span class="font-mono">流转建议</span>
-                <strong>{selectedItem.risk_type === 'none' ? '静默托管' : '需要干预'}</strong>
-              </div>
-              <div class="brain-flow-grid font-mono">
-                {#each getBrainFlowSignals(selectedItem) as signal}
-                  <div class="brain-signal signal-{signal.tone}">
-                    <span>{signal.label}</span>
-                    <strong>{signal.value}</strong>
-                  </div>
-                {/each}
-              </div>
-              <p>{getBrainFlowSuggestion(selectedItem)}</p>
-            </div>
+          <div class="inspector-section-grid">
+            {#each inspectorRecord.sections as section}
+              <section class="inspector-section">
+                <h3>{section.title}</h3>
+                {#if section.body}
+                  <p>{section.body}</p>
+                {/if}
+                {#if section.items}
+                  <ul>
+                    {#each section.items as item}
+                      <li>{item}</li>
+                    {/each}
+                  </ul>
+                {/if}
+              </section>
+            {/each}
           </div>
 
-          <!-- Right Col: Intervention Form -->
-          <div class="override-controls">
-            <div class="controls-header">
-              <div class="header-main">
-                <h4>⚡ 人工调停与干预 (Override)</h4>
-                <button class="btn-quick-ai font-mono" on:click={applyAiPlan}>
-                  💡 一键导入 AI 调停预案
-                </button>
-              </div>
-              <p class="subtitle">对此任务进行调停决策，您的指令将覆盖 AI 的后台静默决策并自动同步</p>
-            </div>
-
-            <div class="override-decision-strip font-mono">
-              <div>
-                <span>当前负责人</span>
-                <strong>{selectedItem.assignee || '-'}</strong>
-              </div>
-              <div>
-                <span>当前截止</span>
-                <strong>{selectedItem.due_date ? formatDateLabel(selectedItem.due_date.slice(0, 10)) : '未设置'}</strong>
-              </div>
-              <div>
-                <span>风险等级</span>
-                <strong class="risk-{selectedItem.risk_level}">{selectedItem.risk_level.toUpperCase()}</strong>
-              </div>
-            </div>
-
-            <div class="override-form font-mono">
-              <div class="input-row">
-                <div class="input-field">
-                  <label for="assignee-val">指派干预人</label>
-                  <div class="override-select-container" bind:this={overrideAssigneeSelectEl}>
-                    <button
-                      id="assignee-val"
-                      type="button"
-                      class="override-select-trigger {newAssignee ? 'has-value' : ''}"
-                      on:click={toggleOverrideAssigneeDropdown}
-                      aria-expanded={showOverrideAssigneeDropdown}
-                    >
-                      <span>{newAssignee || '选择干预负责人'}</span>
-                      <span class="select-arrow">{showOverrideAssigneeDropdown ? '▲' : '▼'}</span>
-                    </button>
-                    {#if showOverrideAssigneeDropdown}
-                      <div class="override-select-options">
-                        {#each overrideAssigneeOptions as name}
-                          <button
-                            type="button"
-                            class="override-select-option {newAssignee === name ? 'active' : ''}"
-                            on:click={() => selectOverrideAssignee(name)}
-                          >
-                            {name}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="input-field">
-                  <label for="due-val">延期截止日</label>
-                  <div class="override-date-shell" bind:this={overrideDatePickerEl}>
-                    <button
-                      id="due-val"
-                      type="button"
-                      class="override-date-display {newDueDate ? 'has-value' : ''}"
-                      on:click|stopPropagation={toggleOverrideDatePicker}
-                      aria-expanded={showOverrideDatePicker}
-                    >
-                      <span>{newDueDateDisplay || '选择截止日期'}</span>
-                      <span class="date-input-icon"></span>
-                    </button>
-                    {#if showOverrideDatePicker}
-                      {@const calendar = getOverrideCalendarDays(newDueDate, overrideDatePickerCursor)}
-                      <div class="override-date-picker-panel">
-                        <div class="override-date-picker-head">
-                          <button type="button" aria-label="上个月" on:click={(event) => moveOverrideDateMonth(-1, event)}>‹</button>
-                          <strong>{calendar.label}</strong>
-                          <button type="button" aria-label="下个月" on:click={(event) => moveOverrideDateMonth(1, event)}>›</button>
-                        </div>
-                        <div class="override-date-week-grid font-mono">
-                          {#each weekdayNames as day}
-                            <span>{day}</span>
-                          {/each}
-                        </div>
-                        <div class="override-date-grid">
-                          {#each calendar.days as day}
-                            <button
-                              type="button"
-                              class="override-date-cell {day.muted ? 'muted' : ''} {day.today ? 'today' : ''} {day.selected ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectOverrideDueDate(day.value)}
-                            >
-                              {day.label}
-                            </button>
-                          {/each}
-                        </div>
-                        <div class="override-date-picker-foot">
-                          <button type="button" on:click|stopPropagation={() => selectOverrideDueDate(toDateValue(new Date()))}>今天</button>
-                          <button type="button" on:click|stopPropagation={clearOverrideDueDate}>清空</button>
-                        </div>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-              <div class="input-field full-width">
-                <label for="note-val">会议干预备注 (将写回 Jira 与飞书)</label>
-                <input id="note-val" type="text" bind:value={decisionNote} placeholder="如：会中决定转派协助并顺延周期..." />
-              </div>
-              <div class="input-field">
-                <label for="operator-val">调停决策人</label>
-                <input id="operator-val" type="text" bind:value={operator} />
-              </div>
-            </div>
-
-            <div class="override-actions">
-              <button class="override-btn btn-primary" on:click={() => submitDecision('reassign')} disabled={decisionLoading}>
-                👥 强制指派
+          <section class="inspector-section intervention-section">
+            <div class="section-row-head">
+              <h3>人工调停</h3>
+              <button class="wa-admin-action secondary" type="button" on:click={applyResolutionDraft}>
+                带入草稿
               </button>
-              <button class="override-btn btn-warning" on:click={() => submitDecision('reschedule')} disabled={decisionLoading}>
-                📅 调整截止
+            </div>
+
+            <div class="intervention-form">
+              <div class="form-field">
+                <Select
+                  label="指派负责人"
+                  bind:value={newAssignee}
+                  options={overrideAssigneeSelectOptions}
+                  placeholder="选择负责人"
+                  searchPlaceholder="搜索负责人"
+                  compact={true}
+                />
+              </div>
+              <div class="form-field">
+                <DatePicker
+                  label="新的截止日"
+                  bind:value={newDueDate}
+                  placeholder="选择新的截止日"
+                  compact={true}
+                />
+              </div>
+              <label class="wide-field">
+                <span>会议备注</span>
+                <input class="wa-control" type="text" bind:value={decisionNote} placeholder="填写调停依据或下一步动作" />
+              </label>
+              <label>
+                <span>调停决策人</span>
+                <input class="wa-control" type="text" bind:value={operator} />
+              </label>
+            </div>
+
+            <div class="intervention-actions">
+              <button class="wa-admin-action primary" type="button" on:click={() => submitDecision('reassign')} disabled={decisionLoading}>
+                覆盖指派
               </button>
-              <button class="override-btn btn-secondary" on:click={() => submitDecision('suspend')} disabled={decisionLoading}>
-                ⏸️ 挂起任务
+              <button class="wa-admin-action secondary" type="button" on:click={() => submitDecision('reschedule')} disabled={decisionLoading}>
+                调整截止
               </button>
             </div>
 
             {#if decisionSuccess}
-              <div class="alert-box alert-success font-mono">{decisionSuccess}</div>
+              <Alert type="success" message={decisionSuccess} />
             {/if}
             {#if decisionError}
-              <div class="alert-box alert-danger font-mono">{decisionError}</div>
+              <Alert type="error" message={decisionError} />
             {/if}
+          </section>
+        {:else}
+          <div class="inspector-empty">
+            <strong>暂无可查看事项</strong>
+            <p>当前数据或过滤条件下没有真实 Agenda 记录。</p>
           </div>
-        </div>
+        {/if}
+      </div>
+    </aside>
+  </div>
 
-        <!-- Timeline Log of Past Human Interventions -->
-        <div class="override-history">
-          <span class="eyebrow font-mono">PAST HUMAN INTERVENTIONS</span>
-          <div class="logs-feed font-mono">
-            {#if selectedItem.decision_logs}
-              {#each selectedItem.decision_logs.split('\n') as logLine}
-                {#if logLine.trim()}
-                  <div class="log-item">
-                    <span class="indicator-icon">👥</span>
-                    <p>{logLine}</p>
-                  </div>
+  <section class="decision-log-grid" aria-label="决策流转记录">
+    <div class="wa-admin-card log-panel auto-log-panel">
+      <div class="log-head">
+        <div>
+          <strong>自动流转记录</strong>
+          <small>系统检测、提交证据与状态推进</small>
+        </div>
+        <span>{filteredAutoDecisions.length} 条</span>
+      </div>
+      <div class="log-list">
+        {#if filteredAutoDecisions.length === 0}
+          <div class="log-empty">当前没有可见自动流转记录。</div>
+        {:else}
+          {#each filteredAutoDecisions as dec}
+            <article class="log-item">
+              <div class="log-meta">
+                <span>{dec.time || '-'}</span>
+                {#if getJiraUrl(dec.task_id)}
+                  <a href={getJiraUrl(dec.task_id)} target="_blank" rel="noopener noreferrer">{dec.task_id}</a>
+                {:else}
+                  <strong>{dec.task_id}</strong>
                 {/if}
-              {/each}
-            {:else}
-              <div class="empty-logs">该卡点目前完全处于 AI 静默流转状态，尚无人工干预记录</div>
-            {/if}
-          </div>
+                {#if dec.commit_id}
+                  {#if normalizedCommitUrl(dec.commit_url)}
+                    <a
+                      href={normalizedCommitUrl(dec.commit_url)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={dec.commit_id}
+                      on:click={(event) => openCommitUrl(event, dec.commit_url)}
+                    >
+                      {shortCommit(dec.commit_id)}
+                    </a>
+                  {:else}
+                    <strong>{shortCommit(dec.commit_id)}</strong>
+                  {/if}
+                {/if}
+              </div>
+              <p>{dec.message}</p>
+            </article>
+          {/each}
+        {/if}
+      </div>
+    </div>
+
+    <div class="wa-admin-card log-panel manual-log-panel">
+      <div class="log-head">
+        <div>
+          <strong>本次会议操作</strong>
+          <small>人工调停动作</small>
         </div>
-      {:else}
-        <div class="override-panel-layout centered font-mono">
-          <div class="empty-panel-msg">
-            <span class="icon">⇅</span>
-            <p>请在上方诊断盘中选择异常卡点进行人工调停 (Human Override)</p>
-          </div>
-        </div>
-      {/if}
+        <span>{localDecisions.length} 条</span>
+      </div>
+      <div class="log-list">
+        {#if localDecisions.length === 0}
+          <div class="log-empty">等待人工调停动作触发。</div>
+        {:else}
+          {#each localDecisions as feed}
+            <article class="log-item local">
+              <div class="log-meta">
+                <span>INTERVENTION</span>
+              </div>
+              <p>{feed}</p>
+            </article>
+          {/each}
+        {/if}
+      </div>
     </div>
-
-  </div>
-
-  <!-- Bottom Session decisions feed -->
-  <div class="session-feed glass-panel">
-    <div class="feed-header font-mono">
-      <span>📢 本次会议决策广播 (LIVE FEED)</span>
-    </div>
-    <div class="feed-list font-mono">
-      {#if localDecisions.length === 0}
-        <div class="empty-feed">等待会中决策动作触发...</div>
-      {:else}
-        {#each localDecisions as feed}
-          <div class="feed-item">
-            <span class="badge">INTERVENTION</span>
-            <p>{feed}</p>
-          </div>
-        {/each}
-      {/if}
-    </div>
-  </div>
-
+  </section>
 </div>
 
 <style>
-  /* 自动流转终端元信息与标签样式 */
-  .terminal-meta-row {
-    display: flex;
-    flex-wrap: nowrap;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 2px;
-    min-width: 0;
-  }
-
-  .terminal-meta-row .time {
-    flex: none;
-  }
-
-  .terminal-id-group {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 5px;
-    min-width: 0;
-    max-width: 100%;
-    white-space: nowrap;
-  }
-
-  .terminal-id-separator {
-    color: #334155;
-    font-weight: 700;
-    flex: none;
-  }
-
-  .terminal-commit-link {
-    color: #38bdf8;
-    border-bottom: 1px solid rgba(56, 189, 248, 0.35);
-    font-size: 0.68rem;
-    font-weight: 700;
-    line-height: 1.2;
-    text-decoration: none;
-    white-space: nowrap;
-    flex: none;
-    transition: all 0.2s;
-  }
-
-  .terminal-commit-link:hover {
-    color: #7dd3fc;
-    border-color: rgba(125, 211, 252, 0.7);
-  }
-
-  .terminal-commit-link.muted {
-    color: #64748b;
-    border-color: rgba(100, 116, 139, 0.35);
-  }
-
-  .blockage-context-grid {
+  .decision-admin {
+    --decision-radius-panel: 20px;
+    --decision-radius-card: 16px;
+    --decision-radius-control: 12px;
+    position: relative;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .context-chip {
+    width: 100%;
     min-width: 0;
-    background: rgba(15, 23, 42, 0.48);
-    border: 1px solid rgba(51, 65, 85, 0.35);
-    border-radius: 8px;
-    padding: 9px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    gap: var(--wa-space-5);
+    padding-bottom: var(--wa-space-4);
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-sans);
+    isolation: isolate;
   }
 
-  .context-chip span {
-    color: #64748b;
-    font-size: 0.64rem;
-    font-weight: 700;
-  }
-
-  .context-chip strong {
-    color: #e2e8f0;
-    font-size: 0.72rem;
-    line-height: 1.25;
-    overflow-wrap: anywhere;
-  }
-
-  .context-summary {
-    margin: 10px 0 0 0;
-    color: #94a3b8;
-    font-size: 0.7rem;
-    line-height: 1.45;
-  }
-
-  .tile-project {
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: #34d399;
-    background: rgba(16, 185, 129, 0.08);
-    border: 1px solid rgba(16, 185, 129, 0.2);
-    padding: 2px 6px;
-    border-radius: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: inline-block;
-    align-self: flex-start;
-  }
-
-  .project-tag {
-    font-size: 0.8rem;
-    font-weight: 700;
-    background: rgba(16, 185, 129, 0.15);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    color: #34d399;
-    padding: 2px 8px;
-    border-radius: 4px;
-    max-width: 240px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .decision-war-room {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    margin-top: 10px;
-    color: #e2e8f0;
-  }
-
-  /* Bento Grid Layout (3 Columns, 3 Rows equivalent height) */
-  .bento-grid {
-    --agenda-tile-height: 188px;
-    --agenda-row-gap: 16px;
-    --agenda-visible-height: 400px;
-    display: grid;
-    grid-template-columns: 350px 1fr 1fr;
-    grid-template-rows: auto auto;
-    gap: 24px;
-  }
-
-  .bento-card {
-    display: flex;
-    flex-direction: column;
-  }
-
-  /* Bento Tiles Sizing */
-  .bento-metrics {
-    grid-column: 1;
-    grid-row: 1;
-    min-height: 280px;
-  }
-
-  .bento-terminal {
-    grid-column: 1;
-    grid-row: 2;
-    align-self: start;
-    min-height: 440px;
-    height: var(--override-panel-height, 440px);
-    max-height: var(--override-panel-height, 440px);
-    overflow: hidden;
-  }
-
-  .bento-agenda {
-    grid-column: 2 / span 2;
-    grid-row: 1;
-    min-height: 280px;
-    position: relative;
-    z-index: 10;
-  }
-
-  .bento-override {
-    grid-column: 2 / span 2;
-    grid-row: 2;
-    min-height: 440px;
-    overflow: visible;
-    position: relative;
-    z-index: 12;
-  }
-
-  /* Premium Glassmorphism cards */
-  .glass-panel {
-    background: rgba(10, 15, 30, 0.7);
-    border: 1px solid rgba(51, 65, 85, 0.35);
-    border-radius: 16px;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    padding: 24px;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
-    transition: border-color 0.3s;
-  }
-
-  .glass-panel:hover {
-    border-color: rgba(99, 102, 241, 0.25);
-  }
-
-  .eyebrow {
-    font-size: 0.65rem;
-    font-weight: 800;
-    color: #64748b;
-    letter-spacing: 0.1em;
-    display: block;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-  }
-
-  .card-header-mini h3 {
-    margin: 0 0 16px 0;
-    font-size: 1rem;
-    font-weight: 700;
-    color: #f1f5f9;
-  }
-
-  /* Metrics Panel Styling */
-  .metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-
-  .metric-item {
-    background: rgba(2, 6, 23, 0.4);
-    border-radius: 10px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .border-blue-dim { border-left: 3px solid #3b82f6; }
-  .border-rose-dim { border-left: 3px solid #f43f5e; }
-  .border-purple-dim { border-left: 3px solid #8b5cf6; }
-  .border-green-dim { border-left: 3px solid #10b981; }
-
-  .metric-label {
-    font-size: 0.7rem;
-    color: #64748b;
-    font-weight: 600;
-  }
-
-  .metric-value-row {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
-  }
-
-  .metric-val {
-    font-size: 1.5rem;
-    font-weight: 800;
-  }
-
-  .text-blue { color: #3b82f6; }
-  .text-rose { color: #f43f5e; }
-  .text-orange { color: #f59e0b; }
-  .text-green { color: #10b981; }
-
-  .unit {
-    font-size: 0.7rem;
-    color: #475569;
-  }
-
-  .overall-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    border-top: 1px solid rgba(51, 65, 85, 0.2);
-    padding-top: 16px;
-  }
-
-  .progress-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    color: #94a3b8;
-  }
-
-  .progress-bar-bg {
-    height: 6px;
-    background: rgba(30, 41, 59, 0.6);
-    border-radius: 9999px;
-    overflow: hidden;
-  }
-
-  .progress-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #10b981 0%, #06b6d4 100%);
-    border-radius: 9999px;
-  }
-
-  /* Telemetry Terminal Panel */
-  .bento-terminal {
-    position: relative;
-  }
-
-  .bento-terminal .pulse-indicator {
-    position: absolute;
-    top: 24px;
-    right: 24px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #10b981;
-    box-shadow: 0 0 8px #10b981;
-    animation: pulse 2s infinite;
-  }
-
-  .terminal-container {
-    background: #020617;
-    border: 1px solid rgba(51, 65, 85, 0.3);
-    border-radius: 10px;
-    flex-grow: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .terminal-header {
-    background: rgba(30, 41, 59, 0.4);
-    padding: 6px 12px;
-    font-size: 0.65rem;
-    color: #64748b;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.2);
-  }
-
-  .terminal-body {
-    position: relative;
-    padding: 14px 12px 14px 32px;
-    font-size: 0.7rem;
-    line-height: 1.5;
-    color: #34d399;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    overflow-y: auto;
-    flex-grow: 1;
-    min-height: 0;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(16, 185, 129, 0.2) transparent;
-  }
-
-  .terminal-body::before {
+  .decision-admin::before {
     content: "";
     position: absolute;
-    top: 18px;
-    bottom: 18px;
-    left: 17px;
-    width: 1px;
-    background: linear-gradient(180deg, rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.6), rgba(16, 185, 129, 0.08));
+    inset: -18px -16px auto;
+    z-index: -1;
+    height: 360px;
     pointer-events: none;
+    background:
+      linear-gradient(135deg, rgba(0, 143, 150, 0.1), transparent 42%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0));
+    mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.78) 45%, transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.78) 45%, transparent 100%);
   }
 
-  .terminal-body::-webkit-scrollbar {
-    width: 4px;
-  }
-  .terminal-body::-webkit-scrollbar-thumb {
-    background: rgba(16, 185, 129, 0.2);
-    border-radius: 2px;
-  }
-
-  .terminal-line {
+  .decision-command-strip {
     position: relative;
+    min-width: 0;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    background: rgba(15, 23, 42, 0.38);
-    border: 1px solid rgba(16, 185, 129, 0.1);
-    border-radius: 8px;
-    padding: 8px 10px 9px 12px;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: var(--wa-space-6);
+    padding: 20px 22px;
+    border-color: rgba(255, 255, 255, 0.74);
+    border-radius: var(--decision-radius-panel);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(242, 248, 251, 0.72)),
+      var(--wa-chrome-1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      0 18px 46px rgba(30, 46, 64, 0.1);
   }
 
-  .terminal-line::before {
+  .decision-command-strip::before {
     content: "";
     position: absolute;
-    top: 12px;
-    left: -20px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #10b981;
-    border: 2px solid #020617;
-    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08), 0 0 12px rgba(16, 185, 129, 0.35);
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background:
+      linear-gradient(90deg, rgba(0, 143, 150, 0.08), transparent 36%),
+      repeating-linear-gradient(90deg, rgba(13, 23, 34, 0.035) 0 1px, transparent 1px 52px);
+    opacity: 0.82;
+  }
+
+  .command-copy,
+  .command-signal-grid {
+    position: relative;
     z-index: 1;
   }
 
-  .terminal-line .time {
-    color: #475569;
-  }
-
-  .terminal-line .task-link {
-    color: #818cf8;
-    font-weight: 700;
-  }
-
-  .terminal-line .msg {
-    margin: 0;
-    color: #10b981;
-    word-break: break-word;
-  }
-
-  .blink-line {
-    border-color: rgba(129, 140, 248, 0.16);
-  }
-
-  .blink-line::before {
-    background: #818cf8;
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.12), 0 0 12px rgba(129, 140, 248, 0.4);
-  }
-
-  .blink-line .cursor {
-    animation: blink 1s infinite;
-    color: #10b981;
-  }
-
-  /* Risk Diagnostics Panel (Bento 3) - Flattened Grid Vertical Scroll */
-  .panel-header-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-bottom: 18px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.15);
-    padding-bottom: 12px;
-  }
-
-  .panel-header-row h2 {
-    margin: 0;
-    font-size: 1.2rem;
-    font-weight: 800;
-  }
-
-  .filter-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .filter-group {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .filter-label-inline {
-    font-size: 0.65rem;
-    font-weight: 700;
-    color: #475569;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .filter-tabs {
-    display: flex;
-    background: rgba(2, 6, 23, 0.5);
-    border: 1px solid rgba(51, 65, 85, 0.3);
-    border-radius: 8px;
-    padding: 3px;
-    gap: 4px;
-  }
-
-  .filter-btn {
-    background: transparent;
-    border: none;
-    color: #64748b;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .filter-btn:hover {
-    color: #cbd5e1;
-  }
-
-  .filter-btn.active {
-    background: rgba(99, 102, 241, 0.15);
-    color: #818cf8;
-  }
-
-  .agenda-scroll-container {
-    flex-grow: 1;
-    overflow-y: auto;
-    max-height: var(--agenda-visible-height);
-    padding-right: 8px;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
-  }
-
-  .agenda-scroll-container::-webkit-scrollbar {
-    width: 4px;
-  }
-  .agenda-scroll-container::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.25);
-    border-radius: 4px;
-  }
-  .agenda-scroll-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(99, 102, 241, 0.45);
-  }
-
-  .agenda-items-grid {
+  .command-copy {
+    min-width: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-    grid-auto-rows: minmax(var(--agenda-tile-height), max-content);
-    gap: var(--agenda-row-gap);
-    padding: 4px 2px;
+    align-content: center;
+    gap: 5px;
+    padding: 13px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: var(--decision-radius-card);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(246, 251, 253, 0.5)),
+      rgba(255, 255, 255, 0.54);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 10px 24px rgba(30, 46, 64, 0.055);
   }
 
-  .agenda-tile-card {
-    background: rgba(30, 41, 59, 0.25);
-    border: 1px solid rgba(51, 65, 85, 0.4);
-    border-radius: 12px;
-    padding: 14px;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 0;
-    text-align: left;
-    position: relative;
-    overflow: hidden;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  .command-kicker,
+  .command-subline,
+  .command-signal span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 740;
+    letter-spacing: 0;
   }
 
-  .tile-red { border-top: 4px solid #ef4444; }
-  .tile-yellow { border-top: 4px solid #f59e0b; }
-
-  .agenda-tile-card:hover {
-    background: rgba(51, 65, 85, 0.3);
-    transform: translateY(-2px);
-    border-color: rgba(99, 102, 241, 0.35);
-  }
-
-  .agenda-tile-card.selected,
-  .agenda-tile-card:focus {
-    background: rgba(99, 102, 241, 0.1);
-    border-color: #6366f1;
-    box-shadow: 0 0 16px rgba(99, 102, 241, 0.25);
-    outline: none;
-  }
-
-  .tile-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .type-icon {
-    font-size: 0.65rem;
-    font-weight: 800;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-
-  .type-bug { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-  .type-task { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-
-  .risk-label-mini {
-    font-size: 0.65rem;
-    font-weight: 700;
-  }
-
-  .tile-title {
-    font-size: 0.8rem;
+  .command-copy h2 {
     margin: 0;
-    color: #e2e8f0;
-    font-weight: 600;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
+    color: var(--wa-text-strong);
+    font-size: 25px;
+    line-height: 1.12;
+    font-weight: 850;
+    letter-spacing: 0;
   }
 
-  .tile-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.7rem;
-    color: #64748b;
-    border-top: 1px solid rgba(51, 65, 85, 0.2);
-    padding-top: 7px;
+  .command-subline {
+    color: var(--wa-text-main);
+    font-weight: 680;
   }
 
-  .tile-footer .assignee {
-    color: #cbd5e1;
-  }
-
-  .tile-pulse-glow {
-    position: absolute;
-    top: 0;
-    right: 0;
-    width: 60px;
-    height: 60px;
-    background: radial-gradient(circle, rgba(239, 68, 68, 0.1) 0%, transparent 70%);
-    pointer-events: none;
-  }
-
-  /* Human Override Panel (Bento 4) */
-  .override-panel-layout {
-    display: grid;
-    grid-template-columns: 1.1fr 0.9fr;
-    gap: 24px;
-  }
-
-  .override-panel-layout.centered {
-    height: 300px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    color: #475569;
-  }
-
-  .empty-panel-msg {
-    text-align: center;
-  }
-  .empty-panel-msg .icon {
-    font-size: 3rem;
-    display: block;
-    margin-bottom: 12px;
-  }
-
-  .override-info {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    border-right: 1px solid rgba(51, 65, 85, 0.25);
-    padding-right: 24px;
-  }
-
-  .override-title-row {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .task-id-badge {
-    font-size: 0.8rem;
-    font-weight: 800;
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    color: #818cf8;
-    padding: 2px 8px;
-    border-radius: 4px;
-    text-decoration: none;
-    display: inline-block;
-  }
-
-  a.task-id-badge:hover {
-    background: rgba(99, 102, 241, 0.25);
-    border-color: rgba(99, 102, 241, 0.5);
-  }
-
-  .jira-id-link {
-    text-decoration: none;
-    transition: all 0.2s;
-  }
-
-  .tile-project.jira-id-link:hover {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.4);
-    transform: translateY(-1px);
-  }
-
-  .type-badge {
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 2px 8px;
-    border-radius: 4px;
-  }
-  .badge-bug { background: rgba(244, 63, 94, 0.1); color: #f43f5e; border: 1px solid rgba(244, 63, 94, 0.2); }
-  .badge-task { background: rgba(6, 182, 212, 0.1); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.2); }
-
-  .override-title {
-    margin: 0;
-    font-size: 0.95rem;
-    color: #f1f5f9;
-    line-height: 1.4;
-  }
-
-  .blockage-context-panel {
-    background: rgba(2, 6, 23, 0.4);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: 0.7rem;
-    color: #64748b;
-  }
-
-  .ai-diagnose-box {
-    background: rgba(99, 102, 241, 0.08);
-    border: 1px dashed rgba(99, 102, 241, 0.35);
-    border-radius: 10px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .ai-diagnose-box .ai-msg {
-    margin: 0;
-    font-size: 0.8rem;
-    color: #e2e8f0;
-    line-height: 1.4;
-  }
-
-  .ai-diagnose-box .ai-reason {
-    font-size: 0.7rem;
-    color: #818cf8;
-  }
-
-  /* Impact simulation tile */
-  .impact-box {
-    background: rgba(245, 158, 11, 0.05);
-    border: 1px solid rgba(245, 158, 11, 0.15);
-    border-radius: 10px;
-    padding: 14px;
-  }
-
-  .impact-title {
-    font-size: 0.7rem;
-    font-weight: 700;
-    color: #f59e0b;
-    display: block;
-    margin-bottom: 4px;
-  }
-
-  .impact-desc {
-    margin: 0;
-    font-size: 0.75rem;
-    color: #cbd5e1;
-    line-height: 1.4;
-  }
-
-  .brain-flow-box {
-    border: 1px solid rgba(51, 65, 85, 0.42);
-    background: rgba(2, 6, 23, 0.26);
-    border-radius: 10px;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .brain-flow-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .brain-flow-head span {
-    color: #94a3b8;
-    font-size: 0.7rem;
-    font-weight: 800;
-  }
-
-  .brain-flow-head strong {
-    color: #7dd3fc;
-    font-size: 0.72rem;
-  }
-
-  .brain-flow-grid {
+  .command-signal-grid {
+    width: min(520px, 48%);
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
+    gap: var(--wa-space-3);
   }
 
-  .brain-signal {
+  .command-signal {
     min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.38);
-    background: rgba(15, 23, 42, 0.42);
-    border-radius: 7px;
-    padding: 7px 8px;
-  }
-
-  .brain-signal span {
-    display: block;
-    color: #64748b;
-    font-size: 0.6rem;
-    margin-bottom: 4px;
-  }
-
-  .brain-signal strong {
-    display: block;
-    color: #cbd5e1;
-    font-size: 0.68rem;
-    line-height: 1.3;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .brain-signal.signal-safe strong { color: #86efac; }
-  .brain-signal.signal-warn strong { color: #fbbf24; }
-  .brain-signal.signal-danger strong { color: #fb7185; }
-  .brain-signal.signal-info strong { color: #93c5fd; }
-
-  .brain-flow-box p {
-    margin: 0;
-    color: #cbd5e1;
-    font-size: 0.74rem;
-    line-height: 1.45;
-  }
-
-  /* Intervention Form Controls */
-  .override-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .controls-header {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .controls-header .header-main {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .controls-header h4 {
-    margin: 0;
-    font-size: 0.85rem;
-    color: #cbd5e1;
-  }
-
-  .btn-quick-ai {
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.35);
-    color: #a5b4fc;
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-quick-ai:hover {
-    background: rgba(99, 102, 241, 0.25);
-    border-color: #6366f1;
-    transform: scale(0.97);
-  }
-
-  .controls-header .subtitle {
-    font-size: 0.7rem;
-    color: #64748b;
-    margin: 0;
-  }
-
-  .override-decision-strip {
+    padding: 2px 0 2px var(--wa-space-4);
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    gap: var(--wa-space-1);
+    border-left: 1px solid rgba(123, 143, 160, 0.18);
   }
 
-  .override-decision-strip div {
-    min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.55);
-    background: rgba(2, 6, 23, 0.36);
-    border-radius: 8px;
-    padding: 8px 10px;
-  }
-
-  .override-decision-strip span {
-    display: block;
-    color: #64748b;
-    font-size: 0.62rem;
-    font-weight: 800;
-    margin-bottom: 4px;
-  }
-
-  .override-decision-strip strong {
-    display: block;
-    color: #e2e8f0;
-    font-size: 0.72rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .override-decision-strip .risk-critical {
-    color: #fb7185;
-  }
-
-  .override-decision-strip .risk-warning {
-    color: #f59e0b;
-  }
-
-  .override-decision-strip .risk-safe {
-    color: #34d399;
-  }
-
-  .override-form {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .input-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-
-  .input-field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .input-field label {
-    font-size: 0.65rem;
-    color: #64748b;
-    font-weight: 700;
-  }
-
-  .input-field input {
-    background: rgba(2, 6, 23, 0.5);
-    border: 1px solid rgba(51, 65, 85, 0.5);
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: #f1f5f9;
-    font-size: 0.75rem;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  .input-field input:focus {
-    border-color: #6366f1;
-  }
-
-  .override-select-container,
-  .override-date-shell {
-    position: relative;
-    min-height: 32px;
-  }
-
-  .override-select-trigger,
-  .override-date-display {
-    width: 100%;
-    min-height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    box-sizing: border-box;
-    background: linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.62));
-    border: 1px solid rgba(71, 85, 105, 0.62);
-    border-radius: 6px;
-    color: #64748b;
-    padding: 6px 10px;
-    font-family: inherit;
-    font-size: 0.75rem;
+  .command-signal strong {
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 26px;
     line-height: 1;
-    text-align: left;
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
-  }
-
-  .override-select-trigger.has-value,
-  .override-date-display.has-value {
-    color: #f1f5f9;
-  }
-
-  .override-select-trigger:hover,
-  .override-select-trigger:focus,
-  .override-date-shell:hover .override-date-display,
-  .override-date-shell:focus-within .override-date-display {
-    border-color: rgba(129, 140, 248, 0.72);
-    background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.72));
-    box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.16);
-  }
-
-  .override-select-options {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    right: 0;
-    z-index: 120;
-    max-height: 180px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    background: #0f172a;
-    border: 1px solid rgba(129, 140, 248, 0.26);
-    border-radius: 8px;
-    padding: 4px;
-    box-shadow: 0 18px 36px rgba(2, 6, 23, 0.58);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
-  }
-
-  .override-select-option {
-    width: 100%;
-    border: none;
-    background: transparent;
-    color: #cbd5e1;
-    border-radius: 5px;
-    padding: 7px 9px;
-    font-family: inherit;
-    font-size: 0.75rem;
-    line-height: 1.35;
-    text-align: left;
-    cursor: pointer;
-    word-break: break-word;
-  }
-
-  .override-select-option:hover {
-    background: rgba(99, 102, 241, 0.14);
-    color: #ffffff;
-  }
-
-  .override-select-option.active {
-    background: rgba(99, 102, 241, 0.9);
-    color: #ffffff;
-    font-weight: 700;
-  }
-
-  .date-input-icon {
-    position: relative;
-    flex: 0 0 auto;
-    box-sizing: border-box;
-    width: 15px;
-    height: 15px;
-    color: #818cf8;
-    border: 1px solid rgba(129, 140, 248, 0.7);
-    border-radius: 4px;
-    pointer-events: none;
-    background: rgba(30, 41, 59, 0.5);
-    overflow: hidden;
-  }
-
-  .date-input-icon::before {
-    content: "";
-    position: absolute;
-    left: 2px;
-    right: 2px;
-    top: 4px;
-    border-top: 1px solid currentColor;
-  }
-
-  .date-input-icon::after {
-    content: "";
-    position: absolute;
-    left: 4px;
-    top: 8px;
-    width: 2px;
-    height: 2px;
-    background: currentColor;
-    box-shadow: 5px 0 0 currentColor, 0 4px 0 currentColor, 5px 4px 0 currentColor;
-    border-radius: 1px;
-  }
-
-  .override-date-picker-panel {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    width: 292px;
-    background: #0b1220;
-    border: 1px solid rgba(71, 85, 105, 0.76);
-    border-radius: 12px;
-    padding: 12px;
-    box-shadow: 0 20px 48px rgba(2, 6, 23, 0.72);
-    z-index: 1500;
-  }
-
-  .override-date-picker-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-
-  .override-date-picker-head strong {
-    color: #e2e8f0;
-    font-size: 0.86rem;
-  }
-
-  .override-date-picker-head button,
-  .override-date-picker-foot button,
-  .override-date-cell {
-    border: 1px solid transparent;
-    background: transparent;
-    color: #94a3b8;
-    cursor: pointer;
-    font: inherit;
-  }
-
-  .override-date-picker-head button {
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
-    font-size: 1.15rem;
-    line-height: 1;
-    background: rgba(15, 23, 42, 0.78);
-    border-color: rgba(51, 65, 85, 0.7);
-  }
-
-  .override-date-picker-head button:hover,
-  .override-date-picker-foot button:hover {
-    color: #e2e8f0;
-    border-color: rgba(129, 140, 248, 0.55);
-  }
-
-  .override-date-week-grid,
-  .override-date-grid {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 4px;
-  }
-
-  .override-date-week-grid {
-    margin-bottom: 6px;
-  }
-
-  .override-date-week-grid span {
-    color: #475569;
-    font-size: 0.64rem;
-    text-align: center;
-    font-weight: 800;
-  }
-
-  .override-date-cell {
-    height: 32px;
-    border-radius: 8px;
-    font-size: 0.76rem;
+    font-weight: 780;
     font-variant-numeric: tabular-nums;
   }
 
-  .override-date-cell:hover {
-    color: #f8fafc;
-    background: rgba(99, 102, 241, 0.16);
-    border-color: rgba(129, 140, 248, 0.42);
+  .command-signal.tone-danger {
+    border-color: rgba(221, 75, 62, 0.22);
   }
 
-  .override-date-cell.muted {
-    color: #334155;
+  .command-signal.tone-info {
+    border-color: rgba(37, 107, 216, 0.2);
   }
 
-  .override-date-cell.today {
-    border-color: rgba(14, 165, 233, 0.55);
-    color: #7dd3fc;
+  .decision-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-4);
   }
 
-  .override-date-cell.selected {
-    background: #4f46e5;
-    color: #ffffff;
-    border-color: rgba(129, 140, 248, 0.9);
+  .decision-metric {
+    position: relative;
+    overflow: hidden;
+    min-height: 124px;
+    padding: 18px;
+    border-color: rgba(255, 255, 255, 0.66);
+    border-radius: var(--decision-radius-card);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 251, 253, 0.72)),
+      var(--wa-chrome-1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 16px 38px rgba(30, 46, 64, 0.075);
   }
 
-  .override-date-picker-foot {
+  .decision-metric::before {
+    content: "";
+    position: absolute;
+    inset: 14px auto 14px 0;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--wa-border-soft);
+  }
+
+  .decision-metric.metric-info::before {
+    background: var(--wa-info);
+  }
+
+  .decision-metric.metric-success::before {
+    background: var(--wa-success);
+  }
+
+  .decision-metric.metric-warning::before {
+    background: var(--wa-warning);
+  }
+
+  .decision-metric.metric-danger::before {
+    background: var(--wa-danger);
+  }
+
+  .metric-topline {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    margin-top: 10px;
-    border-top: 1px solid rgba(51, 65, 85, 0.48);
-    padding-top: 10px;
+    gap: var(--wa-space-3);
   }
 
-  .override-date-picker-foot button {
-    border-color: rgba(51, 65, 85, 0.62);
-    background: rgba(15, 23, 42, 0.58);
-    border-radius: 7px;
-    padding: 6px 9px;
-    font-size: 0.72rem;
+  .metric-topline span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.25;
+    font-weight: 780;
   }
 
-  .override-actions {
+  .metric-topline i {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--decision-radius-control);
+    background: var(--wa-neutral-soft);
+    border: 1px solid var(--wa-border-soft);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  }
+
+  .metric-topline i::before,
+  .metric-topline i::after {
+    content: "";
+    position: absolute;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.72;
+  }
+
+  .metric-topline i::before {
+    width: 12px;
+    height: 12px;
+    left: 10px;
+    top: 9px;
+  }
+
+  .metric-topline i::after {
+    width: 16px;
+    height: 4px;
+    left: 9px;
+    bottom: 8px;
+    opacity: 0.34;
+  }
+
+  .metric-info .metric-topline i {
+    background: var(--wa-info-soft);
+    border-color: rgba(37, 107, 216, 0.2);
+    color: var(--wa-info);
+  }
+
+  .metric-success .metric-topline i {
+    background: var(--wa-success-soft);
+    border-color: rgba(4, 150, 111, 0.2);
+    color: var(--wa-success);
+  }
+
+  .metric-warning .metric-topline i {
+    background: var(--wa-warning-soft);
+    border-color: rgba(216, 135, 0, 0.2);
+    color: var(--wa-warning);
+  }
+
+  .metric-danger .metric-topline i {
+    background: var(--wa-danger-soft);
+    border-color: rgba(221, 75, 62, 0.22);
+    color: var(--wa-danger);
+  }
+
+  .decision-metric strong {
+    align-self: end;
+    margin-top: 8px;
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: clamp(30px, 2.6vw, 38px);
+    line-height: 0.95;
+    font-weight: 780;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .decision-metric small {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.35;
+    font-weight: 620;
+  }
+
+  .decision-stage-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-3);
+  }
+
+  .stage-chip {
+    position: relative;
+    min-width: 0;
+    min-height: 70px;
     display: flex;
-    gap: 10px;
-    margin-top: 6px;
-  }
-
-  .override-btn {
-    flex: 1;
-    border: none;
-    padding: 8px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    border-radius: 6px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
+    padding: var(--wa-space-3) var(--wa-space-4) var(--wa-space-3) 18px;
+    border: 1px solid var(--wa-border-soft);
+    border-left: 4px solid rgba(123, 143, 160, 0.18);
+    border-radius: var(--decision-radius-card);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(246, 251, 253, 0.64)),
+      rgba(255, 255, 255, 0.68);
+    color: var(--wa-text-main);
+    font: inherit;
     cursor: pointer;
-    transition: transform 0.1s, opacity 0.2s;
+    text-align: left;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+    backdrop-filter: blur(14px) saturate(122%);
+    -webkit-backdrop-filter: blur(14px) saturate(122%);
+    transition:
+      transform var(--wa-duration-fast) var(--wa-ease),
+      background var(--wa-duration-fast) var(--wa-ease),
+      border-color var(--wa-duration-fast) var(--wa-ease),
+      box-shadow var(--wa-duration-fast) var(--wa-ease);
   }
 
-  .override-btn:active {
-    transform: scale(0.97);
+  .stage-chip:hover,
+  .stage-chip.active {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.92);
+    border-color: var(--wa-accent);
+    box-shadow: var(--wa-shadow-glow);
   }
 
-  .btn-primary { background: #4f46e5; color: white; }
-  .btn-primary:hover { background: #4338ca; }
-  
-  .btn-warning { background: #0d9488; color: white; }
-  .btn-warning:hover { background: #0f766e; }
-
-  .btn-secondary { background: #334155; color: #cbd5e1; }
-  .btn-secondary:hover { background: #1e293b; }
-
-  .alert-box {
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.7rem;
+  .stage-chip span {
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    font-weight: 680;
   }
 
-  .alert-success { background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.25); }
-  .alert-danger { background: rgba(239, 68, 68, 0.12); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.25); }
-
-  /* Intervention logs timeline */
-  .override-history {
-    border-top: 1px solid rgba(51, 65, 85, 0.2);
-    padding-top: 14px;
-    margin-top: 14px;
+  .stage-chip strong {
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 25px;
+    font-weight: 760;
+    font-variant-numeric: tabular-nums;
   }
 
-  .logs-feed {
+  .decision-main-grid {
+    --decision-panel-height: clamp(640px, calc(100dvh - 112px), 820px);
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(540px, 1.16fr) minmax(500px, 0.84fr);
+    grid-template-areas: "inspector selector";
+    gap: var(--wa-space-4);
+    align-items: start;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .decision-table-section {
+    grid-area: selector;
+    position: relative;
+    z-index: 20;
+    min-width: 0;
+    height: var(--decision-panel-height);
+    max-height: var(--decision-panel-height);
+    min-height: var(--decision-panel-height);
+    box-sizing: border-box;
+    padding: 18px;
+    overflow: visible;
+    border: 1px solid rgba(255, 255, 255, 0.66);
+    border-radius: var(--decision-radius-panel);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(245, 250, 252, 0.56)),
+      var(--wa-chrome-2);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 16px 42px rgba(30, 46, 64, 0.08);
+    backdrop-filter: blur(18px) saturate(126%);
+    -webkit-backdrop-filter: blur(18px) saturate(126%);
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: var(--wa-space-4);
+  }
+
+  .decision-table-section:focus-within {
+    z-index: 80;
+  }
+
+  .decision-toolbar {
+    position: relative;
+    z-index: 45;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    overflow: visible;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .toolbar-copy {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: 4px 10px;
+    min-width: 0;
+  }
+
+  .toolbar-copy span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .toolbar-copy strong {
+    color: var(--wa-text-strong);
+    font-size: 17px;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toolbar-copy small {
+    justify-self: end;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .toolbar-controls {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(140px, 1.25fr) minmax(112px, 0.82fr) minmax(136px, 0.96fr) auto;
+    align-items: center;
+    justify-content: stretch;
+    gap: var(--wa-space-2);
+  }
+
+  .search-control {
+    width: 100%;
+    min-width: 0;
+    padding: 0 12px 0 34px;
+    border-radius: var(--decision-radius-control);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='11' cy='11' r='6.5' fill='none' stroke='%23667789' stroke-width='2'/%3E%3Cpath d='m16 16 4 4' fill='none' stroke='%23667789' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 12px 50%;
+    background-size: 15px 15px;
+  }
+
+  .toolbar-select {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .toolbar-select.project-select {
+    width: 100%;
+  }
+
+  .toolbar-controls .wa-admin-action {
+    width: auto;
+    min-width: 64px;
+    padding-inline: 12px;
+    white-space: nowrap;
+  }
+
+  .decision-table-shell {
+    position: relative;
+    z-index: 1;
+    grid-row: 3;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    overflow: auto;
+    border-color: rgba(123, 143, 160, 0.18);
+    border-radius: var(--decision-radius-card);
+    background: rgba(255, 255, 255, 0.64);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      0 10px 26px rgba(30, 46, 64, 0.05);
+    backdrop-filter: blur(14px) saturate(118%);
+    -webkit-backdrop-filter: blur(14px) saturate(118%);
+    scrollbar-gutter: stable;
+  }
+
+  .decision-table-shell .wa-admin-table {
+    min-width: 760px;
+  }
+
+  .decision-table-shell .wa-admin-table th {
+    padding: 10px 12px;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    letter-spacing: 0;
+    background:
+      linear-gradient(180deg, rgba(250, 253, 255, 0.98), rgba(244, 249, 252, 0.94));
+  }
+
+  .decision-table-shell .wa-admin-table td {
+    height: 48px;
+    padding: 10px 12px;
+    color: var(--wa-text-main);
+  }
+
+  .decision-table-shell .sticky-status-col {
+    position: sticky;
+    right: 0;
+    z-index: 3;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.98) 30%),
+      rgba(255, 255, 255, 0.96);
+    box-shadow: -12px 0 18px rgba(26, 41, 58, 0.08);
+  }
+
+  .decision-table-shell thead .sticky-status-col {
+    z-index: 5;
+    background:
+      linear-gradient(90deg, rgba(248, 251, 254, 0.82), rgba(248, 251, 254, 0.98) 32%),
+      rgba(248, 251, 254, 0.98);
+  }
+
+  .decision-table-shell tbody tr.is-selected .sticky-status-col {
+    background:
+      linear-gradient(90deg, rgba(242, 250, 250, 0.82), rgba(242, 250, 250, 0.98) 32%),
+      rgba(242, 250, 250, 0.98);
+  }
+
+  .decision-table-shell .wa-admin-table tbody tr:hover {
+    background: rgba(242, 248, 251, 0.9);
+  }
+
+  .decision-table-shell .wa-admin-table tbody tr.is-selected {
+    background: rgba(0, 143, 150, 0.06);
+    box-shadow:
+      inset 3px 0 0 var(--wa-accent),
+      inset 0 0 0 1px rgba(0, 143, 150, 0.14);
+  }
+
+  .select-col {
+    width: 36px;
+    text-align: center;
+  }
+
+  .row-check {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-xs);
+    background: #ffffff;
+    vertical-align: middle;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  .row-check.checked {
+    border-color: var(--wa-accent);
+    background:
+      linear-gradient(135deg, transparent 0 42%, var(--wa-accent-ink) 42% 56%, transparent 56%),
+      var(--wa-accent);
+  }
+
+  .table-link,
+  .log-meta a {
+    color: var(--wa-info);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    font-weight: 760;
+    text-decoration: none;
+  }
+
+  .table-link:hover,
+  .log-meta a:hover {
+    text-decoration: underline;
+  }
+
+  .table-id {
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .title-stack {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .title-stack strong {
+    color: var(--wa-text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    line-height: 1.28;
+    font-weight: 780;
+  }
+
+  .table-state {
+    padding: var(--wa-space-8);
+    color: var(--wa-text-muted);
+    text-align: center;
+  }
+
+  .decision-inspector {
+    --wa-control-h: 34px;
+    grid-area: inspector;
+    align-self: start;
+    z-index: 30;
+    position: sticky;
+    top: var(--wa-space-4);
+    height: var(--decision-panel-height);
+    max-height: var(--decision-panel-height);
+    min-height: var(--decision-panel-height);
+    box-sizing: border-box;
+    gap: 12px;
+    padding: 16px;
+    overflow: visible;
+    border-color: rgba(255, 255, 255, 0.68);
+    border-radius: var(--decision-radius-panel);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 253, 0.66)),
+      var(--wa-chrome-1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 18px 46px rgba(30, 46, 64, 0.1);
+  }
+
+  .inspector-content {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .decision-inspector:focus-within {
+    z-index: 90;
+  }
+
+  .inspector-head {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 100px;
-    overflow-y: auto;
-    background: rgba(2, 6, 23, 0.3);
-    border-radius: 8px;
-    padding: 8px 12px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.1) transparent;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
   }
 
-  .logs-feed::-webkit-scrollbar {
-    width: 4px;
+  .inspector-head > div {
+    min-width: 0;
   }
-  .logs-feed::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.15);
-    border-radius: 2px;
+
+  .inspector-head .wa-admin-pill {
+    flex: none;
+  }
+
+  .inspector-kicker {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 780;
+  }
+
+  .inspector-head h2 {
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 17px;
+    line-height: 1.28;
+    font-weight: 820;
+    letter-spacing: 0;
+  }
+
+  .inspector-id-row,
+  .section-row-head,
+  .intervention-actions,
+  .log-head,
+  .log-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2);
+  }
+
+  .inspector-id-row,
+  .section-row-head,
+  .log-head {
+    justify-content: space-between;
+  }
+
+  .inspector-id-row strong {
+    color: var(--wa-text-strong);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fact-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px 12px;
+    margin: 0;
+  }
+
+  .fact-grid div {
+    min-width: 0;
+    padding: 0 0 7px;
+    border-bottom: 1px solid rgba(123, 143, 160, 0.14);
+  }
+
+  .fact-grid dt {
+    color: var(--wa-text-muted);
+    font-size: 11.5px;
+    line-height: 1.25;
+    font-weight: 740;
+  }
+
+  .fact-grid dd {
+    margin: 2px 0 0;
+    color: var(--wa-text-strong);
+    font-size: 12.5px;
+    line-height: 1.3;
+    font-weight: 760;
+    overflow-wrap: anywhere;
+  }
+
+  .inspector-section-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    align-items: stretch;
+    min-width: 0;
+    padding-top: 10px;
+    border-top: 1px solid rgba(121, 139, 159, 0.16);
+  }
+
+  .inspector-section {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    min-width: 0;
+    min-height: 94px;
+    padding: 0 0 10px;
+    border-bottom: 1px solid rgba(121, 139, 159, 0.12);
+  }
+
+  .inspector-section h3 {
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .inspector-section p,
+  .inspector-section li {
+    color: var(--wa-text-main);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
+  .inspector-section p,
+  .inspector-section ul {
+    margin: 0;
+  }
+
+  .inspector-section p {
+    overflow: visible;
+  }
+
+  .inspector-section ul {
+    display: grid;
+    gap: 4px;
+    overflow: visible;
+    padding-left: 16px;
+  }
+
+  .intervention-form {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: minmax(104px, 1fr) minmax(108px, 0.92fr) minmax(132px, 1.18fr) minmax(92px, 0.78fr);
+    align-items: end;
+    gap: 8px;
+  }
+
+  .intervention-form label {
+    position: relative;
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .intervention-form .form-field {
+    position: relative;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .intervention-form label span {
+    color: var(--wa-text-muted);
+    font-size: 11.5px;
+    font-weight: 720;
+  }
+
+  .intervention-form .wa-control {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0 10px;
+    font: inherit;
+    font-size: 12.5px;
+  }
+
+  .wide-field {
+    grid-column: auto;
+  }
+
+  .intervention-section {
+    position: relative;
+    z-index: 2;
+    min-height: 128px;
+    padding: 12px 0 0;
+    border-bottom: 0;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .intervention-actions {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .section-row-head .wa-admin-action {
+    min-height: 30px;
+    padding-inline: 10px;
+    font-size: 12px;
+  }
+
+  .intervention-actions .wa-admin-action {
+    min-height: 34px;
+    padding-inline: 14px;
+  }
+
+  .intervention-section :global(.alert) {
+    padding: 8px 10px;
+  }
+
+  .inspector-empty {
+    min-height: 320px;
+    display: grid;
+    place-content: center;
+    gap: var(--wa-space-2);
+    text-align: center;
+    color: var(--wa-text-muted);
+  }
+
+  .inspector-empty strong {
+    color: var(--wa-text-strong);
+  }
+
+  .decision-log-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.34fr) minmax(300px, 0.66fr);
+    gap: var(--wa-space-4);
+  }
+
+  .log-panel {
+    min-width: 0;
+    padding: 18px;
+    display: grid;
+    gap: var(--wa-space-3);
+    border-color: rgba(255, 255, 255, 0.66);
+    border-radius: var(--decision-radius-panel);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 253, 0.62)),
+      var(--wa-chrome-1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 14px 34px rgba(30, 46, 64, 0.075);
+  }
+
+  .auto-log-panel {
+    min-height: 320px;
+  }
+
+  .manual-log-panel {
+    min-height: 320px;
+  }
+
+  .log-head > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .log-head strong {
+    color: var(--wa-text-strong);
+    font-size: 15px;
+  }
+
+  .log-head small {
+    overflow: hidden;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .log-head span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .log-list {
+    display: grid;
+    gap: 8px;
+    max-height: 316px;
+    overflow: auto;
+    padding-right: 2px;
   }
 
   .log-item {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-  }
-
-  .log-item .indicator-icon {
-    font-size: 0.8rem;
-    flex-shrink: 0;
-  }
-
-  .log-item p {
-    margin: 0;
-    font-size: 0.7rem;
-    color: #cbd5e1;
-    line-height: 1.4;
-  }
-
-  .empty-logs {
-    font-size: 0.7rem;
-    color: #475569;
-    text-align: center;
-  }
-
-  /* Bottom session feed */
-  .session-feed {
-    margin-top: 6px;
-  }
-
-  .feed-header {
-    font-size: 0.75rem;
-    color: #818cf8;
-    font-weight: 700;
-    margin-bottom: 10px;
-  }
-
-  .feed-list {
-    background: #020617;
-    border: 1px solid rgba(51, 65, 85, 0.3);
-    border-radius: 8px;
-    padding: 12px;
-    max-height: 100px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .feed-item {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    font-size: 0.7rem;
-  }
-
-  .feed-item .badge {
-    background: #ef4444;
-    color: white;
-    font-weight: 800;
-    font-size: 0.55rem;
-    padding: 1px 4px;
-    border-radius: 3px;
-    flex-shrink: 0;
-  }
-
-  .feed-item p {
-    margin: 0;
-    color: #cbd5e1;
-  }
-
-  .empty-feed {
-    font-size: 0.7rem;
-    color: #475569;
-    text-align: center;
-  }
-
-  .state-msg {
-    padding: 40px;
-    text-align: center;
-    color: #475569;
-    font-size: 0.8rem;
-  }
-
-  .safe-msg {
-    color: #10b981;
-  }
-
-  .error-msg {
-    color: #f87171;
-  }
-
-  @keyframes pulse {
-    0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.1); opacity: 0.6; }
-  }
-
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
-  }
-
-  /* Custom Select Dropdowns */
-  .custom-select-container {
     position: relative;
-    display: inline-block;
-    z-index: 20;
-    width: 145px; /* 固定容器宽度以杜绝抖动 */
+    display: grid;
+    gap: 7px;
+    padding: 10px 12px 10px 18px;
+    border: 1px solid rgba(121, 139, 159, 0.15);
+    border-radius: var(--decision-radius-card);
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   }
 
-  .custom-select-trigger {
+  .log-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--wa-info);
+    opacity: 0.72;
+  }
+
+  .log-item.local {
+    border-color: rgba(0, 143, 150, 0.18);
+    background: rgba(0, 143, 150, 0.055);
+  }
+
+  .log-item.local::before {
+    background: var(--wa-accent);
+  }
+
+  .log-meta {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log-meta span,
+  .log-meta strong,
+  .log-meta a {
     display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(129, 140, 248, 0.25);
-    color: #cbd5e1;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    outline: none;
-    user-select: none;
-    width: 145px;
-    box-sizing: border-box;
+    min-height: 22px;
+    padding: 0 7px;
+    border-radius: var(--wa-radius-sm);
+    background: rgba(121, 139, 159, 0.09);
   }
 
-  .custom-select-trigger:hover, .custom-select-trigger:focus {
-    border-color: #6366f1;
-    background-color: rgba(30, 41, 59, 0.8);
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  .log-meta strong {
+    color: var(--wa-text-main);
   }
 
-  .trigger-label {
-    flex: 1;
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  .log-item p,
+  .log-empty {
+    margin: 0;
+    color: var(--wa-text-main);
+    font-size: 13px;
+    line-height: 1.5;
   }
 
-  .select-arrow {
-    font-size: 0.6rem;
-    color: #818cf8;
-    transition: transform 0.2s;
-    line-height: 1;
-  }
-
-  .custom-select-options {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    width: max-content; /* 自适应内容宽度，防止名字被截断 */
-    min-width: 145px;
-    max-width: 240px;
-    background: #0f172a;
-    border: 1px solid rgba(129, 140, 248, 0.25);
-    border-radius: 8px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(99, 102, 241, 0.1);
-    z-index: 100;
-    overflow-y: auto;
-    max-height: 160px; /* 限制最大高度，防止卡片外层溢出截断 */
-    display: flex;
-    flex-direction: column;
-    padding: 4px;
-    box-sizing: border-box;
-    animation: dropdownFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99, 102, 241, 0.25) transparent;
-  }
-
-  .custom-select-options::-webkit-scrollbar {
-    width: 4px;
-  }
-
-  .custom-select-options::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .custom-select-options::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.25);
-    border-radius: 4px;
-  }
-
-  .custom-select-options::-webkit-scrollbar-thumb:hover {
-    background: rgba(99, 102, 241, 0.5);
-  }
-
-  .custom-option {
-    background: transparent;
-    border: none;
-    color: #cbd5e1;
-    padding: 8px 12px;
-    text-align: left;
-    font-size: 0.8rem;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s;
-    width: 100%;
-    white-space: normal;
-    overflow: visible;
-    line-height: 1.4;
-    word-break: keep-all;
-  }
-
-  .custom-option:hover {
-    background: rgba(99, 102, 241, 0.15);
-    color: #ffffff;
-  }
-
-  .custom-option.active {
-    background: #6366f1;
-    color: #ffffff;
-    font-weight: 600;
-  }
-
-  @keyframes dropdownFadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  .combobox-trigger {
-    cursor: text !important;
-  }
-  .combobox-trigger-input {
-    background: transparent !important;
-    border: none !important;
-    outline: none !important;
-    color: #cbd5e1 !important;
-    font-size: 0.8rem;
-    font-family: inherit;
-    padding: 0 !important;
-    margin: 0 !important;
-    flex: 1;
-    min-width: 0;
-  }
-  .combobox-trigger-input::placeholder {
-    color: #cbd5e1 !important;
-    opacity: 1;
+  .log-empty {
+    padding: var(--wa-space-5);
+    color: var(--wa-text-muted);
+    text-align: center;
   }
 
   @media (max-width: 1280px) {
-    .bento-grid {
+    .decision-main-grid {
+      --decision-panel-height: auto !important;
+      grid-template-areas:
+        "inspector"
+        "selector";
       grid-template-columns: 1fr;
+      min-height: 0;
     }
 
-    .bento-metrics,
-    .bento-terminal,
-    .bento-agenda,
-    .bento-override {
-      grid-column: 1;
-      grid-row: auto;
-    }
-
-    .bento-terminal {
+    .decision-inspector {
+      position: static;
       height: auto;
       max-height: none;
-      min-height: 440px;
+      overflow: visible;
     }
 
+    .inspector-section p {
+      display: block;
+      max-height: none;
+      overflow: visible;
+      -webkit-line-clamp: unset;
+    }
+
+    .inspector-section ul {
+      max-height: none;
+      overflow: visible;
+    }
+
+    .decision-table-section {
+      height: auto;
+      max-height: none;
+      min-height: 560px;
+    }
   }
 
-  @media (max-width: 760px) {
-    .panel-header-row,
-    .override-panel-layout,
-    .input-row,
-    .controls-header .header-main {
-      grid-template-columns: 1fr;
+  @media (max-width: 900px) {
+    .decision-command-strip {
       flex-direction: column;
-      align-items: stretch;
+      gap: var(--wa-space-4);
     }
 
-    .metrics-grid,
-    .override-decision-strip,
-    .brain-flow-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .override-info {
-      border-right: none;
-      border-bottom: 1px solid rgba(51, 65, 85, 0.25);
-      padding-right: 0;
-      padding-bottom: 16px;
-    }
-
-    .filter-bar,
-    .override-actions {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .custom-select-container,
-    .custom-select-trigger {
+    .command-signal-grid {
       width: 100%;
     }
+
+    .decision-metrics,
+    .decision-stage-strip,
+    .decision-log-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .toolbar-controls {
+      grid-template-columns: minmax(160px, 1.35fr) minmax(120px, 0.8fr) minmax(140px, 0.95fr) auto;
+    }
+
+    .inspector-section-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .intervention-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .wide-field {
+      grid-column: 1 / -1;
+    }
+
+    .search-control,
+    .toolbar-select {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .decision-command-strip,
+    .decision-table-section,
+    .decision-inspector,
+    .log-panel {
+      padding: var(--wa-space-3);
+    }
+
+    .command-signal-grid,
+    .decision-metrics,
+    .decision-stage-strip,
+    .decision-log-grid,
+    .fact-grid,
+    .intervention-form {
+      grid-template-columns: 1fr;
+    }
+
+    .decision-toolbar,
+    .intervention-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .toolbar-copy {
+      grid-template-columns: 1fr;
+    }
+
+    .toolbar-copy small {
+      justify-self: start;
+    }
+
+    .toolbar-controls {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
+    .search-control,
+    .toolbar-select,
+    .toolbar-controls .wa-admin-action {
+      width: 100%;
+    }
+  }
+
+  /* Strongest-brain page contract: inherit shell surface and spacing. */
+  .decision-admin {
+    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
+    gap: var(--wa-page-gap, 16px);
+    padding-bottom: 0;
+    background: transparent;
+  }
+
+  .decision-admin::before {
+    display: none;
+  }
+
+  .decision-command-strip,
+  .decision-table-section,
+  .decision-inspector,
+  .log-panel,
+  .stage-chip,
+  .metric-card,
+  .command-copy,
+  .command-signal {
+    border-color: rgba(255, 255, 255, 0.7);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 253, 0.68)),
+      var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+  }
+
+  .decision-main-grid,
+  .decision-log-grid,
+  .decision-metrics,
+  .decision-stage-strip {
+    gap: var(--wa-page-gap, 16px);
   }
 </style>

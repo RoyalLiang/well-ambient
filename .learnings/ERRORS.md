@@ -26,6 +26,37 @@ Use smaller context blocks around the exact current file excerpt after formatter
 
 ---
 
+## [ERR-20260705-001] bundled_soffice_missing_little_cms
+
+**Logged**: 2026-07-05T13:15:45Z
+**Priority**: low
+**Status**: pending
+**Area**: tooling
+
+### Summary
+Bundled `soffice` failed during DOCX-to-PDF rendering because its LibreOffice runtime referenced a missing Homebrew `little-cms2` dynamic library.
+
+### Error
+```text
+dyld: Library not loaded: /opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib
+Referenced from: .../dependencies/native/libreoffice-headless/libreoffice/LibreOfficeDev.app/Contents/Frameworks/libvcllo.dylib
+Reason: tried: '/opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib' ... (no such file)
+```
+
+### Context
+- Operation attempted: convert `output/doc/个人简介内容_润色版.docx` to PDF for visual QA.
+- Runtime binary: `/Users/eddie/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/soffice`.
+- System `/Applications/LibreOffice.app/Contents/MacOS/soffice` was not installed.
+
+### Suggested Fix
+For DOCX visual QA in this workspace, try `textutil`, `qlmanage`, or install/fix LibreOffice dependencies before relying on the bundled `soffice`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: output/doc/个人简介内容_润色版.docx
+
+---
+
 ## [ERR-20260620-002] apply_patch_context
 
 **Logged**: 2026-06-20T17:37:00+08:00

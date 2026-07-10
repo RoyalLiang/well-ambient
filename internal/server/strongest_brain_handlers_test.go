@@ -481,6 +481,90 @@ func TestStrongestBrainDeliveryCockpitAggregatesPhaseSignals(t *testing.T) {
 	}
 }
 
+func TestStrongestBrainExceptionAndWeeklyDecisionCenters(t *testing.T) {
+	token := seedStrongestBrainUser(t)
+	now := time.Now()
+	due := now.AddDate(0, 0, -1)
+	demand := db.TaskTelemetry{
+		TaskID:        "DEMAND-PHASE23",
+		Title:         "逾期且证据未闭合的需求",
+		IssueType:     "demand",
+		Status:        "progress",
+		Assignee:      "Brain User",
+		Branch:        "feature/phase23",
+		DueDate:       &due,
+		TaskGroupID:   "brain-phase23",
+		TaskCreatedAt: now.AddDate(0, 0, -7),
+		LastUpdate:    now.AddDate(0, 0, -5),
+	}
+	child := db.TaskTelemetry{
+		TaskID:        "TASK-PHASE23",
+		Title:         "MR 已合并但 Jira 未完成",
+		IssueType:     "task",
+		Status:        "review",
+		Assignee:      "Brain User",
+		Repo:          "well-ambient",
+		Branch:        "feature/phase23",
+		TaskGroupID:   "brain-phase23",
+		TaskCreatedAt: now.AddDate(0, 0, -5),
+		LastUpdate:    now.AddDate(0, 0, -3),
+	}
+	if err := db.DB.Create(&demand).Error; err != nil {
+		t.Fatalf("seed demand: %v", err)
+	}
+	if err := db.DB.Create(&child).Error; err != nil {
+		t.Fatalf("seed child: %v", err)
+	}
+	if err := db.DB.Create(&db.GitCommitLog{
+		TaskID:    child.TaskID,
+		Repo:      child.Repo,
+		Branch:    child.Branch,
+		Action:    "mr_merge",
+		MrURL:     "https://gitlab.example/mr/23",
+		CreatedAt: now.Add(-4 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("seed merge log: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+
+	exceptionReq := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/exceptions", nil)
+	exceptionReq.Header.Set("Authorization", "Bearer "+token)
+	exceptionRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(exceptionRR, exceptionReq)
+	if exceptionRR.Code != http.StatusOK {
+		t.Fatalf("exceptions status = %d, body = %s", exceptionRR.Code, exceptionRR.Body.String())
+	}
+	var exceptions StrongestBrainExceptionCenterResponse
+	if err := json.Unmarshal(exceptionRR.Body.Bytes(), &exceptions); err != nil {
+		t.Fatalf("decode exceptions: %v", err)
+	}
+	if exceptions.Mode != "exceptions_only" || exceptions.Summary.Open == 0 || exceptions.Summary.P0 == 0 {
+		t.Fatalf("unexpected exceptions summary: %+v", exceptions)
+	}
+	if len(exceptions.Items) == 0 || len(exceptions.Items[0].CloseRequires) == 0 || exceptions.Items[0].DecisionOwner == "" {
+		t.Fatalf("exception item missing operating fields: %+v", exceptions.Items)
+	}
+
+	weeklyReq := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/weekly-decisions", nil)
+	weeklyReq.Header.Set("Authorization", "Bearer "+token)
+	weeklyRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(weeklyRR, weeklyReq)
+	if weeklyRR.Code != http.StatusOK {
+		t.Fatalf("weekly status = %d, body = %s", weeklyRR.Code, weeklyRR.Body.String())
+	}
+	var weekly StrongestBrainWeeklyDecisionCenterResponse
+	if err := json.Unmarshal(weeklyRR.Body.Bytes(), &weekly); err != nil {
+		t.Fatalf("decode weekly: %v", err)
+	}
+	if weekly.Mode != "decision_meeting" || weekly.Summary.Total == 0 || weekly.Summary.MustDecide == 0 {
+		t.Fatalf("unexpected weekly summary: %+v", weekly)
+	}
+	if len(weekly.Items) == 0 || weekly.Items[0].Question == "" || len(weekly.Items[0].Options) == 0 || weekly.Items[0].DecisionOwner == "" {
+		t.Fatalf("weekly item missing decision fields: %+v", weekly.Items)
+	}
+}
+
 func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	_ = seedStrongestBrainUser(t) // 初始化 db 和基础用户
 

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
+  import type { AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
+  import { ADMIN_TONE_CLASS } from '../lib/admin-console/contract';
 
   let inputText = '';
   type IntentMode = 'intent' | 'summary';
@@ -68,6 +70,16 @@
     period_days: number;
   };
 
+  const deconstructColumns: AdminTableColumn[] = [
+    { key: 'task', label: '任务标题', width: '30%' },
+    { key: 'repo', label: '代码库', width: '15%' },
+    { key: 'owner', label: '负责人', width: '13%' },
+    { key: 'estimate', label: '工时', width: '12%' },
+    { key: 'priority', label: '优先级', width: '10%', align: 'center' },
+    { key: 'difficulty', label: '难度', width: '10%', align: 'center' },
+    { key: 'evidence', label: '检查项', width: '10%' }
+  ];
+
   let result = {
     mappedRepos: [] as string[],
     tasks: [] as GeneratedTask[],
@@ -77,6 +89,8 @@
 
   let assigneesList: string[] = ['Eddie', 'Antigravity'];
   let currentTaskGroupId = '';
+  let activeGeneratedTaskId = '';
+  let selectedGeneratedTask: GeneratedTask | null = null;
 
   let isMockResponse = false;
 
@@ -91,13 +105,48 @@
   let showDemandDropdown = false;
   let selectedDemandTitle = '选择要关联的产品需求 (可选)';
 
+  $: if (hasResult && result.tasks.length > 0 && !result.tasks.some(task => task.id === activeGeneratedTaskId)) {
+    activeGeneratedTaskId = result.tasks[0].id;
+  }
+  $: if (!hasResult && activeGeneratedTaskId) {
+    activeGeneratedTaskId = '';
+  }
+  $: selectedGeneratedTask = result.tasks.find(task => task.id === activeGeneratedTaskId) || null;
+  $: deconstructMetrics = [
+    {
+      label: 'AI 服务',
+      value: isAIEnabled ? '启用' : '未启用',
+      helper: isAIEnabled ? '可解构与识别意图' : '等待配置凭证',
+      tone: isAIEnabled ? 'success' : 'danger'
+    },
+    {
+      label: '可关联需求',
+      value: activeDemands.length,
+      helper: selectedDemandId ? selectedDemandTitle : '当前未绑定需求',
+      tone: selectedDemandId ? 'info' : 'neutral'
+    },
+    {
+      label: '任务证据',
+      value: hasResult ? result.tasks.length : 0,
+      helper: hasResult ? `${result.mappedRepos.length} 个代码库` : '尚未生成解构结果',
+      tone: hasResult ? 'success' : 'neutral'
+    },
+    {
+      label: '完整性',
+      value: hasResult ? percentLabel(result.analysis.completeness_score) : '-',
+      helper: hasResult ? `置信度 ${confidenceLabel(result.analysis.confidence)}` : '等待分析',
+      tone: hasResult ? scoreTone(result.analysis.completeness_score) : 'neutral'
+    }
+  ] satisfies AdminMetric[];
+  $: generatedTaskRows = result.tasks.map(buildGeneratedTaskRow) satisfies AdminTableRow[];
+
   function getDemandDisplayTitle(demand: any) {
     return `#${demand.task_id} - ${demand.title}`;
   }
 
-  function createBrainGroupId(taskId: string) {
+  function createTaskGroupId(taskId: string) {
     const clean = taskId.replace(/[^A-Za-z0-9-]/g, '').toLowerCase();
-    return clean ? `brain-${clean}` : `brain-${Date.now()}`;
+    return clean ? `group-${clean}` : `group-${Date.now()}`;
   }
 
   function getDemandTaskGroupId(demand: any) {
@@ -124,7 +173,7 @@
     if (existingGroupId) {
       currentTaskGroupId = existingGroupId;
     } else if (!currentTaskGroupId && hasResult) {
-      currentTaskGroupId = createBrainGroupId(demand.task_id);
+      currentTaskGroupId = createTaskGroupId(demand.task_id);
     }
     showDemandDropdown = false;
   }
@@ -230,6 +279,54 @@
     if (value === 'High') return 'High (高)';
     if (value === 'Low') return 'Low (低)';
     return 'Medium (中)';
+  }
+
+  function priorityTone(value: string): AdminTone {
+    const normalized = String(value || '').toLowerCase();
+    if (normalized === 'high') return 'danger';
+    if (normalized === 'medium') return 'warning';
+    if (normalized === 'low') return 'success';
+    return 'neutral';
+  }
+
+  function difficultyTone(value: string): AdminTone {
+    const normalized = String(value || '').toLowerCase();
+    if (normalized === 'high') return 'danger';
+    if (normalized === 'medium') return 'warning';
+    if (normalized === 'low') return 'success';
+    return 'neutral';
+  }
+
+  function scoreTone(score: number): AdminTone {
+    if (score >= 85) return 'success';
+    if (score >= 65) return 'warning';
+    return 'danger';
+  }
+
+  function buildGeneratedTaskRow(task: GeneratedTask): AdminTableRow {
+    return {
+      id: task.id,
+      title: task.title,
+      status: '待同步',
+      tone: priorityTone(task.priority),
+      owner: task.assignee,
+      dueDate: '',
+      priority: task.priority,
+      risk: task.difficulty,
+      cells: {
+        task: task.title,
+        repo: task.repo,
+        owner: task.assignee,
+        estimate: getHoursLabel(task.estimated_hours),
+        priority: task.priority,
+        difficulty: task.difficulty,
+        evidence: task.estimate_basis ? '有估算依据' : '待补依据'
+      }
+    };
+  }
+
+  function selectGeneratedTask(task: GeneratedTask) {
+    activeGeneratedTaskId = task.id;
   }
 
   function estimateSummaryLabel(days: number, hours: number) {
@@ -570,7 +667,7 @@
       };
 
       // 成功生成解构任务时，优先沿用已选需求的任务组 ID，保证二次解构仍挂在同一父需求上。
-      currentTaskGroupId = getSelectedDemandTaskGroupId() || (selectedDemandId ? createBrainGroupId(selectedDemandId) : 'group-' + Date.now());
+      currentTaskGroupId = getSelectedDemandTaskGroupId() || (selectedDemandId ? createTaskGroupId(selectedDemandId) : 'group-' + Date.now());
       isMockResponse = !!data.is_mock;
       hasResult = true;
     } catch (e: any) {
@@ -673,7 +770,7 @@
       }
 
       await fetchActiveDemands();
-      displayToast(`成功同步 ${result.tasks.length} 个影子任务至项目看板！`, 'success');
+      displayToast(`已同步 ${result.tasks.length} 个解构任务至项目看板`, 'success');
     } catch (e: any) {
       console.error('Import tasks failed:', e);
       displayToast(`同步失败: ${e.message}`, 'error');
@@ -684,90 +781,119 @@
 
   function deleteTask(taskId: string) {
     result.tasks = result.tasks.filter(t => t.id !== taskId);
-    displayToast('任务卡片已删除', 'info');
+    displayToast('任务已删除', 'info');
   }
 </script>
 
-<section class="deconstructor-section">
-  <div class="section-header">
-    <div class="header-left">
-      <h2 class="section-title">需求解构引擎</h2>
-      <span class="badge">Deconstructor</span>
+<section class="deconstructor-workbench wa-grain">
+  <div class="deconstructor-header">
+    <div>
+      <span class="eyebrow">需求证据解构</span>
+      <h2>任务证据生成台</h2>
+      <p>把非结构化需求转成可同步到看板的任务、仓库、负责人和检查项。</p>
     </div>
-    <span class="badge-sub">对接 LLM 自动映射多仓</span>
+    <span class="wa-admin-pill {isAIEnabled ? 'tone-success' : 'tone-danger'}">{isAIEnabled ? 'AI 已启用' : 'AI 未启用'}</span>
   </div>
 
-  <div class="split-layout">
-    <!-- Input Panel -->
-    <div class="panel input-panel {!isAIEnabled ? 'disabled-panel' : ''}">
-      <label for="raw-demand" class="input-label">输入非结构化需求草案 / Bug 描述</label>
+  <div class="deconstructor-metrics" aria-label="解构事实指标">
+    {#each deconstructMetrics as metric}
+      <div class="wa-admin-card wa-admin-metric deconstructor-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
+        <span>{metric.label}</span>
+        <strong>{metric.value}</strong>
+        <em>{metric.helper}</em>
+      </div>
+    {/each}
+  </div>
 
-      {#if !isAIEnabled}
-        <div class="ai-disabled-indicator">
-          <span class="warning-icon">⚠️</span>
-          <div class="warning-text">
-            <strong>AI 需求自解构已锁定</strong>
-            <p>由于后台大模型配置未启用或未检测到 API 凭证，本功能已禁用。请在上方“集成状态中枢”中配置并启用大模型服务。</p>
+  <div class="deconstructor-entry-card wa-admin-card {!isAIEnabled ? 'disabled-panel' : ''}">
+    <div class="entry-card-head">
+      <div>
+        <span class="eyebrow">输入材料</span>
+        <h3>需求文本与意图识别</h3>
+      </div>
+      <button
+        on:click={handleDeconstruct}
+        disabled={isLoading || !isAIEnabled}
+        class="wa-admin-action primary"
+      >
+        {#if isLoading}
+          <span class="spinner-small"></span>
+          解构分析中
+        {:else}
+          生成解构
+        {/if}
+      </button>
+    </div>
+
+    {#if !isAIEnabled}
+      <div class="ai-disabled-indicator">
+        <span class="status-dot danger" aria-hidden="true"></span>
+        <div class="warning-text">
+          <strong>AI 需求解构未启用</strong>
+          <p>后台大模型配置未启用或未检测到 API 凭证。启用后可导入文档、解构任务并识别意图。</p>
+        </div>
+      </div>
+    {/if}
+
+    <div class="entry-grid">
+      <div class="entry-input-column">
+        {#if isAIEnabled}
+          <div
+            class="file-dropzone {isDragging ? 'dragging' : ''}"
+            on:dragover={handleDragOver}
+            on:dragleave={handleDragLeave}
+            on:drop={handleDrop}
+            role="button"
+            tabindex="0"
+          >
+            <input
+              type="file"
+              id="file-upload"
+              accept=".txt,.md,.json,.csv,.xml,.html"
+              on:change={handleFileSelect}
+              class="file-input"
+            />
+            <label for="file-upload" class="dropzone-label">
+              <span class="upload-symbol">DOC</span>
+              {#if uploadedFileName}
+                <span class="upload-text text-indigo">已加载：{uploadedFileName} ({uploadedFileSize} 字节)</span>
+              {:else}
+                <span class="upload-text">拖拽 .md / .txt / .json 文档，或 <span class="browse-link">浏览文件</span></span>
+              {/if}
+            </label>
           </div>
-        </div>
-      {/if}
+        {/if}
 
-      <!-- File Upload Dropzone -->
-      {#if isAIEnabled}
-        <div
-          class="file-dropzone {isDragging ? 'dragging' : ''}"
-          on:dragover={handleDragOver}
-          on:dragleave={handleDragLeave}
-          on:drop={handleDrop}
-          role="button"
-          tabindex="0"
-        >
-          <input
-            type="file"
-            id="file-upload"
-            accept=".txt,.md,.json,.csv,.xml,.html"
-            on:change={handleFileSelect}
-            class="file-input"
-          />
-          <label for="file-upload" class="dropzone-label">
-            <span class="upload-icon">📂</span>
-            {#if uploadedFileName}
-              <span class="upload-text text-indigo">已加载：{uploadedFileName} ({uploadedFileSize} 字节)</span>
-            {:else}
-              <span class="upload-text">拖拽需求文档 (.md / .txt) 至此 或 <span class="browse-link">浏览文件</span></span>
-            {/if}
-          </label>
-        </div>
-      {/if}
-
-      <textarea
-        id="raw-demand"
-        bind:value={inputText}
-        disabled={!isAIEnabled}
-        class="demand-textarea"
-        placeholder={isAIEnabled ? "在此粘贴或上传原始需求描述..." : "AI 服务未启用，不可输入..."}
-      ></textarea>
+        <label for="raw-demand" class="input-label">非结构化需求或缺陷描述</label>
+        <textarea
+          id="raw-demand"
+          bind:value={inputText}
+          disabled={!isAIEnabled}
+          class="demand-textarea"
+          placeholder={isAIEnabled ? "粘贴原始需求、缺陷描述或会议整理..." : "AI 服务未启用，不可输入..."}
+        ></textarea>
+      </div>
 
       <div class="intent-console-panel">
         <div class="intent-console-header">
           <div>
-            <span class="result-section-label">AI 意图识别 / 对话总结</span>
-            <p>把多轮沟通显式拆成当前意图、缺失上下文、下一问和建议动作。</p>
+            <span class="result-section-label">意图识别 / 对话总结</span>
+            <p>把沟通记录拆成当前意图、缺失上下文、下一问和建议动作。</p>
           </div>
           <button
             type="button"
-            class="btn-load-intent-source font-mono"
+            class="wa-admin-action secondary font-mono"
             on:click={syncIntentInputFromDemand}
             disabled={!inputText.trim()}
           >
-            载入需求文本
+            载入文本
           </button>
         </div>
 
         <textarea
           class="intent-textarea"
           bind:value={intentInputText}
-          placeholder="粘贴产品、研发、测试之间的多轮对话，或直接复用上方需求文本..."
+          placeholder="粘贴多轮沟通记录，或复用左侧需求文本..."
         ></textarea>
 
         <div class="intent-actions-row">
@@ -789,11 +915,11 @@
           </div>
           <button
             type="button"
-            class="btn-run-intent font-mono"
+            class="wa-admin-action primary font-mono"
             on:click={() => runIntentAssistant(intentMode)}
             disabled={intentLoading || !intentInputText.trim()}
           >
-            {intentLoading ? '识别中...' : intentMode === 'summary' ? '生成总结' : '识别意图'}
+            {intentLoading ? '识别中' : intentMode === 'summary' ? '生成总结' : '识别意图'}
           </button>
         </div>
 
@@ -857,23 +983,23 @@
             </div>
           {:else}
             <div class="intent-empty-state font-mono">
-              等待输入后识别。结果会显示 intent、confidence、summary、missing_context、next_questions 和 suggested_action。
+              等待输入后识别，结果会展示 intent、confidence、summary、missing_context、next_questions 和 suggested_action。
             </div>
           {/if}
         </div>
       </div>
+    </div>
 
-      <!--折叠 Prompt 约束 -->
-      {#if isAIEnabled}
-        <div class="prompt-constraint-panel">
-          <button class="prompt-toggle-btn" on:click={() => showPromptSettings = !showPromptSettings}>
-            <span>⚙️ 解构 Prompt 约束词规约</span>
-            <span class="arrow">{showPromptSettings ? '▲' : '▼'}</span>
-          </button>
-          {#if showPromptSettings}
-            <div class="prompt-content font-mono" transition:slide>
-              <p class="prompt-desc">解构引擎将固定使用系统 Prompt 对大模型进行强规约，确保输出的任务严格匹配代码仓和分配逻辑，保障入库格式的契约一致性。</p>
-              <pre class="prompt-pre"><code>{`【输出 JSON 契约规约】
+    {#if isAIEnabled}
+      <div class="prompt-constraint-panel">
+        <button class="prompt-toggle-btn" on:click={() => showPromptSettings = !showPromptSettings}>
+          <span>解构 Prompt 约束</span>
+          <span class="arrow">{showPromptSettings ? '收起' : '展开'}</span>
+        </button>
+        {#if showPromptSettings}
+          <div class="prompt-content font-mono" transition:slide>
+            <p class="prompt-desc">解构引擎使用固定系统 Prompt，约束输出任务、仓库、负责人、工时和检查项，保证入库格式一致。</p>
+            <pre class="prompt-pre"><code>{`【输出 JSON 契约规约】
 {
   "mappedRepos": ["仓库名称"],
   "tasks": [
@@ -905,264 +1031,89 @@
     "confidence": 0.78
   }
 }`}</code></pre>
-            </div>
-          {/if}
-        </div>
-      {/if}
-
-      <div class="actions">
-        <button
-          on:click={handleDeconstruct}
-          disabled={isLoading || !isAIEnabled}
-          class="btn-deconstruct"
-        >
-          {#if isLoading}
-            <span class="spinner-small"></span>
-            解构分析中...
-          {:else}
-            🚀 需求解构
-          {/if}
-        </button>
+          </div>
+        {/if}
       </div>
+    {/if}
+  </div>
 
-      {#if hasResult}
-        <div class="analysis-panel input-analysis-panel">
-          <div class="analysis-header">
-            <div>
-              <span class="result-section-label">需求作战图 / AI 分析</span>
-              <p class="analysis-subtitle">完整性、风险、依赖与验收口径</p>
-            </div>
-            <div class="analysis-score-row">
-              <div class="analysis-score-block">
-                <span class="score-label">预估工时</span>
-                <span class="score-value estimate-value">{estimateSummaryLabel(result.analysis.overall_estimated_days, result.analysis.overall_estimated_hours)}</span>
-              </div>
-              <div class="analysis-score-block">
-                <span class="score-label">整体难度</span>
-                <span class="score-value difficulty-value">{difficultyLabel(result.analysis.overall_difficulty)}</span>
-              </div>
-              <div class="analysis-score-block">
-                <span class="score-label">完整性</span>
-                <span class="score-value">{percentLabel(result.analysis.completeness_score)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="score-track" aria-label="需求完整性">
-            <span style:width={`${result.analysis.completeness_score}%`}></span>
-          </div>
-
-          <div class="analysis-kpi-row">
-            <span>置信度 <strong>{confidenceLabel(result.analysis.confidence)}</strong></span>
-            <span>预估 <strong>{estimateSummaryLabel(result.analysis.overall_estimated_days, result.analysis.overall_estimated_hours)}</strong></span>
-            <span>风险项 <strong>{result.analysis.risks.length}</strong></span>
-            <span>待确认 <strong>{result.analysis.meeting_questions.length}</strong></span>
-          </div>
-
-          {#if result.analysis.estimate_basis}
-            <div class="estimate-basis-strip">
-              <span class="estimate-basis-label">估算依据</span>
-              <span>{result.analysis.estimate_basis}</span>
-            </div>
-          {/if}
-
-          <div class="analysis-grid">
-            <div class="analysis-cell">
-              <span class="analysis-cell-title">缺失信息</span>
-              {#if result.analysis.missing_info.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.missing_info as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">暂无明显缺口</p>
-              {/if}
-            </div>
-
-            <div class="analysis-cell risk-cell">
-              <span class="analysis-cell-title">风险</span>
-              {#if result.analysis.risks.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.risks as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">暂无高风险提示</p>
-              {/if}
-            </div>
-
-            <div class="analysis-cell">
-              <span class="analysis-cell-title">验收标准</span>
-              {#if result.analysis.acceptance_criteria.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.acceptance_criteria as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">待补充可验证标准</p>
-              {/if}
-            </div>
-
-            <div class="analysis-cell">
-              <span class="analysis-cell-title">会议问题</span>
-              {#if result.analysis.meeting_questions.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.meeting_questions as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">暂无待会审问题</p>
-              {/if}
-            </div>
-
-            <div class="analysis-cell compact">
-              <span class="analysis-cell-title">依赖</span>
-              {#if result.analysis.dependencies.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.dependencies as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">暂无显式依赖</p>
-              {/if}
-            </div>
-
-            <div class="analysis-cell compact">
-              <span class="analysis-cell-title">排期提示</span>
-              {#if result.analysis.schedule_notes.length > 0}
-                <ul class="analysis-list">
-                  {#each result.analysis.schedule_notes as item}
-                    <li>{item}</li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="analysis-empty">按任务复杂度常规排期</p>
-              {/if}
-            </div>
-          </div>
-        </div>
-      {/if}
+  {#if hasResult && isMockResponse}
+    <div class="mock-alert-banner wa-admin-card">
+      <span class="status-dot warning" aria-hidden="true"></span>
+      <div class="mock-alert-text-group">
+        <p class="mock-alert-title">当前结果标记为模拟响应</p>
+        <p class="mock-alert-desc">后端返回了 is_mock=true。请在同步前确认 API 配置与任务内容。</p>
+      </div>
     </div>
+  {/if}
 
-    <!-- Output Panel -->
-    <div class="panel output-panel">
-      {#if !isLoading && !hasResult}
-        <div class="empty-state">
-          <p class="empty-main">输入左侧需求并点击“需求解构”</p>
-          <p class="empty-sub">AI 将为您提取最关联代码库并生成影子任务卡</p>
+  <div class="deconstructor-main-grid">
+    <section class="deconstructor-table-stack wa-admin-section" aria-label="任务证据列表">
+      <div class="deconstructor-table-card wa-admin-card">
+        <div class="deconstructor-table-head">
+          <div>
+            <span class="eyebrow">解构列表</span>
+            <h3>任务证据表</h3>
+          </div>
+          <span class="deconstructor-count font-mono">{generatedTaskRows.length} tasks</span>
         </div>
-      {/if}
 
-      {#if isLoading}
-        <div class="loading-state">
-          <div class="spinner-large"></div>
-          <p class="loading-text">检索仓库元数据，匹配 Project-Mapping...</p>
-        </div>
-      {/if}
-
-      {#if hasResult}
-        <div class="result-content">
-
-          <div class="result-section">
-            <span class="result-section-label">匹配目标仓库 (Project-Mapping)</span>
+        {#if isLoading}
+          <div class="state-panel">
+            <div class="spinner-large"></div>
+            <p class="loading-text">正在匹配仓库、负责人和验收检查项</p>
+          </div>
+        {:else if !hasResult}
+          <div class="state-panel">
+            <strong>等待需求文本</strong>
+            <p>输入或导入需求后生成任务证据，结果会进入下方表格并可同步到看板。</p>
+          </div>
+        {:else}
+          <div class="result-section mapped-repos-section">
+            <span class="result-section-label">匹配代码库</span>
             <div class="repo-list">
               {#each result.mappedRepos as repo}
-                <span class="repo-badge">
-                  📁 {repo}
-                </span>
+                <span class="repo-badge">{repo}</span>
               {/each}
             </div>
           </div>
 
-          <div class="result-section">
-            <div class="result-header-row">
-              <span class="result-section-label">生成影子任务卡 (Subtasks)</span>
-
-              <div class="sync-actions-group">
-                <!-- 关联需求下拉框 -->
-                <div class="custom-dropdown-container deconstruct-demand-link-select">
-                  <button
-                    type="button"
-                    class="dropdown-trigger"
-                    on:click|stopPropagation={() => showDemandDropdown = !showDemandDropdown}
+          <div class="wa-admin-table-shell deconstructor-table-shell">
+            <table class="wa-admin-table deconstructor-table">
+              <colgroup>
+                {#each deconstructColumns as column}
+                  <col style="width: {column.width || 'auto'}" />
+                {/each}
+                <col style="width: 86px" />
+              </colgroup>
+              <thead>
+                <tr>
+                  {#each deconstructColumns as column}
+                    <th class:align-center={column.align === 'center'}>{column.label}</th>
+                  {/each}
+                  <th class="align-center">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each result.tasks as task (task.id)}
+                  {@const row = buildGeneratedTaskRow(task)}
+                  <tr
+                    class:is-selected={activeGeneratedTaskId === task.id}
+                    on:click={() => selectGeneratedTask(task)}
                   >
-                    <span>{selectedDemandId === '' ? '不关联需求，仅同步任务' : selectedDemandTitle}</span>
-                    <span class="arrow-icon {showDemandDropdown ? 'open' : ''}">▼</span>
-                  </button>
-                  {#if showDemandDropdown}
-                    <div class="dropdown-options-list glass-panel">
-                      <button
-                        type="button"
-                        class="dropdown-option-item {selectedDemandId === '' ? 'selected' : ''}"
-                        on:click={() => selectDemandLink(null)}
-                      >
-                        不关联需求，仅同步任务
-                      </button>
-                      {#each activeDemands as d}
-                        <button
-                          type="button"
-                          class="dropdown-option-item {selectedDemandId === d.task_id ? 'selected' : ''}"
-                          on:click={() => selectDemandLink(d)}
-                        >
-                          {getDemandDisplayTitle(d)}
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-
-                <button
-                  class="btn-sync-kanban font-sans"
-                  on:click={importTasksToKanban}
-                  disabled={isImporting}
-                >
-                  {#if isImporting}
-                    <span class="spinner-small"></span> 同步中...
-                  {:else}
-                    📥 一键同步至看板
-                  {/if}
-                </button>
-              </div>
-            </div>
-            <div class="task-list">
-              {#each result.tasks as task (task.id)}
-                <div
-                  class="generated-task-card"
-                  style={activeDropdown && activeDropdown.taskId === task.id ? 'z-index: 10;' : 'z-index: 1;'}
-                >
-                  <!-- 卡片顶部栏 -->
-                  <div class="task-card-top-row">
-                    <div class="task-meta-group">
-                      <span class="task-gen-id">{task.id}</span>
-                      {#if currentTaskGroupId}
-                        <span class="task-group-badge" title="当前影子任务所属的大脑任务组">🔗 {currentTaskGroupId}</span>
-                      {/if}
-                    </div>
-
-                    <button class="delete-task-btn-premium" on:click={() => deleteTask(task.id)} title="删除影子任务">
-                      <svg xmlns="http://www.w3.org/2000/svg" class="icon-trash-premium" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-                      </svg>
-                      <span class="delete-text-mini">删除</span>
-                    </button>
-                  </div>
-
-                  <!-- 卡片标题编辑 -->
-                  <div class="task-title-container">
-                    <span class="edit-icon-indicator">✏️</span>
-                    <input type="text" class="task-title-input-premium" bind:value={task.title} placeholder="修改任务标题..." />
-                  </div>
-
-                  <!-- Bento 风格的开发属性微调网格 -->
-                  <div class="task-bento-grid">
-                    <!-- 关联仓库 -->
-                    <div class="bento-edit-cell">
-                      <span class="cell-label">📦 关联仓库</span>
+                    <td>
+                      <div class="task-title-cell">
+                        <span class="task-gen-id font-mono">{task.id}</span>
+                        <input
+                          type="text"
+                          class="task-title-input-premium"
+                          bind:value={task.title}
+                          placeholder="修改任务标题..."
+                          on:click|stopPropagation
+                        />
+                      </div>
+                    </td>
+                    <td>
                       <div class="custom-dropdown-container">
                         <button
                           type="button"
@@ -1172,7 +1123,6 @@
                           <span class="trigger-value">{task.repo}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'repo') ? 'rotated' : ''}">▼</span>
                         </button>
-
                         {#if isDropdownOpen(task.id, 'repo')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
                             {#each result.mappedRepos.length > 0 ? result.mappedRepos : ['frontend-dashboard', 'backend-core'] as repo}
@@ -1187,11 +1137,8 @@
                           </div>
                         {/if}
                       </div>
-                    </div>
-
-                    <!-- 负责人 -->
-                    <div class="bento-edit-cell">
-                      <span class="cell-label">👤 负责人</span>
+                    </td>
+                    <td>
                       <div class="custom-dropdown-container">
                         <button
                           type="button"
@@ -1201,7 +1148,6 @@
                           <span class="trigger-value">{task.assignee}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'assignee') ? 'rotated' : ''}">▼</span>
                         </button>
-
                         {#if isDropdownOpen(task.id, 'assignee')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
                             {#each assigneesList as member}
@@ -1223,11 +1169,8 @@
                           </div>
                         {/if}
                       </div>
-                    </div>
-
-                    <!-- 预估工时 -->
-                    <div class="bento-edit-cell">
-                      <span class="cell-label">⏳ 预估工时</span>
+                    </td>
+                    <td>
                       <div class="custom-dropdown-container">
                         <button
                           type="button"
@@ -1237,7 +1180,6 @@
                           <span class="trigger-value">{getHoursLabel(task.estimated_hours)}</span>
                           <span class="trigger-arrow {isDropdownOpen(task.id, 'estimated_hours') ? 'rotated' : ''}">▼</span>
                         </button>
-
                         {#if isDropdownOpen(task.id, 'estimated_hours')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
                             {#each [2, 4, 6, 8, 12, 16, 24, 32, 40, 56, 80, 112] as hours}
@@ -1252,114 +1194,246 @@
                           </div>
                         {/if}
                       </div>
-                    </div>
-
-                    <!-- 优先级 -->
-                    <div class="bento-edit-cell">
-                      <span class="cell-label">⚡ 优先级</span>
+                    </td>
+                    <td class="align-center">
                       <div class="custom-dropdown-container">
                         <button
                           type="button"
-                          class="custom-dropdown-trigger"
+                          class="wa-admin-pill task-pill-button {ADMIN_TONE_CLASS[priorityTone(task.priority)]}"
                           on:click|stopPropagation={() => toggleDropdown(task.id, 'priority')}
                         >
-                          <span class="trigger-value">{task.priority === 'High' ? 'High (高)' : task.priority === 'Medium' ? 'Medium (中)' : 'Low (低)'}</span>
-                          <span class="trigger-arrow {isDropdownOpen(task.id, 'priority') ? 'rotated' : ''}">▼</span>
+                          {task.priority === 'High' ? 'High' : task.priority === 'Medium' ? 'Medium' : 'Low'}
                         </button>
-
                         {#if isDropdownOpen(task.id, 'priority')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.priority === 'High' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'High')}
-                            >
-                              High (高)
-                            </button>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.priority === 'Medium' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'Medium')}
-                            >
-                              Medium (中)
-                            </button>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.priority === 'Low' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', 'Low')}
-                            >
-                              Low (低)
-                            </button>
+                            {#each ['High', 'Medium', 'Low'] as priority}
+                              <button
+                                type="button"
+                                class="dropdown-option-btn {task.priority === priority ? 'selected' : ''}"
+                                on:click|stopPropagation={() => selectDropdownValue(task.id, 'priority', priority)}
+                              >
+                                {priority}
+                              </button>
+                            {/each}
                           </div>
                         {/if}
                       </div>
-                    </div>
-
-                    <!-- 预估难度 -->
-                    <div class="bento-edit-cell">
-                      <span class="cell-label">📊 预估难度</span>
+                    </td>
+                    <td class="align-center">
                       <div class="custom-dropdown-container">
                         <button
                           type="button"
-                          class="custom-dropdown-trigger"
+                          class="wa-admin-pill task-pill-button {ADMIN_TONE_CLASS[difficultyTone(task.difficulty)]}"
                           on:click|stopPropagation={() => toggleDropdown(task.id, 'difficulty')}
                         >
-                          <span class="trigger-value">{difficultyLabel(task.difficulty)}</span>
-                          <span class="trigger-arrow {isDropdownOpen(task.id, 'difficulty') ? 'rotated' : ''}">▼</span>
+                          {task.difficulty}
                         </button>
-
                         {#if isDropdownOpen(task.id, 'difficulty')}
                           <div class="custom-dropdown-options" transition:slide={{ duration: 150 }}>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.difficulty === 'High' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'High')}
-                            >
-                              High (高)
-                            </button>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.difficulty === 'Medium' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'Medium')}
-                            >
-                              Medium (中)
-                            </button>
-                            <button
-                              type="button"
-                              class="dropdown-option-btn {task.difficulty === 'Low' ? 'selected' : ''}"
-                              on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', 'Low')}
-                            >
-                              Low (低)
-                            </button>
+                            {#each ['High', 'Medium', 'Low'] as difficulty}
+                              <button
+                                type="button"
+                                class="dropdown-option-btn {task.difficulty === difficulty ? 'selected' : ''}"
+                                on:click|stopPropagation={() => selectDropdownValue(task.id, 'difficulty', difficulty)}
+                              >
+                                {difficultyLabel(difficulty)}
+                              </button>
+                            {/each}
                           </div>
                         {/if}
                       </div>
-                    </div>
-                  </div>
+                    </td>
+                    <td>
+                      <span class="wa-admin-pill {task.estimate_basis ? 'tone-success' : 'tone-warning'}">{row.cells.evidence}</span>
+                    </td>
+                    <td class="align-center">
+                      <button class="wa-admin-action danger compact-action" type="button" on:click|stopPropagation={() => deleteTask(task.id)}>
+                        删除
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </div>
+    </section>
 
-                  {#if task.estimate_basis}
-                    <div class="task-estimate-basis">
-                      <span>估算依据</span>
-                      <p>{task.estimate_basis}</p>
-                    </div>
-                  {/if}
-                </div>
-              {/each}
+    <aside class="deconstructor-inspector wa-admin-card wa-admin-inspector" aria-label="解构详情与同步检查">
+      <div class="inspector-title-row">
+        <span class="wa-admin-pill {hasResult ? 'tone-info' : 'tone-neutral'}">{hasResult ? '已生成' : '待生成'}</span>
+        <span class="font-mono">{currentTaskGroupId ? '任务组已创建' : '未创建任务组'}</span>
+      </div>
+
+      <h3>同步检查项</h3>
+      <p>{hasResult ? '确认关联需求、估算依据和风险项后再同步到看板。' : '生成结果后，这里会显示选中任务与整体分析。'}</p>
+
+      <div class="deconstruct-inspector-facts">
+        <div>
+          <span>任务数量</span>
+          <strong>{result.tasks.length}</strong>
+        </div>
+        <div>
+          <span>代码库</span>
+          <strong>{result.mappedRepos.length}</strong>
+        </div>
+        <div>
+          <span>上下文包</span>
+          <strong>{result.context_pack_id || '-'}</strong>
+        </div>
+        <div>
+          <span>可关联需求</span>
+          <strong>{activeDemands.length}</strong>
+        </div>
+      </div>
+
+      {#if hasResult}
+        <div class="deconstruct-progress">
+          <div>
+            <span>需求完整性</span>
+            <strong class="font-mono">{percentLabel(result.analysis.completeness_score)}</strong>
+          </div>
+          <div class="wa-admin-progress" style="--progress: {result.analysis.completeness_score}%" aria-hidden="true"></div>
+        </div>
+
+        <div class="inspector-sync-section">
+          <h4>同步目标</h4>
+          <div class="custom-dropdown-container deconstruct-demand-link-select">
+            <button
+              type="button"
+              class="dropdown-trigger"
+              on:click|stopPropagation={() => showDemandDropdown = !showDemandDropdown}
+            >
+              <span>{selectedDemandId === '' ? '不关联需求，仅同步任务' : selectedDemandTitle}</span>
+              <span class="arrow-icon {showDemandDropdown ? 'open' : ''}">▼</span>
+            </button>
+            {#if showDemandDropdown}
+              <div class="dropdown-options-list glass-panel">
+                <button
+                  type="button"
+                  class="dropdown-option-item {selectedDemandId === '' ? 'selected' : ''}"
+                  on:click={() => selectDemandLink(null)}
+                >
+                  不关联需求，仅同步任务
+                </button>
+                {#each activeDemands as demand}
+                  <button
+                    type="button"
+                    class="dropdown-option-item {selectedDemandId === demand.task_id ? 'selected' : ''}"
+                    on:click={() => selectDemandLink(demand)}
+                  >
+                    {getDemandDisplayTitle(demand)}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <button
+            class="wa-admin-action primary"
+            on:click={importTasksToKanban}
+            disabled={isImporting || result.tasks.length === 0}
+          >
+            {#if isImporting}
+              <span class="spinner-small"></span>
+              同步中
+            {:else}
+              同步到看板
+            {/if}
+          </button>
+        </div>
+
+        {#if selectedGeneratedTask}
+          <div class="inspector-task-section">
+            <h4>选中任务</h4>
+            <strong>{selectedGeneratedTask.title}</strong>
+            <div class="selected-task-pills">
+              <span class="wa-admin-pill tone-info">{selectedGeneratedTask.repo}</span>
+              <span class="wa-admin-pill tone-neutral">{selectedGeneratedTask.assignee}</span>
+              <span class="wa-admin-pill {ADMIN_TONE_CLASS[priorityTone(selectedGeneratedTask.priority)]}">{selectedGeneratedTask.priority}</span>
+              <span class="wa-admin-pill {ADMIN_TONE_CLASS[difficultyTone(selectedGeneratedTask.difficulty)]}">{difficultyLabel(selectedGeneratedTask.difficulty)}</span>
             </div>
+            <p>{selectedGeneratedTask.estimate_basis || '该任务尚未返回估算依据，建议同步前补充。'}</p>
+          </div>
+        {/if}
+
+        <div class="inspector-analysis-section">
+          <h4>整体分析</h4>
+          <div class="analysis-kpi-row">
+            <span>置信度 <strong>{confidenceLabel(result.analysis.confidence)}</strong></span>
+            <span>预估 <strong>{estimateSummaryLabel(result.analysis.overall_estimated_days, result.analysis.overall_estimated_hours)}</strong></span>
+            <span>难度 <strong>{difficultyLabel(result.analysis.overall_difficulty)}</strong></span>
+          </div>
+          {#if result.analysis.estimate_basis}
+            <p>{result.analysis.estimate_basis}</p>
+          {/if}
+        </div>
+
+        <div class="inspector-checklist-grid">
+          <div class="analysis-cell">
+            <span class="analysis-cell-title">缺失信息</span>
+            {#if result.analysis.missing_info.length > 0}
+              <ul class="analysis-list">
+                {#each result.analysis.missing_info as item}
+                  <li>{item}</li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="analysis-empty">暂无明显缺口</p>
+            {/if}
+          </div>
+
+          <div class="analysis-cell risk-cell">
+            <span class="analysis-cell-title">风险</span>
+            {#if result.analysis.risks.length > 0}
+              <ul class="analysis-list">
+                {#each result.analysis.risks as item}
+                  <li>{item}</li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="analysis-empty">暂无高风险提示</p>
+            {/if}
+          </div>
+
+          <div class="analysis-cell">
+            <span class="analysis-cell-title">验收标准</span>
+            {#if result.analysis.acceptance_criteria.length > 0}
+              <ul class="analysis-list">
+                {#each result.analysis.acceptance_criteria as item}
+                  <li>{item}</li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="analysis-empty">待补充可验证标准</p>
+            {/if}
+          </div>
+
+          <div class="analysis-cell">
+            <span class="analysis-cell-title">会审问题</span>
+            {#if result.analysis.meeting_questions.length > 0}
+              <ul class="analysis-list">
+                {#each result.analysis.meeting_questions as item}
+                  <li>{item}</li>
+                {/each}
+              </ul>
+            {:else}
+              <p class="analysis-empty">暂无待会审问题</p>
+            {/if}
           </div>
         </div>
+      {:else}
+        <div class="inspector-empty-state">
+          <strong>尚未生成任务证据</strong>
+          <span>输入需求并点击“生成解构”后，检查项会在这里出现。</span>
+        </div>
       {/if}
-    </div>
+    </aside>
   </div>
 
   <div class="toast {toastType} {showToast ? 'show' : ''}">
-    {#if toastType === 'success'}
-      <span>✅</span>
-    {:else if toastType === 'error'}
-      <span>❌</span>
-    {:else}
-      <span>ℹ️</span>
-    {/if}
+    <span class="toast-status-dot" aria-hidden="true"></span>
     <span>{toastMsg}</span>
   </div>
 </section>
@@ -1454,11 +1528,6 @@
     border-radius: 8px;
     margin-bottom: 12px;
     align-items: flex-start;
-  }
-
-  .ai-disabled-indicator .warning-icon {
-    font-size: 1.1rem;
-    line-height: 1;
   }
 
   .ai-disabled-indicator .warning-text strong {
@@ -2207,10 +2276,6 @@
     transition: transform 0.2s;
   }
 
-  .delete-task-btn-premium:hover .icon-trash-premium {
-    transform: rotate(6deg) scale(1.05);
-  }
-
   .delete-text-mini {
     font-family: inherit;
   }
@@ -2237,10 +2302,6 @@
     font-size: 0.8rem;
     opacity: 0.6;
     transition: opacity 0.2s;
-  }
-
-  .task-title-container:focus-within .edit-icon-indicator {
-    opacity: 1;
   }
 
   .task-title-input-premium {
@@ -2314,14 +2375,6 @@
     font-size: 0.62rem;
     font-weight: 700;
     white-space: nowrap;
-  }
-
-  .task-estimate-basis p {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 0.7rem;
-    line-height: 1.45;
-    overflow-wrap: anywhere;
   }
 
   /* 任务组标识样式 */
@@ -2760,5 +2813,653 @@
   .btn-sync-kanban:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .deconstructor-workbench {
+    display: grid;
+    gap: var(--wa-space-4);
+    margin-bottom: var(--wa-space-6);
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-sans);
+  }
+
+  .deconstructor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-4);
+    min-height: 58px;
+    padding: 10px 12px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-xl);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: var(--wa-shadow-sm);
+    backdrop-filter: blur(16px) saturate(124%);
+    -webkit-backdrop-filter: blur(16px) saturate(124%);
+  }
+
+  .deconstructor-header h2,
+  .entry-card-head h3,
+  .deconstructor-table-head h3,
+  .deconstructor-inspector h3 {
+    margin: 3px 0 0;
+    color: var(--wa-text-strong);
+    font-size: 18px;
+    line-height: 1.18;
+    font-weight: 840;
+  }
+
+  .entry-card-head h3,
+  .deconstructor-table-head h3,
+  .deconstructor-inspector h3 {
+    font-size: 16px;
+  }
+
+  .deconstructor-header p,
+  .deconstructor-inspector > p {
+    margin: 6px 0 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .deconstructor-header p {
+    display: none;
+  }
+
+  .deconstructor-workbench .eyebrow {
+    display: block;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 780;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .deconstructor-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-3);
+  }
+
+  .deconstructor-metric em {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.35;
+    font-style: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .deconstructor-entry-card,
+  .deconstructor-table-card {
+    min-width: 0;
+    padding: var(--wa-space-4);
+    display: grid;
+    gap: var(--wa-space-3);
+  }
+
+  .entry-card-head,
+  .deconstructor-table-head,
+  .inspector-title-row,
+  .deconstruct-progress > div:first-child {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
+  }
+
+  .entry-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(360px, 1.05fr);
+    gap: var(--wa-space-4);
+    align-items: start;
+  }
+
+  .entry-input-column {
+    min-width: 0;
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .input-label {
+    margin: 0;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .demand-textarea,
+  .intent-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: rgba(255, 255, 255, 0.84);
+    color: var(--wa-text-main);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    outline: none;
+    resize: vertical;
+    transition:
+      border-color var(--wa-duration-fast) var(--wa-ease),
+      box-shadow var(--wa-duration-fast) var(--wa-ease),
+      background var(--wa-duration-fast) var(--wa-ease);
+  }
+
+  .demand-textarea {
+    height: 214px;
+    padding: var(--wa-space-3);
+  }
+
+  .intent-textarea {
+    min-height: 92px;
+    max-height: 168px;
+    padding: 10px 11px;
+  }
+
+  .demand-textarea:focus,
+  .intent-textarea:focus {
+    border-color: var(--wa-border-focus);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
+  .demand-textarea:disabled {
+    background: var(--wa-surface-inset);
+    border-color: var(--wa-border-soft);
+    color: var(--wa-text-subtle);
+  }
+
+  .ai-disabled-indicator,
+  .mock-alert-banner {
+    margin: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--wa-space-3);
+    border-color: rgba(221, 75, 62, 0.22);
+    background: var(--wa-danger-soft);
+    color: var(--wa-text-main);
+  }
+
+  .mock-alert-banner {
+    border-color: rgba(216, 135, 0, 0.24);
+    background: var(--wa-warning-soft);
+  }
+
+  .warning-text strong,
+  .mock-alert-title {
+    color: var(--wa-text-strong);
+    font-size: 13px;
+  }
+
+  .warning-text p,
+  .mock-alert-desc {
+    margin: 0;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .status-dot,
+  .toast-status-dot {
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: var(--wa-info);
+    flex: none;
+  }
+
+  .status-dot.danger {
+    background: var(--wa-danger);
+  }
+
+  .status-dot.warning {
+    background: var(--wa-warning);
+  }
+
+  .file-dropzone {
+    margin: 0;
+    border: 1px dashed var(--wa-border-strong);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: var(--wa-space-3);
+    box-shadow: none;
+  }
+
+  .file-dropzone:hover,
+  .file-dropzone.dragging {
+    border-color: var(--wa-border-focus);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
+  .upload-symbol {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 24px;
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+    font-size: 11px;
+    font-weight: 820;
+    font-family: var(--wa-font-mono);
+  }
+
+  .upload-text {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .upload-text.text-indigo,
+  .browse-link {
+    color: var(--wa-accent-strong);
+  }
+
+  .intent-console-panel,
+  .intent-result-shell,
+  .intent-result-top div,
+  .intent-summary-block,
+  .intent-detail-cell,
+  .intent-action-strip,
+  .prompt-constraint-panel,
+  .analysis-cell {
+    border-color: var(--wa-border-soft);
+    background: var(--wa-surface-inset);
+    box-shadow: none;
+  }
+
+  .intent-console-panel {
+    margin: 0;
+    padding: var(--wa-space-3);
+    gap: var(--wa-space-3);
+  }
+
+  .intent-console-header p,
+  .intent-empty-state,
+  .result-section-label,
+  .intent-result-top span,
+  .intent-summary-block span,
+  .intent-detail-cell span,
+  .intent-action-strip span,
+  .analysis-cell-title,
+  .analysis-empty {
+    color: var(--wa-text-muted);
+  }
+
+  .intent-result-top strong,
+  .intent-summary-block p,
+  .intent-detail-cell p,
+  .intent-detail-cell ul,
+  .intent-action-strip p,
+  .analysis-list li,
+  .analysis-kpi-row strong {
+    color: var(--wa-text-main);
+  }
+
+  .intent-mode-tabs {
+    border-color: var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.78);
+  }
+
+  .intent-mode-tabs button {
+    color: var(--wa-text-muted);
+  }
+
+  .intent-mode-tabs button.intent-active {
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+  }
+
+  .intent-inline-error {
+    border-color: rgba(216, 135, 0, 0.24);
+    background: var(--wa-warning-soft);
+    color: var(--wa-warning);
+  }
+
+  .prompt-toggle-btn {
+    color: var(--wa-text-main);
+  }
+
+  .prompt-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.58);
+    color: var(--wa-text-strong);
+  }
+
+  .prompt-content {
+    border-top-color: var(--wa-border-soft);
+  }
+
+  .prompt-desc {
+    color: var(--wa-text-muted);
+  }
+
+  .prompt-pre {
+    background: rgba(255, 255, 255, 0.76);
+    border-color: var(--wa-border-soft);
+    color: var(--wa-text-main);
+  }
+
+  .deconstructor-main-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(330px, 400px);
+    gap: var(--wa-space-4);
+    align-items: start;
+  }
+
+  .deconstructor-table-head {
+    align-items: center;
+  }
+
+  .deconstructor-count {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .state-panel {
+    min-height: 180px;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: var(--wa-space-2);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: var(--wa-space-5);
+    text-align: center;
+  }
+
+  .state-panel strong {
+    color: var(--wa-text-strong);
+  }
+
+  .state-panel p,
+  .loading-text {
+    margin: 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .mapped-repos-section {
+    padding: var(--wa-space-2) 0;
+  }
+
+  .repo-badge {
+    border: 1px solid var(--wa-border-soft);
+    background: var(--wa-neutral-soft);
+    color: var(--wa-text-main);
+    border-radius: var(--wa-radius-sm);
+  }
+
+  .deconstructor-table {
+    min-width: 1120px;
+  }
+
+  .deconstructor-table .align-center,
+  .deconstructor-table th.align-center {
+    text-align: center;
+  }
+
+  .task-title-cell {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+  }
+
+  .task-gen-id {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 780;
+  }
+
+  .task-title-input-premium {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid transparent;
+    border-radius: var(--wa-radius-sm);
+    background: transparent;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 650;
+    padding: 4px 6px;
+  }
+
+  .task-title-input-premium:focus {
+    border-color: var(--wa-border-focus);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
+  .task-title-input-premium::placeholder {
+    color: var(--wa-text-subtle);
+  }
+
+  .custom-dropdown-trigger,
+  .deconstruct-demand-link-select .dropdown-trigger {
+    min-height: 30px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm);
+    background: rgba(255, 255, 255, 0.76);
+    color: var(--wa-text-main);
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+
+  .custom-dropdown-trigger:hover,
+  .custom-dropdown-trigger:focus,
+  .deconstruct-demand-link-select .dropdown-trigger:hover {
+    border-color: var(--wa-border-strong);
+    background: #ffffff;
+    color: var(--wa-text-strong);
+  }
+
+  .trigger-arrow,
+  .arrow-icon {
+    color: var(--wa-text-subtle);
+  }
+
+  .trigger-arrow.rotated,
+  .arrow-icon.open {
+    color: var(--wa-accent-strong);
+  }
+
+  .custom-dropdown-options,
+  .deconstruct-demand-link-select .dropdown-options-list {
+    background: #ffffff;
+    border-color: var(--wa-border-soft);
+    box-shadow: var(--wa-shadow-sm);
+  }
+
+  .dropdown-option-btn,
+  .deconstruct-demand-link-select .dropdown-option-item {
+    color: var(--wa-text-main);
+  }
+
+  .dropdown-option-btn:hover,
+  .deconstruct-demand-link-select .dropdown-option-item:hover {
+    background: var(--wa-row-hover);
+    color: var(--wa-text-strong);
+  }
+
+  .dropdown-option-btn.selected,
+  .deconstruct-demand-link-select .dropdown-option-item.selected {
+    background: var(--wa-row-active);
+    color: var(--wa-accent-strong);
+  }
+
+  .task-pill-button {
+    width: 100%;
+    border: 1px solid var(--wa-border-soft);
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .compact-action {
+    min-height: 30px;
+    padding: 0 10px;
+  }
+
+  .deconstructor-inspector {
+    position: sticky;
+    top: var(--wa-space-4);
+  }
+
+  .deconstruct-inspector-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wa-space-2);
+  }
+
+  .deconstruct-inspector-facts div,
+  .inspector-task-section,
+  .inspector-analysis-section,
+  .inspector-sync-section,
+  .inspector-empty-state {
+    min-width: 0;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: var(--wa-space-3);
+  }
+
+  .deconstruct-inspector-facts span,
+  .deconstruct-progress span,
+  .inspector-task-section h4,
+  .inspector-analysis-section h4,
+  .inspector-sync-section h4 {
+    display: block;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.3;
+    font-weight: 760;
+  }
+
+  .deconstruct-inspector-facts strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--wa-text-strong);
+    font-size: 15px;
+  }
+
+  .deconstruct-progress,
+  .inspector-task-section,
+  .inspector-analysis-section,
+  .inspector-sync-section,
+  .inspector-empty-state {
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .deconstruct-progress strong,
+  .inspector-task-section > strong {
+    color: var(--wa-text-strong);
+  }
+
+  .deconstruct-demand-link-select {
+    width: 100%;
+  }
+
+  .deconstruct-demand-link-select .dropdown-trigger span {
+    max-width: 300px;
+  }
+
+  .selected-task-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2);
+  }
+
+  .inspector-task-section p,
+  .inspector-analysis-section p {
+    margin: 0;
+    color: var(--wa-text-main);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .analysis-kpi-row {
+    grid-template-columns: 1fr;
+    margin: 0;
+  }
+
+  .analysis-kpi-row span {
+    background: rgba(255, 255, 255, 0.72);
+    border-color: var(--wa-border-soft);
+    color: var(--wa-text-muted);
+  }
+
+  .inspector-checklist-grid {
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .analysis-cell {
+    min-height: auto;
+  }
+
+  .analysis-cell.risk-cell {
+    border-color: rgba(216, 135, 0, 0.22);
+    background: var(--wa-warning-soft);
+  }
+
+  .analysis-list li::before {
+    background: var(--wa-accent);
+  }
+
+  .toast {
+    border-color: var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--wa-shadow-md);
+    color: var(--wa-text-main);
+  }
+
+  .toast.success .toast-status-dot {
+    background: var(--wa-success);
+  }
+
+  .toast.error .toast-status-dot {
+    background: var(--wa-danger);
+  }
+
+  .toast.info .toast-status-dot {
+    background: var(--wa-info);
+  }
+
+  @media (max-width: 1180px) {
+    .entry-grid,
+    .deconstructor-main-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .deconstructor-inspector {
+      position: static;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .deconstructor-header,
+    .entry-card-head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .deconstructor-metrics,
+    .deconstruct-inspector-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .intent-console-header,
+    .intent-actions-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
 </style>

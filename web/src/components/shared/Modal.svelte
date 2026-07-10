@@ -7,6 +7,7 @@
   export let title = '';
 
   let backdropEl: HTMLDivElement;
+  let modalId = `modal-title-${Math.random().toString(36).slice(2)}`;
   let mousedownOnBackdrop = false;
   let isCurrentlyShown = false;
 
@@ -57,10 +58,19 @@
     bind:this={backdropEl} 
     on:mousedown={handleMousedown} 
     on:mouseup={handleMouseup}
+    role="presentation"
   >
-    <div class="modal-container" on:mousedown|stopPropagation on:mouseup|stopPropagation>
+    <div
+      class="modal-container"
+      on:mousedown|stopPropagation
+      on:mouseup|stopPropagation
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={modalId}
+      tabindex="-1"
+    >
       <header class="modal-header">
-        <h3 class="modal-title">{title}</h3>
+        <h3 class="modal-title" id={modalId}>{title}</h3>
         <button class="close-btn" on:click={close} aria-label="Close modal">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
@@ -75,13 +85,14 @@
 <style>
   .modal-backdrop {
     position: fixed;
-    top: 0;
-    left: 0;
+    inset: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(2, 6, 23, 0.75);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background:
+      linear-gradient(180deg, rgba(13, 23, 34, 0.22), rgba(13, 23, 34, 0.36)),
+      rgba(238, 244, 247, 0.58);
+    backdrop-filter: blur(18px) saturate(118%);
+    -webkit-backdrop-filter: blur(18px) saturate(118%);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -92,15 +103,19 @@
   }
 
   .modal-container {
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(129, 140, 248, 0.15);
-    border-radius: 16px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 251, 253, 0.82)),
+      rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: var(--wa-radius-xl, 8px);
     width: 100%;
     max-width: 640px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(99, 102, 241, 0.1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      0 26px 72px rgba(26, 41, 58, 0.22);
     box-sizing: border-box;
     overflow: hidden;
     animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -111,26 +126,28 @@
     justify-content: space-between;
     align-items: center;
     padding: 20px 24px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.4);
-    background: rgba(30, 41, 59, 0.3);
+    border-bottom: 1px solid rgba(123, 143, 160, 0.14);
+    background: rgba(255, 255, 255, 0.44);
   }
 
   .modal-title {
     margin: 0;
-    font-size: 1.2rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 18px;
+    line-height: 1.25;
+    font-weight: 820;
+    letter-spacing: 0;
   }
 
   .close-btn {
-    background: transparent;
+    width: 34px;
+    height: 34px;
+    background: rgba(102, 119, 137, 0.08);
     border: none;
-    color: #64748b;
+    color: var(--wa-text-muted, #667789);
     cursor: pointer;
-    padding: 6px;
-    border-radius: 8px;
+    padding: 0;
+    border-radius: var(--wa-radius-md, 7px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -138,8 +155,8 @@
   }
 
   .close-btn:hover {
-    background: rgba(51, 65, 85, 0.5);
-    color: #f1f5f9;
+    background: rgba(0, 143, 150, 0.1);
+    color: var(--wa-accent-strong, #006f76);
   }
 
   .modal-body {
@@ -148,7 +165,7 @@
     flex-grow: 1;
     box-sizing: border-box;
     scrollbar-width: thin;
-    scrollbar-color: rgba(51, 65, 85, 0.5) transparent;
+    scrollbar-color: rgba(0, 143, 150, 0.38) rgba(121, 139, 159, 0.1);
   }
 
   .modal-body::-webkit-scrollbar {
@@ -156,8 +173,8 @@
   }
 
   .modal-body::-webkit-scrollbar-thumb {
-    background-color: rgba(51, 65, 85, 0.5);
-    border-radius: 3px;
+    background-color: rgba(0, 143, 150, 0.36);
+    border-radius: 999px;
   }
 
   @keyframes fadeIn {

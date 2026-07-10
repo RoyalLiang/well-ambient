@@ -1,4 +1,5 @@
 <script lang="ts">
+  import '../styles/settings-config-workbench.css';
   import { onMount, onDestroy } from 'svelte';
   import Button from './shared/Button.svelte';
   import Alert from './shared/Alert.svelte';
@@ -9,12 +10,22 @@
   import AIConfig from './config/AIConfig.svelte';
   import KPIKanban from './KPIKanban.svelte';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
+  import { resetSettingsWorkspaceScroll } from '../lib/settings-ui';
+  import {
+    ADMIN_TONE_CLASS,
+    toneForStatus,
+    type AdminInspectorRecord,
+    type AdminTone
+  } from '../lib/admin-console/contract';
 
-  export let currentUserRole = 'member';
   export let currentUserEmail = '';
   export let currentUserPermissions: string[] = [];
+  export let activeSettingsSection = 'gitlab';
+  export let onSectionChange: (section: string) => void = () => {};
 
-  let serverStatus: 'online' | 'offline' | 'warning' = 'online';
+  type ConnectionStatus = 'online' | 'offline' | 'warning';
+
+  let serverStatus: ConnectionStatus = 'online';
   let activeHooks = 0;
   let statusIntervalId: any;
 
@@ -32,12 +43,51 @@
   }
 
   // Reactive connection status computations for navigation indicators
+  let gitlabStatus: ConnectionStatus = 'warning';
+  let feishuStatus: ConnectionStatus = 'warning';
+  let jiraStatus: ConnectionStatus = 'warning';
+  let aiStatus: ConnectionStatus = 'warning';
+
   $: gitlabStatus = globalConfig.gitlab?.enabled ? 'online' : 'warning';
   $: feishuStatus = globalConfig.feishu?.enabled ? 'online' : 'warning';
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'warning';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'warning';
 
-  let activeSection: 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit' = 'gitlab';
+  type SettingsSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit';
+  type SettingsNavItem = {
+    id: SettingsSection;
+    group: string;
+    label: string;
+    summary: string;
+    domain: string;
+  };
+
+  const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
+    { id: 'gitlab', group: '集成设置', label: 'GitLab 仓库', summary: '仓库源、Webhook 与令牌配置。', domain: '仓库同步' },
+    { id: 'feishu', group: '集成设置', label: '飞书消息同步', summary: '机器人、群聊与多维表格同步。', domain: '消息同步' },
+    { id: 'jira', group: '集成设置', label: 'Jira 服务关联', summary: '任务源、同步项目、核心成员与自定义 JQL。', domain: '任务源集成' },
+    { id: 'projects', group: '集成设置', label: '项目优先级与集成', summary: '基于 Jira 同步项目维护交付优先级。', domain: '项目映射' },
+    { id: 'ai', group: 'AI 工作台', label: 'AI 引擎配置', summary: '模型供应商、端点与估算口径。', domain: '模型引擎' },
+    { id: 'ai_context', group: 'AI 工作台', label: '系统设计语料库', summary: '需求解构上下文、架构资料和交付语料。', domain: '设计语料' },
+    { id: 'kpi', group: '运营洞察', label: 'KPI 绩效大盘', summary: '团队绩效指标与任务完成统计。', domain: '绩效洞察' },
+    { id: 'users', group: '安全与授权', label: '成员角色管理', summary: '成员、用户组与作用域分配。', domain: '身份管理' },
+    { id: 'matrix', group: '安全与授权', label: '权限树配置', summary: '原子权限和用户组覆盖矩阵。', domain: '权限矩阵' },
+    { id: 'policies', group: '安全与授权', label: '策略化授权', summary: 'allow/deny 策略与授权解释器。', domain: '授权策略' },
+    { id: 'audit', group: '安全与授权', label: '审计安全日志', summary: '配置、登录与权限变更审计。', domain: '安全审计' }
+  ];
+
+  let activeSection: SettingsSection = 'gitlab';
+
+  $: if (
+    isSettingsSection(activeSettingsSection) &&
+    activeSettingsSection !== activeSection
+  ) {
+    activeSection = activeSettingsSection;
+    saveError = '';
+    saveSuccess = false;
+    saveSuccessKey = null;
+    resetSettingsWorkspaceScroll();
+  }
 
   interface GlobalConfig {
     server: { host: string; port: number };
@@ -141,11 +191,11 @@
 
   $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(activeSection);
   $: visibleConfigVersions = isIntegrationSection
-    ? configVersions.filter(v => configVersionTouchesSection(v, activeSection)).slice(0, 8)
+    ? configVersions.filter(v => configVersionTouchesSection(v, activeSection))
     : configVersions;
   $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
-  function canAccessSection(section: typeof activeSection) {
+  function canAccessSection(section: SettingsSection) {
     if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
     if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') || currentUserPermissions.includes('config:read');
     if (section === 'kpi') return currentUserPermissions.includes('kpi:read');
@@ -153,17 +203,23 @@
     return false;
   }
 
-  function firstAccessibleSection(): typeof activeSection {
-    const sections: (typeof activeSection)[] = ['gitlab', 'ai_context', 'kpi', 'users'];
+  function firstAccessibleSection(): SettingsSection {
+    const sections: SettingsSection[] = ['gitlab', 'ai_context', 'kpi', 'users'];
     return sections.find(canAccessSection) || 'gitlab';
   }
 
-  function switchSection(section: typeof activeSection) {
+  function isSettingsSection(section: unknown): section is SettingsSection {
+    return typeof section === 'string' && SETTINGS_NAV_ITEMS.some(item => item.id === section);
+  }
+
+  function switchSection(section: SettingsSection) {
     if (!canAccessSection(section)) return;
     activeSection = section;
+    onSectionChange(section);
     saveError = '';
     saveSuccess = false;
     saveSuccessKey = null;
+    resetSettingsWorkspaceScroll();
   }
 
   // RBAC lists
@@ -374,6 +430,31 @@
   $: permissionTree = buildPermissionTree(permissionMeta);
   $: policyActionOptions = permissionMeta.map(perm => ({ code: perm.code, name: perm.name }));
   $: permissionCatalogSourceLabel = permissionCatalog.length ? '实时权限目录' : '本地兜底目录';
+  $: activeSectionMeta = SETTINGS_NAV_ITEMS.find(item => item.id === activeSection) || SETTINGS_NAV_ITEMS[0];
+  let lastUpdatedBySection = {} as Record<SettingsSection, string>;
+  let settingsInspector: AdminInspectorRecord;
+  $: lastUpdatedBySection = SETTINGS_NAV_ITEMS.reduce((result, item) => {
+    result[item.id] = configVersions.find(version => (version.changed_sections || []).includes(item.id))?.created_at || '';
+    return result;
+  }, {} as Record<SettingsSection, string>);
+  $: {
+    globalConfig;
+    configVersions;
+    lastUpdatedBySection;
+    users;
+    permissionMeta;
+    authorizationPolicies;
+    auditLogs;
+    authorizationAuditLogs;
+    currentUserPermissions;
+    gitlabStatus;
+    feishuStatus;
+    jiraStatus;
+    aiStatus;
+    serverStatus;
+    settingsInspector = buildSettingsInspector();
+  }
+  $: settingsContextDetail = settingsInspector?.facts.find((fact) => fact.label === '链路状态')?.value || '-';
 
   let policyForm = {
     effect: 'deny',
@@ -428,10 +509,8 @@
   let removeMembershipTarget: { username: string; membership: UserMembership } | null = null;
   let removingMembership = false;
   let removeMembershipError = '';
-  let settingsSidebarEl: HTMLElement | null = null;
-  let settingsSidebarHeight = 0;
-  let settingsSidebarResizeObserver: ResizeObserver | null = null;
   let manualModalScrollLocked = false;
+  $: settingsBreadcrumbs = ['管理台配置', activeSectionMeta.group, activeSectionMeta.label];
 
   $: {
     const shouldLock = showAddMembershipModal || showTransferModal || showCreateGroupModal || showDeleteGroupModal || showRemoveMembershipModal;
@@ -458,7 +537,7 @@
   async function fetchConfigVersions(selectLatest = false) {
     if (!currentUserPermissions.includes('config:read')) return;
     try {
-      const res = await fetch('/api/config/versions?limit=12');
+      const res = await fetch('/api/config/versions?limit=40');
       if (!res.ok) throw new Error(await res.text());
       configVersions = await res.json();
       if ((selectLatest || !selectedConfigVersionID || !configVersions.some(v => v.id === selectedConfigVersionID)) && configVersions.length > 0) {
@@ -471,8 +550,7 @@
   }
 
   function sectionLastUpdated(section: string) {
-    const version = configVersions.find(v => (v.changed_sections || []).includes(section));
-    return version?.created_at || '';
+    return isSettingsSection(section) ? lastUpdatedBySection[section] || '' : '';
   }
 
   function configVersionTouchesSection(version: ConfigVersion, section: string) {
@@ -500,7 +578,7 @@
   function formatDiffValue(value: any) {
     if (value === undefined || value === null || value === '') return '空';
     if (typeof value === 'string') return value;
-    return JSON.stringify(value);
+    return JSON.stringify(value, null, 2);
   }
 
   async function rollbackConfigVersion(version: ConfigVersion) {
@@ -566,6 +644,100 @@
     saveError = '';
     saveSuccess = false;
     saveSuccessKey = null;
+  }
+
+  function statusForSection(section: SettingsSection): ConnectionStatus {
+    if (section === 'gitlab') return gitlabStatus;
+    if (section === 'feishu') return feishuStatus;
+    if (section === 'jira') return jiraStatus;
+    if (section === 'ai') return aiStatus;
+    if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning';
+    if (section === 'kpi') return currentUserPermissions.includes('kpi:read') ? 'online' : 'warning';
+    if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read') ? 'online' : 'warning';
+    return serverStatus;
+  }
+
+  function statusLabel(status: 'online' | 'offline' | 'warning') {
+    if (status === 'online') return '在线';
+    if (status === 'offline') return '离线';
+    return '待配置';
+  }
+
+  function statusTone(status: 'online' | 'offline' | 'warning'): AdminTone {
+    return toneForStatus(status === 'online' ? 'completed' : status === 'offline' ? 'failed' : 'pending');
+  }
+
+  function integrationDetail(section: SettingsSection) {
+    if (section === 'gitlab') return `${globalConfig.gitlab?.repos?.length || 0} 个仓库`;
+    if (section === 'feishu') return globalConfig.feishu?.bot?.enabled ? '机器人已启用' : '机器人待配置';
+    if (section === 'jira') return `${globalConfig.jira?.sync_projects?.length || 0} 个项目`;
+    if (section === 'projects') return `${globalConfig.jira?.sync_projects?.length || 0} 个映射`;
+    if (section === 'ai') return globalConfig.ai?.model || '模型待配置';
+    if (section === 'ai_context') return globalConfig.ai?.project_architecture ? '语料已就绪' : '语料待配置';
+    if (section === 'kpi') return '报表预览';
+    if (section === 'users') return `${users.length} 位成员`;
+    if (section === 'matrix') return `${permissionMeta.length} 个权限`;
+    if (section === 'policies') return `${authorizationPolicies.length} 条策略`;
+    if (section === 'audit') return `${auditLogs.length + authorizationAuditLogs.length} 条日志`;
+    return '-';
+  }
+
+  function sectionLastUpdatedLabel(section: SettingsSection) {
+    const updated = sectionLastUpdated(section);
+    return updated ? formatDateTime(updated) : '暂无版本';
+  }
+
+  function requiredPermissionLabel(section: SettingsSection) {
+    if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return '配置只读';
+    if (section === 'ai_context') return '语料只读';
+    if (section === 'kpi') return '绩效只读';
+    return '成员只读';
+  }
+
+  function sectionDisplayName(section: string) {
+    return SETTINGS_NAV_ITEMS.find(item => item.id === section)?.label || section;
+  }
+
+  function formatChangedSections(sections: string[] = []) {
+    return sections.map(sectionDisplayName).join(' / ') || '无差异';
+  }
+
+  function sectionApiLinks(section: SettingsSection) {
+    if (['gitlab', 'feishu', 'jira', 'projects', 'ai', 'ai_context'].includes(section)) {
+      return ['/api/config', '/api/config/versions'];
+    }
+    if (section === 'kpi') return ['/api/kpi/performance', '/api/kpi/report-preview'];
+    if (section === 'users') return ['/api/users', '/api/groups'];
+    if (section === 'matrix') return ['/api/groups', '/api/permissions'];
+    if (section === 'policies') return ['/api/authz/policies', '/api/authz/explain', '/api/authz/audit-logs'];
+    if (section === 'audit') return ['/api/audit-logs', '/api/authz/audit-logs'];
+    return [];
+  }
+
+  function buildSettingsInspector(): AdminInspectorRecord {
+    const status = statusForSection(activeSectionMeta.id);
+    return {
+      id: activeSectionMeta.id,
+      title: activeSectionMeta.label,
+      status: statusLabel(status),
+      tone: statusTone(status),
+      facts: [
+        { label: '分类', value: activeSectionMeta.group },
+        { label: '权限', value: requiredPermissionLabel(activeSectionMeta.id) },
+        { label: '最近更新', value: sectionLastUpdatedLabel(activeSectionMeta.id) },
+        { label: '链路状态', value: integrationDetail(activeSectionMeta.id) }
+      ],
+      sections: [
+        {
+          title: '真实数据链路',
+          items: sectionApiLinks(activeSectionMeta.id)
+        },
+        {
+          title: '当前说明',
+          body: activeSectionMeta.summary
+        }
+      ]
+    };
   }
 
   // RBAC Requests
@@ -1083,9 +1255,12 @@
   }
 
   onMount(() => {
-    if (!canAccessSection(activeSection)) {
+    if (isSettingsSection(activeSettingsSection)) {
+      activeSection = activeSettingsSection;
+    } else if (!canAccessSection(activeSection)) {
       activeSection = firstAccessibleSection();
     }
+    onSectionChange(activeSection);
     fetchConfig();
     fetchConfigVersions();
     fetchStatus();
@@ -1099,7 +1274,7 @@
     statusIntervalId = setInterval(fetchStatus, 5000);
 
     const handleFocus = (e: any) => {
-      if (e.detail && ['gitlab', 'feishu', 'jira', 'projects', 'ai', 'ai_context', 'kpi'].includes(e.detail)) {
+      if (isSettingsSection(e.detail)) {
         switchSection(e.detail);
       }
     };
@@ -1111,24 +1286,12 @@
       }
       await fetchConfigVersions(true);
     };
-    const updateSettingsSidebarHeight = () => {
-      settingsSidebarHeight = settingsSidebarEl?.offsetHeight || 0;
-    };
 
-    updateSettingsSidebarHeight();
-    if (settingsSidebarEl && typeof ResizeObserver !== 'undefined') {
-      settingsSidebarResizeObserver = new ResizeObserver(updateSettingsSidebarHeight);
-      settingsSidebarResizeObserver.observe(settingsSidebarEl);
-    }
     window.addEventListener('focus-settings-section', handleFocus);
     window.addEventListener('config-updated', handleConfigUpdated);
-    window.addEventListener('resize', updateSettingsSidebarHeight);
     return () => {
       window.removeEventListener('focus-settings-section', handleFocus);
       window.removeEventListener('config-updated', handleConfigUpdated);
-      window.removeEventListener('resize', updateSettingsSidebarHeight);
-      settingsSidebarResizeObserver?.disconnect();
-      settingsSidebarResizeObserver = null;
       if (statusIntervalId) {
         clearInterval(statusIntervalId);
       }
@@ -1143,116 +1306,62 @@
   });
 </script>
 
-<div class="settings-container">
-  <!-- Left Category Navigation Sidebar -->
-  <aside class="settings-sidebar font-mono" bind:this={settingsSidebarEl}>
-    <div class="sidebar-header">
-      <h3>⚙️ 系统设置</h3>
-      <span class="version-label">Category settings · {currentUserRole}</span>
-    </div>
-    <nav class="sidebar-nav">
-      {#if currentUserPermissions.includes('config:read')}
-        <div class="nav-group">
-          <span class="group-title">集成设置</span>
-          <button class="nav-item {activeSection === 'gitlab' ? 'active' : ''}" on:click={() => switchSection('gitlab')}>
-            <span class="status-indicator indicator-{gitlabStatus}"></span>
-            <span>🔌 GitLab 仓库</span>
-          </button>
-          <button class="nav-item {activeSection === 'feishu' ? 'active' : ''}" on:click={() => switchSection('feishu')}>
-            <span class="status-indicator indicator-{feishuStatus}"></span>
-            <span>🤖 飞书消息同步</span>
-          </button>
-          <button class="nav-item {activeSection === 'jira' ? 'active' : ''}" on:click={() => switchSection('jira')}>
-            <span class="status-indicator indicator-{jiraStatus}"></span>
-            <span>📝 Jira 服务关联</span>
-          </button>
-          <button class="nav-item {activeSection === 'projects' ? 'active' : ''}" on:click={() => switchSection('projects')}>
-            <span class="status-indicator indicator-online"></span>
-            <span>📝 项目优先级与集成</span>
-          </button>
-        </div>
-      {/if}
-
-      {#if currentUserPermissions.includes('config:read') || currentUserPermissions.includes('ai_context:read')}
-        <div class="nav-group">
-          <span class="group-title">AI 工作台</span>
-          {#if currentUserPermissions.includes('config:read')}
-            <button class="nav-item {activeSection === 'ai' ? 'active' : ''}" on:click={() => switchSection('ai')}>
-              <span class="status-indicator indicator-{aiStatus}"></span>
-              <span>🧠 AI 引擎配置</span>
-            </button>
-          {/if}
-          <button class="nav-item {activeSection === 'ai_context' ? 'active' : ''}" on:click={() => switchSection('ai_context')}>
-            <span class="status-indicator indicator-{currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning'}"></span>
-            <span>🗂️ 系统设计语料库</span>
-          </button>
-        </div>
-      {/if}
-
-      {#if currentUserPermissions.includes('kpi:read')}
-        <div class="nav-group">
-          <span class="group-title">运营洞察</span>
-          <button class="nav-item {activeSection === 'kpi' ? 'active' : ''}" on:click={() => switchSection('kpi')}>
-            <span class="status-indicator indicator-online"></span>
-            <span>📈 KPI 绩效大盘</span>
-          </button>
-        </div>
-      {/if}
-
-      {#if currentUserPermissions.includes('users:read')}
-        <div class="nav-group">
-          <span class="group-title">安全与授权</span>
-          <button class="nav-item {activeSection === 'users' ? 'active' : ''}" on:click={() => switchSection('users')}>
-            👥 成员角色管理
-          </button>
-          <button class="nav-item {activeSection === 'matrix' ? 'active' : ''}" on:click={() => switchSection('matrix')}>
-            🌲 权限树配置
-          </button>
-          <button class="nav-item {activeSection === 'policies' ? 'active' : ''}" on:click={() => switchSection('policies')}>
-            🧭 策略化授权
-          </button>
-          <button class="nav-item {activeSection === 'audit' ? 'active' : ''}" on:click={() => switchSection('audit')}>
-            📋 审计安全日志
-          </button>
-        </div>
-      {/if}
+<div class="settings-container phase41-settings phase46-settings phase49-settings">
+  <main class="settings-main">
+    <nav class="settings-breadcrumb-bar" aria-label="面包屑导航">
+      <ol>
+        {#each settingsBreadcrumbs as crumb, index}
+          <li class:current={index === settingsBreadcrumbs.length - 1}>
+            <span>{crumb}</span>
+          </li>
+        {/each}
+      </ol>
+      <div class="breadcrumb-meta">
+        <span class="wa-admin-pill {ADMIN_TONE_CLASS[settingsInspector.tone || 'neutral']}">{settingsInspector.status}</span>
+        <span class="font-mono">{settingsContextDetail}</span>
+      </div>
     </nav>
-  </aside>
 
-  <!-- Right Section Panel -->
-  <main class="settings-main" style="max-height: {settingsSidebarHeight ? `${settingsSidebarHeight}px` : 'none'};">
+    <section class="settings-content-shell" aria-labelledby="settings-content-title">
+      <header class="settings-content-header">
+        <div>
+          <span class="settings-kicker">{activeSectionMeta.domain}</span>
+          <h1 id="settings-content-title">{activeSectionMeta.label}</h1>
+          <p>{activeSectionMeta.summary}</p>
+        </div>
+        <div class="settings-content-facts">
+          {#each settingsInspector.facts.slice(1) as fact}
+            <div>
+              <span>{fact.label}</span>
+              <strong>{fact.value}</strong>
+            </div>
+          {/each}
+        </div>
+      </header>
+
+      <div class="settings-module-panel">
+        <div class="settings-workbench-grid" class:without-audit={!isIntegrationSection}>
+          <div class="settings-primary-pane" class:integration-surface={isIntegrationSection || activeSection === 'ai_context'}>
     {#if activeSection === 'gitlab'}
-      <div class="section-card">
-        <GitLabConfig config={globalConfig.gitlab} lastUpdated={sectionLastUpdated('gitlab')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
-      </div>
+            <GitLabConfig config={globalConfig.gitlab} lastUpdated={lastUpdatedBySection.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
     {:else if activeSection === 'feishu'}
-      <div class="section-card">
-        <FeishuConfig config={globalConfig.feishu} lastUpdated={sectionLastUpdated('feishu')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
-      </div>
+            <FeishuConfig config={globalConfig.feishu} lastUpdated={lastUpdatedBySection.feishu} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
     {:else if activeSection === 'jira'}
-      <div class="section-card">
-        <JiraConfig config={globalConfig.jira} lastUpdated={sectionLastUpdated('jira')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
-      </div>
+            <JiraConfig config={globalConfig.jira} lastUpdated={lastUpdatedBySection.jira} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
     {:else if activeSection === 'projects'}
-      <div class="section-card">
-        <ProjectConfig lastUpdated={sectionLastUpdated('projects')} syncProjects={globalConfig.jira?.sync_projects || []} />
-      </div>
+            <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} />
     {:else if activeSection === 'ai'}
-      <div class="section-card">
-        <AIConfig view="engine" config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
-      </div>
+            <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
     {:else if activeSection === 'ai_context'}
-      <div class="section-card">
-        <AIConfig view="context" config={globalConfig.ai} lastUpdated={sectionLastUpdated('ai')} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} />
-      </div>
+            <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} />
     {:else if activeSection === 'kpi'}
-      <div class="kpi-settings-panel">
-        <KPIKanban />
-      </div>
+            <div class="kpi-settings-panel">
+              <KPIKanban />
+            </div>
     {:else if activeSection === 'users'}
-      <div class="section-card">
+            <div class="section-card">
         <div class="card-header">
-          <h2>👥 成员角色与项目隔离 (Scope) 管理</h2>
+          <h2>成员角色与项目隔离 (Scope) 管理</h2>
           <p>查看并管理注册成员所属的权限组，在此可配置细粒度的 GitLab 仓库作用域隔离（Scope）。</p>
         </div>
 
@@ -1288,14 +1397,14 @@
                         <div class="membership-badge badge-{membership.group_name}">
                           <span class="badge-role">{membership.group_display_name}</span>
                           <span class="badge-scope">
-                            {membership.scope === 'global' ? '🌎 全局' : `📂 ${membership.scope_id}`}
+                            {membership.scope === 'global' ? '全局' : membership.scope_id}
                           </span>
                           {#if currentUserPermissions.includes('users:write') && membership.group_name !== 'super_admin'}
                             <button class="remove-membership-btn" on:click={() => requestRemoveMembership(user.username, membership)} title="移除组身份">&times;</button>
                           {/if}
                         </div>
                       {:else}
-                        <span class="text-muted text-xs font-mono">⚠️ 暂未分配用户组（无管理权限）</span>
+                        <span class="text-muted text-xs font-mono">暂未分配用户组（无管理权限）</span>
                       {/each}
                     </div>
                   </td>
@@ -1303,12 +1412,12 @@
                     <div class="actions-cell">
                       {#if currentUserPermissions.includes('users:write')}
                         <Button size="small" variant="ghost" on:click={() => openAddMembership(user.username)}>
-                          ➕ 分配组
+                          分配组
                         </Button>
                       {/if}
                       {#if currentUserPermissions.includes('users:transfer_super_admin') && user.username !== currentUserEmail}
                         <Button size="small" variant="danger" on:click={() => openTransferAdmin(user.username)}>
-                          👑 转让超管
+                          转让超管
                         </Button>
                       {/if}
                     </div>
@@ -1323,7 +1432,7 @@
       <div class="section-card">
         <div class="card-header flex-header">
           <div>
-            <h2>🌲 可视化权限树配置</h2>
+            <h2>可视化权限树配置</h2>
             <p>按权限命名空间自动归类，纵向展示每个原子权限与用户组覆盖关系。</p>
             <div class="permission-catalog-status">
               <span class:live={permissionCatalog.length > 0}>{permissionCatalogSourceLabel}</span>
@@ -1336,7 +1445,7 @@
             </Button>
             {#if currentUserPermissions.includes('users:write')}
               <Button variant="ghost" on:click={() => showCreateGroupModal = true}>
-                🛠️ 创建自定义组
+                创建自定义组
               </Button>
             {/if}
           </div>
@@ -1431,7 +1540,7 @@
       <div class="section-card">
         <div class="card-header flex-header">
           <div>
-            <h2>🧭 策略化授权控制台</h2>
+            <h2>策略化授权控制台</h2>
             <p>在原有用户组权限矩阵之上追加 allow/deny 策略，按主体、动作、资源与作用域解释最终授权结果。</p>
           </div>
           <Button variant="ghost" on:click={() => { fetchAuthorizationPolicies(); fetchAuthorizationAuditLogs(); }}>
@@ -1458,7 +1567,7 @@
         <div class="policy-workbench refined">
           <section class="policy-panel policy-builder">
             <div class="policy-panel-header">
-              <span class="audit-kicker font-mono">Policy Builder</span>
+              <span class="audit-kicker font-mono">策略编辑</span>
               <h3>新增授权策略</h3>
             </div>
 
@@ -1621,7 +1730,7 @@
 
           <section class="policy-panel">
             <div class="policy-panel-header">
-              <span class="audit-kicker font-mono">Explain Decision</span>
+              <span class="audit-kicker font-mono">授权解释</span>
               <h3>授权解释器</h3>
             </div>
             {#if authorizationExplainError}
@@ -1700,7 +1809,7 @@
         <div class="policy-grid">
           <section class="policy-panel">
             <div class="policy-panel-header">
-              <span class="audit-kicker font-mono">Policies</span>
+              <span class="audit-kicker font-mono">策略清单</span>
               <h3>策略列表</h3>
             </div>
             <div class="table-responsive policy-table-wrap">
@@ -1739,7 +1848,7 @@
 
           <section class="policy-panel">
             <div class="policy-panel-header">
-              <span class="audit-kicker font-mono">Decision Audit</span>
+              <span class="audit-kicker font-mono">授权审计</span>
               <h3>授权决策审计</h3>
             </div>
             <div class="decision-log-list">
@@ -1761,7 +1870,7 @@
     {:else if activeSection === 'audit'}
       <div class="section-card">
         <div class="card-header">
-          <h2>📋 安全审计日志痕迹 (Audit Logs)</h2>
+          <h2>安全审计日志痕迹 (Audit Logs)</h2>
           <p>系统自动记录所有敏感配置修改、鉴权登录及用户权限矩阵分配的操作行迹，以便溯源审计。</p>
         </div>
 
@@ -1792,7 +1901,7 @@
                 </tr>
               {:else}
                 <tr>
-                  <td colspan="5" style="text-align: center; color: #64748b; padding: 24px;">📭 暂无敏感操作审计记录</td>
+                  <td colspan="5" style="text-align: center; color: #64748b; padding: 24px;">暂无敏感操作审计记录</td>
                 </tr>
               {/each}
             </tbody>
@@ -1800,81 +1909,93 @@
         </div>
       </div>
     {/if}
+          </div>
 
     {#if isIntegrationSection}
-      <section class="config-audit-panel">
-        <div class="config-audit-header">
-          <div>
-            <span class="audit-kicker font-mono">Versioned Config</span>
-            <h3>配置版本审计与回滚 <em>{activeSection}</em></h3>
-          </div>
-          <Button size="small" variant="ghost" on:click={() => fetchConfigVersions()}>刷新记录</Button>
-        </div>
-
-        {#if configVersionError}
-          <div class="config-version-error">{configVersionError}</div>
-        {/if}
-
-        {#if configVersions.length === 0}
-          <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
-        {:else if visibleConfigVersions.length === 0}
-          <div class="empty-version-state">当前配置页暂无独立版本记录。</div>
-        {:else}
-          <div class="version-layout">
-            <div class="version-list" role="list" aria-label="配置版本">
-              {#each visibleConfigVersions as version}
-                <button
-                  type="button"
-                  class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
-                  on:click={() => selectedConfigVersionID = version.id}
-                >
-                  <span class="version-title">v{version.version}</span>
-                  <span class="version-meta">{formatDateTime(version.created_at)}</span>
-                  <span class="version-sections">{(version.changed_sections || []).join(' / ') || '无差异'}</span>
-                </button>
-              {/each}
-            </div>
-
-            {#if selectedConfigVersion}
-              <div class="version-detail">
-                <div class="version-detail-header">
-                  <div>
-                    <span class="version-title">版本 v{selectedConfigVersion.version}</span>
-                    <p>{selectedConfigVersion.actor_name || selectedConfigVersion.actor_id || 'system'} · {selectedConfigVersion.source || 'manual'}</p>
-                  </div>
-                  <Button
-                    size="small"
-                    variant="danger"
-                    loading={rollbackLoadingID === selectedConfigVersion.id}
-                    disabled={rollbackLoadingID !== null || selectedConfigVersion.id === configVersions[0]?.id}
-                    on:click={() => rollbackConfigVersion(selectedConfigVersion)}
-                  >
-                    回滚到此版本
-                  </Button>
+          <aside class="settings-audit-pane" aria-label="配置版本审计">
+            <section class="config-audit-panel">
+              <div class="config-audit-header">
+                <div>
+                  <span class="audit-kicker font-mono">版本审计</span>
+                  <h3>配置版本审计与回滚 <span class="audit-scope">{activeSectionMeta.label}</span></h3>
                 </div>
-
-                {#if selectedConfigVersion.rollback_from_version_id}
-                  <div class="rollback-note">由 v{selectedConfigVersion.rollback_from_version_id} 回滚生成</div>
-                {/if}
-
-                <div class="diff-table">
-                  {#each (selectedConfigVersion.diff || []).slice(0, 8) as diff}
-                    <div class="diff-row">
-                      <span class="diff-path font-mono">{diff.path}</span>
-                      <span class="diff-value before font-mono">{formatDiffValue(diff.before)}</span>
-                      <span class="diff-arrow">→</span>
-                      <span class="diff-value after font-mono">{formatDiffValue(diff.after)}</span>
-                    </div>
-                  {:else}
-                    <div class="diff-empty">该版本为初始快照或无字段差异。</div>
-                  {/each}
-                </div>
+                <Button size="small" variant="ghost" on:click={() => fetchConfigVersions()}>刷新记录</Button>
               </div>
+
+              {#if configVersionError}
+                <div class="config-version-error">{configVersionError}</div>
+              {/if}
+
+              {#if configVersions.length === 0}
+                <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
+              {:else if visibleConfigVersions.length === 0}
+                <div class="empty-version-state">当前配置页暂无独立版本记录。</div>
+              {:else}
+                <div class="version-layout">
+                  <div class="version-list" role="list" aria-label="配置版本">
+                    {#each visibleConfigVersions as version}
+                      <button
+                        type="button"
+                        class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
+                        on:click={() => selectedConfigVersionID = version.id}
+                      >
+                        <span class="version-title">v{version.version}</span>
+                        <span class="version-meta">{formatDateTime(version.created_at)}</span>
+                        <span class="version-sections">{formatChangedSections(version.changed_sections || [])}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  {#if selectedConfigVersion}
+                    <div class="version-detail">
+                      <div class="version-detail-header">
+                        <div>
+                          <span class="version-title">版本 v{selectedConfigVersion.version}</span>
+                          <p>{selectedConfigVersion.actor_name || selectedConfigVersion.actor_id || 'system'} · {selectedConfigVersion.source || 'manual'}</p>
+                        </div>
+                        <Button
+                          size="small"
+                          variant="danger"
+                          loading={rollbackLoadingID === selectedConfigVersion.id}
+                          disabled={rollbackLoadingID !== null || selectedConfigVersion.id === configVersions[0]?.id}
+                          on:click={() => rollbackConfigVersion(selectedConfigVersion)}
+                        >
+                          回滚到此版本
+                        </Button>
+                      </div>
+
+                      {#if selectedConfigVersion.rollback_from_version_id}
+                        <div class="rollback-note">由 v{selectedConfigVersion.rollback_from_version_id} 回滚生成</div>
+                      {/if}
+
+                      <div class="diff-table">
+                        {#each selectedConfigVersion.diff || [] as diff}
+                          <div class="diff-row">
+                            <span class="diff-path font-mono">{diff.path}</span>
+                            <div class="diff-value before">
+                              <span>变更前</span>
+                              <pre class="font-mono">{formatDiffValue(diff.before)}</pre>
+                            </div>
+                            <span class="diff-arrow">→</span>
+                            <div class="diff-value after">
+                              <span>变更后</span>
+                              <pre class="font-mono">{formatDiffValue(diff.after)}</pre>
+                            </div>
+                          </div>
+                        {:else}
+                          <div class="diff-empty">该版本为初始快照或无字段差异。</div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </section>
+          </aside>
             {/if}
           </div>
-        {/if}
-      </section>
-    {/if}
+      </div>
+    </section>
   </main>
 </div>
 
@@ -1888,10 +2009,10 @@
       </div>
       <div class="modal-body">
         {#if membershipError}
-          <div class="error-banner">❌ {membershipError}</div>
+          <div class="error-banner">{membershipError}</div>
         {/if}
         {#if membershipSuccess}
-          <div class="success-banner">✅ {membershipSuccess}</div>
+          <div class="success-banner">{membershipSuccess}</div>
         {/if}
         
         <div class="field-item">
@@ -1911,7 +2032,7 @@
           </button>
           
           {#if showGroupDropdown}
-            <div class="dropdown-backdrop-overlay" on:click={() => showGroupDropdown = false}></div>
+            <button type="button" class="dropdown-backdrop-overlay" aria-label="关闭用户组下拉菜单" on:click={() => showGroupDropdown = false}></button>
             <div class="dropdown-options-list glass-panel font-mono">
               {#each groups as g}
                 {#if g.name !== 'super_admin'}
@@ -2012,12 +2133,12 @@
   <div class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3 style="color: #ef4444;">⚠️ 警告：超级管理员控制权转让</h3>
+        <h3 style="color: #ef4444;">警告：超级管理员控制权转让</h3>
         <button class="close-modal-btn" on:click={() => showTransferModal = false}>&times;</button>
       </div>
       <div class="modal-body">
         {#if transferError}
-          <div class="error-banner">❌ {transferError}</div>
+          <div class="error-banner">{transferError}</div>
         {/if}
         <Alert type="warning">
           转让超级管理员是高危操作。转让完成后，您的账号将被降级为「系统管理员组」，原有的超级管理员管理权与审批权将不可撤销地转让给他人。
@@ -2050,12 +2171,12 @@
   <div class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>🛠️ 创建自定义组 (Role Group)</h3>
+        <h3>创建自定义组 (Role Group)</h3>
         <button class="close-modal-btn" on:click={() => showCreateGroupModal = false}>&times;</button>
       </div>
       <div class="modal-body">
         {#if createGroupError}
-          <div class="error-banner">❌ {createGroupError}</div>
+          <div class="error-banner">{createGroupError}</div>
         {/if}
         <div class="field-item">
           <label for="new-group-name">组代码名称 (英文小写下划线，作为系统唯一 Key)</label>
@@ -2134,10 +2255,7 @@
 
 <style>
   .settings-container {
-    display: grid;
-    grid-template-columns: 250px minmax(0, 1fr);
-    align-items: stretch;
-    gap: 28px;
+    display: block;
     flex: 1;
     width: 100%;
     height: auto;
@@ -2145,107 +2263,6 @@
     overflow: visible;
     padding-bottom: 32px;
     box-sizing: border-box;
-  }
-
-  .settings-sidebar {
-    box-sizing: border-box;
-    background: linear-gradient(180deg, rgba(11, 19, 41, 0.98), rgba(8, 13, 28, 0.98));
-    border: 1px solid rgba(71, 85, 105, 0.46);
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 18px 48px -32px rgba(0, 0, 0, 0.82), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-    height: auto;
-    align-self: start;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: visible;
-    position: sticky;
-    top: 24px;
-    scrollbar-width: none; /* Firefox */
-  }
-
-  .settings-sidebar::-webkit-scrollbar {
-    display: none; /* Safari & Chrome */
-  }
-
-  .sidebar-header {
-    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-    padding-bottom: 12px;
-    margin-bottom: 16px;
-    flex-shrink: 0;
-  }
-
-  .sidebar-header h3 {
-    margin: 0 0 4px 0;
-    font-size: 1.1rem;
-    color: #e2e8f0;
-  }
-
-  .version-label {
-    display: block;
-    font-size: 0.7rem;
-    color: #64748b;
-    line-height: 1.35;
-  }
-
-  .sidebar-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    flex: none;
-    min-height: 0;
-    overflow: visible;
-    padding-right: 0;
-  }
-
-  .nav-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 20px;
-  }
-
-  .group-title {
-    font-size: 0.75rem;
-    color: #475569;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 4px;
-    padding-left: 8px;
-  }
-
-  .nav-item {
-    background: transparent;
-    border: none;
-    color: #94a3b8;
-    text-align: left;
-    padding: 8px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .nav-item:hover {
-    background: rgba(30, 41, 59, 0.5);
-    color: #e2e8f0;
-    padding-left: 16px;
-  }
-
-  .nav-item:active {
-    transform: scale(0.97);
-  }
-
-  .nav-item.active {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-    color: #ffffff;
-    font-weight: 700;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
   }
 
   .settings-main {
@@ -2753,14 +2770,6 @@
     margin: 4px 0 0 0;
     color: #f8fafc;
     font-size: 0.92rem;
-  }
-
-  .config-audit-header h3 em {
-    margin-left: 6px;
-    color: #64748b;
-    font-size: 0.72rem;
-    font-style: normal;
-    font-weight: 700;
   }
 
   .config-version-error,
@@ -3732,29 +3741,9 @@
     bottom: 0;
     z-index: 1099;
     background: transparent;
-  }
-
-  .status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    transition: all 0.3s ease;
-  }
-
-  .indicator-online {
-    background-color: #10b981;
-    box-shadow: 0 0 8px #10b981;
-  }
-
-  .indicator-offline {
-    background-color: #ef4444;
-    box-shadow: 0 0 8px #ef4444;
-  }
-
-  .indicator-warning {
-    background-color: #f59e0b;
-    box-shadow: 0 0 8px #f59e0b;
+    border: 0;
+    padding: 0;
+    cursor: default;
   }
 
   .input-disabled {
@@ -3808,23 +3797,227 @@
     border: 1px solid rgba(16, 185, 129, 0.2);
   }
 
+  /* Phase 41 settings shell: light management workspace, scoped away from modals. */
+  .phase41-settings {
+    display: block;
+    color: #102033;
+    padding-bottom: 28px;
+  }
+
+  .settings-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #008f96;
+    font-size: 0.7rem;
+    font-weight: 900;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .phase41-settings .settings-main {
+    gap: 16px;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .settings-breadcrumb-bar {
+    border-radius: 8px;
+    border: 1px solid rgba(139, 159, 181, 0.28);
+    background: rgba(255, 255, 255, 0.74);
+    box-shadow: 0 12px 28px rgba(25, 43, 61, 0.07);
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  .settings-breadcrumb-bar ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: #69798b;
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+
+  .settings-breadcrumb-bar li {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .settings-breadcrumb-bar li + li::before {
+    content: "/";
+    color: #a4b0bd;
+    font-weight: 700;
+  }
+
+  .settings-breadcrumb-bar button {
+    border: 0;
+    background: transparent;
+    color: #0d1b2a;
+    font: inherit;
+    font-weight: 900;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .settings-breadcrumb-bar li.current span {
+    color: #0b1724;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .breadcrumb-meta {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #7a8897;
+    font-size: 0.76rem;
+  }
+
+  .settings-content-shell {
+    border-radius: 8px;
+    border: 1px solid rgba(139, 159, 181, 0.32);
+    background: rgba(255, 255, 255, 0.76);
+    box-shadow: 0 16px 34px rgba(25, 43, 61, 0.08);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  .settings-content-header {
+    border-bottom: 1px solid rgba(139, 159, 181, 0.24);
+    padding: 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.86fr);
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .settings-content-header h1 {
+    margin: 3px 0 0;
+    color: #0d1b2a;
+    font-size: 1.12rem;
+    line-height: 1.15;
+    letter-spacing: 0;
+  }
+
+  .settings-content-header p {
+    display: none;
+  }
+
+  .settings-content-facts {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .settings-content-facts div {
+    min-width: 0;
+    min-height: 48px;
+    border-radius: 8px;
+    border: 1px solid rgba(139, 159, 181, 0.22);
+    background: rgba(247, 250, 252, 0.78);
+    padding: 9px 10px;
+    display: grid;
+    align-content: center;
+    gap: 4px;
+  }
+
+  .settings-content-facts span {
+    color: #7a8897;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .settings-content-facts strong {
+    color: #0d1b2a;
+    font-size: 0.86rem;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-module-panel {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    border-radius: 8px;
+    border: 1px solid rgba(139, 159, 181, 0.24);
+    background: rgba(255, 255, 255, 0.62);
+    box-shadow: none;
+    color: #13243a;
+  }
+
+  .phase41-settings .kpi-settings-panel {
+    padding: 0;
+  }
+
+  .phase41-settings .card-header {
+    border-bottom-color: rgba(139, 159, 181, 0.24);
+  }
+
+  .phase41-settings .card-header h2,
+  .phase41-settings .config-audit-header h3,
+  .phase41-settings .policy-panel-header h3 {
+    color: #0d1b2a;
+  }
+
+  .phase41-settings .card-header p,
+  .phase41-settings .version-detail-header p,
+  .phase41-settings .decision-card p {
+    color: #667789;
+  }
+
+  .phase41-settings .table-responsive,
+  .phase41-settings .policy-panel,
+  .phase41-settings .version-detail,
+  .phase41-settings .decision-card,
+  .phase41-settings .permission-branch,
+  .phase41-settings .group-coverage-card {
+    border-color: rgba(139, 159, 181, 0.24);
+    background: rgba(255, 255, 255, 0.6);
+  }
+
+  .phase41-settings th,
+  .phase41-settings td {
+    color: #25384d;
+    border-bottom-color: rgba(139, 159, 181, 0.18);
+    background: transparent;
+  }
+
+  .phase41-settings th {
+    color: #69798b;
+    background: rgba(241, 246, 249, 0.78);
+    letter-spacing: 0;
+  }
+
+  .phase41-settings tr:hover td {
+    background: rgba(238, 247, 247, 0.62);
+  }
+
   @media (max-width: 1100px) {
     .settings-container {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
       height: auto;
       min-height: 0;
       overflow: visible;
-    }
-
-    .settings-sidebar {
-      width: auto;
-      position: static;
-      height: auto;
-      max-height: none;
-      overflow: visible;
-      align-self: stretch;
     }
 
     .settings-main {
@@ -3838,19 +4031,6 @@
       height: auto;
       min-height: 0;
       overflow: visible;
-    }
-
-    .sidebar-nav {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-      flex: none;
-      overflow: visible;
-      padding-right: 0;
-    }
-
-    .nav-group {
-      margin-bottom: 20px;
     }
 
     .policy-workbench,
@@ -3909,6 +4089,3057 @@
 
     .diff-arrow {
       text-align: left;
+    }
+  }
+
+  /* Phase 41 final settings calibration: flat shell, light child config surfaces. */
+  .phase41-settings {
+    --settings-surface: rgba(255, 255, 255, 0.78);
+    --settings-surface-strong: rgba(255, 255, 255, 0.92);
+    --settings-surface-soft: rgba(247, 250, 252, 0.78);
+    --settings-border: rgba(121, 139, 159, 0.18);
+    --settings-border-strong: rgba(85, 106, 128, 0.3);
+    max-width: var(--wa-content-max, 1720px);
+    margin: 0 auto;
+    padding-bottom: 16px;
+  }
+
+  .phase41-settings .settings-content-shell {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .phase41-settings .settings-content-header,
+  .settings-breadcrumb-bar {
+    border-radius: var(--wa-radius-md, 8px);
+    border-color: var(--settings-border);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 250, 252, 0.72)),
+      var(--settings-surface);
+    box-shadow: 0 10px 24px rgba(26, 41, 58, 0.06);
+  }
+
+  .phase41-settings .settings-content-header {
+    padding: 14px 16px;
+  }
+
+  .phase41-settings .settings-content-header p {
+    display: block;
+    max-width: 720px;
+    margin: 6px 0 0;
+    color: var(--wa-text-muted, #667789);
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+
+  .phase41-settings .settings-module-panel {
+    padding: 14px 0 0;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    border-radius: var(--wa-radius-md, 8px);
+    border-color: var(--settings-border);
+    background: var(--settings-surface);
+    box-shadow: 0 12px 28px rgba(26, 41, 58, 0.065);
+  }
+
+  .phase41-settings :global(.card-header h2),
+  .phase41-settings :global(.config-overview h3),
+  .phase41-settings :global(.summary-card h3),
+  .phase41-settings :global(.webhook-automation-panel h3),
+  .phase41-settings :global(.context-registry-panel h3),
+  .phase41-settings :global(.pack-preview-panel h3) {
+    color: var(--wa-text-strong, #0d1722);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    letter-spacing: 0;
+  }
+
+  .phase41-settings :global(.card-header p),
+  .phase41-settings :global(.config-overview p),
+  .phase41-settings :global(.summary-card p),
+  .phase41-settings :global(.field-desc),
+  .phase41-settings :global(.helper-text),
+  .phase41-settings :global(.text-muted) {
+    color: var(--wa-text-muted, #667789);
+  }
+
+  .phase41-settings :global(.config-overview),
+  .phase41-settings :global(.overview-grid > div),
+  .phase41-settings :global(.summary-card),
+  .phase41-settings :global(.webhook-automation-panel),
+  .phase41-settings :global(.context-health-grid),
+  .phase41-settings :global(.context-config-panel),
+  .phase41-settings :global(.context-registry-panel),
+  .phase41-settings :global(.pack-preview-panel),
+  .phase41-settings :global(.form-container),
+  .phase41-settings :global(.table-container),
+  .phase41-settings :global(.table-responsive),
+  .phase41-settings :global(.autoload-section),
+  .phase41-settings :global(.project-card-item) {
+    border-color: var(--settings-border) !important;
+    border-radius: var(--wa-radius-md, 8px) !important;
+    background: var(--settings-surface-soft) !important;
+    color: var(--wa-text-main, #293847) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(table) {
+    color: var(--wa-text-main, #293847);
+  }
+
+  .phase41-settings :global(th) {
+    color: var(--wa-text-muted, #667789) !important;
+    background: rgba(241, 246, 249, 0.92) !important;
+    border-bottom-color: var(--settings-border) !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+  }
+
+  .phase41-settings :global(td) {
+    color: var(--wa-text-main, #293847) !important;
+    border-bottom-color: var(--settings-border) !important;
+  }
+
+  .phase41-settings :global(tr:hover td) {
+    background: rgba(238, 247, 247, 0.72) !important;
+  }
+
+  .phase41-settings :global(input),
+  .phase41-settings :global(textarea),
+  .phase41-settings :global(select),
+  .phase41-settings :global(.custom-input),
+  .phase41-settings :global(.custom-textarea),
+  .phase41-settings :global(.dropdown-trigger-btn),
+  .phase41-settings :global(.custom-select-dropdown),
+  .phase41-settings :global(.dropdown-options-list) {
+    border-color: var(--settings-border) !important;
+    background: rgba(255, 255, 255, 0.86) !important;
+    color: var(--wa-text-strong, #0d1722) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(input:focus),
+  .phase41-settings :global(textarea:focus),
+  .phase41-settings :global(select:focus),
+  .phase41-settings :global(.custom-input:focus),
+  .phase41-settings :global(.custom-textarea:focus) {
+    border-color: var(--wa-accent, #008f96) !important;
+    background: #ffffff !important;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1) !important;
+  }
+
+  .phase41-settings :global(.dropdown-item),
+  .phase41-settings :global(.dropdown-option-item) {
+    color: var(--wa-text-main, #293847) !important;
+  }
+
+  .phase41-settings :global(.dropdown-item:hover),
+  .phase41-settings :global(.dropdown-option-item:hover),
+  .phase41-settings :global(.dropdown-option-item.selected) {
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12)) !important;
+    color: var(--wa-accent-strong, #006f76) !important;
+  }
+
+  .phase41-settings .policy-template-strip button,
+  .phase41-settings .policy-panel,
+  .phase41-settings .choice-card,
+  .phase41-settings .segmented-pills,
+  .phase41-settings .segmented-pills button,
+  .phase41-settings .suggestion-pills button,
+  .phase41-settings .action-chip-grid button,
+  .phase41-settings .priority-stepper strong,
+  .phase41-settings .priority-stepper button,
+  .phase41-settings .toggle-pill,
+  .phase41-settings .decision-log-item,
+  .phase41-settings .permission-node,
+  .phase41-settings .delete-target-card {
+    border-color: var(--settings-border);
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--wa-text-main, #293847);
+  }
+
+  .phase41-settings .policy-template-strip span,
+  .phase41-settings .choice-card strong,
+  .phase41-settings .permission-code,
+  .phase41-settings .priority-stepper strong,
+  .phase41-settings .decision-log-item strong {
+    color: var(--wa-text-strong, #0d1722);
+  }
+
+  .phase41-settings .policy-template-strip small,
+  .phase41-settings .choice-card small,
+  .phase41-settings .action-chip-grid small {
+    color: var(--wa-text-muted, #667789);
+  }
+
+  .phase41-settings .segmented-pills button.active,
+  .phase41-settings .suggestion-pills button.active,
+  .phase41-settings .action-chip-grid button.active {
+    border-color: rgba(0, 143, 150, 0.34);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .phase41-settings .toggle-pill i {
+    background: rgba(102, 119, 137, 0.38);
+  }
+
+  .phase41-settings .toggle-pill.on {
+    border-color: rgba(4, 150, 111, 0.24);
+    background: var(--wa-success-soft, rgba(4, 150, 111, 0.12));
+    color: var(--wa-success, #04966f);
+  }
+
+  .phase41-settings .toggle-pill.on i {
+    background: var(--wa-success, #04966f);
+  }
+
+  @media (max-width: 920px) {
+    .settings-breadcrumb-bar,
+    .phase41-settings .settings-content-header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .phase41-settings .settings-content-header {
+      grid-template-columns: 1fr;
+    }
+
+    .settings-content-facts {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Phase 42 configuration center visual reset. This layer intentionally wins over legacy dark config skins. */
+  .phase41-settings {
+    --settings-glass: rgba(255, 255, 255, 0.66);
+    --settings-glass-strong: rgba(255, 255, 255, 0.82);
+    --settings-glass-soft: rgba(248, 252, 253, 0.54);
+    --settings-edge: rgba(255, 255, 255, 0.76);
+    --settings-line: rgba(107, 127, 146, 0.16);
+    --settings-line-strong: rgba(74, 97, 118, 0.24);
+    --settings-text: #243342;
+    --settings-strong: #0c1724;
+    --settings-muted: #607384;
+    --settings-subtle: #8a9baa;
+    --settings-accent: #007f86;
+    --settings-accent-soft: rgba(0, 127, 134, 0.11);
+    --settings-blue: #255fa8;
+    --settings-blue-soft: rgba(37, 95, 168, 0.1);
+    --settings-purple: #6841a8;
+    --settings-purple-soft: rgba(104, 65, 168, 0.1);
+    --settings-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 18px 54px rgba(28, 47, 65, 0.11);
+    width: 100%;
+    max-width: min(1720px, 100%);
+    color: var(--settings-text);
+  }
+
+  .phase41-settings .settings-main {
+    gap: 12px;
+    padding-right: 0;
+    overflow: visible;
+  }
+
+  .phase41-settings .settings-content-shell {
+    display: grid;
+    gap: 12px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .phase41-settings .settings-breadcrumb-bar,
+  .phase41-settings .settings-content-header,
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    border: 1px solid var(--settings-edge);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(246, 250, 252, 0.62)),
+      var(--settings-glass);
+    box-shadow: var(--settings-shadow);
+    backdrop-filter: blur(22px) saturate(138%);
+    -webkit-backdrop-filter: blur(22px) saturate(138%);
+  }
+
+  .phase41-settings .settings-breadcrumb-bar {
+    min-height: 48px;
+    padding: 8px 12px;
+    border-radius: 16px;
+  }
+
+  .phase41-settings .settings-breadcrumb-bar ol {
+    gap: 6px;
+  }
+
+  .phase41-settings .settings-breadcrumb-bar button,
+  .phase41-settings .settings-breadcrumb-bar span,
+  .phase41-settings .breadcrumb-meta {
+    color: var(--settings-muted);
+  }
+
+  .phase41-settings .settings-breadcrumb-bar li.current span {
+    color: var(--settings-strong);
+  }
+
+  .phase41-settings .settings-content-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+    gap: 18px;
+    align-items: end;
+    min-height: 132px;
+    padding: 22px 24px;
+    border-radius: 22px;
+  }
+
+  .phase41-settings .settings-kicker {
+    color: var(--settings-accent);
+    font-size: 0.72rem;
+    font-weight: 820;
+    letter-spacing: 0.08em;
+  }
+
+  .phase41-settings .settings-content-header h1 {
+    margin: 5px 0 0;
+    color: var(--settings-strong);
+    font-size: clamp(1.55rem, 1.2vw + 1.1rem, 2.25rem);
+    line-height: 1.08;
+    font-weight: 820;
+    text-wrap: balance;
+  }
+
+  .phase41-settings .settings-content-header p {
+    max-width: 760px;
+    margin-top: 10px;
+    color: var(--settings-muted);
+    font-size: 0.9rem;
+    line-height: 1.65;
+  }
+
+  .phase41-settings .settings-content-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .phase41-settings .settings-content-facts div {
+    min-height: 64px;
+    padding: 11px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.68);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.48);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  }
+
+  .phase41-settings .settings-content-facts span {
+    color: var(--settings-subtle);
+    font-size: 0.7rem;
+  }
+
+  .phase41-settings .settings-content-facts strong {
+    color: var(--settings-strong);
+    font-size: 0.82rem;
+  }
+
+  .phase41-settings .settings-module-panel {
+    padding: 0;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    padding: 22px;
+    border-radius: 22px;
+  }
+
+  .phase41-settings :global(.config-overview),
+  .phase41-settings :global(.webhook-automation-panel),
+  .phase41-settings :global(.summary-card),
+  .phase41-settings :global(.form-sub-section),
+  .phase41-settings :global(.form-section),
+  .phase41-settings :global(.form-container),
+  .phase41-settings :global(.table-container),
+  .phase41-settings :global(.table-responsive),
+  .phase41-settings :global(.autoload-section),
+  .phase41-settings :global(.repo-mapping-section),
+  .phase41-settings :global(.add-repo-form),
+  .phase41-settings :global(.context-config-panel),
+  .phase41-settings :global(.context-registry-panel),
+  .phase41-settings :global(.pack-preview-panel),
+  .phase41-settings :global(.context-health-grid),
+  .phase41-settings :global(.overview-row),
+  .phase41-settings :global(.registry-fact-card),
+  .phase41-settings :global(.project-card-item),
+  .phase41-settings :global(.summary-repo-item),
+  .phase41-settings :global(.webhook-result-table) {
+    border-color: var(--settings-line) !important;
+    border-radius: 16px !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(248, 252, 253, 0.42)),
+      var(--settings-glass-soft) !important;
+    color: var(--settings-text) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(16px) saturate(126%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(126%) !important;
+  }
+
+  .phase41-settings :global(.overview-grid),
+  .phase41-settings :global(.context-grid),
+  .phase41-settings :global(.registry-form-grid),
+  .phase41-settings :global(.add-repo-inputs) {
+    gap: 10px !important;
+  }
+
+  .phase41-settings :global(.card-header),
+  .phase41-settings :global(.overview-header),
+  .phase41-settings :global(.context-header),
+  .phase41-settings :global(.webhook-auto-header),
+  .phase41-settings .config-audit-header {
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .phase41-settings :global(.card-header h2),
+  .phase41-settings :global(.overview-header h4),
+  .phase41-settings :global(.context-header h4),
+  .phase41-settings :global(.webhook-auto-header h5),
+  .phase41-settings :global(.config-overview h3),
+  .phase41-settings :global(.summary-card h3),
+  .phase41-settings :global(.context-registry-panel h3),
+  .phase41-settings :global(.pack-preview-panel h3),
+  .phase41-settings .config-audit-header h3 {
+    color: var(--settings-strong) !important;
+    background: none !important;
+    -webkit-text-fill-color: currentColor !important;
+    font-weight: 780 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+  }
+
+  .phase41-settings :global(.card-header p),
+  .phase41-settings :global(.overview-header p),
+  .phase41-settings :global(.context-intro),
+  .phase41-settings :global(.webhook-auto-header p),
+  .phase41-settings :global(.webhook-auto-hint),
+  .phase41-settings :global(.helper-text),
+  .phase41-settings :global(.field-desc),
+  .phase41-settings :global(.summary-label),
+  .phase41-settings :global(.overview-row span),
+  .phase41-settings :global(.form-label-custom),
+  .phase41-settings :global(.section-subtitle),
+  .phase41-settings :global(.registry-section-title),
+  .phase41-settings :global(.text-muted) {
+    color: var(--settings-muted) !important;
+  }
+
+  .phase41-settings :global(.summary-value),
+  .phase41-settings :global(.overview-row strong),
+  .phase41-settings :global(.summary-row strong),
+  .phase41-settings :global(.webhook-url-box),
+  .phase41-settings :global(.repo-name-cell),
+  .phase41-settings :global(.registry-fact-card strong),
+  .phase41-settings :global(.pack-summary strong),
+  .phase41-settings :global(.font-mono) {
+    color: var(--settings-strong) !important;
+  }
+
+  .phase41-settings :global(table) {
+    overflow: hidden;
+    width: 100%;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    color: var(--settings-text) !important;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phase41-settings :global(th) {
+    height: 42px;
+    padding: 10px 14px !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+    background: rgba(243, 248, 250, 0.78) !important;
+    color: var(--settings-muted) !important;
+    font-size: 0.76rem !important;
+    font-weight: 740 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+  }
+
+  .phase41-settings :global(td) {
+    min-height: 48px;
+    padding: 12px 14px !important;
+    border-bottom: 1px solid rgba(107, 127, 146, 0.12) !important;
+    color: var(--settings-text) !important;
+    background: transparent !important;
+  }
+
+  .phase41-settings :global(tbody tr:hover td) {
+    background: rgba(234, 246, 247, 0.52) !important;
+  }
+
+  .phase41-settings :global(input),
+  .phase41-settings :global(textarea),
+  .phase41-settings :global(select),
+  .phase41-settings :global(.text-input),
+  .phase41-settings :global(.select-trigger),
+  .phase41-settings :global(.select-inline-input),
+  .phase41-settings :global(.context-input),
+  .phase41-settings :global(.context-textarea),
+  .phase41-settings :global(.custom-input),
+  .phase41-settings :global(.custom-textarea),
+  .phase41-settings :global(.dropdown-trigger-btn) {
+    border-color: var(--settings-line-strong) !important;
+    background: rgba(255, 255, 255, 0.74) !important;
+    color: var(--settings-strong) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+  }
+
+  .phase41-settings :global(input:focus),
+  .phase41-settings :global(textarea:focus),
+  .phase41-settings :global(select:focus),
+  .phase41-settings :global(.text-input:focus),
+  .phase41-settings :global(.select-trigger.is-active),
+  .phase41-settings :global(.context-input:focus),
+  .phase41-settings :global(.context-textarea:focus),
+  .phase41-settings :global(.custom-input:focus),
+  .phase41-settings :global(.custom-textarea:focus) {
+    border-color: rgba(0, 127, 134, 0.72) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    box-shadow: 0 0 0 3px rgba(0, 127, 134, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+  }
+
+  .phase41-settings :global(.custom-select-dropdown),
+  .phase41-settings :global(.dropdown-options-list),
+  .phase41-settings :global(.select-menu) {
+    border: 1px solid var(--settings-edge) !important;
+    border-radius: 16px !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    box-shadow: 0 18px 48px rgba(28, 47, 65, 0.16) !important;
+    backdrop-filter: blur(22px) saturate(132%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(132%) !important;
+  }
+
+  .phase41-settings :global(.dropdown-item),
+  .phase41-settings :global(.dropdown-option-item),
+  .phase41-settings :global(.select-option),
+  .phase41-settings :global(.context-choice-grid button) {
+    color: var(--settings-text) !important;
+  }
+
+  .phase41-settings :global(.dropdown-item:hover),
+  .phase41-settings :global(.dropdown-option-item:hover),
+  .phase41-settings :global(.dropdown-option-item.selected),
+  .phase41-settings :global(.select-option:hover),
+  .phase41-settings :global(.select-option.selected),
+  .phase41-settings :global(.context-choice-grid button:hover),
+  .phase41-settings :global(.context-choice-grid button.active) {
+    border-color: rgba(0, 127, 134, 0.22) !important;
+    background: var(--settings-accent-soft) !important;
+    color: var(--settings-accent) !important;
+  }
+
+  .phase41-settings :global(.badge),
+  .phase41-settings :global(.context-chip),
+  .phase41-settings :global(.webhook-status-pill),
+  .phase41-settings :global(.phase-badge),
+  .phase41-settings :global(.priority-badge),
+  .phase41-settings .wa-admin-pill {
+    border-radius: 999px !important;
+    box-shadow: none !important;
+    font-weight: 760 !important;
+    letter-spacing: 0 !important;
+  }
+
+  .phase41-settings :global(.webhook-status-pill.ok),
+  .phase41-settings :global(.webhook-status-pill.created),
+  .phase41-settings :global(.webhook-status-pill.updated) {
+    border-color: rgba(4, 150, 111, 0.2) !important;
+    background: rgba(4, 150, 111, 0.1) !important;
+    color: #047857 !important;
+  }
+
+  .phase41-settings :global(.webhook-status-pill.drift),
+  .phase41-settings :global(.webhook-status-pill.missing) {
+    border-color: rgba(216, 135, 0, 0.24) !important;
+    background: rgba(216, 135, 0, 0.12) !important;
+    color: #9a5b00 !important;
+  }
+
+  .phase41-settings :global(.webhook-status-pill.error),
+  .phase41-settings :global(.text-warning) {
+    color: #b42318 !important;
+  }
+
+  .phase41-settings :global(.btn) {
+    border-radius: 10px !important;
+    transition:
+      transform 160ms var(--wa-ease, ease),
+      border-color 160ms var(--wa-ease, ease),
+      background 160ms var(--wa-ease, ease),
+      box-shadow 160ms var(--wa-ease, ease) !important;
+  }
+
+  .phase41-settings :global(.btn:hover:not(:disabled)) {
+    transform: translateY(-1px);
+  }
+
+  .phase41-settings :global(.btn:active:not(:disabled)) {
+    transform: translateY(0);
+  }
+
+  .phase41-settings :global(.btn-secondary),
+  .phase41-settings :global(.btn-ghost) {
+    border-color: var(--settings-line) !important;
+    background: rgba(255, 255, 255, 0.56) !important;
+    color: var(--settings-text) !important;
+  }
+
+  .phase41-settings :global(.btn-secondary:hover:not(:disabled)),
+  .phase41-settings :global(.btn-ghost:hover:not(:disabled)) {
+    border-color: var(--settings-line-strong) !important;
+    background: rgba(255, 255, 255, 0.86) !important;
+    color: var(--settings-strong) !important;
+  }
+
+  .phase41-settings .policy-template-strip button,
+  .phase41-settings .policy-panel,
+  .phase41-settings .choice-card,
+  .phase41-settings .segmented-pills,
+  .phase41-settings .segmented-pills button,
+  .phase41-settings .suggestion-pills button,
+  .phase41-settings .action-chip-grid button,
+  .phase41-settings .priority-stepper strong,
+  .phase41-settings .priority-stepper button,
+  .phase41-settings .toggle-pill,
+  .phase41-settings .decision-log-item,
+  .phase41-settings .permission-node,
+  .phase41-settings .delete-target-card,
+  .phase41-settings .group-coverage-card,
+  .phase41-settings .decision-card {
+    border-color: var(--settings-line) !important;
+    background: rgba(255, 255, 255, 0.52) !important;
+    color: var(--settings-text) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+  }
+
+  .phase41-settings .policy-template-strip button:hover,
+  .phase41-settings .choice-card:hover,
+  .phase41-settings .suggestion-pills button:hover,
+  .phase41-settings .action-chip-grid button:hover,
+  .phase41-settings .permission-node:hover,
+  .phase41-settings .group-coverage-card:hover {
+    border-color: rgba(0, 127, 134, 0.22) !important;
+    background: rgba(255, 255, 255, 0.78) !important;
+    transform: translateY(-1px);
+  }
+
+  .phase41-settings .segmented-pills button.active,
+  .phase41-settings .suggestion-pills button.active,
+  .phase41-settings .action-chip-grid button.active,
+  .phase41-settings .choice-card.active {
+    border-color: rgba(0, 127, 134, 0.28) !important;
+    background: var(--settings-accent-soft) !important;
+    color: var(--settings-accent) !important;
+  }
+
+  .phase41-settings .toggle-pill.on {
+    border-color: rgba(4, 150, 111, 0.22) !important;
+    background: rgba(4, 150, 111, 0.1) !important;
+    color: #047857 !important;
+  }
+
+  .phase41-settings .config-audit-panel {
+    margin-top: 12px;
+  }
+
+  .phase41-settings .empty-version-state,
+  .phase41-settings .diff-empty,
+  .phase41-settings .rollback-note {
+    border: 1px solid rgba(107, 127, 146, 0.14) !important;
+    border-radius: 14px !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(248, 252, 253, 0.5)),
+      rgba(255, 255, 255, 0.48) !important;
+    color: var(--settings-muted) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(12px) saturate(124%);
+    -webkit-backdrop-filter: blur(12px) saturate(124%);
+  }
+
+  .phase41-settings .config-version-error {
+    border: 1px solid rgba(221, 75, 62, 0.18) !important;
+    border-radius: 14px !important;
+    background:
+      linear-gradient(90deg, rgba(221, 75, 62, 0.12), rgba(255, 255, 255, 0.66)),
+      rgba(255, 255, 255, 0.54) !important;
+    color: var(--settings-danger) !important;
+  }
+
+  .phase41-settings .diff-table,
+  .phase41-settings :global(.summary-repos),
+  .phase41-settings :global(.project-cards-container),
+  .phase41-settings :global(.table-container),
+  .phase41-settings :global(.webhook-result-table) {
+    scrollbar-color: rgba(0, 127, 134, 0.38) rgba(107, 127, 146, 0.1) !important;
+  }
+
+  @media (max-width: 1120px) {
+    .phase41-settings .settings-content-header {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .phase41-settings .settings-content-facts {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .phase41-settings .settings-content-header,
+    .phase41-settings .section-card,
+    .phase41-settings .config-audit-panel {
+      padding: 16px;
+      border-radius: 18px;
+    }
+
+    .phase41-settings .settings-content-facts {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Phase 43 configuration workbench rebuild. */
+  .phase41-settings {
+    --settings-radius-panel: 18px;
+    --settings-radius-control: 12px;
+  }
+
+  .phase41-settings .settings-content-shell {
+    gap: 10px;
+  }
+
+  .phase41-settings .settings-content-header {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.74fr);
+    align-items: center;
+    min-height: 96px;
+    padding: 18px 20px;
+    border-radius: var(--settings-radius-panel);
+  }
+
+  .phase41-settings .settings-content-header h1 {
+    font-size: clamp(1.28rem, 0.72vw + 1rem, 1.72rem);
+  }
+
+  .phase41-settings .settings-content-header p {
+    max-width: 600px;
+    margin-top: 6px;
+    font-size: 0.84rem;
+    line-height: 1.5;
+  }
+
+  .phase41-settings .settings-content-facts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .phase41-settings .settings-content-facts div {
+    min-height: 52px;
+    padding: 9px 10px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.5);
+  }
+
+  .phase41-settings .settings-module-panel {
+    padding: 0;
+  }
+
+  .phase41-settings .settings-workbench-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+    gap: 12px;
+    align-items: start;
+  }
+
+  .phase41-settings .settings-workbench-grid.without-audit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phase41-settings .settings-primary-pane,
+  .phase41-settings .settings-audit-pane {
+    min-width: 0;
+  }
+
+  .phase41-settings .settings-audit-pane {
+    position: sticky;
+    top: 12px;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    padding: 18px;
+    border-radius: var(--settings-radius-panel);
+  }
+
+  .phase41-settings .config-audit-panel {
+    margin-top: 0;
+  }
+
+  .phase41-settings :global(.config-overview) {
+    display: grid !important;
+    gap: 16px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .phase41-settings :global(.overview-header) {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center !important;
+    gap: 14px !important;
+    margin-bottom: 0 !important;
+    padding-bottom: 14px !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+  }
+
+  .phase41-settings :global(.overview-kicker),
+  .phase41-settings .audit-kicker {
+    color: var(--settings-accent) !important;
+    font-size: 0.68rem !important;
+    font-weight: 860 !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+  }
+
+  .phase41-settings :global(.overview-header h4) {
+    margin-top: 4px !important;
+    font-size: 1.08rem !important;
+    line-height: 1.2 !important;
+  }
+
+  .phase41-settings :global(.overview-grid) {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    margin-top: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(.overview-row) {
+    display: grid !important;
+    align-content: start !important;
+    gap: 8px !important;
+    min-height: 96px !important;
+    padding: 13px 14px !important;
+    border: 1px solid rgba(107, 127, 146, 0.14) !important;
+    border-radius: 14px !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(248, 252, 253, 0.48)),
+      rgba(255, 255, 255, 0.52) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78) !important;
+  }
+
+  .phase41-settings :global(.overview-row span) {
+    font-size: 0.72rem !important;
+    font-weight: 760 !important;
+    line-height: 1.25 !important;
+  }
+
+  .phase41-settings :global(.overview-row strong) {
+    display: block !important;
+    max-height: 72px;
+    overflow: auto;
+    color: var(--settings-strong) !important;
+    font-size: 0.84rem !important;
+    font-weight: 780 !important;
+    line-height: 1.45 !important;
+    text-align: left !important;
+    overflow-wrap: anywhere;
+    scrollbar-width: thin;
+  }
+
+  .phase41-settings :global(.overview-row:has(strong.text-success)),
+  .phase41-settings :global(.overview-row:last-child) {
+    border-color: rgba(4, 150, 111, 0.18) !important;
+    background:
+      linear-gradient(180deg, rgba(242, 251, 248, 0.78), rgba(255, 255, 255, 0.48)),
+      rgba(255, 255, 255, 0.52) !important;
+  }
+
+  .phase41-settings :global(.overview-actions) {
+    display: flex !important;
+    justify-content: flex-end !important;
+    gap: 10px !important;
+    margin-top: 0 !important;
+    padding-top: 14px !important;
+    border-top: 1px solid var(--settings-line) !important;
+  }
+
+  .phase41-settings .config-audit-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .phase41-settings .config-audit-header :global(.btn),
+  .phase41-settings .config-audit-header button {
+    justify-self: start;
+  }
+
+  .phase41-settings .settings-audit-pane .version-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .phase41-settings .settings-audit-pane .version-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    max-height: 190px;
+    padding-right: 2px;
+    overflow: auto;
+  }
+
+  .phase41-settings .settings-audit-pane .version-item {
+    min-height: 72px;
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail {
+    min-width: 0;
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-table {
+    display: grid;
+    gap: 8px;
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 9px;
+    border: 1px solid rgba(107, 127, 146, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.48);
+  }
+
+  .phase41-settings .settings-audit-pane .diff-arrow {
+    display: none;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-value {
+    max-height: 68px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 1360px) {
+    .phase41-settings .settings-workbench-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase41-settings .settings-audit-pane {
+      position: static;
+    }
+
+    .phase41-settings .settings-audit-pane .version-layout {
+      grid-template-columns: minmax(240px, 0.42fr) minmax(0, 0.58fr);
+    }
+  }
+
+  @media (max-width: 1180px) {
+    .phase41-settings .settings-content-header,
+    .phase41-settings .settings-content-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .phase41-settings :global(.overview-grid) {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .phase41-settings :global(.overview-grid),
+    .phase41-settings .settings-audit-pane .version-layout,
+    .phase41-settings .settings-audit-pane .version-list {
+      grid-template-columns: 1fr !important;
+    }
+
+    .phase41-settings :global(.overview-header),
+    .phase41-settings :global(.overview-actions) {
+      grid-template-columns: 1fr;
+      justify-content: stretch !important;
+    }
+  }
+
+  /* Phase 44 white-glass correction: keep hierarchy without gray masking. */
+  .phase41-settings {
+    --settings-glass: rgba(255, 255, 255, 0.9);
+    --settings-glass-strong: rgba(255, 255, 255, 0.98);
+    --settings-glass-soft: rgba(255, 255, 255, 0.88);
+    --settings-edge: rgba(222, 234, 239, 0.86);
+    --settings-line: rgba(212, 226, 233, 0.78);
+    --settings-line-strong: rgba(184, 205, 216, 0.86);
+    --settings-muted: #596d7d;
+    --settings-subtle: #8294a1;
+    --settings-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 16px 34px rgba(42, 63, 82, 0.055);
+    min-height: calc(100dvh - var(--wa-workspace-topbar-h, 68px));
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(252, 254, 254, 0.96)),
+      #ffffff;
+  }
+
+  .phase41-settings .settings-main,
+  .phase41-settings .settings-content-shell,
+  .phase41-settings .settings-module-panel,
+  .phase41-settings .settings-workbench-grid {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings .settings-breadcrumb-bar,
+  .phase41-settings .settings-content-header,
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    border-color: var(--settings-edge) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    box-shadow: var(--settings-shadow) !important;
+  }
+
+  .phase41-settings .settings-content-header {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 0.62fr);
+    min-height: 118px;
+    padding: 20px 22px;
+  }
+
+  .phase41-settings .settings-content-facts div {
+    border-color: rgba(214, 228, 235, 0.76) !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88) !important;
+  }
+
+  .phase41-settings :global(.config-overview),
+  .phase41-settings :global(.overview-grid),
+  .phase41-settings :global(.form-container),
+  .phase41-settings :global(.table-container),
+  .phase41-settings :global(.table-responsive),
+  .phase41-settings :global(.autoload-section),
+  .phase41-settings :global(.repo-mapping-section),
+  .phase41-settings :global(.add-repo-form),
+  .phase41-settings :global(.summary-card),
+  .phase41-settings :global(.webhook-automation-panel),
+  .phase41-settings :global(.context-config-panel),
+  .phase41-settings :global(.context-registry-panel),
+  .phase41-settings :global(.pack-preview-panel),
+  .phase41-settings :global(.context-health-grid) {
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .phase41-settings :global(.overview-row),
+  .phase41-settings :global(.registry-fact-card),
+  .phase41-settings :global(.project-card-item),
+  .phase41-settings :global(.summary-repo-item),
+  .phase41-settings :global(.webhook-result-table) {
+    border-color: rgba(205, 220, 228, 0.84) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 8px 18px rgba(42, 63, 82, 0.035) !important;
+    backdrop-filter: blur(18px) saturate(128%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(128%) !important;
+  }
+
+  .phase41-settings :global(.overview-row:hover),
+  .phase41-settings :global(.registry-fact-card:hover),
+  .phase41-settings :global(.project-card-item:hover),
+  .phase41-settings :global(.summary-repo-item:hover) {
+    border-color: rgba(0, 127, 134, 0.22) !important;
+    background: #ffffff !important;
+    transform: translateY(-1px);
+  }
+
+  .phase41-settings :global(.overview-row:has(strong.text-success)),
+  .phase41-settings :global(.overview-row:last-child) {
+    border-color: rgba(0, 127, 134, 0.24) !important;
+    background: rgba(252, 255, 254, 0.98) !important;
+  }
+
+  .phase41-settings :global(th) {
+    background: rgba(255, 255, 255, 0.78) !important;
+  }
+
+  .phase41-settings :global(tbody tr:hover td) {
+    background: rgba(241, 251, 251, 0.62) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail,
+  .phase41-settings .settings-audit-pane .diff-row {
+    border-color: rgba(205, 220, 228, 0.8) !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .version-item {
+    background: rgba(255, 255, 255, 0.92);
+  }
+
+  .phase41-settings .settings-audit-pane .version-item.active {
+    border-color: rgba(0, 127, 134, 0.24);
+    background: rgba(235, 250, 250, 0.9);
+    color: var(--settings-strong);
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.config-overview)) {
+    align-items: stretch;
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.config-overview) .settings-audit-pane) {
+    display: flex;
+    align-self: stretch;
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.config-overview) .config-audit-panel) {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.project-config-container)) {
+    align-items: stretch;
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.project-config-container) .settings-audit-pane) {
+    display: flex;
+    align-self: stretch;
+  }
+
+  :global(.phase41-settings .settings-workbench-grid:has(.project-config-container) .config-audit-panel) {
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Phase 45 configuration design convergence: one light glass system for every nested config panel. */
+  .phase41-settings {
+    --config-ink: #0d1722;
+    --config-text: #293847;
+    --config-muted: #667789;
+    --config-subtle: #8a99aa;
+    --config-line: rgba(203, 219, 227, 0.78);
+    --config-line-strong: rgba(173, 195, 207, 0.82);
+    --config-panel: rgba(255, 255, 255, 0.92);
+    --config-card: rgba(255, 255, 255, 0.86);
+    --config-soft: rgba(247, 252, 253, 0.82);
+    --config-accent: #008f96;
+    --config-accent-strong: #006f76;
+    --config-accent-soft: rgba(0, 143, 150, 0.1);
+    --config-success: #04966f;
+    --config-warning: #a56500;
+    --config-danger: #c94035;
+    --config-info: #256bd8;
+    --config-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 14px 34px rgba(31, 55, 72, 0.055);
+    --config-radius: 12px;
+    --config-radius-lg: 16px;
+    color: var(--config-text);
+  }
+
+  .phase41-settings,
+  .phase41-settings * {
+    letter-spacing: 0 !important;
+  }
+
+  .phase41-settings .settings-main::-webkit-scrollbar-track,
+  .phase41-settings :global(.version-list::-webkit-scrollbar-track),
+  .phase41-settings :global(.diff-table::-webkit-scrollbar-track),
+  .phase41-settings :global(.diff-value::-webkit-scrollbar-track) {
+    background: rgba(121, 139, 159, 0.1) !important;
+  }
+
+  .phase41-settings .settings-main::-webkit-scrollbar-thumb,
+  .phase41-settings :global(.version-list::-webkit-scrollbar-thumb),
+  .phase41-settings :global(.diff-table::-webkit-scrollbar-thumb),
+  .phase41-settings :global(.diff-value::-webkit-scrollbar-thumb) {
+    background: rgba(0, 143, 150, 0.38) !important;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel,
+  .phase41-settings .policy-panel,
+  .phase41-settings .branch-content,
+  .phase41-settings .modal-card,
+  .phase41-settings :global(.wizard),
+  .phase41-settings :global(.project-config-container) {
+    color: var(--config-text) !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 253, 254, 0.88)),
+      var(--config-panel) !important;
+    border-color: var(--config-line) !important;
+    box-shadow: var(--config-shadow) !important;
+  }
+
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    border-radius: var(--config-radius-lg) !important;
+    padding: 18px !important;
+  }
+
+  .phase41-settings :global(.wizard),
+  .phase41-settings :global(.project-config-container) {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(.step-content),
+  .phase41-settings :global(.form-section),
+  .phase41-settings :global(.form-container),
+  .phase41-settings :global(.registry-form-grid),
+  .phase41-settings :global(.context-grid),
+  .phase41-settings :global(.policy-builder-grid),
+  .phase41-settings .policy-form-grid {
+    gap: 14px !important;
+  }
+
+  .phase41-settings :global(.config-overview),
+  .phase41-settings :global(.step-content),
+  .phase41-settings :global(.success-screen),
+  .phase41-settings :global(.form-container) {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .phase41-settings :global(.info-block),
+  .phase41-settings :global(.credential-collapsed),
+  .phase41-settings :global(.webhook-display),
+  .phase41-settings :global(.webhook-automation-panel),
+  .phase41-settings :global(.autoload-section),
+  .phase41-settings :global(.repo-mapping-section),
+  .phase41-settings :global(.add-repo-form),
+  .phase41-settings :global(.summary-card),
+  .phase41-settings :global(.bot-notice-box),
+  .phase41-settings :global(.context-health-grid > *),
+  .phase41-settings :global(.context-config-panel),
+  .phase41-settings :global(.context-registry-panel),
+  .phase41-settings :global(.pack-preview-panel),
+  .phase41-settings :global(.registry-list),
+  .phase41-settings :global(.registry-empty),
+  .phase41-settings :global(.registry-fact-card),
+  .phase41-settings :global(.pack-summary > *),
+  .phase41-settings :global(.pack-item),
+  .phase41-settings :global(.project-card-item),
+  .phase41-settings :global(.summary-repo-item),
+  .phase41-settings :global(.table-container),
+  .phase41-settings :global(.table-responsive),
+  .phase41-settings .policy-template-strip button,
+  .phase41-settings .policy-panel,
+  .phase41-settings .choice-card,
+  .phase41-settings .segmented-pills,
+  .phase41-settings .suggestion-pills button,
+  .phase41-settings .action-chip-grid button,
+  .phase41-settings .priority-stepper strong,
+  .phase41-settings .priority-stepper button,
+  .phase41-settings .toggle-pill,
+  .phase41-settings .decision-card,
+  .phase41-settings .decision-log-item,
+  .phase41-settings .group-coverage-card,
+  .phase41-settings .branch-content,
+  .phase41-settings .branch-header,
+  .phase41-settings .permission-node,
+  .phase41-settings .permission-group-toggles button,
+  .phase41-settings .delete-target-card,
+  .phase41-settings .version-item,
+  .phase41-settings .version-detail,
+  .phase41-settings .diff-row,
+  .phase41-settings .empty-version-state,
+  .phase41-settings .diff-empty {
+    border: 1px solid var(--config-line) !important;
+    border-radius: var(--config-radius) !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(249, 253, 254, 0.76)),
+      var(--config-card) !important;
+    color: var(--config-text) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78) !important;
+    backdrop-filter: blur(14px) saturate(120%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(120%) !important;
+  }
+
+  .phase41-settings :global(.info-block) {
+    border-left: 4px solid var(--config-accent) !important;
+  }
+
+  .phase41-settings :global(.form-sub-section),
+  .phase41-settings :global(.column-mapping-grid),
+  .phase41-settings :global(.add-repo-inputs),
+  .phase41-settings :global(.context-choice-grid),
+  .phase41-settings .choice-row,
+  .phase41-settings .permission-summary-strip {
+    gap: 12px !important;
+  }
+
+  .phase41-settings :global(.form-sub-section > .input-group),
+  .phase41-settings :global(.form-group),
+  .phase41-settings :global(.form-group-custom),
+  .phase41-settings :global(.context-field),
+  .phase41-settings :global(.flex-1),
+  .phase41-settings :global(.custom-select-wrapper) {
+    min-width: 0;
+    padding: 14px !important;
+    border: 1px solid var(--config-line) !important;
+    border-radius: var(--config-radius) !important;
+    background: var(--config-soft) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(.overview-header),
+  .phase41-settings .config-audit-header,
+  .phase41-settings .policy-panel-header,
+  .phase41-settings .card-header,
+  .phase41-settings .modal-header,
+  .phase41-settings .modal-footer,
+  .phase41-settings .group-card-actions,
+  .phase41-settings .branch-header,
+  .phase41-settings :global(.registry-header),
+  .phase41-settings :global(.registry-toolbar),
+  .phase41-settings :global(.webhook-auto-header) {
+    border-color: var(--config-line) !important;
+    background: transparent !important;
+    color: var(--config-text) !important;
+  }
+
+  .phase41-settings :global(.overview-header p) {
+    color: #536a7d !important;
+  }
+
+  .phase41-settings :global(.overview-kicker),
+  .phase41-settings .audit-kicker,
+  .phase41-settings :global(.context-kicker),
+  .phase41-settings :global(.branch-key),
+  .phase41-settings :global(.permission-code),
+  .phase41-settings :global(.diff-path),
+  .phase41-settings :global(.proj-id) {
+    color: var(--config-accent) !important;
+    text-transform: none !important;
+    font-weight: 820 !important;
+  }
+
+  .phase41-settings :global(h1),
+  .phase41-settings :global(h2),
+  .phase41-settings :global(h3),
+  .phase41-settings :global(h4),
+  .phase41-settings :global(h5),
+  .phase41-settings :global(strong),
+  .phase41-settings .version-title,
+  .phase41-settings .actor-tag,
+  .phase41-settings :global(.overview-header h4),
+  .phase41-settings :global(.info-block h4),
+  .phase41-settings :global(.success-title),
+  .phase41-settings :global(.summary-value),
+  .phase41-settings :global(.repo-name-cell),
+  .phase41-settings :global(.proj-name),
+  .phase41-settings :global(.registry-section-title),
+  .phase41-settings :global(.permission-node-main strong),
+  .phase41-settings :global(.branch-header h3),
+  .phase41-settings :global(.choice-card strong),
+  .phase41-settings :global(.decision-card strong),
+  .phase41-settings :global(.decision-log-item strong),
+  .phase41-settings :global(.group-coverage-card strong) {
+    color: var(--config-ink) !important;
+    background: none !important;
+    -webkit-text-fill-color: currentColor !important;
+    text-shadow: none !important;
+  }
+
+  .phase41-settings :global(p),
+  .phase41-settings :global(small),
+  .phase41-settings .version-meta,
+  .phase41-settings .version-sections,
+  .phase41-settings .branch-count,
+  .phase41-settings .actor-sub,
+  .phase41-settings .field-desc,
+  .phase41-settings .empty-table-cell,
+  .phase41-settings :global(.overview-header p),
+  .phase41-settings :global(.overview-row span),
+  .phase41-settings :global(.helper-text),
+  .phase41-settings :global(.helper-text-custom),
+  .phase41-settings :global(.summary-label),
+  .phase41-settings :global(.success-desc),
+  .phase41-settings :global(.webhook-help),
+  .phase41-settings :global(.repo-path-cell),
+  .phase41-settings :global(.proj-path),
+  .phase41-settings :global(.empty-repos),
+  .phase41-settings :global(.empty-projects-msg),
+  .phase41-settings :global(.context-intro),
+  .phase41-settings :global(.fact-meta),
+  .phase41-settings :global(.permission-node-main p),
+  .phase41-settings :global(.group-coverage-card p),
+  .phase41-settings :global(.group-coverage-meta small),
+  .phase41-settings :global(.pack-item p) {
+    color: var(--config-muted) !important;
+  }
+
+  .phase41-settings :global(.overview-row) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 253, 254, 0.92)),
+      #ffffff !important;
+    border-color: rgba(196, 214, 224, 0.92) !important;
+  }
+
+  .phase41-settings :global(.overview-row span) {
+    color: #536a7d !important;
+  }
+
+  .phase41-settings :global(.overview-row strong) {
+    color: var(--config-ink) !important;
+    font-weight: 820 !important;
+  }
+
+  .phase41-settings :global(.switch-label),
+  .phase41-settings :global(.form-label-custom),
+  .phase41-settings :global(label) {
+    color: var(--config-ink) !important;
+    font-weight: 760 !important;
+  }
+
+  .phase41-settings :global(.helper-text-custom),
+  .phase41-settings :global(.helper-text) {
+    color: #536a7d !important;
+    line-height: 1.55 !important;
+  }
+
+  .phase41-settings :global(.text-success),
+  .phase41-settings .tone-success,
+  .phase41-settings .permission-catalog-status span.live {
+    color: var(--config-success) !important;
+  }
+
+  .phase41-settings :global(.text-muted),
+  .phase41-settings .tone-neutral {
+    color: var(--config-subtle) !important;
+  }
+
+  .phase41-settings .rollback-note,
+  .phase41-settings .badge-action-group_permissions_update,
+  .phase41-settings :global(.fact-status.status-draft) {
+    border-color: rgba(165, 101, 0, 0.22) !important;
+    background: rgba(216, 135, 0, 0.1) !important;
+    color: var(--config-warning) !important;
+  }
+
+  .phase41-settings .config-version-error,
+  .phase41-settings .error-banner,
+  .phase41-settings :global(.error-msg),
+  .phase41-settings :global(.error-msg-banner),
+  .phase41-settings :global(.inline-error),
+  .phase41-settings .decision-card.denied span,
+  .phase41-settings .effect-deny,
+  .phase41-settings .group-delete-btn,
+  .phase41-settings .permission-group-toggles button.locked {
+    border-color: rgba(201, 64, 53, 0.22) !important;
+    background: rgba(221, 75, 62, 0.1) !important;
+    color: var(--config-danger) !important;
+  }
+
+  .phase41-settings .success-banner,
+  .phase41-settings :global(.inline-success),
+  .phase41-settings .decision-card.allowed span,
+  .phase41-settings .effect-allow,
+  .phase41-settings .permission-group-toggles button.enabled,
+  .phase41-settings .toggle-pill.on {
+    border-color: rgba(4, 150, 111, 0.22) !important;
+    background: rgba(4, 150, 111, 0.1) !important;
+    color: var(--config-success) !important;
+  }
+
+  .phase41-settings :global(input),
+  .phase41-settings :global(textarea),
+  .phase41-settings :global(select),
+  .phase41-settings .custom-input,
+  .phase41-settings .custom-textarea,
+  .phase41-settings .custom-select,
+  .phase41-settings .dropdown-trigger-btn,
+  .phase41-settings :global(.context-input),
+  .phase41-settings :global(.context-textarea),
+  .phase41-settings :global(.webhook-url-box),
+  .phase41-settings :global(.details-pre),
+  .phase41-settings :global(.jql-preview code),
+  .phase41-settings :global(.pack-text) {
+    border: 1px solid var(--config-line-strong) !important;
+    border-radius: 10px !important;
+    background: rgba(255, 255, 255, 0.92) !important;
+    color: var(--config-ink) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .phase41-settings :global(input:focus),
+  .phase41-settings :global(textarea:focus),
+  .phase41-settings :global(select:focus),
+  .phase41-settings .custom-input:focus,
+  .phase41-settings .custom-textarea:focus,
+  .phase41-settings .custom-select:focus,
+  .phase41-settings .dropdown-trigger-btn:focus,
+  .phase41-settings :global(.context-input:focus),
+  .phase41-settings :global(.context-textarea:focus) {
+    border-color: var(--config-accent) !important;
+    background: #ffffff !important;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.12) !important;
+  }
+
+  .phase41-settings :global(input::placeholder),
+  .phase41-settings :global(textarea::placeholder) {
+    color: var(--config-subtle) !important;
+  }
+
+  .phase41-settings :global(.segmented-control),
+  .phase41-settings :global(.context-choice-grid),
+  .phase41-settings .segmented-pills {
+    border: 1px solid var(--config-line-strong) !important;
+    border-radius: 12px !important;
+    background: rgba(248, 252, 253, 0.9) !important;
+    padding: 4px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86) !important;
+  }
+
+  .phase41-settings :global(.control-btn),
+  .phase41-settings :global(.context-choice-grid button),
+  .phase41-settings .segmented-pills button {
+    min-height: 34px !important;
+    border: 1px solid transparent !important;
+    border-radius: 9px !important;
+    background: transparent !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .phase41-settings :global(.control-btn:hover),
+  .phase41-settings :global(.context-choice-grid button:hover),
+  .phase41-settings .segmented-pills button:hover {
+    background: rgba(255, 255, 255, 0.86) !important;
+    border-color: rgba(0, 143, 150, 0.16) !important;
+    color: var(--config-accent-strong) !important;
+    transform: none !important;
+  }
+
+  .phase41-settings :global(.control-btn.active),
+  .phase41-settings :global(.context-choice-grid button.active),
+  .phase41-settings .segmented-pills button.active {
+    background: var(--config-accent) !important;
+    border-color: var(--config-accent) !important;
+    color: #ffffff !important;
+    box-shadow: 0 8px 20px rgba(0, 143, 150, 0.16) !important;
+    text-shadow: none !important;
+  }
+
+  .phase41-settings :global(table),
+  .phase41-settings :global(.repo-table) {
+    color: var(--config-text) !important;
+    border-collapse: collapse;
+  }
+
+  .phase41-settings :global(th),
+  .phase41-settings :global(td),
+  .phase41-settings :global(.repo-table th),
+  .phase41-settings :global(.repo-table td) {
+    border-color: var(--config-line) !important;
+    background: transparent !important;
+    color: var(--config-text) !important;
+    text-transform: none !important;
+  }
+
+  .phase41-settings :global(th),
+  .phase41-settings :global(.repo-table th) {
+    background: rgba(247, 252, 253, 0.78) !important;
+    color: var(--config-muted) !important;
+    font-size: 0.76rem !important;
+    font-weight: 780 !important;
+  }
+
+  .phase41-settings :global(tr:hover td),
+  .phase41-settings :global(.repo-table tr:hover td) {
+    background: rgba(239, 249, 250, 0.64) !important;
+  }
+
+  .phase41-settings button:not(.btn):not(.close-modal-btn):not(.dropdown-backdrop-overlay),
+  .phase41-settings :global(.copy-link),
+  .phase41-settings :global(.gen-btn),
+  .phase41-settings :global(.delete-btn),
+  .phase41-settings :global(.control-btn) {
+    min-height: 34px;
+    border: 1px solid var(--config-line) !important;
+    border-radius: 10px !important;
+    background: rgba(255, 255, 255, 0.76) !important;
+    color: var(--config-text) !important;
+    box-shadow: none !important;
+    transition: background 140ms var(--wa-ease, ease), border-color 140ms var(--wa-ease, ease), transform 140ms var(--wa-ease, ease);
+  }
+
+  .phase41-settings button:not(.btn):not(.close-modal-btn):not(.dropdown-backdrop-overlay):hover,
+  .phase41-settings :global(.copy-link:hover),
+  .phase41-settings :global(.gen-btn:hover),
+  .phase41-settings :global(.control-btn:hover) {
+    border-color: rgba(0, 143, 150, 0.28) !important;
+    background: #ffffff !important;
+    color: var(--config-accent-strong) !important;
+    transform: translateY(-1px);
+  }
+
+  .phase41-settings :global(.control-btn.active),
+  .phase41-settings .choice-card.active,
+  .phase41-settings .segmented-pills button.active,
+  .phase41-settings .suggestion-pills button.active,
+  .phase41-settings .action-chip-grid button.active,
+  .phase41-settings .version-item.active,
+  .phase41-settings :global(.registry-fact-card.active),
+  .phase41-settings :global(.context-choice-grid button.active) {
+    border-color: rgba(0, 143, 150, 0.28) !important;
+    background: var(--config-accent-soft) !important;
+    color: var(--config-accent-strong) !important;
+  }
+
+  .phase41-settings :global(.steps-container) {
+    border: 1px solid var(--config-line) !important;
+    border-radius: var(--config-radius-lg) !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(.step-indicator) {
+    border-color: var(--config-line-strong) !important;
+    background: #ffffff !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings :global(.step-item.active .step-indicator),
+  .phase41-settings :global(.step-item.completed .step-indicator) {
+    border-color: var(--config-accent) !important;
+    background: var(--config-accent) !important;
+    color: #ffffff !important;
+  }
+
+  .phase41-settings :global(.step-line),
+  .phase41-settings :global(.step-item .step-line) {
+    background: var(--config-line) !important;
+  }
+
+  .phase41-settings :global(.step-item .step-line.completed-line) {
+    background: var(--config-accent) !important;
+  }
+
+  .phase41-settings :global(.step-label) {
+    background: #ffffff !important;
+    color: var(--config-muted) !important;
+    text-transform: none !important;
+  }
+
+  .phase41-settings .settings-content-shell {
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings .settings-module-panel {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings .settings-content-header,
+  .phase41-settings .section-card,
+  .phase41-settings .config-audit-panel {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(250, 254, 254, 0.86)),
+      rgba(255, 255, 255, 0.88) !important;
+    border: 1px solid rgba(205, 220, 228, 0.76) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      0 18px 42px rgba(35, 56, 72, 0.045) !important;
+    backdrop-filter: blur(18px) saturate(122%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(122%) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail-header {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: start;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail-header :global(.btn) {
+    width: auto !important;
+    min-width: 108px;
+    justify-self: end;
+  }
+
+  .phase41-settings .settings-audit-pane .version-detail-header :global(.btn-danger:disabled) {
+    border-color: rgba(201, 64, 53, 0.16) !important;
+    background: rgba(201, 64, 53, 0.055) !important;
+    color: rgba(154, 58, 51, 0.78) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .version-item {
+    display: grid;
+    align-content: center;
+    gap: 5px;
+  }
+
+  .phase41-settings .settings-audit-pane .version-sections {
+    color: var(--config-accent-strong) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-path {
+    color: var(--config-accent-strong) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-value.before {
+    border-color: rgba(201, 64, 53, 0.12) !important;
+    background: rgba(201, 64, 53, 0.035) !important;
+  }
+
+  .phase41-settings .settings-audit-pane .diff-value.after {
+    border-color: rgba(4, 150, 111, 0.13) !important;
+    background: rgba(4, 150, 111, 0.035) !important;
+  }
+
+  .phase41-settings :global(.form-sub-section > .input-group),
+  .phase41-settings :global(.form-group),
+  .phase41-settings :global(.form-group-custom),
+  .phase41-settings :global(.context-field),
+  .phase41-settings :global(.flex-1),
+  .phase41-settings :global(.custom-select-wrapper) {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 253, 254, 0.62)),
+      rgba(255, 255, 255, 0.74) !important;
+    backdrop-filter: blur(12px) saturate(118%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(118%) !important;
+  }
+
+  .phase41-settings .modal-overlay {
+    background: rgba(13, 23, 34, 0.22) !important;
+    backdrop-filter: blur(12px) !important;
+  }
+
+  .phase41-settings .modal-card {
+    background: rgba(255, 255, 255, 0.98) !important;
+    color: var(--config-text) !important;
+  }
+
+  @media (max-width: 1180px) {
+    .phase41-settings .settings-content-header {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Phase 46: flat configuration workbench. Glass separates regions, never fields. */
+  .phase46-settings {
+    --config-ink: #101923;
+    --config-text: #31404e;
+    --config-muted: #6b7b8b;
+    --config-subtle: #92a0ad;
+    --config-line: rgba(116, 139, 156, 0.18);
+    --config-line-strong: rgba(91, 119, 137, 0.3);
+    --config-accent: #008f96;
+    --config-accent-strong: #006e74;
+    --config-accent-soft: rgba(0, 143, 150, 0.08);
+    --config-success: #087f61;
+    --config-warning: #a36908;
+    --config-danger: #c5473c;
+    --config-glass: rgba(255, 255, 255, 0.78);
+    --config-glass-strong: rgba(255, 255, 255, 0.9);
+    --config-surface: rgba(249, 252, 253, 0.7);
+    --config-shadow: 0 18px 44px rgba(41, 62, 78, 0.055);
+    width: 100%;
+    max-width: min(1720px, 100%);
+    min-height: calc(100dvh - var(--wa-workspace-topbar-h, 68px));
+    background: transparent !important;
+    color: var(--config-text);
+  }
+
+  .phase46-settings,
+  .phase46-settings * {
+    letter-spacing: 0 !important;
+    box-sizing: border-box;
+  }
+
+  .phase46-settings .settings-main {
+    gap: 12px;
+    padding-bottom: 20px;
+  }
+
+  .phase46-settings .settings-breadcrumb-bar,
+  .phase46-settings .settings-content-header,
+  .phase46-settings .settings-primary-pane.integration-surface,
+  .phase46-settings .section-card,
+  .phase46-settings .config-audit-panel {
+    border: 1px solid var(--config-line) !important;
+    background: var(--config-glass) !important;
+    box-shadow: var(--config-shadow) !important;
+    backdrop-filter: blur(22px) saturate(126%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(126%) !important;
+  }
+
+  .phase46-settings .settings-breadcrumb-bar {
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 10px;
+  }
+
+  .phase46-settings .settings-breadcrumb-bar button {
+    border: 0 !important;
+    border-radius: 4px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings .settings-content-shell,
+  .phase46-settings .settings-module-panel {
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings .settings-content-header {
+    min-height: 112px;
+    padding: 20px 22px;
+    border-radius: 14px;
+    grid-template-columns: minmax(260px, 1fr) minmax(520px, 0.92fr);
+    align-items: center;
+    gap: 28px;
+  }
+
+  .phase46-settings .settings-kicker,
+  .phase46-settings .audit-kicker,
+  .phase46-settings :global(.overview-kicker),
+  .phase46-settings :global(.context-kicker) {
+    color: var(--config-accent-strong) !important;
+    font-size: 11px !important;
+    font-weight: 760 !important;
+    text-transform: none !important;
+  }
+
+  .phase46-settings .settings-content-header h1 {
+    margin-top: 4px;
+    color: var(--config-ink) !important;
+    font-size: clamp(22px, 2vw, 28px);
+    line-height: 1.15;
+  }
+
+  .phase46-settings .settings-content-header p {
+    margin-top: 6px;
+    color: var(--config-muted) !important;
+    font-size: 13px;
+  }
+
+  .phase46-settings .settings-content-facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .phase46-settings .settings-content-facts div {
+    min-width: 0;
+    min-height: 48px;
+    padding: 3px 12px;
+    border: 0 !important;
+    border-left: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings .settings-content-facts span {
+    color: var(--config-muted) !important;
+    font-size: 11px;
+  }
+
+  .phase46-settings .settings-content-facts strong {
+    margin-top: 6px;
+    color: var(--config-ink) !important;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase46-settings .settings-workbench-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 320px);
+    align-items: start;
+    gap: 14px;
+    margin-top: 12px;
+  }
+
+  .phase46-settings .settings-workbench-grid.without-audit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phase46-settings .settings-primary-pane.integration-surface,
+  .phase46-settings .section-card,
+  .phase46-settings .config-audit-panel {
+    min-width: 0;
+    border-radius: 14px !important;
+  }
+
+  .phase46-settings .settings-primary-pane.integration-surface,
+  .phase46-settings .section-card {
+    padding: 20px !important;
+  }
+
+  .phase46-settings .settings-audit-pane {
+    min-width: 0;
+    align-self: stretch;
+  }
+
+  .phase46-settings .config-audit-panel {
+    height: 100%;
+    min-height: 440px;
+    padding: 18px !important;
+    overflow: hidden;
+  }
+
+  .phase46-settings :global(.wizard),
+  .phase46-settings :global(.project-config-container),
+  .phase46-settings :global(.config-overview),
+  .phase46-settings :global(.step-content),
+  .phase46-settings :global(.success-screen),
+  .phase46-settings :global(.form-container),
+  .phase46-settings :global(.context-registry-panel),
+  .phase46-settings :global(.pack-preview-panel) {
+    width: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase46-settings :global(.overview-header),
+  .phase46-settings .config-audit-header,
+  .phase46-settings .card-header,
+  .phase46-settings :global(.registry-header) {
+    min-height: 66px;
+    margin: 0 !important;
+    padding: 0 0 16px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    background: transparent !important;
+  }
+
+  .phase46-settings :global(.overview-header h4),
+  .phase46-settings .config-audit-header h3,
+  .phase46-settings .card-header h2,
+  .phase46-settings :global(.registry-header h4) {
+    margin: 3px 0 0 !important;
+    color: var(--config-ink) !important;
+    background: none !important;
+    -webkit-text-fill-color: currentColor !important;
+    font-size: 17px !important;
+    line-height: 1.3 !important;
+    text-shadow: none !important;
+  }
+
+  .phase46-settings :global(.overview-header p),
+  .phase46-settings .card-header p,
+  .phase46-settings :global(.registry-header p) {
+    margin: 5px 0 0 !important;
+    color: var(--config-muted) !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+  }
+
+  .phase46-settings :global(.switch-container) {
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.switch-control) {
+    width: 42px !important;
+    height: 23px !important;
+    border: 0 !important;
+    background: #c8d1d8 !important;
+    box-shadow: inset 0 0 0 1px rgba(72, 92, 108, 0.12) !important;
+  }
+
+  .phase46-settings :global(.switch-control.checked) {
+    background: var(--config-accent) !important;
+  }
+
+  .phase46-settings :global(.switch-control:focus-visible) {
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.14) !important;
+  }
+
+  .phase46-settings :global(.overview-grid) {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 0 28px !important;
+    margin: 0 !important;
+    padding: 6px 0 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .phase46-settings :global(.overview-row) {
+    min-width: 0;
+    min-height: 66px !important;
+    display: grid !important;
+    align-content: center !important;
+    gap: 5px !important;
+    margin: 0 !important;
+    padding: 12px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.overview-row span),
+  .phase46-settings :global(.summary-label) {
+    color: var(--config-muted) !important;
+    font-size: 11px !important;
+    font-weight: 650 !important;
+  }
+
+  .phase46-settings :global(.overview-row strong),
+  .phase46-settings :global(.summary-value) {
+    min-width: 0;
+    color: var(--config-ink) !important;
+    font-size: 13px !important;
+    font-weight: 720 !important;
+    line-height: 1.45 !important;
+    overflow-wrap: anywhere;
+  }
+
+  .phase46-settings :global(.jql-preview),
+  .phase46-settings :global(.details-pre),
+  .phase46-settings :global(.summary-card),
+  .phase46-settings :global(.credential-collapsed),
+  .phase46-settings :global(.webhook-display),
+  .phase46-settings :global(.webhook-automation-panel),
+  .phase46-settings :global(.autoload-section),
+  .phase46-settings :global(.repo-mapping-section),
+  .phase46-settings :global(.add-repo-form),
+  .phase46-settings :global(.context-config-panel),
+  .phase46-settings :global(.registry-list-column),
+  .phase46-settings :global(.registry-editor-column),
+  .phase46-settings :global(.pack-summary),
+  .phase46-settings :global(.pack-items) {
+    margin: 0 !important;
+    padding: 16px 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    border-top: 1px solid var(--config-line) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase46-settings :global(.jql-preview code),
+  .phase46-settings :global(.details-pre),
+  .phase46-settings :global(.webhook-url-box),
+  .phase46-settings :global(.pack-text) {
+    display: block;
+    max-height: 152px;
+    padding: 12px !important;
+    border: 1px solid var(--config-line) !important;
+    border-radius: 7px !important;
+    background: rgba(246, 249, 250, 0.86) !important;
+    color: var(--config-text) !important;
+    box-shadow: none !important;
+    overflow: auto;
+  }
+
+  .phase46-settings :global(.overview-actions),
+  .phase46-settings :global(.actions),
+  .phase46-settings :global(.form-actions),
+  .phase46-settings :global(.success-actions),
+  .phase46-settings :global(.registry-actions) {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin: 16px 0 0 !important;
+    padding: 16px 0 0 !important;
+    border-top: 1px solid var(--config-line) !important;
+    background: transparent !important;
+  }
+
+  .phase46-settings :global(.steps-container) {
+    margin: 0 0 18px !important;
+    padding: 0 0 15px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.step-indicator) {
+    border-color: var(--config-line-strong) !important;
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.step-item.active .step-indicator),
+  .phase46-settings :global(.step-item.completed .step-indicator) {
+    border-color: var(--config-accent) !important;
+    background: var(--config-accent) !important;
+    color: #fff !important;
+  }
+
+  .phase46-settings :global(.step-label) {
+    background: transparent !important;
+    color: var(--config-muted) !important;
+  }
+
+  .phase46-settings :global(.info-block) {
+    margin: 0 0 18px !important;
+    padding: 0 0 14px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.info-block h4) {
+    margin: 0 0 5px !important;
+    color: var(--config-ink) !important;
+    font-size: 15px !important;
+  }
+
+  .phase46-settings :global(.info-block p),
+  .phase46-settings :global(.helper-text),
+  .phase46-settings :global(.helper-text-custom),
+  .phase46-settings :global(.config-textarea-helper) {
+    color: var(--config-muted) !important;
+    font-size: 12px !important;
+    line-height: 1.55 !important;
+  }
+
+  .phase46-settings :global(.form-section),
+  .phase46-settings :global(.form-sub-section),
+  .phase46-settings :global(.registry-form-grid),
+  .phase46-settings .policy-builder-grid,
+  .phase46-settings .policy-form-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .phase46-settings :global(.form-sub-section > .input-group),
+  .phase46-settings :global(.input-group),
+  .phase46-settings :global(.select-group),
+  .phase46-settings :global(.form-group),
+  .phase46-settings :global(.form-group-custom),
+  .phase46-settings :global(.context-field),
+  .phase46-settings :global(.flex-1),
+  .phase46-settings :global(.custom-select-wrapper),
+  .phase46-settings .policy-choice-block {
+    min-width: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase46-settings :global(.config-textarea-field-wide),
+  .phase46-settings :global(.form-group-custom.wide),
+  .phase46-settings .policy-wide {
+    grid-column: 1 / -1;
+  }
+
+  .phase46-settings :global(input),
+  .phase46-settings :global(textarea),
+  .phase46-settings :global(select),
+  .phase46-settings .custom-input,
+  .phase46-settings .custom-textarea,
+  .phase46-settings .custom-select,
+  .phase46-settings .dropdown-trigger-btn,
+  .phase46-settings :global(.select-trigger),
+  .phase46-settings :global(.context-input),
+  .phase46-settings :global(.context-textarea) {
+    min-height: 38px;
+    border: 1px solid var(--config-line-strong) !important;
+    border-radius: 7px !important;
+    background: rgba(255, 255, 255, 0.8) !important;
+    color: var(--config-ink) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(input:focus),
+  .phase46-settings :global(textarea:focus),
+  .phase46-settings :global(select:focus),
+  .phase46-settings .custom-input:focus,
+  .phase46-settings .custom-textarea:focus,
+  .phase46-settings .dropdown-trigger-btn:focus,
+  .phase46-settings :global(.select-trigger:focus),
+  .phase46-settings :global(.context-input:focus),
+  .phase46-settings :global(.context-textarea:focus) {
+    outline: 0;
+    border-color: var(--config-accent) !important;
+    background: #fff !important;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1) !important;
+  }
+
+  .phase46-settings :global(.credential-collapsed) {
+    grid-column: 1 / -1;
+    display: flex !important;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1px solid var(--config-line) !important;
+  }
+
+  .phase46-settings :global(.segmented-control),
+  .phase46-settings :global(.context-choice-grid),
+  .phase46-settings .segmented-pills {
+    display: inline-flex !important;
+    width: fit-content;
+    max-width: 100%;
+    gap: 2px !important;
+    padding: 3px !important;
+    border: 1px solid var(--config-line) !important;
+    border-radius: 8px !important;
+    background: rgba(240, 245, 247, 0.76) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.control-btn),
+  .phase46-settings :global(.context-choice-grid button),
+  .phase46-settings .segmented-pills button {
+    min-height: 32px !important;
+    padding: 0 11px !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.control-btn.active),
+  .phase46-settings :global(.context-choice-grid button.active),
+  .phase46-settings .segmented-pills button.active {
+    background: rgba(255, 255, 255, 0.96) !important;
+    color: var(--config-accent-strong) !important;
+    box-shadow: 0 1px 3px rgba(28, 54, 67, 0.1) !important;
+  }
+
+  .phase46-settings :global(.registry-layout) {
+    display: grid !important;
+    grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr) !important;
+    gap: 24px !important;
+  }
+
+  .phase46-settings :global(.registry-list-column),
+  .phase46-settings :global(.registry-editor-column) {
+    border-top: 0 !important;
+  }
+
+  .phase46-settings :global(.registry-editor-column) {
+    padding-left: 24px !important;
+    border-left: 1px solid var(--config-line) !important;
+  }
+
+  .phase46-settings :global(.registry-fact-card),
+  .phase46-settings :global(.pack-item),
+  .phase46-settings :global(.project-card-item),
+  .phase46-settings :global(.summary-repo-item) {
+    width: 100%;
+    margin: 0 !important;
+    padding: 12px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.registry-fact-card.active) {
+    padding-inline: 10px !important;
+    background: var(--config-accent-soft) !important;
+  }
+
+  .phase46-settings :global(.table-responsive),
+  .phase46-settings :global(.table-container),
+  .phase46-settings :global(.webhook-result-table) {
+    overflow: auto;
+    border: 1px solid var(--config-line) !important;
+    border-radius: 8px !important;
+    background: rgba(255, 255, 255, 0.46) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--config-text) !important;
+  }
+
+  .phase46-settings :global(th) {
+    padding: 10px 12px !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    background: rgba(242, 247, 248, 0.76) !important;
+    color: var(--config-muted) !important;
+    font-size: 11px !important;
+    text-transform: none !important;
+  }
+
+  .phase46-settings :global(td) {
+    padding: 11px 12px !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    background: transparent !important;
+    color: var(--config-text) !important;
+  }
+
+  .phase46-settings :global(tr:hover td) {
+    background: rgba(0, 143, 150, 0.035) !important;
+  }
+
+  .phase46-settings .config-audit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .phase46-settings .config-audit-header h3 {
+    display: grid;
+    gap: 2px;
+  }
+
+  .phase46-settings .audit-scope {
+    color: var(--config-muted);
+    font-size: 11px;
+    font-weight: 620;
+  }
+
+  .phase46-settings .version-layout {
+    display: grid !important;
+    grid-template-rows: minmax(0, 190px) minmax(0, 1fr) !important;
+    gap: 0 !important;
+    height: calc(100% - 70px);
+    min-height: 350px;
+  }
+
+  .phase46-settings .version-list {
+    display: block !important;
+    overflow: auto !important;
+    padding: 6px 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+  }
+
+  .phase46-settings .version-item {
+    width: 100%;
+    min-height: 52px;
+    display: grid !important;
+    grid-template-columns: auto 1fr;
+    gap: 3px 10px !important;
+    align-items: center;
+    margin: 0 !important;
+    padding: 8px 9px !important;
+    border: 0 !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    color: var(--config-text) !important;
+    box-shadow: none !important;
+    text-align: left;
+  }
+
+  .phase46-settings .version-item:hover,
+  .phase46-settings .version-item.active {
+    background: var(--config-accent-soft) !important;
+  }
+
+  .phase46-settings .version-title {
+    color: var(--config-ink) !important;
+    font-size: 12px !important;
+  }
+
+  .phase46-settings .version-meta,
+  .phase46-settings .version-sections {
+    color: var(--config-muted) !important;
+    font-size: 10px !important;
+  }
+
+  .phase46-settings .version-sections {
+    grid-column: 2;
+  }
+
+  .phase46-settings .version-detail {
+    min-width: 0;
+    padding: 14px 0 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: hidden;
+  }
+
+  .phase46-settings .version-detail-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: start;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .phase46-settings .diff-table {
+    max-height: 260px;
+    overflow: auto;
+    border-top: 1px solid var(--config-line);
+  }
+
+  .phase46-settings .diff-row {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 6px !important;
+    margin: 0 !important;
+    padding: 9px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings .diff-arrow {
+    display: none !important;
+  }
+
+  .phase46-settings .diff-value {
+    min-width: 0;
+    max-height: 76px;
+    overflow: auto;
+    padding: 6px !important;
+    border: 0 !important;
+    border-radius: 4px !important;
+    background: rgba(246, 249, 250, 0.8) !important;
+    color: var(--config-text) !important;
+    font-size: 10px !important;
+  }
+
+  .phase46-settings .diff-value.before {
+    background: rgba(197, 71, 60, 0.045) !important;
+  }
+
+  .phase46-settings .diff-value.after {
+    background: rgba(8, 127, 97, 0.05) !important;
+  }
+
+  .phase46-settings .empty-version-state,
+  .phase46-settings .diff-empty,
+  .phase46-settings :global(.registry-empty),
+  .phase46-settings :global(.loading-state),
+  .phase46-settings :global(.empty-state) {
+    padding: 24px 12px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+    text-align: center;
+  }
+
+  .phase46-settings :global(.text-success) {
+    color: var(--config-success) !important;
+  }
+
+  .phase46-settings :global(.text-warning),
+  .phase46-settings .rollback-note {
+    color: var(--config-warning) !important;
+  }
+
+  .phase46-settings :global(.alert),
+  .phase46-settings .error-banner,
+  .phase46-settings .success-banner,
+  .phase46-settings :global(.inline-error),
+  .phase46-settings :global(.inline-success) {
+    border-radius: 7px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase46-settings .policy-panel,
+  .phase46-settings .branch-content,
+  .phase46-settings .permission-node,
+  .phase46-settings .group-coverage-card,
+  .phase46-settings .decision-card,
+  .phase46-settings .decision-log-item {
+    margin: 0 !important;
+    padding: 16px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings .choice-card,
+  .phase46-settings .suggestion-pills button,
+  .phase46-settings .action-chip-grid button,
+  .phase46-settings .permission-group-toggles button,
+  .phase46-settings .policy-template-strip button {
+    border-color: var(--config-line) !important;
+    border-radius: 7px !important;
+    background: rgba(255, 255, 255, 0.56) !important;
+    color: var(--config-text) !important;
+    box-shadow: none !important;
+  }
+
+  .phase46-settings :global(.custom-select-dropdown),
+  .phase46-settings :global(.select-dropdown),
+  .phase46-settings .dropdown-options-list {
+    border: 1px solid var(--config-line) !important;
+    border-radius: 9px !important;
+    background: rgba(255, 255, 255, 0.96) !important;
+    color: var(--config-text) !important;
+    box-shadow: 0 18px 44px rgba(34, 55, 70, 0.14) !important;
+    backdrop-filter: blur(18px) saturate(124%) !important;
+  }
+
+  .phase46-settings .modal-overlay {
+    background: rgba(18, 29, 39, 0.24) !important;
+    backdrop-filter: blur(10px) !important;
+  }
+
+  .phase46-settings .modal-card {
+    border: 1px solid var(--config-line) !important;
+    border-radius: 12px !important;
+    background: rgba(255, 255, 255, 0.94) !important;
+    color: var(--config-text) !important;
+    box-shadow: 0 28px 72px rgba(20, 38, 51, 0.18) !important;
+  }
+
+  @media (max-width: 1120px) {
+    .phase46-settings .settings-content-header {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .phase46-settings .settings-content-facts div:first-child {
+      border-left: 0 !important;
+    }
+  }
+
+  @media (max-width: 1080px) {
+    .phase46-settings .settings-workbench-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase46-settings .config-audit-panel {
+      min-height: auto;
+    }
+
+    .phase46-settings .version-layout {
+      height: auto;
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr) !important;
+      grid-template-rows: minmax(300px, auto) !important;
+    }
+
+    .phase46-settings .version-list {
+      border-right: 1px solid var(--config-line) !important;
+      border-bottom: 0 !important;
+      padding-right: 10px !important;
+    }
+
+    .phase46-settings .version-detail {
+      padding: 6px 0 0 14px !important;
+    }
+  }
+
+  @media (max-width: 1380px) {
+    .phase41-settings.phase46-settings .settings-workbench-grid:has(:global(.project-config-container)) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase41-settings.phase46-settings .settings-workbench-grid:has(:global(.project-config-container)) .config-audit-panel {
+      min-height: auto;
+    }
+
+    .phase41-settings.phase46-settings .settings-workbench-grid:has(:global(.project-config-container)) .version-layout {
+      height: auto;
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr) !important;
+      grid-template-rows: minmax(280px, auto) !important;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .phase46-settings .settings-content-header,
+    .phase46-settings .settings-primary-pane.integration-surface,
+    .phase46-settings .section-card,
+    .phase46-settings .config-audit-panel {
+      padding: 16px !important;
+      border-radius: 10px !important;
+    }
+
+    .phase46-settings .settings-content-facts {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .phase46-settings .settings-content-facts div:nth-child(odd) {
+      border-left: 0 !important;
+    }
+
+    .phase46-settings :global(.overview-grid),
+    .phase46-settings :global(.form-section),
+    .phase46-settings :global(.form-sub-section),
+    .phase46-settings :global(.registry-form-grid),
+    .phase46-settings :global(.registry-layout),
+    .phase46-settings .policy-builder-grid,
+    .phase46-settings .policy-form-grid {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .phase46-settings :global(.registry-editor-column) {
+      padding-left: 0 !important;
+      border-left: 0 !important;
+      border-top: 1px solid var(--config-line) !important;
+    }
+
+    .phase46-settings .version-layout {
+      display: block !important;
+    }
+
+    .phase46-settings .version-list {
+      max-height: 190px;
+      border-right: 0 !important;
+      border-bottom: 1px solid var(--config-line) !important;
+      padding-right: 0 !important;
+    }
+
+    .phase46-settings .version-detail {
+      padding: 14px 0 0 !important;
+    }
+  }
+
+  /* Specificity lock while Phase 41 selectors remain for untouched Settings routes. */
+  .phase41-settings.phase46-settings :global(.overview-row),
+  .phase41-settings.phase46-settings :global(.summary-row) {
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane .version-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane .version-item,
+  .phase41-settings.phase46-settings :global(.registry-fact-card),
+  .phase41-settings.phase46-settings :global(.pack-item),
+  .phase41-settings.phase46-settings :global(.project-card-item),
+  .phase41-settings.phase46-settings :global(.summary-repo-item) {
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane button.version-item:not(.btn) {
+    border: 0 !important;
+    border-bottom: 1px solid var(--config-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane .version-item:hover,
+  .phase41-settings.phase46-settings .settings-audit-pane .version-item.active,
+  .phase41-settings.phase46-settings :global(.registry-fact-card.active) {
+    background: var(--config-accent-soft) !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane button.version-item.active:not(.btn),
+  .phase41-settings.phase46-settings .settings-audit-pane button.version-item:hover:not(.btn) {
+    background: var(--config-accent-soft) !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane .version-detail,
+  .phase41-settings.phase46-settings .settings-audit-pane .diff-row {
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings .settings-audit-pane .diff-row {
+    border-bottom: 1px solid var(--config-line) !important;
+  }
+
+  .phase41-settings.phase46-settings :global(.context-choice-grid) {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)) !important;
+    gap: 6px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings :global(.context-choice-grid button) {
+    min-width: 0 !important;
+    min-height: 34px !important;
+    padding: 0 9px !important;
+    border: 1px solid var(--config-line) !important;
+    border-radius: 6px !important;
+    background: rgba(255, 255, 255, 0.46) !important;
+    color: var(--config-text) !important;
+    white-space: nowrap;
+  }
+
+  .phase41-settings.phase46-settings :global(.context-choice-grid button.active) {
+    border-color: rgba(0, 143, 150, 0.28) !important;
+    background: var(--config-accent-soft) !important;
+    color: var(--config-accent-strong) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings :global(.registry-metrics) {
+    display: flex !important;
+    align-items: center;
+    gap: 0 !important;
+  }
+
+  .phase41-settings.phase46-settings :global(.registry-metrics span) {
+    padding: 0 10px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: var(--config-muted) !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings :global(.registry-metrics span + span) {
+    border-left: 1px solid var(--config-line) !important;
+  }
+
+  .phase41-settings.phase46-settings .permission-branch {
+    display: block !important;
+    margin: 0 !important;
+    padding: 18px 0 0 !important;
+    border-top: 1px solid var(--config-line) !important;
+  }
+
+  .phase41-settings.phase46-settings .branch-stem {
+    display: none !important;
+  }
+
+  .phase41-settings.phase46-settings .branch-content,
+  .phase41-settings.phase46-settings .branch-header {
+    margin: 0 !important;
+    padding: 0 0 14px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings .branch-header {
+    border-bottom: 1px solid var(--config-line) !important;
+  }
+
+  .phase41-settings.phase46-settings .coverage-bar i {
+    background: var(--config-accent) !important;
+    box-shadow: none !important;
+  }
+
+  @media (max-width: 1080px) {
+    .phase41-settings.phase46-settings .settings-audit-pane .version-layout {
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr) !important;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .phase41-settings.phase46-settings .settings-audit-pane .version-layout {
+      display: block !important;
+    }
+  }
+
+  /* Phase 49: compact page context and a height-synchronized audit inspector. */
+  .phase41-settings.phase46-settings.phase49-settings .settings-breadcrumb-bar {
+    min-height: 44px;
+    border-radius: 8px !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-breadcrumb-bar li span {
+    display: inline;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-content-header {
+    min-height: 86px;
+    grid-template-columns: minmax(240px, 0.78fr) minmax(420px, 1.22fr);
+    gap: 20px;
+    padding: 14px 18px !important;
+    border-radius: 8px !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-content-header h1 {
+    font-size: 22px;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-content-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 420px);
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane {
+    position: relative;
+    align-self: stretch !important;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow: hidden;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .config-audit-panel,
+  :global(.phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid:has(.config-overview) .config-audit-panel),
+  :global(.phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid:has(.project-config-container) .config-audit-panel) {
+    width: 100%;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 16px !important;
+    border-radius: 8px !important;
+    overflow: hidden;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .config-audit-header {
+    flex: 0 0 auto;
+    min-height: 64px;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-layout,
+  .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane .version-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(112px, 210px) minmax(0, 1fr) !important;
+    overflow: hidden;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-list {
+    min-height: 0;
+    max-height: 210px;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 143, 150, 0.38) rgba(121, 139, 159, 0.1);
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-item {
+    grid-template-columns: 48px minmax(0, 1fr) !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-detail {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-detail-header {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-detail-header :global(.btn) {
+    width: fit-content !important;
+    justify-self: start !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-table {
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 143, 150, 0.38) rgba(121, 139, 159, 0.1);
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-list::-webkit-scrollbar,
+  .phase41-settings.phase46-settings.phase49-settings .diff-table::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-list::-webkit-scrollbar-track,
+  .phase41-settings.phase46-settings.phase49-settings .diff-table::-webkit-scrollbar-track,
+  .phase41-settings.phase46-settings.phase49-settings .version-list::-webkit-scrollbar-corner,
+  .phase41-settings.phase46-settings.phase49-settings .diff-table::-webkit-scrollbar-corner {
+    background: rgba(121, 139, 159, 0.08) !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-list::-webkit-scrollbar-thumb,
+  .phase41-settings.phase46-settings.phase49-settings .diff-table::-webkit-scrollbar-thumb {
+    min-height: 44px;
+    border: 2px solid rgba(255, 255, 255, 0.72);
+    border-radius: 999px;
+    background: rgba(0, 143, 150, 0.36) !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .version-list::-webkit-scrollbar-thumb:hover,
+  .phase41-settings.phase46-settings.phase49-settings .diff-table::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 143, 150, 0.54) !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-row {
+    gap: 8px !important;
+    padding: 11px 0 !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-path {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-value {
+    max-height: none;
+    overflow: visible;
+    display: grid;
+    gap: 5px;
+    padding: 8px !important;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-value > span {
+    color: var(--config-muted);
+    font-size: 10px;
+    font-weight: 760;
+  }
+
+  .phase41-settings.phase46-settings.phase49-settings .diff-value pre {
+    max-width: 100%;
+    margin: 0;
+    color: var(--config-text);
+    font-size: 10px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  @media (max-width: 1280px) {
+    .phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane {
+      position: static;
+      align-self: auto !important;
+      width: 100%;
+      height: min(640px, calc(100dvh - 110px));
+      max-height: 640px;
+      overflow: hidden;
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .config-audit-panel,
+    :global(.phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid:has(.config-overview) .config-audit-panel),
+    :global(.phase41-settings.phase46-settings.phase49-settings .settings-workbench-grid:has(.project-config-container) .config-audit-panel) {
+      position: relative;
+      inset: auto;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .phase41-settings.phase46-settings.phase49-settings .settings-content-header {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .settings-content-facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .settings-content-facts div {
+      border-left: 0 !important;
+      border-top: 1px solid var(--config-line) !important;
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane {
+      height: 620px;
+      max-height: 620px;
+    }
+
+    .phase41-settings.phase46-settings.phase49-settings .version-layout,
+    .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane .version-layout {
+      display: grid !important;
+      grid-template-rows: 190px minmax(0, 1fr) !important;
     }
   }
 </style>

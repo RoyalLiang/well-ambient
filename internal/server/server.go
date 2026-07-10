@@ -57,6 +57,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/strongest-brain/evidence-chain", s.withPermission("dashboard:read", s.handleGetStrongestBrainEvidenceChain))
 	s.mux.HandleFunc("GET /api/strongest-brain/delivery-cockpit", s.withPermission("decision:read", s.handleGetStrongestBrainDeliveryCockpit))
 	s.mux.HandleFunc("GET /api/strongest-brain/decision-queue", s.withPermission("decision:read", s.handleGetStrongestBrainDecisionQueue))
+	s.mux.HandleFunc("GET /api/strongest-brain/exceptions", s.withPermission("decision:read", s.handleGetStrongestBrainExceptions))
+	s.mux.HandleFunc("GET /api/strongest-brain/weekly-decisions", s.withPermission("decision:read", s.handleGetStrongestBrainWeeklyDecisions))
 	s.mux.HandleFunc("GET /api/strongest-brain/demand-readiness", s.withPermission("demands:read", s.handleGetStrongestBrainDemandReadiness))
 	s.mux.HandleFunc("GET /api/strongest-brain/override-audit", s.withPermission("decision:read", s.handleGetStrongestBrainOverrideAudit))
 	s.mux.HandleFunc("GET /api/strongest-brain/ai-traces", s.withPermission("ai_context:read", s.handleGetStrongestBrainAITraces))
@@ -278,6 +280,11 @@ func (s *Server) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	projectFilter := r.URL.Query().Get("project")
 	assigneeFilter := r.URL.Query().Get("assignee")
+	visibility, _, err := s.loadCoreMemberVisibility()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query users for core member visibility: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	tx := db.DB.Where("status != ?", "archived")
 
@@ -287,14 +294,16 @@ func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 
 	if assigneeFilter != "" && assigneeFilter != "all" {
 		if assigneeFilter == "外部协同" {
-			coreMembers := []string{
-				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华",
-				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang",
-				"Eddie", "Antigravity",
-			}
-			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")
-		} else {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]db.TaskTelemetry{})
+			return
+		}
+		if visibility.includesAssignee(assigneeFilter) {
 			tx = tx.Where("assignee = ?", assigneeFilter)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]db.TaskTelemetry{})
+			return
 		}
 	}
 
@@ -303,6 +312,7 @@ func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to query tasks: %v", err), http.StatusInternalServerError)
 		return
 	}
+	tasks = visibility.filterTasks(tasks)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(tasks); err != nil {

@@ -102,6 +102,65 @@ func TestKPIReportPreviewReturnsEvidenceBackedSections(t *testing.T) {
 	}
 }
 
+func TestKPIFiltersNonCoreMemberData(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "kpi-admin@westwell-lab.com", "KPI Admin", []string{"kpi:read"})
+	seedKPIReportPreviewData(t)
+
+	srv := NewServer(&config.Config{
+		Server: config.ServerConfig{Port: 9113, Host: "127.0.0.1"},
+		Jira: config.JiraConfig{
+			SyncUsers: []string{"Bob"},
+		},
+	}, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/kpi/performance?period=week", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/kpi/performance failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var performance KPIPerformanceResponse
+	if err := json.NewDecoder(rr.Body).Decode(&performance); err != nil {
+		t.Fatalf("Failed to decode KPI performance response: %v", err)
+	}
+
+	if performance.Summary.TotalCompleted != 1 || performance.Summary.TasksCompleted != 0 || performance.Summary.DemandsCompleted != 1 {
+		t.Fatalf("KPI summary should only include core member work, got %+v", performance.Summary)
+	}
+	if len(performance.UserKPI) != 1 || performance.UserKPI[0].Name != "Bob" {
+		t.Fatalf("Expected only Bob in KPI users, got %+v", performance.UserKPI)
+	}
+	for _, dept := range performance.DepartmentKPI {
+		if dept.Department != "AI Lab" {
+			t.Fatalf("Unexpected non-core department in KPI response: %+v", performance.DepartmentKPI)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/kpi/report-preview?period=week&type=weekly", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/kpi/report-preview failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var preview KPIReportPreviewResponse
+	if err := json.NewDecoder(rr.Body).Decode(&preview); err != nil {
+		t.Fatalf("Failed to decode KPI report preview response: %v", err)
+	}
+	if preview.Overview.TotalCompleted != 1 || preview.Overview.PersonalCount != 1 {
+		t.Fatalf("Report overview should only include core member data, got %+v", preview.Overview)
+	}
+	if reportEvidenceContain(preview.Evidence, "TASK-KPI-OTHER") {
+		t.Fatalf("Report evidence leaked non-core member task: %+v", preview.Evidence)
+	}
+}
+
 func TestKPIReportPreviewRejectsUnknownType(t *testing.T) {
 	setupServerTestDB(t)
 	token := superAdminToken(t, "kpi-admin@westwell-lab.com", "KPI Admin", []string{"kpi:read"})

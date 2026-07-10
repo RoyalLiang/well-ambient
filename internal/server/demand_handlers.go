@@ -48,20 +48,32 @@ func (s *Server) handleGetDemandOptions(w http.ResponseWriter, r *http.Request) 
 
 	assignees := make(map[string]string)
 	projects := make(map[string]string)
-	addDemandOption(assignees, r.Header.Get("x-authenticated-user-name"))
-	addDemandOption(assignees, r.Header.Get("x-authenticated-user-id"))
+	visibility, users, err := s.loadCoreMemberVisibility()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query users for demand options: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-	var users []userdb.User
-	if err := db.DB.Order("name asc, username asc").Find(&users).Error; err == nil {
-		for _, u := range users {
-			addDemandOption(assignees, firstNonBlank(u.Name, u.Username, u.Email))
+	if name := r.Header.Get("x-authenticated-user-name"); visibility.includesAssignee(name) {
+		addDemandOption(assignees, name)
+	}
+	if username := r.Header.Get("x-authenticated-user-id"); visibility.includesAssignee(username) {
+		addDemandOption(assignees, username)
+	}
+
+	for _, u := range users {
+		assignee := firstNonBlank(u.Name, u.Username, u.Email)
+		if visibility.includesAssignee(assignee) {
+			addDemandOption(assignees, assignee)
 		}
 	}
 
 	var tasks []db.TaskTelemetry
 	if err := db.DB.Select("assignee", "repo").Find(&tasks).Error; err == nil {
 		for _, task := range tasks {
-			addDemandOption(assignees, task.Assignee)
+			if visibility.includesAssignee(task.Assignee) {
+				addDemandOption(assignees, task.Assignee)
+			}
 		}
 	}
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
 
   export let taskID = '';
   export let isOpen = false;
@@ -8,8 +7,24 @@
   let commits: any[] = [];
   let loading = false;
   let errorMsg = '';
+  let lastFetchedTaskID = '';
 
   $: if (isOpen && taskID) {
+    fetchCommitsIfNeeded();
+  }
+
+  $: pushCount = commits.filter(log => log.action === 'git_push').length;
+  $: mrCount = commits.filter(log => log.action && log.action.startsWith('mr_')).length;
+  $: commentCount = commits.filter(log => log.action === 'jira_comment').length;
+  $: latestLog = commits[0] || null;
+  $: evidenceStateLabel = commits.length > 0 ? '已捕获代码证据' : '等待代码证据';
+  $: evidenceStateTone = commits.length > 0 ? 'ready' : 'empty';
+  $: if (!isOpen) {
+    lastFetchedTaskID = '';
+  }
+
+  function fetchCommitsIfNeeded() {
+    if (!taskID || loading || lastFetchedTaskID === taskID) return;
     fetchCommits();
   }
 
@@ -17,6 +32,7 @@
     loading = true;
     errorMsg = '';
     commits = [];
+    lastFetchedTaskID = taskID;
     try {
       const token = localStorage.getItem('jwt_token');
       const res = await fetch(`/api/tasks/commits?task_id=${taskID}`, {
@@ -35,6 +51,11 @@
     }
   }
 
+  function refreshCommits() {
+    lastFetchedTaskID = '';
+    fetchCommitsIfNeeded();
+  }
+
   function formatTimeBrief(timeStr: string): string {
     if (!timeStr) return '';
     const date = new Date(timeStr);
@@ -47,45 +68,92 @@
       onClose();
     }
   }
+
+  function getActionLabel(action: string) {
+    if (action === 'git_push') return 'Push';
+    if (action === 'jira_comment') return 'Comment';
+    if (action === 'mr_open') return 'MR Open';
+    if (action === 'mr_merge') return 'MR Merge';
+    if (action === 'mr_close') return 'MR Close';
+    return action || 'Event';
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="drawer-backdrop" on:click={onClose}>
-    <div class="drawer-panel font-sans" on:click|stopPropagation>
+  <div class="drawer-root">
+    <button class="drawer-backdrop" type="button" aria-label="关闭代码轨迹面板" on:click={onClose}></button>
+    <aside class="drawer-panel font-sans" aria-label="代码提交轨迹">
       <div class="drawer-header">
-        <div>
+        <div class="drawer-title-stack">
           <span class="drawer-kicker font-mono">GIT TELEMETRY TRACKER</span>
-          <h3>🛰️ 代码提交轨迹 ({taskID})</h3>
+          <h3>代码提交轨迹</h3>
+          <p class="drawer-subtitle font-mono">{taskID || '未选择任务'}</p>
         </div>
-        <button class="close-btn" on:click={onClose} aria-label="关闭代码轨迹面板">&times;</button>
+        <div class="drawer-actions">
+          <button class="refresh-btn font-mono" type="button" on:click={refreshCommits} disabled={loading}>刷新</button>
+          <button class="close-btn" type="button" on:click={onClose} aria-label="关闭代码轨迹面板">&times;</button>
+        </div>
+      </div>
+
+      <div class="telemetry-summary">
+        <div class="summary-cell state-{evidenceStateTone}">
+          <span class="font-mono">STATE</span>
+          <strong>{evidenceStateLabel}</strong>
+        </div>
+        <div class="summary-cell">
+          <span class="font-mono">PUSH</span>
+          <strong>{pushCount}</strong>
+        </div>
+        <div class="summary-cell">
+          <span class="font-mono">MR</span>
+          <strong>{mrCount}</strong>
+        </div>
+        <div class="summary-cell">
+          <span class="font-mono">COMMENT</span>
+          <strong>{commentCount}</strong>
+        </div>
       </div>
 
       <div class="drawer-body">
         {#if loading}
-          <div class="loading-state font-mono">
-            <span class="spinner"></span> 正在拉取最新的 Git 遥测明细...
+          <div class="loading-state" aria-label="正在加载代码轨迹">
+            <div class="skeleton-line wide"></div>
+            <div class="skeleton-card"></div>
+            <div class="skeleton-card compact"></div>
+            <div class="skeleton-card"></div>
           </div>
         {:else if errorMsg}
-          <div class="error-state font-mono">❌ {errorMsg}</div>
+          <div class="error-state">
+            <span class="font-mono">LOAD FAILED</span>
+            <strong>{errorMsg}</strong>
+            <button type="button" class="retry-btn font-mono" on:click={refreshCommits}>重试</button>
+          </div>
         {:else if commits && commits.length > 0}
+          {#if latestLog}
+            <div class="latest-signal">
+              <span class="summary-kicker font-mono">LATEST SIGNAL</span>
+              <strong>{getActionLabel(latestLog.action)}</strong>
+              <em>{formatTimeBrief(latestLog.created_at)} / {latestLog.author || '未知提交人'}</em>
+            </div>
+          {/if}
           <div class="commit-timeline">
             {#each commits as log}
               <div class="timeline-item">
                 <div class="timeline-badge-container">
                   <span class="timeline-badge badge-{log.action}">
-                    {log.action === 'git_push' ? 'Push' : (log.action === 'jira_comment' ? 'Comment' : 'MR')}
+                    {getActionLabel(log.action)}
                   </span>
                   <span class="timeline-time font-mono">{formatTimeBrief(log.created_at)}</span>
                 </div>
                 <div class="timeline-content">
                   <div class="timeline-meta">
                     {#if log.action === 'jira_comment'}
-                      <span class="meta-repo">💬 Jira 评论</span>
+                      <span class="meta-repo">Jira 评论</span>
                     {:else}
-                      <span class="meta-repo">📁 {log.repo}</span>
-                      <span class="meta-branch">🌿 {log.branch}</span>
+                      <span class="meta-repo">{log.repo || '未知仓库'}</span>
+                      <span class="meta-branch">{log.branch || '未知分支'}</span>
                       {#if log.commit_id}
                         <span class="meta-hash font-mono" title="Commit Hash">{log.commit_id.substring(0, 8)}</span>
                       {/if}
@@ -101,274 +169,548 @@
                     {/if}
                   </div>
                   <div class="timeline-footer">
-                    <span>👤 {log.action === 'jira_comment' ? '评论人' : '提交人'}: {log.author}</span>
+                    <span>{log.action === 'jira_comment' ? '评论人' : '提交人'}: {log.author || '未知'}</span>
                   </div>
                 </div>
               </div>
             {/each}
           </div>
         {:else}
-          <div class="empty-state font-mono">
-            <p>ℹ️ 该任务目前仅处于 Jira 状态，暂无关联的代码提交 (Git Telemetry) 记录。</p>
-            <p class="empty-hint">请确保您的分支或 Commit 包含任务前缀 (如 <code>{taskID}</code>) 并推送到 GitLab 仓库中以进行自动关联。</p>
+          <div class="empty-state">
+            <span class="font-mono">NO TELEMETRY</span>
+            <h4>暂无关联代码证据</h4>
+            <p>该任务目前仅处于 Jira 状态，尚未匹配到 GitLab Push、MR 或评论记录。</p>
+            <p class="empty-hint">分支或 Commit 需要包含任务前缀 <code>{taskID}</code>，推送后会自动关联。</p>
           </div>
         {/if}
       </div>
-    </div>
+    </aside>
   </div>
 {/if}
 
 <style>
-  .drawer-backdrop {
+  .drawer-root {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(15, 23, 42, 0.7);
-    backdrop-filter: blur(4px);
+    inset: 0;
     z-index: 2000;
     display: flex;
     justify-content: flex-end;
-    animation: fadeIn 0.2s ease-out;
+    pointer-events: auto;
+    animation: fadeIn 0.18s ease-out;
+  }
+
+  .drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background:
+      linear-gradient(120deg, rgba(15, 23, 42, 0.58), rgba(15, 23, 42, 0.34)),
+      rgba(2, 6, 23, 0.18);
+    backdrop-filter: blur(14px) saturate(128%);
+    cursor: pointer;
+  }
+
+  .drawer-backdrop:focus-visible {
+    outline: 2px solid rgba(32, 197, 183, 0.72);
+    outline-offset: -4px;
   }
 
   .drawer-panel {
-    width: 500px;
-    max-width: 90%;
+    position: relative;
+    z-index: 1;
+    width: min(584px, calc(100vw - 24px));
     height: 100%;
-    background: #0b1329;
-    border-left: 1px solid rgba(56, 189, 248, 0.2);
-    box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
     display: flex;
     flex-direction: column;
-    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    overflow: hidden;
+    color: var(--wa-ink-strong, #18212f);
+    background:
+      linear-gradient(150deg, rgba(255, 255, 255, 0.86), rgba(236, 246, 244, 0.74)),
+      linear-gradient(180deg, rgba(38, 166, 154, 0.12), rgba(53, 76, 121, 0.08));
+    border-left: 1px solid rgba(255, 255, 255, 0.58);
+    box-shadow:
+      -28px 0 70px rgba(15, 23, 42, 0.25),
+      inset 1px 0 0 rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(26px) saturate(145%);
+    animation: slideIn 0.28s cubic-bezier(0.2, 0.84, 0.28, 1);
+  }
+
+  .drawer-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, rgba(32, 197, 183, 0.16), transparent 16%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.42), transparent 34%);
   }
 
   .drawer-header {
-    padding: 24px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+    position: relative;
+    z-index: 1;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 28px 28px 18px;
+    border-bottom: 1px solid rgba(103, 119, 137, 0.18);
   }
 
-  .drawer-kicker {
-    font-size: 0.65rem;
+  .drawer-title-stack {
+    min-width: 0;
+    display: grid;
+    gap: 7px;
+  }
+
+  .drawer-kicker,
+  .summary-kicker,
+  .summary-cell span,
+  .error-state span,
+  .empty-state > span {
+    color: var(--wa-ink-muted, #667489);
+    font-size: 0.64rem;
     font-weight: 800;
-    color: #38bdf8;
-    letter-spacing: 0.1em;
-    display: block;
-    margin-bottom: 4px;
+    letter-spacing: 0;
+    text-transform: uppercase;
   }
 
   .drawer-header h3 {
     margin: 0;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #f1f5f9;
+    color: var(--wa-ink-strong, #18212f);
+    font-size: clamp(1.35rem, 2vw, 1.72rem);
+    font-weight: 760;
+    line-height: 1.08;
+    letter-spacing: 0;
+  }
+
+  .drawer-subtitle {
+    margin: 0;
+    max-width: 360px;
+    overflow: hidden;
+    color: rgba(24, 33, 47, 0.62);
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drawer-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .refresh-btn,
+  .close-btn,
+  .retry-btn {
+    min-height: 36px;
+    border: 1px solid rgba(103, 119, 137, 0.24);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.58);
+    color: var(--wa-ink-strong, #18212f);
+    cursor: pointer;
+    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  }
+
+  .refresh-btn {
+    padding: 0 14px;
+    color: rgba(24, 33, 47, 0.74);
+    font-size: 0.7rem;
+    font-weight: 800;
   }
 
   .close-btn {
-    background: none;
-    border: none;
-    color: #64748b;
-    font-size: 1.75rem;
-    cursor: pointer;
-    line-height: 1;
+    width: 36px;
     padding: 0;
-    transition: color 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(24, 33, 47, 0.56);
+    font-size: 1.34rem;
+    line-height: 1;
   }
 
-  .close-btn:hover {
-    color: #f1f5f9;
+  .refresh-btn:hover,
+  .close-btn:hover,
+  .retry-btn:hover {
+    transform: translateY(-1px);
+    border-color: rgba(32, 197, 183, 0.46);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.09);
+  }
+
+  .refresh-btn:disabled {
+    cursor: wait;
+    opacity: 0.56;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .refresh-btn:focus-visible,
+  .close-btn:focus-visible,
+  .retry-btn:focus-visible,
+  .mr-timeline-link:focus-visible {
+    outline: 2px solid rgba(32, 197, 183, 0.58);
+    outline-offset: 2px;
+  }
+
+  .telemetry-summary {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) repeat(3, minmax(76px, 1fr));
+    gap: 1px;
+    margin: 0 28px 20px;
+    overflow: hidden;
+    border: 1px solid rgba(103, 119, 137, 0.16);
+    border-radius: 8px;
+    background: rgba(103, 119, 137, 0.16);
+  }
+
+  .summary-cell {
+    min-width: 0;
+    min-height: 78px;
+    padding: 14px;
+    display: grid;
+    align-content: space-between;
+    background: rgba(255, 255, 255, 0.48);
+  }
+
+  .summary-cell strong {
+    min-width: 0;
+    color: var(--wa-ink-strong, #18212f);
+    font-size: 1.26rem;
+    font-weight: 760;
+    line-height: 1.05;
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .summary-cell.state-ready {
+    background:
+      linear-gradient(135deg, rgba(32, 197, 183, 0.18), rgba(255, 255, 255, 0.56)),
+      rgba(255, 255, 255, 0.42);
+  }
+
+  .summary-cell.state-empty {
+    background:
+      linear-gradient(135deg, rgba(214, 172, 72, 0.16), rgba(255, 255, 255, 0.58)),
+      rgba(255, 255, 255, 0.42);
   }
 
   .drawer-body {
+    position: relative;
+    z-index: 1;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 24px;
+    padding: 0 28px 28px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(103, 119, 137, 0.36) transparent;
   }
 
-  /* Spinner */
-  .spinner {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(56, 189, 248, 0.2);
-    border-top-color: #38bdf8;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin-right: 8px;
-    vertical-align: middle;
+  .drawer-body::-webkit-scrollbar {
+    width: 8px;
   }
 
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  .drawer-body::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(103, 119, 137, 0.32);
   }
 
-  /* Loading & States */
-  .loading-state, .error-state {
-    padding: 20px;
-    text-align: center;
-    color: #94a3b8;
-    font-size: 0.85rem;
+  .loading-state {
+    display: grid;
+    gap: 12px;
+  }
+
+  .skeleton-line,
+  .skeleton-card {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(103, 119, 137, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.52);
+  }
+
+  .skeleton-line::after,
+  .skeleton-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.68), transparent);
+    animation: pulse 1.25s ease-in-out infinite;
+  }
+
+  .skeleton-line {
+    width: 68%;
+    height: 18px;
+  }
+
+  .skeleton-line.wide {
+    width: 84%;
+  }
+
+  .skeleton-card {
+    height: 110px;
+  }
+
+  .skeleton-card.compact {
+    height: 82px;
+  }
+
+  .error-state,
+  .empty-state {
+    display: grid;
+    justify-items: start;
+    gap: 12px;
+    padding: 26px;
+    border: 1px solid rgba(103, 119, 137, 0.18);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+
+  .error-state strong,
+  .empty-state h4 {
+    margin: 0;
+    color: var(--wa-ink-strong, #18212f);
+    font-size: 1.08rem;
+    font-weight: 760;
+    letter-spacing: 0;
   }
 
   .error-state {
-    color: #f87171;
+    background:
+      linear-gradient(135deg, rgba(244, 99, 88, 0.12), rgba(255, 255, 255, 0.62)),
+      rgba(255, 255, 255, 0.5);
   }
 
-  .empty-state {
-    padding: 32px 20px;
-    text-align: center;
-    border: 1px dashed rgba(51, 65, 85, 0.4);
-    border-radius: 8px;
-    color: #64748b;
-    background: rgba(15, 23, 42, 0.2);
-    font-size: 0.85rem;
-    line-height: 1.6;
+  .retry-btn {
+    min-height: 38px;
+    padding: 0 16px;
+    font-size: 0.7rem;
+    font-weight: 800;
+  }
+
+  .empty-state p {
+    margin: 0;
+    color: rgba(24, 33, 47, 0.66);
+    font-size: 0.88rem;
+    line-height: 1.65;
   }
 
   .empty-hint {
-    margin-top: 16px;
-    font-size: 0.75rem;
-    color: #475569;
+    padding-top: 8px;
+    border-top: 1px solid rgba(103, 119, 137, 0.16);
   }
 
-  /* Commit Timeline */
+  .empty-hint code {
+    padding: 2px 6px;
+    border: 1px solid rgba(103, 119, 137, 0.18);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--wa-ink-strong, #18212f);
+  }
+
+  .latest-signal {
+    display: grid;
+    gap: 7px;
+    margin-bottom: 18px;
+    padding: 18px;
+    border: 1px solid rgba(32, 197, 183, 0.22);
+    border-radius: 8px;
+    background:
+      linear-gradient(135deg, rgba(32, 197, 183, 0.16), rgba(255, 255, 255, 0.6)),
+      rgba(255, 255, 255, 0.48);
+  }
+
+  .latest-signal strong {
+    color: var(--wa-ink-strong, #18212f);
+    font-size: 1.06rem;
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+
+  .latest-signal em {
+    color: rgba(24, 33, 47, 0.58);
+    font-size: 0.78rem;
+    font-style: normal;
+  }
+
   .commit-timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
     position: relative;
-    padding-left: 12px;
+    display: grid;
+    gap: 14px;
+    padding-left: 18px;
   }
 
   .commit-timeline::before {
     content: '';
     position: absolute;
-    top: 6px;
-    bottom: 6px;
+    top: 10px;
+    bottom: 10px;
     left: 4px;
-    width: 2px;
-    background: rgba(51, 65, 85, 0.5);
+    width: 1px;
+    background: linear-gradient(180deg, rgba(32, 197, 183, 0.5), rgba(103, 119, 137, 0.14));
   }
 
   .timeline-item {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
     position: relative;
+    display: grid;
+    gap: 8px;
   }
 
   .timeline-badge-container {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
-    padding-left: 14px;
+    min-height: 26px;
   }
 
   .timeline-badge-container::before {
     content: '';
     position: absolute;
-    left: 1px;
-    top: 6px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #38bdf8;
-    box-shadow: 0 0 6px #38bdf8;
+    left: -18px;
+    top: 9px;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(32, 197, 183, 0.88);
+    box-shadow: 0 0 0 4px rgba(32, 197, 183, 0.14);
   }
 
   .timeline-badge {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 2px 6px;
-    border-radius: 4px;
+    min-height: 24px;
+    padding: 4px 8px;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(103, 119, 137, 0.2);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.6);
+    color: rgba(24, 33, 47, 0.7);
+    font-size: 0.64rem;
+    font-weight: 850;
+    letter-spacing: 0;
     text-transform: uppercase;
   }
 
   .timeline-badge.badge-git_push {
-    background: rgba(14, 165, 233, 0.15);
-    color: #38bdf8;
-    border: 1px solid rgba(14, 165, 233, 0.3);
+    border-color: rgba(32, 197, 183, 0.3);
+    background: rgba(32, 197, 183, 0.14);
+    color: #116b63;
   }
 
   .timeline-badge.badge-mr_open,
   .timeline-badge.badge-mr_merge,
   .timeline-badge.badge-mr_close {
-    background: rgba(168, 85, 247, 0.15);
-    color: #c084fc;
-    border: 1px solid rgba(168, 85, 247, 0.3);
+    border-color: rgba(64, 86, 154, 0.24);
+    background: rgba(64, 86, 154, 0.12);
+    color: #33467f;
   }
 
   .timeline-badge.badge-jira_comment {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-color: rgba(214, 172, 72, 0.34);
+    background: rgba(214, 172, 72, 0.14);
+    color: #795d12;
   }
 
   .timeline-time {
-    font-size: 0.75rem;
-    color: #64748b;
+    flex: 0 0 auto;
+    color: rgba(24, 33, 47, 0.48);
+    font-size: 0.72rem;
   }
 
   .timeline-content {
-    background: rgba(15, 23, 42, 0.4);
-    border: 1px solid rgba(51, 65, 85, 0.4);
-    border-radius: 6px;
-    padding: 12px;
-    margin-left: 14px;
+    min-width: 0;
+    padding: 15px;
+    border: 1px solid rgba(103, 119, 137, 0.16);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.56);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
   }
 
   .timeline-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    font-size: 0.75rem;
-    color: #94a3b8;
-    margin-bottom: 6px;
+    gap: 8px;
+    margin-bottom: 10px;
   }
 
-  .meta-repo, .meta-branch, .meta-hash {
+  .meta-repo,
+  .meta-branch,
+  .meta-hash {
+    min-height: 24px;
+    max-width: 100%;
+    padding: 3px 8px;
     display: inline-flex;
     align-items: center;
+    border: 1px solid rgba(103, 119, 137, 0.15);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.48);
+    color: rgba(24, 33, 47, 0.62);
+    font-size: 0.72rem;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
   }
 
   .meta-hash {
-    background: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(51, 65, 85, 0.6);
-    padding: 1px 4px;
-    border-radius: 3px;
-    color: #38bdf8;
+    border-color: rgba(32, 197, 183, 0.24);
+    color: #116b63;
   }
 
   .timeline-body {
-    font-size: 0.8rem;
-    color: #e2e8f0;
-    word-break: break-all;
-    line-height: 1.5;
-    background: rgba(15, 23, 42, 0.2);
-    border-radius: 4px;
-    padding: 6px 8px;
-    margin-bottom: 6px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(103, 119, 137, 0.12);
+    border-radius: 8px;
+    background: rgba(245, 249, 248, 0.74);
+    color: rgba(24, 33, 47, 0.82);
+    font-size: 0.78rem;
+    line-height: 1.62;
+    overflow-wrap: anywhere;
   }
 
   .mr-timeline-link {
-    color: #a855f7;
+    color: #33467f;
     text-decoration: none;
-    border-bottom: 1px dashed rgba(168, 85, 247, 0.4);
+    border-bottom: 1px solid rgba(64, 86, 154, 0.3);
   }
 
   .mr-timeline-link:hover {
-    color: #c084fc;
-    border-bottom-style: solid;
+    color: #20305f;
+    border-bottom-color: rgba(64, 86, 154, 0.72);
   }
 
   .timeline-footer {
-    font-size: 0.7rem;
-    color: #64748b;
+    margin-top: 9px;
+    color: rgba(24, 33, 47, 0.48);
+    font-size: 0.72rem;
+  }
+
+  @media (max-width: 640px) {
+    .drawer-panel {
+      width: calc(100vw - 12px);
+    }
+
+    .drawer-header {
+      padding: 22px 18px 16px;
+    }
+
+    .telemetry-summary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 0 18px 18px;
+    }
+
+    .drawer-body {
+      padding: 0 18px 22px;
+    }
+
+    .drawer-actions {
+      flex-direction: column-reverse;
+      align-items: flex-end;
+    }
   }
 
   @keyframes fadeIn {
@@ -377,7 +719,11 @@
   }
 
   @keyframes slideIn {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
+    from { transform: translateX(32px); opacity: 0.82; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @keyframes pulse {
+    to { transform: translateX(100%); }
   }
 </style>

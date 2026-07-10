@@ -12,6 +12,8 @@ import (
 	"well-ambient/internal/telemetry"
 )
 
+const jiraCompletedKeepAliveWindow = 14 * 24 * time.Hour
+
 // startJiraSyncWorker starts a background loop to fetch tasks/bugs from Jira
 func (s *Server) startJiraSyncWorker() {
 	log.Println("Starting background Jira task synchronization worker...")
@@ -104,7 +106,7 @@ func (s *Server) syncJiraTasks() {
 			}
 
 			if existing.Assignee != assigneeName {
-				if shouldPreserveLocalAssignee(existing, assigneeName, time.Now()) {
+				if shouldPreserveLocalAssignee(existing, assigneeName, jiraMappedStatus, time.Now()) {
 					log.Printf("Jira sync: preserving local assignee override for %s (%s), ignoring Jira assignee %s", issue.Key, existing.Assignee, assigneeName)
 				} else {
 					existing.Assignee = assigneeName
@@ -154,10 +156,15 @@ func (s *Server) syncJiraTasks() {
 	// Phase 2: Active Local Jira Tasks Keep-Alive & Correction Sync
 	// =================================================================
 	var activeLocalTasks []db.TaskTelemetry
-	// Query local active Jira issues (contains '-' in TaskID and status != 'done')
-	if err := db.DB.Where("status != 'done' AND task_id LIKE '%-%'").Find(&activeLocalTasks).Error; err == nil && len(activeLocalTasks) > 0 {
+	// Query local Jira issues by key. Active issues are always corrected; recently completed
+	// issues get a short keep-alive window for post-completion owner/reopen changes.
+	if err := db.DB.Where("task_id LIKE '%-%'").Find(&activeLocalTasks).Error; err == nil && len(activeLocalTasks) > 0 {
 		var activeKeys []string
+		now := time.Now()
 		for _, t := range activeLocalTasks {
+			if !shouldIncludeInJiraKeepAlive(t, now) {
+				continue
+			}
 			parts := strings.Split(t.TaskID, "-")
 			if len(parts) != 2 {
 				continue
@@ -254,7 +261,7 @@ func (s *Server) syncJiraTasks() {
 				if err := db.DB.Where("task_id = ?", issue.Key).First(&existing).Error; err == nil {
 					hasChanges := false
 					if existing.Assignee != assigneeName {
-						if shouldPreserveLocalAssignee(existing, assigneeName, time.Now()) {
+						if shouldPreserveLocalAssignee(existing, assigneeName, jiraMappedStatus, time.Now()) {
 							log.Printf("Jira sync keep-alive: preserving local assignee override for %s (%s), ignoring Jira assignee %s", issue.Key, existing.Assignee, assigneeName)
 						} else {
 							log.Printf("Jira sync keep-alive: assignee of %s corrected from %s -> %s (even if out of configuration range)", issue.Key, existing.Assignee, assigneeName)
@@ -340,10 +347,13 @@ func mapJiraIssueType(jiraIssueType string) string {
 	}
 }
 
-func shouldPreserveLocalAssignee(task db.TaskTelemetry, incomingAssignee string, now time.Time) bool {
+func shouldPreserveLocalAssignee(task db.TaskTelemetry, incomingAssignee string, incomingStatus string, now time.Time) bool {
 	current := strings.TrimSpace(task.Assignee)
 	incoming := strings.TrimSpace(incomingAssignee)
 	if current == "" || strings.EqualFold(current, incoming) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(incomingStatus), "done") {
 		return false
 	}
 	if task.LastUpdate.IsZero() || now.Sub(task.LastUpdate) > 24*time.Hour {
@@ -358,6 +368,16 @@ func shouldPreserveLocalAssignee(task db.TaskTelemetry, incomingAssignee string,
 	return strings.Contains(logs, "转派") ||
 		strings.Contains(logs, "调整需求负责人") ||
 		strings.Contains(logs, "调停干预")
+}
+
+func shouldIncludeInJiraKeepAlive(task db.TaskTelemetry, now time.Time) bool {
+	if !strings.EqualFold(strings.TrimSpace(task.Status), "done") {
+		return true
+	}
+	if task.LastUpdate.IsZero() {
+		return false
+	}
+	return now.Sub(task.LastUpdate) <= jiraCompletedKeepAliveWindow
 }
 
 // buildJQL constructs a JQL query string from the Jira sync configuration

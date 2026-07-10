@@ -22,6 +22,66 @@ type StrongestBrainDecisionQueueResponse struct {
 	Evidence         []StrongestBrainEvidenceDigest `json:"evidence"`
 }
 
+type StrongestBrainExceptionCenterResponse struct {
+	GeneratedAt string                               `json:"generated_at"`
+	Mode        string                               `json:"mode"`
+	Summary     StrongestBrainExceptionCenterSummary `json:"summary"`
+	Items       []StrongestBrainExceptionCenterItem  `json:"items"`
+	Evidence    []StrongestBrainEvidenceDigest       `json:"evidence"`
+}
+
+type StrongestBrainExceptionCenterSummary struct {
+	Total              int            `json:"total"`
+	Open               int            `json:"open"`
+	P0                 int            `json:"p0"`
+	P1                 int            `json:"p1"`
+	P2                 int            `json:"p2"`
+	ByType             map[string]int `json:"by_type"`
+	ByOwner            map[string]int `json:"by_owner"`
+	EvidenceIncomplete int            `json:"evidence_incomplete"`
+	StatusMismatch     int            `json:"status_mismatch"`
+	MissingSchedule    int            `json:"missing_schedule"`
+	StaleAfterSchedule int            `json:"stale_after_schedule"`
+	DeadlineChainRisks int            `json:"deadline_chain_risks"`
+}
+
+type StrongestBrainExceptionCenterItem struct {
+	ID                   string   `json:"id"`
+	Type                 string   `json:"type"`
+	Severity             string   `json:"severity"`
+	Status               string   `json:"status"`
+	Title                string   `json:"title"`
+	Reason               string   `json:"reason"`
+	DecisionOwner        string   `json:"decision_owner"`
+	Deadline             string   `json:"deadline"`
+	RecommendedAction    string   `json:"recommended_action"`
+	ImpactScope          string   `json:"impact_scope"`
+	Source               string   `json:"source"`
+	EvidenceRefs         []string `json:"evidence_refs"`
+	MissingLinks         []string `json:"missing_links"`
+	CloseRequires        []string `json:"close_requires"`
+	ChainStatus          string   `json:"chain_status"`
+	EvidenceCompleteness int      `json:"evidence_completeness"`
+}
+
+type StrongestBrainWeeklyDecisionCenterResponse struct {
+	GeneratedAt string                                    `json:"generated_at"`
+	Mode        string                                    `json:"mode"`
+	Summary     StrongestBrainWeeklyDecisionCenterSummary `json:"summary"`
+	Items       []StrongestBrainWeeklyDecision            `json:"items"`
+}
+
+type StrongestBrainWeeklyDecisionCenterSummary struct {
+	Total              int `json:"total"`
+	MustDecide         int `json:"must_decide"`
+	ThisWeek           int `json:"this_week"`
+	DecisionDebt       int `json:"decision_debt"`
+	Critical           int `json:"critical"`
+	Warning            int `json:"warning"`
+	EvidenceIncomplete int `json:"evidence_incomplete"`
+	StatusMismatch     int `json:"status_mismatch"`
+}
+
 type StrongestBrainDecisionSummary struct {
 	Total               int `json:"total"`
 	Critical            int `json:"critical"`
@@ -192,18 +252,11 @@ func (s *Server) handleGetStrongestBrainDecisionQueue(w http.ResponseWriter, r *
 	}
 
 	now := time.Now()
-	schedule, err := buildStrongestBrainScheduleSnapshot(now)
+	readModel, err := buildStrongestBrainDecisionSnapshot(now)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to build schedule snapshot: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to build strongest brain decision snapshot: %v", err), http.StatusInternalServerError)
 		return
 	}
-	execution, logs, err := buildStrongestBrainExecutionSnapshot(now)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to build execution snapshot: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	readModel := buildStrongestBrainDecisionReadModel(schedule, execution, logs, now)
 
 	response := StrongestBrainDecisionQueueResponse{
 		GeneratedAt:      formatDateTime(now),
@@ -212,6 +265,59 @@ func (s *Server) handleGetStrongestBrainDecisionQueue(w http.ResponseWriter, r *
 		WeeklyDecisions:  readModel.WeeklyDecisions,
 		Items:            readModel.Items,
 		Evidence:         readModel.Evidence,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleGetStrongestBrainExceptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	now := time.Now()
+	readModel, err := buildStrongestBrainDecisionSnapshot(now)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to build strongest brain exception snapshot: %v", err), http.StatusInternalServerError)
+		return
+	}
+	items := buildStrongestBrainExceptionCenterItems(readModel.Items, boundedQueryLimit(r, 50, 200))
+
+	response := StrongestBrainExceptionCenterResponse{
+		GeneratedAt: formatDateTime(now),
+		Mode:        "exceptions_only",
+		Summary:     buildStrongestBrainExceptionCenterSummary(items),
+		Items:       items,
+		Evidence:    readModel.Evidence,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleGetStrongestBrainWeeklyDecisions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	now := time.Now()
+	readModel, err := buildStrongestBrainDecisionSnapshot(now)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to build strongest brain weekly decisions: %v", err), http.StatusInternalServerError)
+		return
+	}
+	limit := boundedQueryLimit(r, 50, 200)
+	items := readModel.WeeklyDecisions
+	if len(items) > limit {
+		items = items[:limit]
+	}
+
+	response := StrongestBrainWeeklyDecisionCenterResponse{
+		GeneratedAt: formatDateTime(now),
+		Mode:        "decision_meeting",
+		Summary:     buildStrongestBrainWeeklyDecisionCenterSummary(items),
+		Items:       items,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -416,6 +522,18 @@ type strongestBrainLogStats struct {
 	EvidenceRefs []string
 }
 
+func buildStrongestBrainDecisionSnapshot(now time.Time) (strongestBrainDecisionReadModel, error) {
+	schedule, err := buildStrongestBrainScheduleSnapshot(now)
+	if err != nil {
+		return strongestBrainDecisionReadModel{}, fmt.Errorf("build schedule snapshot: %w", err)
+	}
+	execution, logs, err := buildStrongestBrainExecutionSnapshot(now)
+	if err != nil {
+		return strongestBrainDecisionReadModel{}, fmt.Errorf("build execution snapshot: %w", err)
+	}
+	return buildStrongestBrainDecisionReadModel(schedule, execution, logs, now), nil
+}
+
 func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog, now time.Time) strongestBrainDecisionReadModel {
 	profiles := buildStrongestBrainEvidenceProfiles(schedule, execution, logs)
 	items := make([]StrongestBrainDecisionItem, 0)
@@ -454,6 +572,139 @@ func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, executio
 		Items:            items,
 		Evidence:         buildEvidenceDigest(logs, profiles),
 	}
+}
+
+func buildStrongestBrainExceptionCenterItems(items []StrongestBrainDecisionItem, limit int) []StrongestBrainExceptionCenterItem {
+	if limit <= 0 {
+		limit = 50
+	}
+	result := make([]StrongestBrainExceptionCenterItem, 0, len(items))
+	for _, item := range items {
+		status := strings.TrimSpace(item.Status)
+		if status == "" {
+			status = "open"
+		}
+		result = append(result, StrongestBrainExceptionCenterItem{
+			ID:                   item.ID,
+			Type:                 item.RiskType,
+			Severity:             decisionSeverity(item),
+			Status:               status,
+			Title:                item.Title,
+			Reason:               item.Problem,
+			DecisionOwner:        firstNonEmpty(item.DecisionOwner, item.Assignee, "未指定"),
+			Deadline:             firstNonEmpty(item.Deadline, decisionDeadline(item)),
+			RecommendedAction:    firstNonEmpty(item.RecommendedAction, item.SuggestedAction),
+			ImpactScope:          item.ImpactScope,
+			Source:               item.Source,
+			EvidenceRefs:         firstNStrings(firstNonEmptyStringSlice(item.EvidenceRefs, item.Evidence), 8),
+			MissingLinks:         firstNStrings(item.MissingLinks, 8),
+			CloseRequires:        strongestBrainExceptionCloseRequirements(item),
+			ChainStatus:          item.ChainStatus,
+			EvidenceCompleteness: item.EvidenceCompleteness,
+		})
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func buildStrongestBrainExceptionCenterSummary(items []StrongestBrainExceptionCenterItem) StrongestBrainExceptionCenterSummary {
+	summary := StrongestBrainExceptionCenterSummary{
+		Total:   len(items),
+		ByType:  map[string]int{},
+		ByOwner: map[string]int{},
+	}
+	for _, item := range items {
+		if item.Status == "" || item.Status == "open" {
+			summary.Open++
+		}
+		switch item.Severity {
+		case "P0":
+			summary.P0++
+		case "P1":
+			summary.P1++
+		default:
+			summary.P2++
+		}
+		summary.ByType[firstNonEmpty(item.Type, "unknown")]++
+		summary.ByOwner[firstNonEmpty(item.DecisionOwner, "未指定")]++
+		if len(item.MissingLinks) > 0 || item.EvidenceCompleteness < 80 {
+			summary.EvidenceIncomplete++
+		}
+		if strings.Contains(item.Type, "mismatch") {
+			summary.StatusMismatch++
+		}
+		if item.Type == "missing_schedule" {
+			summary.MissingSchedule++
+		}
+		if item.Type == "stale_after_schedule" {
+			summary.StaleAfterSchedule++
+		}
+		if item.Type == "due_soon" || item.Type == "overdue" {
+			summary.DeadlineChainRisks++
+		}
+	}
+	return summary
+}
+
+func buildStrongestBrainWeeklyDecisionCenterSummary(items []StrongestBrainWeeklyDecision) StrongestBrainWeeklyDecisionCenterSummary {
+	summary := StrongestBrainWeeklyDecisionCenterSummary{Total: len(items), ThisWeek: len(items)}
+	for _, item := range items {
+		if item.RiskLevel == "critical" {
+			summary.Critical++
+			summary.MustDecide++
+		}
+		if item.RiskLevel == "warning" {
+			summary.Warning++
+		}
+		if len(item.MissingLinks) > 0 || item.EvidenceCompleteness < 80 {
+			summary.EvidenceIncomplete++
+			summary.DecisionDebt++
+		}
+		if strings.Contains(item.DecisionType, "status") || strings.Contains(item.DecisionType, "mismatch") {
+			summary.StatusMismatch++
+			summary.MustDecide++
+		}
+		if item.DecisionType == "context_clarification" || strings.Contains(item.Question, "补充") {
+			summary.DecisionDebt++
+		}
+	}
+	if summary.MustDecide > summary.Total {
+		summary.MustDecide = summary.Total
+	}
+	return summary
+}
+
+func strongestBrainExceptionCloseRequirements(item StrongestBrainDecisionItem) []string {
+	requirements := []string{"记录处理结果"}
+	if len(item.MissingLinks) > 0 {
+		requirements = append(requirements, "补齐缺失证据："+strings.Join(item.MissingLinks, "、"))
+	}
+	switch item.RiskType {
+	case "missing_schedule":
+		requirements = append(requirements, "绑定排期负责人和截止日")
+	case "due_soon", "overdue":
+		requirements = append(requirements, "确认延期、拆分、转派或范围调整结论")
+	case "stale_after_schedule":
+		requirements = append(requirements, "绑定最新 Git、MR、Jira 或人工调停证据")
+	case "evidence_missing":
+		requirements = append(requirements, "补充 MR、commit、部署或验收记录")
+	case "status_mismatch":
+		requirements = append(requirements, "完成 Jira 与代码状态对账")
+	case "context_missing":
+		requirements = append(requirements, "补齐需求澄清问题")
+	}
+	return requirements
+}
+
+func firstNonEmptyStringSlice(candidates ...[]string) []string {
+	for _, candidate := range candidates {
+		if len(candidate) > 0 {
+			return candidate
+		}
+	}
+	return []string{}
 }
 
 func buildStrongestBrainEvidenceProfiles(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog) map[string]strongestBrainEvidenceProfile {

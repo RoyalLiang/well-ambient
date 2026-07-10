@@ -1,4 +1,5 @@
 import { mount } from 'svelte'
+import './styles/modern-admin-tokens.css'
 import './app.css'
 import App from './App.svelte'
 

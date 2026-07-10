@@ -1,13 +1,18 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { slide } from 'svelte/transition';
+  import type { AdminInspectorRecord, AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
+  import { ADMIN_TONE_CLASS, formatAdminDate, toneForRisk, toneForStatus } from '../lib/admin-console/contract';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
+
+  type DemandView = 'board' | 'schedule';
 
   export let currentUserPermissions: string[] = [];
   export let currentUserName: string = '';
   export let currentUserEmail: string = '';
   export let currentUserDepartment: string = '';
+  export let activeDemandView: DemandView = 'schedule';
 
   function hasPermission(perm: string): boolean {
     return currentUserPermissions.includes(perm);
@@ -36,7 +41,6 @@
     estimate_source?: string;
   }
 
-  type DemandView = 'board' | 'schedule';
   type ScheduleRiskFilter = 'attention' | 'all' | 'overdue' | 'due_soon' | 'stale' | 'unscheduled' | 'safe' | 'done';
   type ScheduleSortMode = 'risk' | 'due' | 'owner';
   type EstimateSource = '' | 'ai_deconstruct' | 'manual_adjusted';
@@ -169,6 +173,17 @@
     { value: 'risk', label: '风险优先' },
     { value: 'due', label: '截止日' },
     { value: 'owner', label: '负责人' }
+  ];
+
+  const scheduleTableColumns: AdminTableColumn[] = [
+    { key: 'demand', label: '需求', width: '150px' },
+    { key: 'title', label: '标题', width: '30%' },
+    { key: 'priority', label: '优先级', width: '74px', align: 'center' },
+    { key: 'owner', label: '负责人', width: '106px' },
+    { key: 'risk', label: '风险', width: '96px' },
+    { key: 'dueDate', label: '计划日', width: '112px' },
+    { key: 'status', label: '状态', width: '96px', align: 'center' },
+    { key: 'evidence', label: '检查', width: '84px', align: 'center' }
   ];
 
   const difficultyOptions: Array<{ value: string; label: string }> = [
@@ -313,7 +328,6 @@
   let demandOptionProjects: string[] = [];
   let loading = false;
   let errorMsg = '';
-  let activeDemandView: DemandView = 'board';
   let scheduleItems: ScheduleItem[] = [];
   let scheduleSummary: ScheduleSummary = createEmptyScheduleSummary();
   let scheduleGeneratedAt = '';
@@ -347,6 +361,7 @@
   let scheduleTypeFilter: 'all' | 'demand' | 'bug' = 'all';
   let scheduleProjectFilter = 'all';
   let scheduleProjectSearchText = '';
+  let selectedScheduleDemandId = '';
   let showScheduleProjectDropdown = false;
   let showRiskDropdown = false;
   let showTypeDropdown = false;
@@ -425,8 +440,8 @@
   let scheduleContainerEl: HTMLDivElement;
   let scheduleWorkbenchEl: HTMLDivElement;
   let scheduleTablePanelEl: HTMLDivElement;
-  const scheduleItemHeight = 76;
-  const scheduleTableHeaderHeight = 38;
+  const scheduleItemHeight = 68;
+  const scheduleTableHeaderHeight = 40;
   const scheduleEmptyStateHeight = 96;
   let lastScheduleLayoutSignature = '';
   let scheduleLayoutStabilizeSeq = 0;
@@ -480,6 +495,129 @@
     return baseWeight + riskWeight + urgencyWeight;
   }
 
+  function getScheduleRiskTone(value?: string): AdminTone {
+    const level = normalizeRiskLevel(value);
+    if (level === 'overdue') return 'danger';
+    if (level === 'due_soon' || level === 'stale' || level === 'unscheduled') return 'warning';
+    if (level === 'safe' || level === 'done') return 'success';
+    return toneForRisk(value);
+  }
+
+  function getScheduleStatusTone(item: ScheduleItem): AdminTone {
+    const statusClass = getScheduleStatusClass(item);
+    if (statusClass === 'done') return 'success';
+    if (statusClass === 'progress') return 'info';
+    if (statusClass === 'review' || statusClass === 'partial' || statusClass === 'unscheduled') return 'warning';
+    if (statusClass === 'scheduled') return 'info';
+    return toneForStatus(getScheduleStatusLabel(item));
+  }
+
+  function getPriorityTone(priority?: string): AdminTone {
+    if (priority === 'P0' || priority === 'P1') return 'danger';
+    if (priority === 'P2') return 'warning';
+    if (priority === 'P3') return 'info';
+    return 'neutral';
+  }
+
+  function getScheduleIssueTypeLabel(item: ScheduleItem): string {
+    return item.issue_type === 'bug' || item.issue_type === '缺陷' || item.issue_type === '故障' || item.issue_type === 'defect'
+      ? '缺陷'
+      : '需求';
+  }
+
+  function getScheduleProjectLabel(item: ScheduleItem): string {
+    const projectKey = item.project_key || getProjectKey(item.demand_id);
+    return getProjectName(projectKey) || projectKey || '暂不指定项目';
+  }
+
+  function buildScheduleChecklist(item: ScheduleItem): string[] {
+    return [
+      item.due_date ? `计划完成日已锁定：${formatScheduleDate(item.due_date)}` : '缺少计划完成日期',
+      hasScheduleValue(item.branch) ? `开发入口已记录：${item.branch}` : '缺少开发入口或分支',
+      item.subtask_total > 0 ? `AI 解构任务进度：${item.subtask_done}/${item.subtask_total}` : '尚未导入 AI 解构任务',
+      hasDeliveryEvidence(item) ? '已有仓库、分支或 MR 交付证据' : '暂无仓库、分支或 MR 证据',
+      item.estimate_hours > 0 || item.estimate_days > 0 ? `工时估算：${formatScheduleEffort(item)}` : '工时仍待评估'
+    ];
+  }
+
+  function buildScheduleTableRow(item: ScheduleItem): AdminTableRow {
+    const priority = item.project_priority || getProjectPriority(item.demand_id);
+    const riskLabel = item.risk_label || getRiskLevelLabel(item.risk_level);
+    const status = getScheduleStatusLabel(item);
+
+    return {
+      id: item.demand_id,
+      title: item.title,
+      status,
+      tone: getScheduleStatusTone(item),
+      owner: item.assignee || '未指派',
+      dueDate: formatAdminDate(item.due_date),
+      priority,
+      risk: riskLabel,
+      cells: {
+        issueType: getScheduleIssueTypeLabel(item),
+        project: getScheduleProjectLabel(item),
+        priority,
+        owner: item.assignee || '未指派',
+        risk: riskLabel,
+        riskReason: item.risk_reason || '',
+        dueDate: formatAdminDate(item.due_date),
+        status,
+        effort: formatScheduleEffort(item),
+        subtasks: `${item.subtask_done}/${item.subtask_total || 0}`,
+        updatedAt: formatAdminDate(item.last_update)
+      }
+    };
+  }
+
+  function buildScheduleInspectorRecord(item: ScheduleItem | null | undefined): AdminInspectorRecord | null {
+    if (!item) return null;
+    const priority = item.project_priority || getProjectPriority(item.demand_id);
+    const progress = getScheduleProgress(item);
+    return {
+      id: item.demand_id,
+      title: item.title,
+      status: getScheduleStatusLabel(item),
+      tone: getScheduleStatusTone(item),
+      facts: [
+        { label: '负责人', value: item.assignee || '未指派' },
+        { label: '提出日期', value: formatAdminDate(item.created_at) },
+        { label: '计划完成日期', value: formatAdminDate(item.due_date) },
+        { label: '所属项目', value: getScheduleProjectLabel(item) },
+        { label: '关联目标', value: priority || 'P2' },
+        { label: '当前阶段', value: getScheduleStatusLabel(item) },
+        { label: '预计工作量', value: formatScheduleEffort(item) },
+        { label: '任务组', value: item.task_group_id || '未绑定' }
+      ],
+      sections: [
+        {
+          title: '需求描述',
+          body: item.description || '当前需求没有补充描述。'
+        },
+        {
+          title: '验收标准',
+          items: buildScheduleChecklist(item)
+        },
+        {
+          title: '风险说明',
+          body: item.risk_reason || '当前接口未返回额外风险说明。'
+        },
+        {
+          title: 'AI 解构',
+          items: [
+            `影子任务完成度：${progress}%`,
+            `影子任务数量：${item.subtask_done}/${item.subtask_total || 0}`,
+            `最近更新：${formatAdminDate(item.last_update)}`
+          ]
+        }
+      ],
+      actions: [
+        { label: '编辑排期', kind: 'primary' },
+        { label: '代码轨迹', kind: 'secondary' }
+      ]
+    };
+  }
+
   $: flatRenderList = (() => {
     const sorted = [...filteredScheduleItems];
     sorted.sort((a, b) => compareScheduleItems(a, b));
@@ -488,6 +626,7 @@
       type: 'item',
       projectKey: item.project_key || getProjectKey(item.demand_id),
       data: item,
+      row: buildScheduleTableRow(item),
       id: item.demand_id
     }));
   })();
@@ -990,7 +1129,7 @@
     projectConfigs,
     telemetryScores
   );
-  $: scheduleAssigneeOptions = [...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)), "外部协同"];
+  $: scheduleAssigneeOptions = Array.from(coreMembers).sort((a, b) => a.localeCompare(b));
   $: detailSubtasks = detailDemand ? getSubTasksForDemand(detailDemand.task_group_id) : [];
   $: scheduleItemsWithWeights = scheduleItems.map(item => {
     const priority = item.project_priority || getProjectPriority(item.demand_id);
@@ -1002,10 +1141,60 @@
     };
   });
 
-  $: filteredScheduleItems = scheduleItemsWithWeights.filter(item => {
-    if (scheduleAssigneeFilter === '外部协同') return true;
-    return isCoreMember(item.assignee);
-  });
+  $: filteredScheduleItems = scheduleItemsWithWeights.filter(item => isCoreMember(item.assignee));
+  $: scheduleCriticalItems = filteredScheduleItems
+    .filter((item) => {
+      const level = normalizeRiskLevel(item.risk_level);
+      return level !== 'safe' && level !== 'done';
+    })
+    .sort((a, b) => compareScheduleItems(a, b))
+    .slice(0, 3);
+  $: scheduleFocusItem = scheduleCriticalItems[0] || filteredScheduleItems[0];
+  $: scheduleLockRate = scheduleSummary.total > 0
+    ? Math.round((scheduleSummary.scheduled / scheduleSummary.total) * 100)
+    : 0;
+  $: scheduleRiskLoad = scheduleSummary.overdue + scheduleSummary.due_soon + scheduleSummary.stale + scheduleSummary.unscheduled;
+  $: scheduleCompletionRate = scheduleSummary.total > 0
+    ? Math.round((scheduleSummary.done / scheduleSummary.total) * 100)
+    : 0;
+  $: scheduleAdminMetrics = [
+    {
+      label: '需求队列',
+      value: scheduleSummary.total,
+      helper: `当前筛选 ${filteredScheduleItems.length} 条`,
+      tone: 'info'
+    },
+    {
+      label: '排期完整率',
+      value: `${scheduleLockRate}%`,
+      helper: `已排期 ${scheduleSummary.scheduled} / 待排期 ${scheduleSummary.unscheduled}`,
+      tone: scheduleLockRate >= 80 ? 'success' : 'warning'
+    },
+    {
+      label: '高风险',
+      value: scheduleRiskLoad,
+      helper: `逾期 ${scheduleSummary.overdue} · 临期 ${scheduleSummary.due_soon} · 滞后 ${scheduleSummary.stale}`,
+      tone: scheduleRiskLoad > 0 ? 'danger' : 'success'
+    },
+    {
+      label: '目标完成',
+      value: `${scheduleCompletionRate}%`,
+      helper: `已完成 ${scheduleSummary.done} 个需求`,
+      tone: 'success'
+    }
+  ] satisfies AdminMetric[];
+  $: scheduleAdminSegments = [
+    { label: '待排期', value: scheduleSummary.unscheduled, helper: '缺入口/截止日', tone: scheduleSummary.unscheduled > 0 ? 'warning' : 'neutral' },
+    { label: '已排期', value: scheduleSummary.scheduled, helper: '已锁定计划', tone: 'info' },
+    { label: '进行中', value: scheduleSummary.in_progress, helper: '开发推进中', tone: 'info' },
+    { label: '待验收', value: scheduleSummary.review, helper: '等待确认', tone: scheduleSummary.review > 0 ? 'warning' : 'neutral' },
+    { label: '已完成', value: scheduleSummary.done, helper: '完成交付', tone: 'success' }
+  ] satisfies AdminMetric[];
+  $: if (selectedScheduleDemandId && !filteredScheduleItems.some((item) => item.demand_id === selectedScheduleDemandId)) {
+    selectedScheduleDemandId = '';
+  }
+  $: selectedScheduleItem = filteredScheduleItems.find((item) => item.demand_id === selectedScheduleDemandId) || scheduleFocusItem || null;
+  $: scheduleInspectorRecord = buildScheduleInspectorRecord(selectedScheduleItem);
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
@@ -1021,13 +1210,6 @@
     } else if (!shouldLock && manualModalScrollLocked) {
       unlockBodyScroll();
       manualModalScrollLocked = false;
-    }
-  }
-
-  function setDemandView(view: DemandView) {
-    activeDemandView = view;
-    if (view === 'schedule') {
-      fetchSchedule();
     }
   }
 
@@ -1314,6 +1496,22 @@
     return bucket.counts.total;
   }
 
+  function getRiskCalendarTotal(risk: ScheduleRiskFilter): number {
+    return riskCalendarBuckets.reduce((sum, bucket) => sum + getBucketRiskCount(bucket, risk), 0);
+  }
+
+  function buildRiskCalendarFocus(): string {
+    const overdue = getRiskCalendarTotal('overdue');
+    const dueSoon = getRiskCalendarTotal('due_soon');
+    const stale = getRiskCalendarTotal('stale');
+    const unscheduled = getRiskCalendarTotal('unscheduled');
+    if (overdue > 0) return `${overdue} 个逾期项优先处理`;
+    if (dueSoon > 0) return `${dueSoon} 个临期项需要锁定交付口径`;
+    if (stale > 0) return `${stale} 个停滞项需要补推进证据`;
+    if (unscheduled > 0) return `${unscheduled} 个需求等待排期`;
+    return '当前排期风险平稳';
+  }
+
   function selectScheduleRiskFromCalendar(risk: ScheduleRiskFilter) {
     scheduleRiskFilter = risk;
     showRiskDropdown = false;
@@ -1325,6 +1523,8 @@
   }
 
   $: riskCalendarHasAny = riskCalendarBuckets.some((bucket) => bucket.counts.total > 0 || bucket.events.length > 0);
+  $: riskCalendarTotalCount = riskCalendarBuckets.reduce((sum, bucket) => sum + bucket.counts.total, 0);
+  $: riskCalendarFocus = buildRiskCalendarFocus();
 
   async function fetchRiskCalendar() {
     const requestSeq = ++riskCalendarRequestSeq;
@@ -1864,30 +2064,36 @@
   }
 </script>
 
-<div class="demand-dashboard font-sans">
+<div
+  class="demand-dashboard font-sans"
+  class:flow-dashboard={activeDemandView === 'board'}
+  class:schedule-dashboard={activeDemandView === 'schedule'}
+>
   <div class="dashboard-header">
-    <div>
-      <span class="eyebrow">PRODUCT REQUIREMENTS ROADMAP</span>
-      <h2>📋 需求流转与排期看板</h2>
+    <div class="dashboard-title-block">
+      <span class="eyebrow">DEMAND GOVERNANCE</span>
+      <h2>{activeDemandView === 'schedule' ? '排期看板' : '流转看板'}</h2>
+      <p class="dashboard-subtitle">
+        {#if activeDemandView === 'schedule' && scheduleGeneratedAt}
+          {scheduleGeneratedAt}
+        {:else}
+          需求流转、负责人、证据与排期入口集中处理
+        {/if}
+      </p>
     </div>
 
-    {#if hasPermission('demands:write')}
-      <button class="add-demand-btn font-mono" on:click={openCreateDemandModal}>
-        ➕ 录入新需求
-      </button>
-    {/if}
-  </div>
-
-  <div class="demand-viewbar">
-    <div class="view-toggle" role="tablist" aria-label="需求视图切换">
-      <button class:active={activeDemandView === 'board'} on:click={() => setDemandView('board')}>流转看板</button>
-      <button class:active={activeDemandView === 'schedule'} on:click={() => setDemandView('schedule')}>排期表</button>
-    </div>
-    <div class="viewbar-meta font-mono">
-      {#if activeDemandView === 'schedule' && scheduleGeneratedAt}
-        {scheduleGeneratedAt}
-      {:else}
-        {demands.length} active demands
+    <div class="dashboard-actions">
+      {#if activeDemandView === 'board'}
+        <span class="flow-demand-count" aria-label="活跃需求数量">
+          <strong class="font-mono">{demands.length}</strong>
+          <span>active demands</span>
+        </span>
+      {/if}
+      {#if hasPermission('demands:write')}
+        <button class="add-demand-btn" on:click={openCreateDemandModal}>
+          <span class="add-demand-icon" aria-hidden="true">+</span>
+          <span>录入新需求</span>
+        </button>
       {/if}
     </div>
   </div>
@@ -1897,444 +2103,499 @@
   {:else if errorMsg && activeDemandView === 'board'}
     <div class="state-msg error-msg font-mono">❌ {errorMsg}</div>
   {:else if activeDemandView === 'schedule'}
-    <div class="schedule-workbench" bind:this={scheduleWorkbenchEl}>
-      <div class="schedule-summary-grid">
-        <div class="schedule-summary-cell">
-          <span class="summary-label font-mono">TOTAL</span>
-          <strong>{scheduleSummary.total}</strong>
-          <em>需求总量</em>
-        </div>
-        <div class="schedule-summary-cell is-blue">
-          <span class="summary-label font-mono">SCHEDULED</span>
-          <strong>{scheduleSummary.scheduled}</strong>
-          <em>已锁定排期</em>
-        </div>
-        <div class="schedule-summary-cell is-red">
-          <span class="summary-label font-mono">OVERDUE</span>
-          <strong>{scheduleSummary.overdue}</strong>
-          <em>逾期风险</em>
-        </div>
-        <div class="schedule-summary-cell is-amber">
-          <span class="summary-label font-mono">DUE SOON</span>
-          <strong>{scheduleSummary.due_soon}</strong>
-          <em>三日内到期</em>
-        </div>
-        <div class="schedule-summary-cell is-violet">
-          <span class="summary-label font-mono">STALE</span>
-          <strong>{scheduleSummary.stale}</strong>
-          <em>推进滞后</em>
-        </div>
+    <div class="schedule-workbench wa-grain" bind:this={scheduleWorkbenchEl}>
+      <div class="schedule-summary-grid" aria-label="排期指标">
+        {#each scheduleAdminMetrics as metric}
+          <div class="schedule-summary-cell wa-admin-card wa-admin-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
+            <span>{metric.label}</span>
+            <strong>{metric.value}</strong>
+            <em>{metric.helper}</em>
+          </div>
+        {/each}
       </div>
 
-      <div class="schedule-risk-calendar-panel">
-        <div class="risk-calendar-head">
-          <div>
-            <span class="eyebrow">RISK CALENDAR</span>
-            <h3>排期风险日历</h3>
+      <div class="schedule-segment-grid" aria-label="排期状态分段">
+        {#each scheduleAdminSegments as segment}
+          <div class="schedule-segment-card wa-admin-card {ADMIN_TONE_CLASS[segment.tone || 'neutral']}">
+            <span>{segment.label}</span>
+            <strong class="font-mono">{segment.value}</strong>
+            <em>{segment.helper}</em>
           </div>
-          <div class="risk-calendar-meta font-mono">
-            {#if riskCalendarLoading}
-              <span>刷新中</span>
-            {:else if riskCalendarUsingFallback}
-              <span>本地排期兜底</span>
-            {:else if riskCalendarGeneratedAt}
-              <span>{riskCalendarGeneratedAt}</span>
-            {/if}
-          </div>
-        </div>
+        {/each}
+      </div>
 
-        {#if riskCalendarErrorMsg && riskCalendarUsingFallback}
-          <div class="risk-calendar-warning font-mono">{riskCalendarErrorMsg}，已使用当前排期表生成临时视图。</div>
-        {/if}
+      <div class="schedule-main-grid">
+        <section class="schedule-table-stack wa-admin-section" aria-label="需求排期表">
+          <div class="schedule-control-panel wa-admin-card wa-admin-toolbar">
+            <div class="schedule-search-shell">
+              <span class="search-mark"></span>
+              <input
+                type="text"
+                placeholder="搜索需求、编号、负责人"
+                value={scheduleSearchInput}
+                on:input={handleScheduleSearch}
+              />
+            </div>
 
-        {#if riskCalendarLoading && !riskCalendarHasAny}
-          <div class="risk-calendar-loading">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        {:else}
-          <div class="risk-calendar-grid">
-            {#each riskCalendarBuckets as bucket}
-              <div class="risk-calendar-bucket">
-                <div class="bucket-title-row">
-                  <div>
-                    <strong>{bucket.label}</strong>
-                    <span class="font-mono">{bucket.window_label}</span>
-                  </div>
-                  <em class="font-mono">{bucket.counts.total}</em>
-                </div>
-
-                <div class="bucket-risk-chips">
-                  {#each riskCalendarRiskTypes as risk}
-                    {@const count = getBucketRiskCount(bucket, risk.value)}
+            <div class="schedule-dropdown-menu custom-dropdown-container">
+              <div class="combobox-trigger-wrapper">
+                <button
+                  type="button"
+                  class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+                  on:click|stopPropagation={() => showRiskDropdown = !showRiskDropdown}
+                >
+                  {scheduleRiskFilters.find(f => f.value === scheduleRiskFilter)?.label || '风险筛选'}
+                </button>
+                <span class="arrow-icon {showRiskDropdown ? 'open' : ''}">▼</span>
+              </div>
+              {#if showRiskDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  {#each scheduleRiskFilters as filter}
                     <button
                       type="button"
-                      class="bucket-risk-chip risk-{risk.value} {count > 0 ? 'has-count' : ''}"
-                      on:click={() => selectScheduleRiskFromCalendar(risk.value)}
-                      disabled={count === 0}
+                      class="dropdown-option-item {scheduleRiskFilter === filter.value ? 'selected' : ''}"
+                      on:click={() => {
+                        scheduleRiskFilter = filter.value;
+                        showRiskDropdown = false;
+                      }}
                     >
-                      <span>{risk.label}</span>
-                      <strong class="font-mono">{count}</strong>
+                      {filter.label}
                     </button>
                   {/each}
                 </div>
+              {/if}
+            </div>
 
-                {#if bucket.events.length > 0}
-                  <div class="bucket-event-list">
-                    {#each bucket.events.slice(0, 3) as event}
-                      <button
-                        type="button"
-                        class="bucket-event-item risk-{normalizeRiskLevel(event.risk_level)}"
-                        on:click={() => selectScheduleRiskFromCalendar(getRiskFilterFromLevel(event.risk_level))}
-                      >
-                        <span class="event-task font-mono">{event.demand_id}</span>
-                        <strong title={event.title}>{event.title}</strong>
-                        <em class="font-mono">{formatRiskEventMeta(event)}</em>
-                      </button>
-                    {/each}
-                  </div>
-                {:else}
-                  <div class="bucket-empty font-mono">暂无明细事件</div>
-                {/if}
+            <div class="schedule-dropdown-menu custom-dropdown-container">
+              <div class="combobox-trigger-wrapper">
+                <button
+                  type="button"
+                  class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+                  on:click|stopPropagation={() => showTypeDropdown = !showTypeDropdown}
+                >
+                  {scheduleTypeFilter === 'all' ? '全部类型' : (scheduleTypeFilter === 'demand' ? '仅需求' : '仅缺陷')}
+                </button>
+                <span class="arrow-icon {showTypeDropdown ? 'open' : ''}">▼</span>
               </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <div class="schedule-control-panel">
-        <div class="schedule-search-shell">
-          <span class="search-mark"></span>
-          <input 
-            type="text"
-            placeholder="搜索需求、负责人、仓库、分支" 
-            value={scheduleSearchInput}
-            on:input={handleScheduleSearch}
-          />
-        </div>
-
-        <div class="schedule-dropdown-menu custom-dropdown-container">
-          <div class="combobox-trigger-wrapper">
-            <button
-              type="button"
-              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
-              on:click|stopPropagation={() => showRiskDropdown = !showRiskDropdown}
-            >
-              {scheduleRiskFilters.find(f => f.value === scheduleRiskFilter)?.label || '风险筛选'}
-            </button>
-            <span class="arrow-icon {showRiskDropdown ? 'open' : ''}">▼</span>
-          </div>
-          {#if showRiskDropdown}
-            <div class="dropdown-options-list glass-panel">
-              {#each scheduleRiskFilters as filter}
-                <button
-                  type="button"
-                  class="dropdown-option-item {scheduleRiskFilter === filter.value ? 'selected' : ''}"
-                  on:click={() => {
-                    scheduleRiskFilter = filter.value;
-                    showRiskDropdown = false;
-                  }}
-                >
-                  {filter.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="schedule-dropdown-menu custom-dropdown-container">
-          <div class="combobox-trigger-wrapper">
-            <button
-              type="button"
-              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
-              on:click|stopPropagation={() => showTypeDropdown = !showTypeDropdown}
-            >
-              {scheduleTypeFilter === 'all' ? '全部类型' : (scheduleTypeFilter === 'demand' ? '仅需求' : '仅缺陷')}
-            </button>
-            <span class="arrow-icon {showTypeDropdown ? 'open' : ''}">▼</span>
-          </div>
-          {#if showTypeDropdown}
-            <div class="dropdown-options-list glass-panel">
-              <button
-                type="button"
-                class="dropdown-option-item {scheduleTypeFilter === 'all' ? 'selected' : ''}"
-                on:click={() => {
-                  scheduleTypeFilter = 'all';
-                  showTypeDropdown = false;
-                }}
-              >
-                全部类型
-              </button>
-              <button
-                type="button"
-                class="dropdown-option-item {scheduleTypeFilter === 'demand' ? 'selected' : ''}"
-                on:click={() => {
-                  scheduleTypeFilter = 'demand';
-                  showTypeDropdown = false;
-                }}
-              >
-                仅需求
-              </button>
-              <button
-                type="button"
-                class="dropdown-option-item {scheduleTypeFilter === 'bug' ? 'selected' : ''}"
-                on:click={() => {
-                  scheduleTypeFilter = 'bug';
-                  showTypeDropdown = false;
-                }}
-              >
-                仅缺陷
-              </button>
-            </div>
-          {/if}
-        </div>
-
-        <div class="schedule-assignee-menu custom-dropdown-container">
-          <div class="combobox-trigger-wrapper">
-            <input
-              type="text"
-              class="dropdown-trigger-input schedule-trigger-override"
-              placeholder={scheduleAssigneeFilter === 'all' ? '全部负责人' : scheduleAssigneeFilter}
-              bind:value={scheduleAssigneeSearchText}
-              on:focus|stopPropagation={() => showScheduleAssigneeDropdown = true}
-            />
-            <span class="arrow-icon {showScheduleAssigneeDropdown ? 'open' : ''}">▼</span>
-          </div>
-          {#if showScheduleAssigneeDropdown}
-            <div class="dropdown-options-list glass-panel">
-              <button
-                type="button"
-                class="dropdown-option-item {scheduleAssigneeFilter === 'all' ? 'selected' : ''}"
-                on:click={() => {
-                  scheduleAssigneeFilter = 'all';
-                  showScheduleAssigneeDropdown = false;
-                }}
-              >
-                全部负责人
-              </button>
-              {#each scheduleAssigneeOptions.filter(name => !scheduleAssigneeSearchText || name.toLowerCase().includes(scheduleAssigneeSearchText.toLowerCase())) as assignee}
-                <button
-                  type="button"
-                  class="dropdown-option-item {scheduleAssigneeFilter === assignee ? 'selected' : ''}"
-                  on:click={() => {
-                    scheduleAssigneeFilter = assignee;
-                    showScheduleAssigneeDropdown = false;
-                  }}
-                >
-                  {assignee}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="schedule-project-menu custom-dropdown-container">
-          <div class="combobox-trigger-wrapper">
-            <input
-              type="text"
-              class="dropdown-trigger-input schedule-trigger-override"
-              placeholder={scheduleProjectFilter === 'all' ? '全部项目' : (getProjectName(scheduleProjectFilter) || scheduleProjectFilter)}
-              bind:value={scheduleProjectSearchText}
-              on:focus|stopPropagation={() => showScheduleProjectDropdown = true}
-            />
-            <span class="arrow-icon {showScheduleProjectDropdown ? 'open' : ''}">▼</span>
-          </div>
-          {#if showScheduleProjectDropdown}
-            <div class="dropdown-options-list glass-panel">
-              <button
-                type="button"
-                class="dropdown-option-item {scheduleProjectFilter === 'all' ? 'selected' : ''}"
-                on:click={() => {
-                  scheduleProjectFilter = 'all';
-                  showScheduleProjectDropdown = false;
-                }}
-              >
-                全部项目
-              </button>
-              {#each projectConfigs.filter(p => !scheduleProjectSearchText || p.project_name.toLowerCase().includes(scheduleProjectSearchText.toLowerCase()) || p.project_key.toLowerCase().includes(scheduleProjectSearchText.toLowerCase())) as proj}
-                <button
-                  type="button"
-                  class="dropdown-option-item {scheduleProjectFilter === proj.project_key ? 'selected' : ''}"
-                  on:click={() => {
-                    scheduleProjectFilter = proj.project_key;
-                    showScheduleProjectDropdown = false;
-                  }}
-                >
-                  {proj.project_name} ({proj.project_key})
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="schedule-dropdown-menu custom-dropdown-container">
-          <div class="combobox-trigger-wrapper">
-            <button
-              type="button"
-              class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
-              on:click|stopPropagation={() => showSortDropdown = !showSortDropdown}
-            >
-              排序: {scheduleSortModes.find(m => m.value === scheduleSortMode)?.label || '默认排序'}
-            </button>
-            <span class="arrow-icon {showSortDropdown ? 'open' : ''}">▼</span>
-          </div>
-          {#if showSortDropdown}
-            <div class="dropdown-options-list glass-panel">
-              {#each scheduleSortModes as mode}
-                <button
-                  type="button"
-                  class="dropdown-option-item {scheduleSortMode === mode.value ? 'selected' : ''}"
-                  on:click={() => {
-                    scheduleSortMode = mode.value;
-                    showSortDropdown = false;
-                  }}
-                >
-                  {mode.label}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <button class="schedule-refresh-btn font-mono" class:is-loading={scheduleLoading} on:click={fetchSchedule}>
-          刷新
-        </button>
-      </div>
-
-      {#if scheduleLoading && scheduleItems.length === 0}
-        <div class="state-msg">加载排期表中...</div>
-      {:else if scheduleErrorMsg}
-        <div class="state-msg error-msg font-mono">❌ {scheduleErrorMsg}</div>
-      {:else}
-        <div class="schedule-table-panel" bind:this={scheduleTablePanelEl}>
-          <div class="schedule-table-head">
-            <div>
-              <span class="eyebrow">SCHEDULE WORKTABLE</span>
-              <h3>需求排期总表</h3>
-            </div>
-            <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
-          </div>
-          <div class="schedule-table-wrapper" style="--schedule-content-height: {scheduleTableContentHeight}px;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
-            <div class="grid-table">
-              <div class="grid-thead">
-                <div class="grid-tr">
-                  <div class="grid-th">需求</div>
-                  <div class="grid-th">项目</div>
-                  <div class="grid-th">负责人</div>
-                  <div class="grid-th">排期</div>
-                  <div class="grid-th">工时</div>
-                  <div class="grid-th">影子任务</div>
-                  <div class="grid-th">风险</div>
-                  <div class="grid-th">创建时间</div>
-                  <div class="grid-th">更新时间</div>
-                  <div class="grid-th col-action">操作</div>
+              {#if showTypeDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  <button
+                    type="button"
+                    class="dropdown-option-item {scheduleTypeFilter === 'all' ? 'selected' : ''}"
+                    on:click={() => {
+                      scheduleTypeFilter = 'all';
+                      showTypeDropdown = false;
+                    }}
+                  >
+                    全部类型
+                  </button>
+                  <button
+                    type="button"
+                    class="dropdown-option-item {scheduleTypeFilter === 'demand' ? 'selected' : ''}"
+                    on:click={() => {
+                      scheduleTypeFilter = 'demand';
+                      showTypeDropdown = false;
+                    }}
+                  >
+                    仅需求
+                  </button>
+                  <button
+                    type="button"
+                    class="dropdown-option-item {scheduleTypeFilter === 'bug' ? 'selected' : ''}"
+                    on:click={() => {
+                      scheduleTypeFilter = 'bug';
+                      showTypeDropdown = false;
+                    }}
+                  >
+                    仅缺陷
+                  </button>
                 </div>
+              {/if}
+            </div>
+
+            <div class="schedule-assignee-menu custom-dropdown-container">
+              <div class="combobox-trigger-wrapper">
+                <input
+                  type="text"
+                  class="dropdown-trigger-input schedule-trigger-override"
+                  placeholder={scheduleAssigneeFilter === 'all' ? '全部负责人' : scheduleAssigneeFilter}
+                  bind:value={scheduleAssigneeSearchText}
+                  on:focus|stopPropagation={() => showScheduleAssigneeDropdown = true}
+                />
+                <span class="arrow-icon {showScheduleAssigneeDropdown ? 'open' : ''}">▼</span>
               </div>
-              <div class="grid-tbody">
-                <div style="height: {scheduleTopPadding}px;"></div>
-                {#each visibleScheduleRows as row (row.id)}
-                  {@const item = row.data}
-                  {@const progress = getScheduleProgress(item)}
-                  {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
-                    <div class="grid-tr">
-                      <div class="grid-td demand-cell">
-                        <div class="demand-stack">
-                          <div class="demand-badge-row">
-                            {#if item.issue_type === 'bug'}
-                              <span class="type-badge bug">🐛 缺陷</span>
-                            {:else}
-                              <span class="type-badge demand">📋 需求</span>
-                            {/if}
+              {#if showScheduleAssigneeDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  <button
+                    type="button"
+                    class="dropdown-option-item {scheduleAssigneeFilter === 'all' ? 'selected' : ''}"
+                    on:click={() => {
+                      scheduleAssigneeFilter = 'all';
+                      showScheduleAssigneeDropdown = false;
+                    }}
+                  >
+                    全部负责人
+                  </button>
+                  {#each scheduleAssigneeOptions.filter(name => !scheduleAssigneeSearchText || name.toLowerCase().includes(scheduleAssigneeSearchText.toLowerCase())) as assignee}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {scheduleAssigneeFilter === assignee ? 'selected' : ''}"
+                      on:click={() => {
+                        scheduleAssigneeFilter = assignee;
+                        showScheduleAssigneeDropdown = false;
+                      }}
+                    >
+                      {assignee}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="schedule-project-menu custom-dropdown-container">
+              <div class="combobox-trigger-wrapper">
+                <input
+                  type="text"
+                  class="dropdown-trigger-input schedule-trigger-override"
+                  placeholder={scheduleProjectFilter === 'all' ? '全部项目' : (getProjectName(scheduleProjectFilter) || scheduleProjectFilter)}
+                  bind:value={scheduleProjectSearchText}
+                  on:focus|stopPropagation={() => showScheduleProjectDropdown = true}
+                />
+                <span class="arrow-icon {showScheduleProjectDropdown ? 'open' : ''}">▼</span>
+              </div>
+              {#if showScheduleProjectDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  <button
+                    type="button"
+                    class="dropdown-option-item {scheduleProjectFilter === 'all' ? 'selected' : ''}"
+                    on:click={() => {
+                      scheduleProjectFilter = 'all';
+                      showScheduleProjectDropdown = false;
+                    }}
+                  >
+                    全部项目
+                  </button>
+                  {#each projectConfigs.filter(p => !scheduleProjectSearchText || p.project_name.toLowerCase().includes(scheduleProjectSearchText.toLowerCase()) || p.project_key.toLowerCase().includes(scheduleProjectSearchText.toLowerCase())) as proj}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {scheduleProjectFilter === proj.project_key ? 'selected' : ''}"
+                      on:click={() => {
+                        scheduleProjectFilter = proj.project_key;
+                        showScheduleProjectDropdown = false;
+                      }}
+                    >
+                      {proj.project_name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="schedule-dropdown-menu custom-dropdown-container">
+              <div class="combobox-trigger-wrapper">
+                <button
+                  type="button"
+                  class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
+                  on:click|stopPropagation={() => showSortDropdown = !showSortDropdown}
+                >
+                  排序: {scheduleSortModes.find(m => m.value === scheduleSortMode)?.label || '默认排序'}
+                </button>
+                <span class="arrow-icon {showSortDropdown ? 'open' : ''}">▼</span>
+              </div>
+              {#if showSortDropdown}
+                <div class="dropdown-options-list glass-panel">
+                  {#each scheduleSortModes as mode}
+                    <button
+                      type="button"
+                      class="dropdown-option-item {scheduleSortMode === mode.value ? 'selected' : ''}"
+                      on:click={() => {
+                        scheduleSortMode = mode.value;
+                        showSortDropdown = false;
+                      }}
+                    >
+                      {mode.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <button class="schedule-refresh-btn wa-admin-action secondary font-mono" class:is-loading={scheduleLoading} on:click={fetchSchedule}>
+              刷新
+            </button>
+          </div>
+
+          {#if scheduleLoading && scheduleItems.length === 0}
+            <div class="state-msg">加载排期表中...</div>
+          {:else if scheduleErrorMsg}
+            <div class="state-msg error-msg font-mono">{scheduleErrorMsg}</div>
+          {:else}
+            <div class="schedule-table-panel wa-admin-card" bind:this={scheduleTablePanelEl}>
+              <div class="schedule-table-head">
+                <div>
+                  <span class="eyebrow">需求队列</span>
+                  <h3>排期治理总表</h3>
+                </div>
+                <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
+              </div>
+              <div class="schedule-table-wrapper wa-admin-table-shell" style="--schedule-content-height: {scheduleTableContentHeight}px;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
+                <table class="wa-admin-table schedule-admin-table">
+                  <colgroup>
+                    {#each scheduleTableColumns as column}
+                      <col style="width: {column.width || 'auto'}" />
+                    {/each}
+                    <col style="width: 112px" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      {#each scheduleTableColumns as column}
+                        <th class:align-center={column.align === 'center'} class:align-right={column.align === 'right'}>{column.label}</th>
+                      {/each}
+                      <th class="align-center action-col">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#if scheduleTopPadding > 0}
+                      <tr class="schedule-spacer-row" aria-hidden="true">
+                        <td colspan={scheduleTableColumns.length + 1} style="height: {scheduleTopPadding}px;"></td>
+                      </tr>
+                    {/if}
+                    {#each visibleScheduleRows as row (row.id)}
+                      {@const item = row.data}
+                      {@const adminRow = row.row}
+                      {@const progress = getScheduleProgress(item)}
+                      {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
+                      <tr
+                        class="schedule-admin-row"
+                        class:is-selected={selectedScheduleItem?.demand_id === item.demand_id}
+                        on:click={() => selectedScheduleDemandId = item.demand_id}
+                      >
+                        <td>
+                          <div class="schedule-id-stack">
+                            <span class="schedule-type-chip wa-admin-pill {getScheduleIssueTypeLabel(item) === '缺陷' ? 'tone-danger' : 'tone-info'}">{adminRow.cells.issueType}</span>
                             {#if getJiraIssueUrl(item.demand_id)}
                               <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                                #{item.demand_id}
+                                {item.demand_id}
                               </a>
                             {:else}
-                              <span class="schedule-id font-mono">#{item.demand_id}</span>
-                            {/if}
-                            {#if priority}
-                              <span class="priority-badge p-{priority.toLowerCase()}">{priority}</span>
+                              <span class="schedule-id font-mono">{item.demand_id}</span>
                             {/if}
                           </div>
-                          <strong title={item.title}>{item.title}</strong>
-                        </div>
-                      </div>
-                      <div class="grid-td project-cell">
-                        <strong class="font-sans" style="font-size: 0.8rem; color: #94a3b8;">
-                          {getProjectName(item.project_key || getProjectKey(item.demand_id)) || item.project_key || getProjectKey(item.demand_id)}
-                        </strong>
-                      </div>
-                      <div class="grid-td">
-                        <div class="owner-stack">
-                          <strong>{item.assignee}</strong>
-                        </div>
-                      </div>
-                      <div class="grid-td">
-                        <div class="plan-stack">
-                          <strong class="font-mono" style="font-size: 0.85rem; color: #f8fafc;">
-                            {formatScheduleDate(item.due_date)}
-                          </strong>
-                          {#if !item.due_date}
-                            <span class="status-chip status-{getScheduleStatusClass(item)}">{getScheduleStatusLabel(item)}</span>
+                        </td>
+                        <td>
+                          <div class="schedule-title-stack">
+                            <strong title={adminRow.title}>{adminRow.title}</strong>
+                            <span>{adminRow.cells.project}</span>
+                          </div>
+                        </td>
+                        <td class="align-center">
+                          {#if priority}
+                            <span class="priority-badge wa-admin-pill {ADMIN_TONE_CLASS[getPriorityTone(priority)]}">{priority}</span>
+                          {:else}
+                            <span class="schedule-row-muted">-</span>
                           {/if}
-                        </div>
-                      </div>
-                      <div class="grid-td">
-                        <div class="effort-stack">
-                          <strong>{formatScheduleEffort(item)}</strong>
-                        </div>
-                      </div>
-                      <div class="grid-td">
-                        <div class="subtask-stack">
-                          <div class="subtask-meter" title="影子任务进度: {item.subtask_done}/{item.subtask_total || 0}">
-                            <span style="width: {progress}%"></span>
-                            <small class="subtask-percentage-text">{item.subtask_done}/{item.subtask_total || 0}</small>
+                        </td>
+                        <td>
+                          <div class="owner-stack">
+                            <strong>{adminRow.owner}</strong>
                           </div>
-                        </div>
-                      </div>
-                      <div class="grid-td">
-                        <div class="risk-stack">
-                          <span class="schedule-risk-pill risk-{item.risk_level}" title={item.risk_reason || ''}>{item.risk_label}</span>
-                        </div>
-                      </div>
-                      <div class="grid-td">
-                        <span class="font-mono text-slate-400 text-xs" style="opacity: 0.85;">{item.created_at ? item.created_at.slice(0, 10) : '-'}</span>
-                      </div>
-                      <div class="grid-td">
-                        <span class="font-mono text-slate-300 text-xs">{item.last_update ? item.last_update.slice(2, 16) : '-'}</span>
-                      </div>
-                      <div class="grid-td col-action">
-                        <div class="schedule-actions-cell">
-                          <button 
-                            class="schedule-row-action" 
-                            disabled={item.issue_type === 'bug' || item.issue_type === '缺陷' || item.issue_type === '故障' || item.issue_type === 'defect' || !canEditScheduleItem(item)}
-                            on:click={() => openScheduleFromItem(item)}
-                          >
-                            调整
-                          </button>
-                          <button class="schedule-row-action is-telemetry font-mono" on:click|stopPropagation={() => {
-                            activeTelemetryTaskId = item.demand_id;
-                            isTelemetryDrawerOpen = true;
-                          }}>轨迹</button>
-                        </div>
-                      </div>
-                    </div>
-                {/each}
-                <div style="height: {scheduleBottomPadding}px;"></div>
+                        </td>
+                        <td>
+                          <span class="schedule-risk-pill wa-admin-pill schedule-risk-{normalizeRiskLevel(item.risk_level)} {ADMIN_TONE_CLASS[getScheduleRiskTone(item.risk_level)]}" title={item.risk_reason || ''}>{adminRow.risk}</span>
+                        </td>
+                        <td>
+                          <div class="plan-stack">
+                            <strong class="font-mono">{adminRow.dueDate}</strong>
+                            <span>{formatScheduleDue(item)}</span>
+                          </div>
+                        </td>
+                        <td class="align-center">
+                          <span class="status-chip wa-admin-pill status-{getScheduleStatusClass(item)} {ADMIN_TONE_CLASS[adminRow.tone || 'neutral']}">{adminRow.status}</span>
+                        </td>
+                        <td class="align-center">
+                          <div class="subtask-stack">
+                            <div class="subtask-meter" title="AI 解构任务进度: {adminRow.cells.subtasks}">
+                              <span style="width: {progress}%"></span>
+                              <small class="subtask-percentage-text">{adminRow.cells.subtasks}</small>
+                            </div>
+                          </div>
+                        </td>
+                        <td class="align-center action-col">
+                          <div class="schedule-actions-cell">
+                            <button
+                              class="schedule-row-action wa-admin-action secondary"
+                              disabled={item.issue_type === 'bug' || item.issue_type === '缺陷' || item.issue_type === '故障' || item.issue_type === 'defect' || !canEditScheduleItem(item)}
+                              on:click|stopPropagation={() => openScheduleFromItem(item)}
+                            >
+                              编辑
+                            </button>
+                            <button class="schedule-row-action wa-admin-action secondary is-telemetry font-mono" on:click|stopPropagation={() => {
+                              activeTelemetryTaskId = item.demand_id;
+                              isTelemetryDrawerOpen = true;
+                            }}>轨迹</button>
+                          </div>
+                        </td>
+                      </tr>
+                    {/each}
+                    {#if scheduleBottomPadding > 0}
+                      <tr class="schedule-spacer-row" aria-hidden="true">
+                        <td colspan={scheduleTableColumns.length + 1} style="height: {scheduleBottomPadding}px;"></td>
+                      </tr>
+                    {/if}
+                  </tbody>
+                </table>
+                {#if filteredScheduleItems.length === 0}
+                  <div class="schedule-empty-state font-mono">当前筛选下暂无排期数据</div>
+                {/if}
               </div>
             </div>
-            {#if filteredScheduleItems.length === 0}
-              <div class="schedule-empty-state font-mono">当前筛选下暂无排期数据</div>
-            {/if}
-          </div>
-        </div>
-      {/if}
+          {/if}
+        </section>
+
+        <aside class="schedule-inspector-panel wa-admin-card wa-admin-inspector" aria-label="需求详情与检查项">
+          {#if scheduleInspectorRecord && selectedScheduleItem}
+            {@const descriptionSection = scheduleInspectorRecord.sections.find((section) => section.title === '需求描述')}
+            {@const checklistSection = scheduleInspectorRecord.sections.find((section) => section.title === '验收标准')}
+            {@const riskSection = scheduleInspectorRecord.sections.find((section) => section.title === '风险说明')}
+            <div class="schedule-inspector-head">
+              <div class="inspector-title-row">
+                <span class="wa-admin-pill {ADMIN_TONE_CLASS[scheduleInspectorRecord.tone || 'neutral']}">{scheduleInspectorRecord.status}</span>
+                {#if getJiraIssueUrl(scheduleInspectorRecord.id)}
+                  <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(scheduleInspectorRecord.id)} target="_blank" rel="noopener noreferrer">
+                    {scheduleInspectorRecord.id}
+                  </a>
+                {:else}
+                  <span class="schedule-id font-mono">{scheduleInspectorRecord.id}</span>
+                {/if}
+              </div>
+              <h3>{scheduleInspectorRecord.title}</h3>
+              <p>{descriptionSection?.body}</p>
+            </div>
+
+            <div class="schedule-inspector-facts">
+              {#each scheduleInspectorRecord.facts as fact}
+                <div>
+                  <span>{fact.label}</span>
+                  <strong>{fact.value}</strong>
+                </div>
+              {/each}
+            </div>
+
+            <div class="schedule-lock-meter">
+              <div>
+                <strong class="font-mono">{getScheduleProgress(selectedScheduleItem)}%</strong>
+                <span>AI 解构完成度</span>
+              </div>
+              <div class="wa-admin-progress" style="--progress: {getScheduleProgress(selectedScheduleItem)}%;" aria-hidden="true"></div>
+            </div>
+
+            <div class="schedule-inspector-section">
+              <div class="inspector-section-head">
+                <strong>验收标准</strong>
+                <span class="font-mono">{selectedScheduleItem.subtask_done}/{selectedScheduleItem.subtask_total || 0}</span>
+              </div>
+              <div class="schedule-check-list">
+                {#each checklistSection?.items || [] as item}
+                  <div class="schedule-check-row">
+                    <span class="check-dot"></span>
+                    <p>{item}</p>
+                  </div>
+                {/each}
+              </div>
+            </div>
+
+            <div class="schedule-inspector-section">
+              <div class="inspector-section-head">
+                <strong>风险说明</strong>
+                <span class="wa-admin-pill {ADMIN_TONE_CLASS[getScheduleRiskTone(selectedScheduleItem.risk_level)]}">{selectedScheduleItem.risk_label || getRiskLevelLabel(selectedScheduleItem.risk_level)}</span>
+              </div>
+              <p>{riskSection?.body}</p>
+            </div>
+
+            <div class="schedule-inspector-section schedule-risk-section">
+              <div class="inspector-section-head">
+                <strong>风险日历</strong>
+                <button type="button" class="wa-admin-action secondary" on:click={fetchRiskCalendar} disabled={riskCalendarLoading}>
+                  {riskCalendarLoading ? '刷新中' : '刷新'}
+                </button>
+              </div>
+              <p>{riskCalendarFocus}</p>
+              {#if riskCalendarErrorMsg && riskCalendarUsingFallback}
+                <div class="risk-calendar-warning font-mono">{riskCalendarErrorMsg}，已使用当前排期表生成临时视图。</div>
+              {/if}
+              <div class="inspector-risk-toolbar">
+                <button
+                  type="button"
+                  class:active={scheduleRiskFilter === 'attention'}
+                  on:click={() => selectScheduleRiskFromCalendar('attention')}
+                >
+                  <span>全部</span>
+                  <strong class="font-mono">{riskCalendarTotalCount}</strong>
+                </button>
+                {#each riskCalendarRiskTypes as risk}
+                  <button
+                    type="button"
+                    class="risk-{risk.value}"
+                    class:active={scheduleRiskFilter === risk.value}
+                    on:click={() => selectScheduleRiskFromCalendar(risk.value)}
+                  >
+                    <span>{risk.label}</span>
+                    <strong class="font-mono">{getRiskCalendarTotal(risk.value)}</strong>
+                  </button>
+                {/each}
+              </div>
+              {#if riskCalendarLoading && !riskCalendarHasAny}
+                <div class="risk-calendar-loading">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              {:else}
+                <div class="inspector-risk-buckets">
+                  {#each riskCalendarBuckets as bucket}
+                    <div class="inspector-risk-bucket">
+                      <span>{bucket.label}</span>
+                      <strong class="font-mono">{bucket.counts.total}</strong>
+                      <em>{bucket.window_label}</em>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="schedule-inspector-actions">
+              <button
+                type="button"
+                class="wa-admin-action primary"
+                disabled={selectedScheduleItem.issue_type === 'bug' || selectedScheduleItem.issue_type === '缺陷' || selectedScheduleItem.issue_type === '故障' || selectedScheduleItem.issue_type === 'defect' || !canEditScheduleItem(selectedScheduleItem)}
+                on:click={() => openScheduleFromItem(selectedScheduleItem)}
+              >
+                编辑排期
+              </button>
+              <button
+                type="button"
+                class="wa-admin-action secondary"
+                on:click={() => {
+                  activeTelemetryTaskId = selectedScheduleItem.demand_id;
+                  isTelemetryDrawerOpen = true;
+                }}
+              >
+                代码轨迹
+              </button>
+            </div>
+          {:else}
+            <div class="schedule-inspector-empty">
+              <strong>暂无需求详情</strong>
+              <p>当前筛选下没有排期记录，可以调整筛选条件或刷新排期数据。</p>
+            </div>
+          {/if}
+        </aside>
+      </div>
     </div>
   {:else}
     <!-- Kanban Lanes -->
     <div class="demand-kanban-board">
-      
+
       <!-- 1. Pending Schedule -->
       <div class="kanban-lane">
         <div class="lane-header">
@@ -3330,58 +3591,6 @@
     box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
   }
 
-  .demand-viewbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    flex-wrap: wrap;
-    background: rgba(15, 23, 42, 0.38);
-    border: 1px solid rgba(51, 65, 85, 0.34);
-    border-radius: 10px;
-    padding: 8px;
-  }
-
-  .view-toggle,
-  .schedule-filter-strip,
-  .schedule-sort-strip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: rgba(2, 6, 23, 0.32);
-    border: 1px solid rgba(51, 65, 85, 0.38);
-    border-radius: 8px;
-    padding: 4px;
-  }
-
-  .view-toggle button,
-  .schedule-filter-strip button,
-  .schedule-sort-strip button {
-    border: none;
-    background: transparent;
-    color: #94a3b8;
-    border-radius: 6px;
-    padding: 7px 11px;
-    font-size: 0.74rem;
-    font-weight: 800;
-    cursor: pointer;
-    transition: background 0.16s ease, color 0.16s ease;
-    white-space: nowrap;
-  }
-
-  .view-toggle button.active,
-  .schedule-filter-strip button.active,
-  .schedule-sort-strip button.active {
-    color: #f8fafc;
-    background: rgba(99, 102, 241, 0.48);
-  }
-
-  .viewbar-meta {
-    color: #64748b;
-    font-size: 0.68rem;
-    padding: 0 4px;
-  }
-
   .schedule-workbench {
     display: flex;
     flex-direction: column;
@@ -3432,14 +3641,18 @@
   }
 
   .schedule-risk-calendar-panel {
-    background: rgba(10, 15, 30, 0.62);
-    border: 1px solid rgba(51, 65, 85, 0.34);
+    background:
+      linear-gradient(180deg, rgba(15, 23, 42, 0.82), rgba(8, 13, 25, 0.72)),
+      radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.12), transparent 32%),
+      radial-gradient(circle at 88% 0%, rgba(244, 63, 94, 0.1), transparent 30%);
+    border: 1px solid rgba(71, 85, 105, 0.44);
     border-radius: 12px;
-    padding: 14px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
     min-width: 0;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
   }
 
   .risk-calendar-head {
@@ -3452,14 +3665,107 @@
   .risk-calendar-head h3 {
     margin: 0;
     color: #f8fafc;
-    font-size: 0.98rem;
+    font-size: 1.04rem;
+  }
+
+  .risk-calendar-head p {
+    margin: 6px 0 0;
+    color: #cbd5e1;
+    font-size: 0.78rem;
+    line-height: 1.42;
   }
 
   .risk-calendar-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
     color: #64748b;
     font-size: 0.68rem;
     white-space: nowrap;
   }
+
+  .risk-calendar-meta span,
+  .risk-calendar-meta button {
+    border: 1px solid rgba(71, 85, 105, 0.42);
+    border-radius: 999px;
+    background: rgba(2, 6, 23, 0.36);
+    padding: 6px 9px;
+  }
+
+  .risk-calendar-meta button {
+    color: #bae6fd;
+    cursor: pointer;
+    font-weight: 800;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .risk-calendar-meta button:hover:not(:disabled) {
+    color: #f8fafc;
+    background: rgba(14, 165, 233, 0.18);
+    border-color: rgba(56, 189, 248, 0.38);
+    transform: translateY(-1px);
+  }
+
+  .risk-calendar-meta button:disabled {
+    cursor: wait;
+    opacity: 0.64;
+  }
+
+  .risk-calendar-command-row {
+    display: grid;
+    grid-template-columns: 1.2fr repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .risk-calendar-command-row button {
+    min-height: 50px;
+    border: 1px solid rgba(71, 85, 105, 0.38);
+    border-radius: 10px;
+    background: rgba(2, 6, 23, 0.28);
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, color 160ms ease;
+    min-width: 0;
+  }
+
+  .risk-calendar-command-row button:hover {
+    transform: translateY(-1px);
+    color: #f8fafc;
+    border-color: rgba(148, 163, 184, 0.42);
+    background: rgba(15, 23, 42, 0.74);
+  }
+
+  .risk-calendar-command-row button.active {
+    color: #f8fafc;
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(129, 140, 248, 0.48);
+    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.12);
+  }
+
+  .risk-calendar-command-row span {
+    font-size: 0.72rem;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .risk-calendar-command-row strong {
+    color: #f8fafc;
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .risk-calendar-command-row .risk-overdue strong { color: #fb7185; }
+  .risk-calendar-command-row .risk-due_soon strong { color: #fbbf24; }
+  .risk-calendar-command-row .risk-stale strong { color: #c4b5fd; }
+  .risk-calendar-command-row .risk-unscheduled strong { color: #7dd3fc; }
 
   .risk-calendar-warning {
     color: #fbbf24;
@@ -3474,7 +3780,7 @@
   .risk-calendar-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
+    gap: 12px;
   }
 
   .risk-calendar-loading span {
@@ -3492,13 +3798,24 @@
 
   .risk-calendar-bucket {
     min-width: 0;
-    background: rgba(15, 23, 42, 0.62);
-    border: 1px solid rgba(71, 85, 105, 0.34);
-    border-radius: 10px;
-    padding: 11px;
+    background: rgba(2, 6, 23, 0.3);
+    border: 1px solid rgba(71, 85, 105, 0.4);
+    border-radius: 12px;
+    padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 11px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .risk-calendar-bucket::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: linear-gradient(90deg, #fb7185, #fbbf24, #38bdf8);
+    opacity: 0.72;
   }
 
   .bucket-title-row {
@@ -3509,9 +3826,19 @@
   }
 
   .bucket-title-row strong {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 7px;
     color: #f8fafc;
     font-size: 0.9rem;
+  }
+
+  .bucket-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: #38bdf8;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.55);
   }
 
   .bucket-title-row span {
@@ -3524,25 +3851,25 @@
   .bucket-title-row em {
     color: #e2e8f0;
     font-style: normal;
-    font-size: 1.15rem;
+    font-size: 1.24rem;
     font-variant-numeric: tabular-nums;
   }
 
   .bucket-risk-chips {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
   }
 
   .bucket-risk-chip {
     border: 1px solid rgba(71, 85, 105, 0.38);
     background: rgba(2, 6, 23, 0.28);
-    border-radius: 7px;
+    border-radius: 9px;
     color: #64748b;
-    padding: 7px 6px;
+    padding: 7px 8px;
     cursor: pointer;
     min-width: 0;
-    transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+    transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
   }
 
   .bucket-risk-chip:disabled {
@@ -3590,12 +3917,13 @@
   .bucket-risk-chip.has-count:hover {
     border-color: rgba(226, 232, 240, 0.42);
     color: #f8fafc;
+    transform: translateY(-1px);
   }
 
   .bucket-event-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 7px;
     min-width: 0;
   }
 
@@ -3603,10 +3931,10 @@
     width: 100%;
     text-align: left;
     border: 1px solid rgba(51, 65, 85, 0.34);
-    background: rgba(2, 6, 23, 0.22);
+    background: rgba(15, 23, 42, 0.5);
     border-left: 3px solid rgba(100, 116, 139, 0.72);
-    border-radius: 7px;
-    padding: 7px 8px;
+    border-radius: 9px;
+    padding: 8px 9px;
     color: #cbd5e1;
     cursor: pointer;
     min-width: 0;
@@ -3618,7 +3946,8 @@
   .bucket-event-item.risk-unscheduled { border-left-color: #60a5fa; }
 
   .bucket-event-item:hover {
-    background: rgba(30, 41, 59, 0.54);
+    background: rgba(30, 41, 59, 0.72);
+    border-color: rgba(148, 163, 184, 0.34);
   }
 
   .bucket-event-item .event-task {
@@ -4179,6 +4508,10 @@
     .risk-calendar-grid {
       grid-template-columns: 1fr;
     }
+
+    .risk-calendar-command-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
   }
 
   @media (max-width: 760px) {
@@ -4189,6 +4522,15 @@
     .risk-calendar-head {
       flex-direction: column;
       align-items: flex-start;
+    }
+
+    .risk-calendar-meta {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .risk-calendar-command-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .bucket-risk-chips {
@@ -4202,8 +4544,7 @@
     }
 
     .schedule-filter-strip button,
-    .schedule-sort-strip button,
-    .view-toggle button {
+    .schedule-sort-strip button {
       white-space: nowrap;
     }
   }
@@ -6153,5 +6494,2894 @@
   }
   .score-risk {
     color: #f87171 !important;
+  }
+
+  .demand-dashboard {
+    --schedule-accent: var(--wa-success, #72e6b4);
+    --schedule-accent-ink: #031510;
+    --schedule-panel: rgba(10, 16, 22, 0.72);
+    --schedule-panel-strong: rgba(13, 20, 27, 0.86);
+    --schedule-panel-soft: rgba(244, 251, 255, 0.052);
+    --schedule-border: var(--wa-border-soft, rgba(203, 234, 244, 0.14));
+    --schedule-border-strong: var(--wa-border-strong, rgba(203, 234, 244, 0.28));
+    --schedule-text: var(--wa-text-main, #d8e5ec);
+    --schedule-strong: var(--wa-text-strong, #f4fbff);
+    --schedule-muted: var(--wa-text-muted, #90a8b5);
+    --schedule-subtle: var(--wa-text-subtle, #5f7582);
+    gap: 12px;
+    margin-top: 0;
+    color: var(--schedule-text);
+  }
+
+  .dashboard-header {
+    min-height: 58px;
+    padding: 10px 12px;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-xl, 8px);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: var(--wa-shadow-sm, 0 7px 16px rgba(30, 46, 64, 0.055));
+    backdrop-filter: blur(16px) saturate(124%);
+    -webkit-backdrop-filter: blur(16px) saturate(124%);
+  }
+
+  .dashboard-header h2 {
+    color: var(--schedule-strong);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    font-size: 1.08rem;
+    line-height: 1.12;
+    letter-spacing: 0;
+  }
+
+  .eyebrow {
+    color: var(--schedule-subtle);
+    font-family: var(--wa-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 0.68rem;
+    font-weight: 820;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .add-demand-btn {
+    min-height: 36px;
+    border: 1px solid color-mix(in srgb, var(--schedule-accent) 54%, transparent);
+    background: var(--schedule-accent);
+    color: var(--schedule-accent-ink);
+    border-radius: var(--wa-radius-md, 8px);
+    box-shadow: none;
+    padding: 0 15px;
+  }
+
+  .add-demand-btn:hover {
+    background: color-mix(in srgb, var(--schedule-accent) 88%, var(--schedule-strong));
+    box-shadow: 0 12px 28px rgba(1, 9, 14, 0.28);
+  }
+
+  .schedule-control-panel,
+  .schedule-table-panel,
+  .schedule-risk-calendar-panel,
+  .schedule-inspector-panel {
+    border: 1px solid var(--schedule-border);
+    background:
+      linear-gradient(145deg, rgba(244, 251, 255, 0.065), rgba(244, 251, 255, 0.018)),
+      var(--schedule-panel);
+    box-shadow: var(--wa-shadow-panel, inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 9px 24px rgba(30, 46, 64, 0.075));
+    backdrop-filter: blur(16px) saturate(124%);
+    -webkit-backdrop-filter: blur(16px) saturate(124%);
+  }
+
+  .schedule-filter-strip,
+  .schedule-sort-strip {
+    background: rgba(7, 11, 16, 0.52);
+    border-color: var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+  }
+
+  .schedule-filter-strip button,
+  .schedule-sort-strip button {
+    min-height: 32px;
+    color: var(--schedule-muted);
+    border-radius: 6px;
+  }
+
+  .schedule-workbench {
+    gap: 14px;
+  }
+
+  .schedule-summary-grid {
+    grid-template-columns: repeat(5, minmax(128px, 1fr));
+    gap: 10px;
+  }
+
+  .schedule-summary-cell {
+    position: relative;
+    overflow: hidden;
+    min-height: 94px;
+    border: 1px solid var(--schedule-border);
+    border-top: 0;
+    border-radius: var(--wa-radius-lg, 12px);
+    background:
+      radial-gradient(circle at 100% 0%, rgba(244, 251, 255, 0.07), transparent 8rem),
+      rgba(7, 11, 16, 0.54);
+    padding: 13px;
+    box-shadow: inset 0 1px 0 rgba(244, 251, 255, 0.042);
+  }
+
+  .schedule-summary-cell::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: rgba(203, 234, 244, 0.28);
+  }
+
+  .schedule-summary-cell.is-blue::before { background: var(--wa-info, #9bd4ff); }
+  .schedule-summary-cell.is-red::before { background: var(--wa-danger, #ff6177); }
+  .schedule-summary-cell.is-amber::before { background: var(--wa-warning, #ffc55f); }
+  .schedule-summary-cell.is-violet::before { background: #b8a7ff; }
+
+  .summary-label,
+  .schedule-count,
+  .risk-calendar-meta,
+  .schedule-summary-cell em {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-summary-cell strong {
+    color: var(--schedule-strong);
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 1.45rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .schedule-command-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 0.34fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+
+  .schedule-risk-calendar-panel,
+  .schedule-inspector-panel {
+    border-radius: var(--wa-radius-xl, 18px);
+    padding: 16px;
+    min-width: 0;
+  }
+
+  .schedule-risk-calendar-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(114, 230, 180, 0.13), transparent 18rem),
+      linear-gradient(145deg, rgba(244, 251, 255, 0.07), rgba(244, 251, 255, 0.018)),
+      var(--schedule-panel);
+  }
+
+  .risk-calendar-head h3,
+  .schedule-table-head h3,
+  .schedule-inspector-head h3 {
+    color: var(--schedule-strong);
+    font-size: 1rem;
+    line-height: 1.24;
+    letter-spacing: 0;
+    text-wrap: balance;
+  }
+
+  .risk-calendar-head p,
+  .schedule-inspector-head p {
+    color: var(--schedule-muted);
+    font-size: 0.8rem;
+    line-height: 1.56;
+    text-wrap: pretty;
+  }
+
+  .risk-calendar-meta span,
+  .risk-calendar-meta button,
+  .risk-calendar-command-row button,
+  .bucket-risk-chip,
+  .bucket-event-item,
+  .schedule-focus-item {
+    border-color: var(--schedule-border);
+    background: rgba(7, 11, 16, 0.46);
+  }
+
+  .risk-calendar-meta button,
+  .risk-calendar-command-row button,
+  .bucket-risk-chip,
+  .bucket-event-item,
+  .schedule-focus-item,
+  .schedule-row-action,
+  .schedule-refresh-btn,
+  .schedule-inspector-actions button {
+    transition: transform 160ms var(--wa-ease, cubic-bezier(0.16, 1, 0.3, 1)), border-color 160ms ease, background 160ms ease, color 160ms ease;
+  }
+
+  .risk-calendar-command-row button {
+    min-height: 52px;
+    border-radius: var(--wa-radius-md, 8px);
+    color: var(--schedule-muted);
+  }
+
+  .risk-calendar-command-row button.active {
+    color: var(--schedule-accent-ink);
+    border-color: color-mix(in srgb, var(--schedule-accent) 64%, transparent);
+    background: var(--schedule-accent);
+    box-shadow: none;
+  }
+
+  .risk-calendar-command-row button.active strong,
+  .risk-calendar-command-row button.active span {
+    color: var(--schedule-accent-ink);
+  }
+
+  .risk-calendar-command-row strong,
+  .bucket-title-row em {
+    color: var(--schedule-strong);
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .risk-calendar-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .risk-calendar-bucket {
+    border-color: var(--schedule-border);
+    background: rgba(7, 11, 16, 0.42);
+    border-radius: var(--wa-radius-lg, 12px);
+  }
+
+  .risk-calendar-bucket::before {
+    background: linear-gradient(90deg, var(--wa-danger, #ff6177), var(--wa-warning, #ffc55f), var(--schedule-accent));
+    opacity: 0.68;
+  }
+
+  .bucket-dot {
+    background: var(--schedule-accent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--schedule-accent) 48%, transparent);
+  }
+
+  .bucket-title-row strong,
+  .bucket-event-item strong {
+    color: var(--schedule-strong);
+  }
+
+  .bucket-title-row span,
+  .bucket-event-item em,
+  .bucket-empty {
+    color: var(--schedule-subtle);
+  }
+
+  .schedule-inspector-panel {
+    display: grid;
+    align-content: start;
+    gap: 15px;
+    background:
+      radial-gradient(circle at 100% 0%, rgba(114, 230, 180, 0.11), transparent 16rem),
+      linear-gradient(145deg, rgba(244, 251, 255, 0.07), rgba(244, 251, 255, 0.02)),
+      var(--schedule-panel-strong);
+  }
+
+  .schedule-inspector-head h3 {
+    margin: 5px 0 0;
+  }
+
+  .schedule-lock-meter {
+    display: grid;
+    gap: 10px;
+    padding: 13px;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-lg, 12px);
+    background: rgba(7, 11, 16, 0.46);
+  }
+
+  .schedule-lock-meter > div:first-child {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .schedule-lock-meter strong {
+    color: var(--schedule-strong);
+    font-size: 1.7rem;
+    line-height: 1;
+  }
+
+  .schedule-lock-meter span {
+    color: var(--schedule-muted);
+    font-size: 0.76rem;
+    font-weight: 720;
+  }
+
+  .lock-track {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(244, 251, 255, 0.08);
+  }
+
+  .lock-track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--schedule-accent), var(--wa-info, #9bd4ff));
+  }
+
+  .schedule-inspector-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .schedule-inspector-metrics div {
+    min-height: 68px;
+    display: grid;
+    align-content: center;
+    gap: 5px;
+    padding: 10px;
+    border-radius: var(--wa-radius-md, 8px);
+    background: rgba(244, 251, 255, 0.045);
+  }
+
+  .schedule-inspector-metrics span {
+    color: var(--schedule-subtle);
+    font-size: 0.68rem;
+  }
+
+  .schedule-inspector-metrics strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--schedule-strong);
+    font-size: 0.84rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-focus-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .focus-list-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--schedule-strong);
+    font-size: 0.8rem;
+  }
+
+  .focus-list-head span {
+    color: var(--schedule-subtle);
+    font-size: 0.68rem;
+  }
+
+  .schedule-focus-item {
+    width: 100%;
+    display: grid;
+    gap: 4px;
+    min-height: 70px;
+    padding: 10px 11px;
+    border-left: 2px solid var(--schedule-border-strong);
+    border-radius: var(--wa-radius-md, 8px);
+    color: var(--schedule-text);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .schedule-focus-item:hover {
+    transform: translateY(-1px);
+    border-color: var(--schedule-border-strong);
+    background: rgba(244, 251, 255, 0.075);
+  }
+
+  .schedule-focus-item span {
+    color: var(--schedule-accent);
+    font-size: 0.66rem;
+  }
+
+  .schedule-focus-item strong {
+    overflow: hidden;
+    color: var(--schedule-strong);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-focus-item em {
+    overflow: hidden;
+    color: var(--schedule-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-focus-item.risk-overdue { border-left-color: var(--wa-danger, #ff6177); }
+  .schedule-focus-item.risk-due_soon { border-left-color: var(--wa-warning, #ffc55f); }
+  .schedule-focus-item.risk-stale { border-left-color: #b8a7ff; }
+  .schedule-focus-item.risk-unscheduled { border-left-color: var(--wa-info, #9bd4ff); }
+
+  .schedule-focus-empty {
+    padding: 14px;
+    border: 1px dashed var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+    color: var(--schedule-subtle);
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  .schedule-inspector-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .schedule-inspector-actions button {
+    min-height: 38px;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+    background: rgba(244, 251, 255, 0.055);
+    color: var(--schedule-text);
+    font-size: 0.76rem;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .schedule-inspector-actions button.primary {
+    border-color: color-mix(in srgb, var(--schedule-accent) 54%, transparent);
+    background: var(--schedule-accent);
+    color: var(--schedule-accent-ink);
+  }
+
+  .schedule-inspector-actions button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--schedule-border-strong);
+    background: rgba(244, 251, 255, 0.09);
+  }
+
+  .schedule-inspector-actions button.primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--schedule-accent) 88%, var(--schedule-strong));
+  }
+
+  .schedule-inspector-actions button:disabled {
+    opacity: 0.46;
+    cursor: not-allowed;
+  }
+
+  .schedule-control-panel {
+    flex-wrap: wrap;
+    border-radius: var(--wa-radius-lg, 12px);
+    padding: 10px;
+  }
+
+  .schedule-search-shell {
+    flex: 2 1 280px;
+  }
+
+  .schedule-search-shell input,
+  .schedule-trigger-override,
+  .schedule-menu-trigger {
+    height: 38px;
+    border-color: var(--schedule-border);
+    background: rgba(7, 11, 16, 0.58);
+    color: var(--schedule-strong);
+    border-radius: var(--wa-radius-md, 8px);
+  }
+
+  .schedule-search-shell input::placeholder,
+  .schedule-trigger-override::placeholder {
+    color: var(--schedule-subtle);
+  }
+
+  .schedule-search-shell input:focus,
+  .schedule-trigger-override:focus {
+    border-color: var(--schedule-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--schedule-accent) 18%, transparent);
+  }
+
+  .search-mark,
+  .search-mark::after {
+    border-color: var(--schedule-subtle);
+    background: var(--schedule-subtle);
+  }
+
+  .schedule-refresh-btn {
+    border-color: color-mix(in srgb, var(--schedule-accent) 42%, transparent);
+    background: rgba(114, 230, 180, 0.1);
+    color: var(--schedule-accent);
+    border-radius: var(--wa-radius-md, 8px);
+  }
+
+  .schedule-refresh-btn:hover {
+    transform: translateY(-1px);
+    background: rgba(114, 230, 180, 0.16);
+  }
+
+  .dropdown-options-list.glass-panel {
+    border-color: var(--schedule-border);
+    background: rgba(9, 14, 20, 0.96);
+    box-shadow: 0 18px 42px rgba(1, 9, 14, 0.38);
+  }
+
+  .dropdown-option-item {
+    color: var(--schedule-text);
+  }
+
+  .dropdown-option-item:hover,
+  .dropdown-option-item.selected {
+    color: var(--schedule-strong);
+    background: rgba(114, 230, 180, 0.12);
+  }
+
+  .schedule-table-panel {
+    overflow: hidden;
+    border-radius: var(--wa-radius-xl, 18px);
+    background:
+      linear-gradient(180deg, rgba(244, 251, 255, 0.055), rgba(244, 251, 255, 0.014)),
+      var(--schedule-panel);
+  }
+
+  .schedule-table-head {
+    padding: 15px 16px;
+    border-bottom-color: var(--schedule-border);
+  }
+
+  .schedule-table-wrapper {
+    max-height: min(620px, calc(100dvh - 320px));
+    scrollbar-color: color-mix(in srgb, var(--schedule-accent) 62%, transparent) rgba(7, 11, 16, 0.72);
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-track,
+  .schedule-table-wrapper::-webkit-scrollbar-corner {
+    background: rgba(7, 11, 16, 0.72);
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--schedule-accent), var(--wa-info, #9bd4ff));
+    border-color: rgba(7, 11, 16, 0.72);
+  }
+
+  .grid-table {
+    background: rgba(7, 11, 16, 0.58);
+  }
+
+  .grid-thead {
+    background: rgba(9, 14, 20, 0.98);
+    border-bottom-color: var(--schedule-border);
+  }
+
+  .grid-tr {
+    grid-template-columns: minmax(250px, 1.55fr) minmax(170px, 1fr) 92px 124px 82px 112px 104px 98px 130px 124px;
+    border-bottom-color: rgba(203, 234, 244, 0.08);
+  }
+
+  .grid-th {
+    color: var(--schedule-subtle);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .grid-td {
+    color: var(--schedule-text);
+  }
+
+  .grid-tr:hover {
+    background: rgba(244, 251, 255, 0.052);
+  }
+
+  .grid-td.col-action,
+  .grid-th.col-action,
+  .grid-tr:hover .grid-td.col-action {
+    background: rgba(9, 14, 20, 0.98);
+    border-left-color: var(--schedule-border);
+    box-shadow: -12px 0 20px rgba(1, 9, 14, 0.22);
+  }
+
+  .demand-stack strong,
+  .plan-stack strong,
+  .effort-stack strong,
+  .evidence-stack strong,
+  .updated-stack strong,
+  .owner-stack strong,
+  .subtask-stack strong {
+    color: var(--schedule-strong);
+  }
+
+  .project-cell strong,
+  .plan-stack span,
+  .effort-stack span,
+  .evidence-stack span,
+  .updated-stack span,
+  .owner-stack span,
+  .subtask-stack small {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-id {
+    color: var(--schedule-accent);
+  }
+
+  .schedule-id.jira-id-link:hover {
+    color: color-mix(in srgb, var(--schedule-accent) 70%, var(--schedule-strong));
+  }
+
+  .subtask-meter {
+    background: rgba(244, 251, 255, 0.075);
+    border-radius: 999px;
+  }
+
+  .subtask-meter span {
+    background: linear-gradient(90deg, var(--schedule-accent), var(--wa-info, #9bd4ff));
+  }
+
+  .subtask-percentage-text {
+    color: var(--schedule-strong);
+    text-shadow: 0 1px 2px rgba(1, 9, 14, 0.62);
+  }
+
+  .schedule-risk-pill,
+  .status-chip {
+    border-radius: 999px;
+  }
+
+  .schedule-row-action {
+    width: 54px;
+    border-color: var(--schedule-border);
+    background: rgba(244, 251, 255, 0.055);
+    color: var(--schedule-text);
+    border-radius: var(--wa-radius-md, 8px);
+  }
+
+  .schedule-row-action:hover {
+    transform: translateY(-1px);
+    background: rgba(244, 251, 255, 0.09);
+    color: var(--schedule-strong);
+  }
+
+  .schedule-row-action.is-telemetry {
+    border-color: color-mix(in srgb, var(--schedule-accent) 40%, transparent);
+    background: rgba(114, 230, 180, 0.1);
+    color: var(--schedule-accent);
+  }
+
+  .schedule-row-action.is-telemetry:hover {
+    background: rgba(114, 230, 180, 0.16);
+    color: var(--schedule-strong);
+  }
+
+  .schedule-empty-state {
+    color: var(--schedule-muted);
+    border-top-color: var(--schedule-border);
+  }
+
+  @media (max-width: 1320px) {
+    .schedule-command-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 980px) {
+    .schedule-summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .risk-calendar-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .risk-calendar-command-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .schedule-inspector-metrics,
+    .schedule-inspector-actions {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 680px) {
+    .schedule-summary-grid,
+    .risk-calendar-command-row {
+      grid-template-columns: 1fr;
+    }
+
+    .risk-calendar-head,
+    .schedule-table-head {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .schedule-control-panel {
+      align-items: stretch;
+    }
+
+    .schedule-search-shell,
+    .schedule-assignee-menu,
+    .schedule-project-menu,
+    .schedule-dropdown-menu,
+    .schedule-refresh-btn {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+
+  /* Phase 41 schedule governance alignment */
+  .demand-dashboard {
+    --schedule-accent: var(--wa-accent, #008f96);
+    --schedule-accent-strong: var(--wa-accent-strong, #006f76);
+    --schedule-accent-ink: var(--wa-accent-ink, #ffffff);
+    --schedule-panel: var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+    --schedule-panel-strong: var(--wa-chrome-0, rgba(255, 255, 255, 0.94));
+    --schedule-panel-soft: var(--wa-surface-inset, #f5f8fb);
+    --schedule-border: var(--wa-border-soft, rgba(121, 139, 159, 0.22));
+    --schedule-border-strong: var(--wa-border-strong, rgba(85, 106, 128, 0.38));
+    --schedule-text: var(--wa-text-main, #293847);
+    --schedule-strong: var(--wa-text-strong, #0d1722);
+    --schedule-muted: var(--wa-text-muted, #667789);
+    --schedule-subtle: var(--wa-text-subtle, #8a99aa);
+    color: var(--schedule-text);
+  }
+
+  .dashboard-header h2 {
+    color: var(--schedule-strong);
+    font-size: 1.08rem;
+    letter-spacing: 0;
+  }
+
+  .add-demand-btn {
+    min-height: var(--wa-control-h, 36px);
+    border-radius: var(--wa-radius-md, 8px);
+    background: var(--schedule-accent);
+    color: var(--schedule-accent-ink);
+    box-shadow: var(--wa-shadow-sm, 0 7px 16px rgba(30, 46, 64, 0.055));
+  }
+
+  .add-demand-btn:hover {
+    background: var(--wa-accent-strong, #006f76);
+    transform: none;
+    box-shadow: 0 12px 26px rgba(0, 143, 150, 0.2);
+  }
+
+  .schedule-workbench {
+    gap: 12px;
+    overflow-anchor: none;
+  }
+
+  .schedule-summary-grid {
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .schedule-summary-cell.wa-admin-metric {
+    min-height: 104px;
+    border-top: 0;
+    border-radius: var(--wa-radius-xl, 12px);
+    background: var(--schedule-panel);
+  }
+
+  .schedule-summary-cell.wa-admin-metric::before {
+    display: none;
+  }
+
+  .schedule-summary-cell.wa-admin-metric span,
+  .schedule-summary-cell.wa-admin-metric em {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-summary-cell.wa-admin-metric strong {
+    color: var(--schedule-strong);
+    font-size: 2rem;
+  }
+
+  .schedule-segment-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .schedule-segment-card {
+    min-width: 0;
+    min-height: 72px;
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    padding: 12px 14px;
+    border-top: 3px solid var(--schedule-border-strong);
+    box-shadow: none;
+  }
+
+  .schedule-segment-card.tone-info { border-top-color: var(--wa-info, #256bd8); }
+  .schedule-segment-card.tone-success { border-top-color: var(--wa-success, #04966f); }
+  .schedule-segment-card.tone-warning { border-top-color: var(--wa-warning, #d88700); }
+  .schedule-segment-card.tone-danger { border-top-color: var(--wa-danger, #dd4b3e); }
+
+  .schedule-segment-card span,
+  .schedule-segment-card em {
+    overflow: hidden;
+    color: var(--schedule-muted);
+    font-size: 0.76rem;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-segment-card strong {
+    color: var(--schedule-strong);
+    font-size: 1.4rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .schedule-main-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, var(--wa-inspector-w, 420px));
+    gap: var(--wa-space-4, 16px);
+    align-items: start;
+  }
+
+  .schedule-table-stack {
+    min-width: 0;
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .schedule-control-panel {
+    min-height: 58px;
+    flex-wrap: wrap;
+    padding: 10px;
+    border-radius: var(--wa-radius-xl, 12px);
+    background: var(--schedule-panel);
+    box-shadow: var(--wa-shadow-sm, 0 10px 24px rgba(26, 41, 58, 0.08));
+  }
+
+  .schedule-search-shell {
+    flex: 1 1 230px;
+    min-width: 210px;
+  }
+
+  .schedule-search-shell input,
+  .schedule-control-panel .combobox-trigger-wrapper .dropdown-trigger-input,
+  .schedule-trigger-override,
+  .schedule-menu-trigger {
+    height: var(--wa-control-h, 36px);
+    border-color: var(--schedule-border);
+    background: rgba(255, 255, 255, 0.84);
+    color: var(--schedule-strong);
+    border-radius: var(--wa-radius-md, 8px);
+  }
+
+  .schedule-search-shell input::placeholder,
+  .schedule-control-panel .dropdown-trigger-input::placeholder {
+    color: var(--schedule-subtle);
+  }
+
+  .schedule-search-shell input:focus,
+  .schedule-control-panel .dropdown-trigger-input:focus {
+    border-color: var(--schedule-accent);
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.14);
+  }
+
+  .search-mark {
+    border-color: var(--schedule-subtle);
+    background: transparent;
+  }
+
+  .search-mark::after {
+    background: var(--schedule-subtle);
+    border-color: transparent;
+  }
+
+  .schedule-control-panel .dropdown-options-list.glass-panel {
+    border-color: var(--schedule-border) !important;
+    background: #ffffff !important;
+    box-shadow: 0 18px 42px rgba(26, 41, 58, 0.12);
+  }
+
+  .schedule-control-panel .dropdown-option-item {
+    color: var(--schedule-text);
+  }
+
+  .schedule-control-panel .dropdown-option-item:hover,
+  .schedule-control-panel .dropdown-option-item.selected {
+    color: var(--schedule-strong);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+  }
+
+  .schedule-refresh-btn.wa-admin-action {
+    min-width: 64px;
+    color: var(--schedule-accent);
+  }
+
+  .schedule-table-panel {
+    overflow: hidden;
+    border-radius: var(--wa-radius-xl, 12px);
+    background: var(--schedule-panel);
+    box-shadow: var(--wa-shadow-panel, 0 18px 44px rgba(26, 41, 58, 0.1));
+  }
+
+  .schedule-table-head {
+    min-height: 58px;
+    padding: 12px 16px;
+    border-bottom-color: var(--schedule-border);
+  }
+
+  .schedule-table-head h3 {
+    color: var(--schedule-strong);
+    font-size: 1rem;
+  }
+
+  .schedule-count {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-table-wrapper.wa-admin-table-shell {
+    height: var(--schedule-content-height, 620px);
+    max-height: clamp(420px, calc(100dvh - 356px), 620px);
+    border: 0;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.72);
+    scrollbar-color: rgba(0, 143, 150, 0.42) rgba(121, 139, 159, 0.12);
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-track,
+  .schedule-table-wrapper::-webkit-scrollbar-corner {
+    background: rgba(121, 139, 159, 0.1);
+  }
+
+  .schedule-table-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(0, 143, 150, 0.42);
+    border-color: rgba(255, 255, 255, 0.72);
+  }
+
+  .schedule-admin-table {
+    min-width: 1080px;
+    background: transparent;
+  }
+
+  .schedule-admin-table th {
+    height: 42px;
+    color: var(--schedule-muted);
+    background: rgba(248, 251, 254, 0.96);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .schedule-admin-table td {
+    height: 76px;
+    color: var(--schedule-text);
+  }
+
+  .schedule-admin-table .align-center {
+    text-align: center;
+  }
+
+  .schedule-admin-table .align-right {
+    text-align: right;
+  }
+
+  .schedule-admin-row {
+    cursor: pointer;
+  }
+
+  .schedule-admin-row:hover {
+    background: var(--wa-row-hover, #f2f8fb);
+  }
+
+  .schedule-spacer-row td {
+    height: auto;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent;
+  }
+
+  .schedule-admin-table th.action-col,
+  .schedule-admin-table td.action-col {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: -12px 0 18px rgba(26, 41, 58, 0.06);
+  }
+
+  .schedule-admin-table thead th.action-col {
+    z-index: 3;
+    background: rgba(248, 251, 254, 0.98);
+  }
+
+  .schedule-id-stack,
+  .schedule-title-stack,
+  .owner-stack,
+  .plan-stack,
+  .subtask-stack {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+  }
+
+  .schedule-id-stack {
+    justify-items: start;
+  }
+
+  .schedule-title-stack strong,
+  .owner-stack strong,
+  .plan-stack strong {
+    overflow: hidden;
+    color: var(--schedule-strong);
+    font-size: 0.82rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-title-stack span,
+  .plan-stack span {
+    overflow: hidden;
+    color: var(--schedule-muted);
+    font-size: 0.72rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-id {
+    color: var(--schedule-accent);
+    font-size: 0.72rem;
+    font-weight: 850;
+    text-decoration: none;
+  }
+
+  .schedule-id.jira-id-link:hover {
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .schedule-type-chip.wa-admin-pill,
+  .priority-badge.wa-admin-pill,
+  .schedule-risk-pill.wa-admin-pill,
+  .status-chip.wa-admin-pill {
+    margin-left: 0;
+    border-radius: var(--wa-radius-sm, 6px);
+    font-size: 0.72rem;
+    box-shadow: none;
+    animation: none;
+  }
+
+  .subtask-meter {
+    height: 16px;
+    min-width: 72px;
+    background: rgba(121, 139, 159, 0.14);
+    border-radius: 999px;
+  }
+
+  .subtask-meter span {
+    background: var(--schedule-accent);
+  }
+
+  .subtask-percentage-text {
+    color: var(--schedule-strong);
+    text-shadow: none;
+  }
+
+  .schedule-row-action.wa-admin-action {
+    width: auto;
+    min-width: 44px;
+    min-height: 30px;
+    padding: 0 8px;
+    border-radius: var(--wa-radius-sm, 6px);
+    color: var(--schedule-text);
+  }
+
+  .schedule-row-action.wa-admin-action:hover {
+    transform: none;
+    color: var(--schedule-strong);
+    background: #ffffff;
+  }
+
+  .schedule-row-action.wa-admin-action.is-telemetry {
+    color: var(--schedule-accent);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+  }
+
+  .schedule-actions-cell {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .schedule-row-muted,
+  .schedule-empty-state {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-inspector-panel.wa-admin-inspector {
+    position: sticky;
+    top: var(--wa-space-4, 16px);
+    max-height: calc(100dvh - 32px);
+    overflow: auto;
+    border-radius: var(--wa-radius-xl, 12px);
+    background: var(--schedule-panel-strong);
+    color: var(--schedule-text);
+    box-shadow: var(--wa-shadow-panel, 0 18px 44px rgba(26, 41, 58, 0.1));
+  }
+
+  .schedule-inspector-head {
+    display: grid;
+    gap: 8px;
+  }
+
+  .inspector-title-row,
+  .inspector-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .schedule-inspector-head h3 {
+    margin: 0;
+    color: var(--schedule-strong);
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  .schedule-inspector-head p,
+  .schedule-inspector-section p {
+    margin: 0;
+    color: var(--schedule-text);
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .schedule-inspector-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .schedule-inspector-facts div {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    padding: 10px;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+    background: var(--wa-surface-inset, #f5f8fb);
+  }
+
+  .schedule-inspector-facts span,
+  .inspector-section-head span {
+    color: var(--schedule-muted);
+    font-size: 0.72rem;
+  }
+
+  .schedule-inspector-facts strong {
+    overflow: hidden;
+    color: var(--schedule-strong);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-lock-meter {
+    border-color: var(--schedule-border);
+    background: var(--wa-surface-inset, #f5f8fb);
+  }
+
+  .schedule-lock-meter strong {
+    color: var(--schedule-strong);
+  }
+
+  .schedule-lock-meter span {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-inspector-section {
+    display: grid;
+    gap: 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--schedule-border);
+  }
+
+  .inspector-section-head strong {
+    color: var(--schedule-strong);
+    font-size: 0.86rem;
+  }
+
+  .schedule-check-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .schedule-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+
+  .schedule-check-row p {
+    margin: 0;
+    color: var(--schedule-text);
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .check-dot {
+    width: 9px;
+    height: 9px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: var(--schedule-accent);
+    box-shadow: 0 0 0 3px var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+  }
+
+  .inspector-risk-toolbar {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .inspector-risk-toolbar button {
+    min-width: 0;
+    min-height: 48px;
+    display: grid;
+    gap: 4px;
+    justify-items: center;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-sm, 6px);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--schedule-muted);
+    cursor: pointer;
+  }
+
+  .inspector-risk-toolbar button.active {
+    border-color: var(--schedule-accent);
+    background: var(--schedule-accent);
+    color: var(--schedule-accent-ink);
+  }
+
+  .inspector-risk-toolbar span {
+    overflow: hidden;
+    max-width: 100%;
+    font-size: 0.68rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inspector-risk-toolbar strong {
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .inspector-risk-buckets {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .inspector-risk-bucket {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    padding: 9px;
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+    background: var(--wa-surface-inset, #f5f8fb);
+  }
+
+  .inspector-risk-bucket span,
+  .inspector-risk-bucket em {
+    overflow: hidden;
+    color: var(--schedule-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .inspector-risk-bucket strong {
+    color: var(--schedule-strong);
+    font-size: 1rem;
+  }
+
+  .schedule-risk-section .risk-calendar-loading {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .schedule-risk-section .risk-calendar-loading span {
+    min-height: 70px;
+    background: linear-gradient(90deg, rgba(121, 139, 159, 0.12), rgba(255, 255, 255, 0.86), rgba(121, 139, 159, 0.12));
+  }
+
+  .risk-calendar-warning {
+    color: var(--wa-warning, #d88700);
+    background: var(--wa-warning-soft, rgba(216, 135, 0, 0.14));
+    border-color: rgba(216, 135, 0, 0.22);
+  }
+
+  .schedule-inspector-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .schedule-inspector-actions .wa-admin-action {
+    width: 100%;
+  }
+
+  .schedule-inspector-empty {
+    display: grid;
+    gap: 8px;
+    padding: 24px 4px;
+    color: var(--schedule-muted);
+  }
+
+  .schedule-inspector-empty strong {
+    color: var(--schedule-strong);
+  }
+
+  @media (max-width: 1280px) {
+    .schedule-main-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .schedule-inspector-panel.wa-admin-inspector {
+      position: static;
+      max-height: none;
+    }
+  }
+
+  @media (max-width: 920px) {
+    .schedule-summary-grid,
+    .schedule-segment-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 680px) {
+    .schedule-summary-grid,
+    .schedule-segment-grid,
+    .schedule-inspector-facts,
+    .schedule-inspector-actions,
+    .inspector-risk-toolbar,
+    .inspector-risk-buckets {
+      grid-template-columns: 1fr;
+    }
+
+    .schedule-control-panel {
+      align-items: stretch;
+    }
+
+    .schedule-search-shell,
+    .schedule-assignee-menu,
+    .schedule-project-menu,
+    .schedule-dropdown-menu,
+    .schedule-refresh-btn {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+
+  /* Final Phase 41 control calibration: override legacy dark dropdown and calendar skins. */
+  .schedule-control-panel .combobox-trigger-wrapper {
+    height: var(--wa-control-h, 36px);
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-md, 8px);
+    background: rgba(255, 255, 255, 0.86);
+    box-shadow: none;
+  }
+
+  .schedule-control-panel .combobox-trigger-wrapper:hover,
+  .schedule-control-panel .combobox-trigger-wrapper:focus-within {
+    border-color: var(--schedule-accent);
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .schedule-control-panel .dropdown-trigger-input,
+  .schedule-control-panel .dropdown-trigger-btn {
+    height: 100%;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: var(--schedule-strong) !important;
+  }
+
+  .schedule-control-panel .arrow-icon {
+    color: var(--schedule-muted);
+  }
+
+  .schedule-control-panel .dropdown-options-list.glass-panel {
+    padding: 5px;
+    border: 1px solid var(--schedule-border) !important;
+    border-radius: var(--wa-radius-lg, 8px);
+    background: rgba(255, 255, 255, 0.98) !important;
+    box-shadow: 0 20px 48px rgba(26, 41, 58, 0.14);
+    backdrop-filter: blur(18px) saturate(124%);
+    -webkit-backdrop-filter: blur(18px) saturate(124%);
+  }
+
+  .schedule-control-panel .dropdown-option-item {
+    min-height: 32px;
+    border-radius: var(--wa-radius-sm, 6px);
+    color: var(--schedule-text);
+  }
+
+  .schedule-control-panel .dropdown-option-item:hover,
+  .schedule-control-panel .dropdown-option-item.selected {
+    color: var(--schedule-accent-strong);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+  }
+
+  .date-input-shell:focus-within .date-input-display {
+    border-color: var(--schedule-accent);
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .date-picker-panel,
+  .schedule-modal .date-picker-panel {
+    border: 1px solid var(--schedule-border);
+    border-radius: var(--wa-radius-lg, 8px);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 22px 52px rgba(26, 41, 58, 0.16);
+    color: var(--schedule-text);
+  }
+
+  .date-picker-head strong {
+    color: var(--schedule-strong);
+  }
+
+  .date-picker-head button,
+  .date-picker-foot button,
+  .date-cell {
+    color: var(--schedule-muted);
+  }
+
+  .date-picker-head button,
+  .date-picker-foot button {
+    border-color: var(--schedule-border);
+    background: var(--wa-surface-inset, #f5f8fb);
+  }
+
+  .date-picker-head button:hover,
+  .date-picker-foot button:hover,
+  .date-cell:hover {
+    border-color: var(--schedule-accent);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+    color: var(--schedule-accent-strong);
+  }
+
+  .date-week-grid span,
+  .date-cell.muted {
+    color: var(--schedule-subtle);
+  }
+
+  .date-cell.today {
+    border-color: rgba(0, 143, 150, 0.3);
+    color: var(--schedule-accent-strong);
+  }
+
+  .date-cell.selected {
+    border-color: var(--schedule-accent);
+    background: var(--schedule-accent);
+    color: var(--schedule-accent-ink);
+  }
+
+  .date-picker-foot {
+    border-top-color: var(--schedule-border);
+  }
+
+  .modal-backdrop {
+    background:
+      linear-gradient(180deg, rgba(13, 23, 34, 0.2), rgba(13, 23, 34, 0.34)),
+      rgba(238, 244, 247, 0.58);
+    backdrop-filter: blur(18px) saturate(118%);
+    -webkit-backdrop-filter: blur(18px) saturate(118%);
+  }
+
+  .modal-content,
+  .confirm-modal {
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: var(--wa-radius-xl, 8px);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 251, 253, 0.82)),
+      rgba(255, 255, 255, 0.9);
+    color: var(--schedule-text);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.92),
+      0 26px 72px rgba(26, 41, 58, 0.22);
+  }
+
+  .modal-header {
+    border-bottom-color: rgba(121, 139, 159, 0.14);
+  }
+
+  .modal-header h3,
+  .confirm-header h3,
+  .confirm-id-value,
+  .confirm-message {
+    color: var(--schedule-strong);
+  }
+
+  .close-btn,
+  .confirm-close {
+    color: var(--schedule-muted);
+  }
+
+  .close-btn:hover,
+  .confirm-close:hover {
+    color: var(--schedule-accent-strong);
+  }
+
+  .form-group label,
+  .confirm-kicker,
+  .confirm-id-label {
+    color: var(--schedule-muted);
+  }
+
+  .form-group input[type="text"],
+  .form-group textarea,
+  .date-input-display {
+    border-color: var(--schedule-border);
+    background: rgba(255, 255, 255, 0.74);
+    color: var(--schedule-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  }
+
+  .form-group input[type="text"]:focus,
+  .form-group textarea:focus,
+  .date-input-shell:focus-within .date-input-display {
+    border-color: var(--schedule-accent);
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .confirm-id-row,
+  .confirm-body {
+    border-color: rgba(121, 139, 159, 0.14);
+    background: rgba(247, 250, 252, 0.68);
+  }
+
+  .confirm-modal .cancel-btn {
+    border-color: var(--schedule-border);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--schedule-text);
+  }
+
+  .confirm-modal .cancel-btn:hover {
+    background: #ffffff;
+    color: var(--schedule-strong);
+  }
+
+  /* Decision-panel aligned schedule governance pass. */
+  .dashboard-header {
+    min-height: 68px;
+    padding: 16px 20px;
+    border-color: rgba(255, 255, 255, 0.72);
+    border-radius: 20px;
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(242, 248, 251, 0.72)),
+      var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 16px 42px rgba(30, 46, 64, 0.09);
+  }
+
+  .schedule-workbench {
+    gap: var(--wa-space-4, 16px);
+    overflow-anchor: none;
+  }
+
+  .schedule-summary-grid {
+    grid-template-columns: repeat(4, minmax(160px, 1fr));
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .schedule-summary-cell.wa-admin-metric {
+    min-height: 98px;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.66);
+    border-radius: 16px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 253, 0.6)),
+      var(--schedule-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.84),
+      0 12px 30px rgba(30, 46, 64, 0.065);
+  }
+
+  .schedule-summary-cell.wa-admin-metric strong {
+    font-size: 1.9rem;
+  }
+
+  .schedule-segment-grid {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .schedule-segment-card {
+    min-height: 66px;
+    padding: 11px 14px;
+    border: 1px solid rgba(121, 139, 159, 0.16);
+    border-top-width: 3px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.62);
+  }
+
+  .schedule-main-grid {
+    grid-template-columns: minmax(580px, 1.12fr) minmax(400px, 0.88fr);
+    gap: var(--wa-space-4, 16px);
+    align-items: start;
+  }
+
+  .schedule-table-stack.wa-admin-section {
+    min-width: 0;
+    gap: 12px;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .schedule-control-panel.wa-admin-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.35fr) repeat(5, minmax(104px, 0.76fr)) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 58px;
+    padding: 10px;
+    overflow: visible;
+    border-color: rgba(255, 255, 255, 0.64);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 251, 253, 0.58)),
+      var(--schedule-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.82),
+      0 12px 30px rgba(30, 46, 64, 0.07);
+  }
+
+  .schedule-search-shell,
+  .schedule-assignee-menu,
+  .schedule-project-menu,
+  .schedule-dropdown-menu {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .schedule-refresh-btn.wa-admin-action {
+    min-width: 62px;
+    min-height: var(--wa-control-h, 36px);
+    white-space: nowrap;
+  }
+
+  .schedule-table-panel {
+    overflow: hidden;
+    border-color: rgba(255, 255, 255, 0.66);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(247, 251, 253, 0.58)),
+      var(--schedule-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.84),
+      0 16px 42px rgba(30, 46, 64, 0.08);
+  }
+
+  .schedule-table-head {
+    min-height: 54px;
+    padding: 12px 16px;
+    border-bottom-color: rgba(121, 139, 159, 0.16);
+  }
+
+  .schedule-table-wrapper.wa-admin-table-shell {
+    height: var(--schedule-content-height, 620px);
+    max-height: clamp(480px, calc(100dvh - 336px), 680px);
+    border: 0;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.64);
+    overflow-anchor: none;
+  }
+
+  .schedule-admin-table {
+    min-width: 980px;
+    table-layout: fixed;
+  }
+
+  .schedule-admin-table th {
+    height: 40px;
+    padding: 9px 10px;
+    font-size: 12px;
+    background:
+      linear-gradient(180deg, rgba(250, 253, 255, 0.98), rgba(244, 249, 252, 0.94));
+  }
+
+  .schedule-admin-table td {
+    height: 68px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+  }
+
+  .schedule-title-stack,
+  .schedule-id-stack,
+  .owner-stack,
+  .plan-stack,
+  .subtask-stack {
+    gap: 4px;
+  }
+
+  .schedule-title-stack strong,
+  .owner-stack strong,
+  .plan-stack strong {
+    font-size: 0.8rem;
+    line-height: 1.22;
+  }
+
+  .schedule-title-stack span,
+  .plan-stack span {
+    font-size: 0.7rem;
+  }
+
+  .schedule-type-chip.wa-admin-pill,
+  .priority-badge.wa-admin-pill,
+  .schedule-risk-pill.wa-admin-pill,
+  .status-chip.wa-admin-pill {
+    min-height: 22px;
+    padding-inline: 7px;
+    border-radius: var(--wa-radius-sm, 7px);
+    font-size: 0.7rem;
+  }
+
+  .subtask-meter {
+    height: 15px;
+    min-width: 66px;
+  }
+
+  .schedule-row-action.wa-admin-action {
+    min-height: 28px;
+    padding-inline: 8px;
+  }
+
+  .schedule-inspector-panel.wa-admin-inspector {
+    top: var(--wa-space-4, 16px);
+    max-height: calc(100dvh - 32px);
+    padding: 16px;
+    border-color: rgba(255, 255, 255, 0.68);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 251, 253, 0.66)),
+      var(--schedule-panel-strong);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 18px 46px rgba(30, 46, 64, 0.1);
+  }
+
+  .schedule-inspector-facts {
+    gap: 8px 12px;
+  }
+
+  .schedule-inspector-facts div {
+    padding: 0 0 8px;
+    border: 0;
+    border-bottom: 1px solid rgba(121, 139, 159, 0.15);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .schedule-lock-meter {
+    padding: 12px 0;
+    border-width: 1px 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .schedule-inspector-section {
+    gap: 8px;
+    padding-top: 12px;
+  }
+
+  .inspector-risk-toolbar button {
+    min-height: 44px;
+    border-radius: 10px;
+  }
+
+  .inspector-risk-bucket {
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.56);
+  }
+
+  @media (max-width: 1440px) {
+    .schedule-control-panel.wa-admin-toolbar {
+      grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(112px, 0.8fr));
+    }
+
+    .schedule-refresh-btn.wa-admin-action {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 1280px) {
+    .schedule-main-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .schedule-inspector-panel.wa-admin-inspector {
+      position: static;
+      max-height: none;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .schedule-summary-grid,
+    .schedule-segment-grid,
+    .schedule-control-panel.wa-admin-toolbar {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .schedule-table-wrapper.wa-admin-table-shell,
+  .schedule-inspector-panel.wa-admin-inspector,
+  .dropdown-options-list {
+    scrollbar-color: rgba(0, 143, 150, 0.42) rgba(121, 139, 159, 0.12);
+  }
+
+  .schedule-inspector-panel.wa-admin-inspector::-webkit-scrollbar-thumb,
+  .dropdown-options-list::-webkit-scrollbar-thumb {
+    border: 2px solid rgba(255, 255, 255, 0.76);
+    border-radius: 999px;
+    background: rgba(0, 143, 150, 0.38);
+  }
+
+  /* Schedule governance final containment and color harmonization. */
+  .demand-dashboard {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    gap: 16px;
+    color: var(--schedule-text);
+  }
+
+  .dashboard-subtitle {
+    margin: 6px 0 0;
+    color: var(--schedule-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+  }
+
+  .schedule-workbench {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .schedule-main-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .schedule-table-stack.wa-admin-section,
+  .schedule-table-panel,
+  .schedule-inspector-panel.wa-admin-inspector {
+    min-width: 0;
+  }
+
+  .schedule-table-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: clamp(560px, calc(100dvh - 300px), 720px);
+  }
+
+  .schedule-table-wrapper.wa-admin-table-shell {
+    flex: 1 1 auto;
+    min-height: 460px;
+    max-height: clamp(520px, calc(100dvh - 360px), 680px);
+  }
+
+  .schedule-inspector-panel.wa-admin-inspector {
+    align-self: stretch;
+    max-height: clamp(560px, calc(100dvh - 146px), 760px);
+    overflow: auto;
+    scrollbar-width: thin;
+  }
+
+  .schedule-inspector-head h3,
+  .schedule-inspector-head p,
+  .schedule-inspector-section p,
+  .schedule-check-row p {
+    overflow-wrap: anywhere;
+  }
+
+  .schedule-control-panel.wa-admin-toolbar {
+    position: relative;
+    z-index: 12;
+  }
+
+  .schedule-control-panel .dropdown-options-list.glass-panel,
+  .schedule-modal .dropdown-options-list.glass-panel,
+  .demand-create-modal .dropdown-options-list.glass-panel {
+    border: 1px solid rgba(121, 139, 159, 0.18) !important;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 252, 254, 0.92)),
+      rgba(255, 255, 255, 0.92) !important;
+    color: var(--schedule-text);
+    box-shadow: 0 18px 46px rgba(26, 41, 58, 0.14) !important;
+    backdrop-filter: blur(18px) saturate(128%);
+    -webkit-backdrop-filter: blur(18px) saturate(128%);
+  }
+
+  .schedule-control-panel .dropdown-option-item,
+  .schedule-modal .dropdown-option-item,
+  .demand-create-modal .dropdown-option-item {
+    color: var(--schedule-text);
+  }
+
+  .schedule-control-panel .dropdown-option-item:hover,
+  .schedule-control-panel .dropdown-option-item.selected,
+  .schedule-modal .dropdown-option-item:hover,
+  .schedule-modal .dropdown-option-item.selected,
+  .demand-create-modal .dropdown-option-item:hover,
+  .demand-create-modal .dropdown-option-item.selected {
+    background: rgba(0, 143, 150, 0.1);
+    color: var(--schedule-accent-strong, #006f76);
+  }
+
+  .modal-backdrop {
+    padding: 24px;
+    background:
+      linear-gradient(180deg, rgba(13, 23, 34, 0.18), rgba(13, 23, 34, 0.28)),
+      rgba(238, 244, 247, 0.64);
+    backdrop-filter: blur(20px) saturate(120%);
+    -webkit-backdrop-filter: blur(20px) saturate(120%);
+  }
+
+  .modal-content,
+  .confirm-modal {
+    gap: 0;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.76) !important;
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 251, 253, 0.88)),
+      rgba(255, 255, 255, 0.94) !important;
+    color: var(--schedule-text);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.94),
+      0 28px 78px rgba(26, 41, 58, 0.2) !important;
+    scrollbar-color: rgba(0, 143, 150, 0.36) rgba(121, 139, 159, 0.08);
+  }
+
+  .schedule-modal {
+    width: min(720px, calc(100vw - 48px));
+    max-width: 720px;
+    overflow: visible;
+  }
+
+  .demand-create-modal {
+    width: min(680px, calc(100vw - 48px));
+    max-width: 680px;
+  }
+
+  .detail-modal {
+    width: min(760px, calc(100vw - 48px));
+    max-width: 760px;
+  }
+
+  .confirm-modal {
+    width: min(460px, calc(100vw - 48px));
+    max-width: 460px;
+    border-top: 0 !important;
+  }
+
+  .modal-header,
+  .confirm-header {
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid rgba(121, 139, 159, 0.14);
+    background: rgba(255, 255, 255, 0.46);
+  }
+
+  .modal-header h3,
+  .confirm-header h3 {
+    color: var(--schedule-strong);
+    font-size: 1rem;
+    line-height: 1.3;
+    letter-spacing: 0;
+  }
+
+  .close-btn,
+  .confirm-close {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: rgba(102, 119, 137, 0.08);
+    color: var(--schedule-muted);
+  }
+
+  .close-btn:hover,
+  .confirm-close:hover {
+    background: rgba(0, 143, 150, 0.1);
+    color: var(--schedule-accent-strong, #006f76);
+  }
+
+  .form-body,
+  .detail-body,
+  .confirm-body {
+    padding: 18px 22px 20px;
+  }
+
+  .form-body {
+    gap: 14px;
+  }
+
+  .demand-brief,
+  .schedule-estimate-panel,
+  .group-lock-field,
+  .confirm-id-row,
+  .confirm-body {
+    border-color: rgba(121, 139, 159, 0.16);
+    background: rgba(247, 250, 252, 0.76);
+    color: var(--schedule-text);
+  }
+
+  .schedule-estimate-panel {
+    border-radius: 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  }
+
+  .estimate-panel-head strong,
+  .group-lock-field span,
+  .confirm-id-value,
+  .confirm-message,
+  .detail-title-block strong,
+  .detail-facts-grid strong,
+  .detail-section-title strong,
+  .detail-subtask-row strong {
+    color: var(--schedule-strong);
+  }
+
+  .estimate-field span,
+  .estimate-reference-field span,
+  .estimate-difficulty-field > span:first-child,
+  .form-group label,
+  .field-hint,
+  .demand-brief,
+  .confirm-kicker,
+  .confirm-id-label,
+  .detail-title-block p,
+  .detail-facts-grid span,
+  .detail-section-title span,
+  .detail-subtask-row em,
+  .detail-empty {
+    color: var(--schedule-muted);
+  }
+
+  .form-group input[type="text"],
+  .form-group textarea,
+  .combobox-trigger-wrapper .dropdown-trigger-input,
+  .estimate-field input,
+  .estimate-reference-field strong,
+  .difficulty-trigger,
+  .date-input-display {
+    border-color: rgba(121, 139, 159, 0.2);
+    background: rgba(255, 255, 255, 0.78);
+    color: var(--schedule-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus,
+  .combobox-trigger-wrapper:focus-within .dropdown-trigger-input,
+  .estimate-field input:focus,
+  .difficulty-trigger:focus,
+  .date-input-shell:focus-within .date-input-display {
+    border-color: var(--schedule-accent);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1);
+  }
+
+  .estimate-ai-btn,
+  .submit-btn,
+  .confirm-btn-archive {
+    border: 1px solid rgba(0, 143, 150, 0.16) !important;
+    background: var(--schedule-accent) !important;
+    color: var(--schedule-accent-ink) !important;
+    box-shadow: 0 10px 24px rgba(0, 143, 150, 0.16) !important;
+  }
+
+  .estimate-ai-btn:hover:not(:disabled),
+  .submit-btn:hover,
+  .confirm-btn-archive:hover {
+    background: var(--wa-accent-strong, #006f76) !important;
+  }
+
+  .estimate-clear-btn,
+  .cancel-btn,
+  .confirm-modal .cancel-btn {
+    border: 1px solid rgba(121, 139, 159, 0.2) !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+    color: var(--schedule-text) !important;
+    box-shadow: none !important;
+  }
+
+  .estimate-clear-btn:hover,
+  .cancel-btn:hover,
+  .confirm-modal .cancel-btn:hover {
+    background: #ffffff !important;
+    color: var(--schedule-strong) !important;
+  }
+
+  .difficulty-options {
+    border: 1px solid rgba(121, 139, 159, 0.18);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 18px 42px rgba(26, 41, 58, 0.14);
+  }
+
+  .difficulty-options button {
+    color: var(--schedule-text);
+  }
+
+  .difficulty-options button:hover,
+  .difficulty-options button.selected {
+    background: rgba(0, 143, 150, 0.1);
+    color: var(--schedule-accent-strong, #006f76);
+  }
+
+  .detail-title-block,
+  .detail-facts-grid div,
+  .detail-subtask-row,
+  .detail-empty {
+    border-color: rgba(121, 139, 159, 0.14);
+    background: rgba(247, 250, 252, 0.66);
+  }
+
+  .modal-footer,
+  .confirm-footer {
+    padding: 14px 22px 18px;
+    border-top: 1px solid rgba(121, 139, 159, 0.14);
+    background: rgba(247, 250, 252, 0.5);
+  }
+
+  @media (max-width: 1440px) {
+    .demand-dashboard {
+      max-width: 100%;
+    }
+
+    .schedule-main-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(340px, 380px);
+    }
+  }
+
+  @media (max-width: 1280px) {
+    .schedule-main-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .schedule-inspector-panel.wa-admin-inspector {
+      max-height: none;
+      overflow: visible;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .modal-backdrop {
+      padding: 14px;
+      align-items: stretch;
+    }
+
+    .schedule-modal,
+    .demand-create-modal,
+    .detail-modal,
+    .confirm-modal {
+      width: 100%;
+      max-width: none;
+    }
+
+    .schedule-table-wrapper.wa-admin-table-shell {
+      min-height: 420px;
+    }
+  }
+
+  /* Strongest-brain page contract: schedule and flow share one shell surface. */
+  .demand-dashboard {
+    --schedule-accent: var(--wa-accent, #008f96);
+    --schedule-accent-strong: var(--wa-accent-strong, #006f76);
+    --schedule-accent-ink: var(--wa-accent-ink, #ffffff);
+    --schedule-panel: var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+    --schedule-panel-strong: var(--wa-chrome-0, rgba(255, 255, 255, 0.94));
+    --schedule-panel-soft: var(--wa-surface-inset, #f5f8fb);
+    --schedule-border: var(--wa-border-soft, rgba(121, 139, 159, 0.22));
+    --schedule-border-strong: var(--wa-border-strong, rgba(85, 106, 128, 0.38));
+    --schedule-text: var(--wa-text-main, #293847);
+    --schedule-strong: var(--wa-text-strong, #0d1722);
+    --schedule-muted: var(--wa-text-muted, #667789);
+    --schedule-subtle: var(--wa-text-subtle, #8a99aa);
+    --flow-panel-height: clamp(600px, calc(100dvh - 188px), 760px);
+    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
+    gap: var(--wa-page-gap, 16px);
+    background: transparent !important;
+  }
+
+  .dashboard-header {
+    min-height: 68px;
+    margin: 0;
+    padding: 16px 20px;
+    border-color: rgba(255, 255, 255, 0.7);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 253, 0.68)),
+      var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 16px 42px rgba(30, 46, 64, 0.08);
+  }
+
+  .dashboard-header h2,
+  .lane-header h4,
+  .demand-card h5 {
+    color: var(--schedule-strong);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .eyebrow,
+  .dashboard-subtitle,
+  .creator-meta,
+  .desc,
+  .branch-line,
+  .mapped-repo-line,
+  .empty-lane,
+  .subtask-progress-row,
+  .subtask-detail-item,
+  .done-date {
+    color: var(--schedule-muted);
+  }
+
+  .demand-kanban-board {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--flow-panel-height);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-page-gap, 16px);
+    align-items: stretch;
+    overflow-anchor: none;
+  }
+
+  .kanban-lane {
+    min-width: 0;
+    min-height: var(--flow-panel-height);
+    max-height: var(--flow-panel-height);
+    padding: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.68);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 253, 0.62)),
+      var(--schedule-panel);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 16px 42px rgba(30, 46, 64, 0.08);
+    backdrop-filter: blur(18px) saturate(126%);
+    -webkit-backdrop-filter: blur(18px) saturate(126%);
+    overflow: hidden;
+  }
+
+  .lane-header {
+    min-height: 40px;
+    padding-bottom: 12px;
+    border-bottom-color: rgba(121, 139, 159, 0.16);
+  }
+
+  .lane-indicator {
+    width: 8px;
+    height: 8px;
+    box-shadow: none;
+  }
+
+  .lane-cards {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding: 0 2px 2px 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 143, 150, 0.32) rgba(121, 139, 159, 0.1);
+  }
+
+  .lane-cards::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .lane-cards::-webkit-scrollbar-thumb {
+    border: 2px solid rgba(255, 255, 255, 0.72);
+    border-radius: 999px;
+    background: rgba(0, 143, 150, 0.34);
+  }
+
+  .demand-card {
+    border: 1px solid rgba(121, 139, 159, 0.18);
+    border-top-width: 3px;
+    border-radius: 16px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(248, 252, 254, 0.7)),
+      rgba(255, 255, 255, 0.76);
+    color: var(--schedule-text);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 10px 24px rgba(30, 46, 64, 0.055);
+    transition:
+      border-color var(--wa-duration-fast, 140ms) var(--wa-ease, cubic-bezier(0.16, 1, 0.3, 1)),
+      background var(--wa-duration-fast, 140ms) var(--wa-ease, cubic-bezier(0.16, 1, 0.3, 1)),
+      box-shadow var(--wa-duration-fast, 140ms) var(--wa-ease, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+
+  .demand-card:hover {
+    transform: none;
+    border-color: rgba(0, 143, 150, 0.28);
+    background: #ffffff;
+    box-shadow: 0 14px 32px rgba(30, 46, 64, 0.09);
+  }
+
+  .demand-id-button,
+  .jira-id-link,
+  .assignee-badge,
+  .brain-link-badge,
+  .priority-badge,
+  .due-badge,
+  .status-badge,
+  .done-tag {
+    border-radius: 8px;
+  }
+
+  .demand-id-button,
+  .jira-id-link,
+  .brain-link-badge {
+    border-color: rgba(0, 143, 150, 0.18);
+    background: rgba(0, 143, 150, 0.08);
+    color: var(--schedule-accent-strong);
+  }
+
+  .assignee-badge,
+  .status-badge {
+    background: rgba(37, 107, 216, 0.08);
+    color: var(--wa-info, #256bd8);
+  }
+
+  .branch-line,
+  .mapped-repo-line,
+  .deconstruct-subtasks-box,
+  .empty-lane {
+    border-color: rgba(121, 139, 159, 0.16);
+    background: rgba(247, 250, 252, 0.74);
+  }
+
+  .subtasks-list-details {
+    border-top-color: rgba(121, 139, 159, 0.16);
+  }
+
+  .subtask-bar {
+    background: rgba(121, 139, 159, 0.18);
+  }
+
+  .subtask-bar-fill {
+    background: linear-gradient(90deg, var(--schedule-accent), rgba(0, 143, 150, 0.62));
+  }
+
+  .edit-sched-btn,
+  .icon-action-btn {
+    color: var(--schedule-muted);
+  }
+
+  .edit-sched-btn:hover,
+  .icon-action-btn:hover {
+    color: var(--schedule-accent-strong);
+  }
+
+  .schedule-main-grid {
+    min-height: var(--flow-panel-height);
+  }
+
+  .schedule-table-panel,
+  .schedule-inspector-panel.wa-admin-inspector {
+    min-height: var(--flow-panel-height);
+    max-height: var(--flow-panel-height);
+  }
+
+  .schedule-table-wrapper.wa-admin-table-shell {
+    min-height: 0;
+    max-height: none;
+  }
+
+  @media (max-width: 1440px) {
+    .demand-kanban-board {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 1280px) {
+    .schedule-table-panel,
+    .schedule-inspector-panel.wa-admin-inspector,
+    .kanban-lane {
+      max-height: none;
+    }
+
+    .demand-kanban-board {
+      min-height: auto;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .demand-kanban-board {
+      grid-template-columns: 1fr;
+    }
+
+    .kanban-lane {
+      min-height: 420px;
+    }
+  }
+
+  /* Schedule table and inspector share one aligned business row. */
+  .schedule-dashboard {
+    --schedule-main-panel-height: clamp(560px, calc(100dvh - 350px), 720px);
+  }
+
+  .schedule-dashboard .schedule-main-grid {
+    display: grid;
+    grid-template-columns: minmax(580px, 1.12fr) minmax(400px, 0.88fr);
+    grid-template-areas:
+      "controls controls"
+      "table inspector";
+    grid-template-rows: auto minmax(0, var(--schedule-main-panel-height));
+    align-items: stretch;
+    min-height: 0;
+  }
+
+  .schedule-dashboard .schedule-table-stack.wa-admin-section {
+    display: contents;
+  }
+
+  .schedule-dashboard .schedule-control-panel.wa-admin-toolbar {
+    grid-area: controls;
+  }
+
+  .schedule-dashboard .schedule-table-panel {
+    grid-area: table;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .schedule-dashboard .schedule-table-stack > .state-msg {
+    grid-area: table;
+    min-height: var(--schedule-main-panel-height);
+  }
+
+  .schedule-dashboard .schedule-table-wrapper.wa-admin-table-shell {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .schedule-dashboard .schedule-inspector-panel.wa-admin-inspector {
+    grid-area: inspector;
+    align-self: stretch;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+  }
+
+  .schedule-risk-pill.wa-admin-pill {
+    position: relative;
+    min-width: 76px;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 9px 0 20px;
+    border-radius: 999px;
+    font-weight: 840;
+    letter-spacing: 0;
+  }
+
+  .schedule-risk-pill.wa-admin-pill::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.86;
+  }
+
+  .schedule-risk-pill.schedule-risk-overdue {
+    border-color: rgba(221, 75, 62, 0.28);
+    background: rgba(221, 75, 62, 0.1);
+    color: #b42318;
+  }
+
+  .schedule-risk-pill.schedule-risk-due_soon {
+    border-color: rgba(216, 135, 0, 0.28);
+    background: rgba(216, 135, 0, 0.12);
+    color: #9a5b00;
+  }
+
+  .schedule-risk-pill.schedule-risk-stale {
+    border-color: rgba(124, 79, 203, 0.24);
+    background: rgba(124, 79, 203, 0.1);
+    color: #6841b5;
+  }
+
+  .schedule-risk-pill.schedule-risk-unscheduled {
+    border-color: rgba(37, 107, 216, 0.22);
+    background: rgba(37, 107, 216, 0.09);
+    color: #1d56ad;
+  }
+
+  .schedule-risk-pill.schedule-risk-safe {
+    border-color: rgba(4, 150, 111, 0.22);
+    background: rgba(4, 150, 111, 0.1);
+    color: #047857;
+  }
+
+  .schedule-risk-pill.schedule-risk-done {
+    border-color: rgba(102, 119, 137, 0.2);
+    background: rgba(102, 119, 137, 0.09);
+    color: var(--schedule-muted);
+  }
+
+  .status-chip.wa-admin-pill {
+    position: relative;
+    min-width: 68px;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 0 9px 0 20px;
+    border-radius: 999px;
+    font-weight: 840;
+    letter-spacing: 0;
+  }
+
+  .status-chip.wa-admin-pill::before {
+    content: "";
+    position: absolute;
+    left: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.82;
+  }
+
+  .status-chip.wa-admin-pill.status-scheduled {
+    border-color: rgba(0, 143, 150, 0.24);
+    background: rgba(0, 143, 150, 0.1);
+    color: #006f76;
+  }
+
+  .status-chip.wa-admin-pill.status-unscheduled {
+    border-color: rgba(102, 119, 137, 0.2);
+    background: rgba(102, 119, 137, 0.09);
+    color: #667789;
+  }
+
+  .status-chip.wa-admin-pill.status-partial {
+    border-color: rgba(216, 135, 0, 0.26);
+    background: rgba(216, 135, 0, 0.12);
+    color: #9a5b00;
+  }
+
+  .status-chip.wa-admin-pill.status-progress {
+    border-color: rgba(37, 107, 216, 0.24);
+    background: rgba(37, 107, 216, 0.1);
+    color: #1d56ad;
+  }
+
+  .status-chip.wa-admin-pill.status-review {
+    border-color: rgba(124, 79, 203, 0.24);
+    background: rgba(124, 79, 203, 0.1);
+    color: #6841b5;
+  }
+
+  .status-chip.wa-admin-pill.status-done {
+    border-color: rgba(4, 150, 111, 0.22);
+    background: rgba(4, 150, 111, 0.1);
+    color: #047857;
+  }
+
+  @media (max-width: 1280px) {
+    .schedule-dashboard .schedule-main-grid {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "controls"
+        "table"
+        "inspector";
+      grid-template-rows: auto minmax(520px, auto) auto;
+    }
+
+    .schedule-dashboard .schedule-inspector-panel.wa-admin-inspector {
+      height: auto;
+      min-height: 0;
+      overflow: visible;
+    }
+  }
+
+  /* Flow board fills the shell and each lane owns its own scrolling. */
+  .flow-dashboard {
+    --flow-panel-height: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .flow-dashboard .dashboard-header {
+    min-height: 58px;
+    padding: 12px 18px;
+  }
+
+  .flow-dashboard .dashboard-subtitle {
+    margin-top: 3px;
+  }
+
+  .flow-dashboard .demand-kanban-board {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  .flow-dashboard .kanban-lane {
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .flow-dashboard .lane-header {
+    min-height: 34px;
+    padding-bottom: 9px;
+  }
+
+  .flow-dashboard .lane-cards {
+    gap: 9px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 4px 2px 0;
+    scrollbar-width: thin;
+  }
+
+  .flow-dashboard .lane-cards::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .flow-dashboard .demand-card {
+    gap: 7px;
+    padding: 10px 11px;
+    border-radius: 14px;
+  }
+
+  .flow-dashboard .demand-card h5 {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 0.78rem;
+    line-height: 1.32;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .flow-dashboard .desc {
+    -webkit-line-clamp: 1;
+  }
+
+  .flow-dashboard .branch-line,
+  .flow-dashboard .mapped-repo-line,
+  .flow-dashboard .creator-meta {
+    font-size: 0.62rem;
+    line-height: 1.25;
+  }
+
+  .flow-dashboard .deconstruct-subtasks-box {
+    margin-top: 4px;
+    padding: 6px 8px;
+  }
+
+  .flow-dashboard .card-bottom {
+    min-height: 24px;
+    margin-top: 0;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+
+  @media (max-height: 780px) and (min-width: 761px) {
+    .flow-dashboard {
+      --flow-panel-height: calc(100dvh - var(--wa-workspace-topbar-h, 68px) - (var(--wa-shell-gutter, 16px) * 2) - 82px);
+      gap: 10px;
+    }
+
+    .flow-dashboard .dashboard-header {
+      min-height: 52px;
+      padding: 10px 16px;
+    }
+
+    .flow-dashboard .eyebrow,
+    .flow-dashboard .dashboard-subtitle {
+      display: none;
+    }
+
+    .flow-dashboard .kanban-lane {
+      padding: 10px;
+    }
+
+    .flow-dashboard .demand-card {
+      gap: 6px;
+      padding: 9px 10px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .flow-dashboard {
+      height: auto;
+      overflow: visible;
+    }
+
+    .flow-dashboard .demand-kanban-board,
+    .flow-dashboard .kanban-lane {
+      height: auto;
+      max-height: none;
+    }
+
+    .flow-dashboard .lane-cards {
+      overflow: visible;
+    }
+  }
+
+  /* Phase 43 flow-board toolbar refinement. */
+  .flow-dashboard .dashboard-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    min-height: 108px;
+    padding: 20px;
+    overflow: visible;
+  }
+
+  .dashboard-title-block {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    align-content: center;
+  }
+
+  .flow-dashboard .dashboard-title-block .eyebrow {
+    margin-bottom: 0;
+  }
+
+  .dashboard-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    min-width: 0;
+    align-self: center;
+  }
+
+  .flow-demand-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 12px;
+    border: 1px solid rgba(107, 127, 146, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.58);
+    color: var(--schedule-muted);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(14px) saturate(124%);
+    -webkit-backdrop-filter: blur(14px) saturate(124%);
+    white-space: nowrap;
+  }
+
+  .flow-demand-count strong {
+    color: var(--schedule-strong);
+    font-size: 0.95rem;
+    font-weight: 840;
+  }
+
+  .flow-demand-count span {
+    color: var(--schedule-muted);
+    font-size: 0.72rem;
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+
+  .add-demand-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 44px;
+    padding: 0 16px 0 12px;
+    border: 1px solid rgba(0, 143, 150, 0.24);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(0, 143, 150, 0.96), rgba(0, 111, 118, 0.94)),
+      var(--schedule-accent);
+    color: #fff;
+    box-shadow:
+      0 12px 24px rgba(0, 111, 118, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    font-size: 0.84rem;
+    font-weight: 820;
+    letter-spacing: 0;
+    white-space: nowrap;
+    transition:
+      transform 160ms var(--wa-ease, ease),
+      box-shadow 160ms var(--wa-ease, ease),
+      filter 160ms var(--wa-ease, ease);
+  }
+
+  .add-demand-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 780;
+    line-height: 1;
+  }
+
+  .add-demand-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.02);
+    box-shadow:
+      0 16px 30px rgba(0, 111, 118, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+
+  .add-demand-btn:active {
+    transform: translateY(0) scale(0.99);
+  }
+
+  .flow-dashboard .dashboard-subtitle {
+    display: block;
+    max-width: min(620px, 100%);
+    margin: 0;
+    color: var(--schedule-muted);
+    font-size: 0.84rem;
+    line-height: 1.58;
+    overflow: visible;
+    white-space: normal;
+    text-wrap: balance;
+  }
+
+  @media (max-width: 760px) {
+    .flow-dashboard .dashboard-header {
+      grid-template-columns: 1fr;
+      min-height: 0;
+      padding: 16px;
+    }
+
+    .dashboard-actions {
+      width: 100%;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .flow-demand-count,
+    .add-demand-btn {
+      flex: 1 1 auto;
+    }
   }
 </style>

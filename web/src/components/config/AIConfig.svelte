@@ -1,10 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
-  import Steps from '../shared/Steps.svelte';
   import TextInput from '../shared/TextInput.svelte';
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
+  import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
 
   const dispatch = createEventDispatcher();
 
@@ -168,9 +168,65 @@
 
   $: showEnginePanel = view !== 'context';
   $: showContextPanel = view !== 'engine';
-  $: isConfigured = enabled || !!(baseURL || apiToken || modelName || activeContextFactCount);
+  $: isConfigured = enabled || !!(baseURL || apiToken || modelName);
   $: activeContextFactCount = contextFacts.filter(fact => fact.status === 'active').length;
   $: totalContextFactTokens = contextFacts.reduce((sum, fact) => sum + (Number(fact.token_count) || 0), 0);
+  let configurationIssues: string[] = [];
+  let healthTone = 'unchecked';
+  let healthLabel = '未检测';
+  let healthMessage = '尚未执行健康检查。';
+
+  $: configurationIssues = enabled
+    ? [
+        ...(!baseURL ? ['API 请求地址'] : []),
+        ...(!apiToken ? ['API Key'] : [])
+      ]
+    : [];
+  $: healthTone = saveSuccess
+    ? 'success'
+    : !isConfigured
+      ? 'incomplete'
+      : !enabled
+        ? 'unchecked'
+        : testing
+          ? 'checking'
+          : testError
+            ? 'error'
+            : configurationIssues.length > 0
+              ? 'incomplete'
+              : testSuccess
+                ? 'success'
+                : 'unchecked';
+  $: healthLabel = saveSuccess
+    ? '配置已保存'
+    : !isConfigured
+      ? '尚未配置'
+      : !enabled
+        ? '引擎已停用'
+        : testing
+          ? '检测中'
+          : testError
+            ? '检测失败'
+            : configurationIssues.length > 0
+              ? '配置不完整'
+              : testSuccess
+                ? '检测通过'
+                : '未检测';
+  $: healthMessage = saveSuccess
+    ? 'AI 引擎连接与估算参数已写入新的配置版本。'
+    : !isConfigured
+      ? '尚未录入模型服务信息。进入编辑后完成连接与凭证配置。'
+      : !enabled
+        ? '配置已保留，需求解构当前不会调用外部模型服务。'
+        : testing
+          ? '正在验证模型端点、认证凭证和协议响应。'
+          : testError
+            ? testError
+            : configurationIssues.length > 0
+              ? `需要补齐：${configurationIssues.join('、')}。`
+              : testSuccess
+                ? testSuccess
+                : '尚未执行健康检查，不默认判定为已就绪。';
   $: if (!editing && !saveSuccess) {
     enabled = config.enabled ?? false;
     provider = config.provider || 'openai';
@@ -203,6 +259,7 @@
     testError = '';
     testSuccess = '';
     testDetails = '';
+    resetSettingsWorkspaceScroll();
   }
 
   function finishClose() {
@@ -562,104 +619,111 @@
   }
 </script>
 
-<div class="wizard">
+<div class="scw-workbench">
   {#if showEnginePanel && saveSuccess}
-    <div class="success-screen">
-      <div class="success-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" class="checkmark-svg" viewBox="0 0 52 52">
-          <circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none"/>
-          <path class="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
-        </svg>
-      </div>
-      <h4 class="success-title">大模型引擎配置成功！</h4>
-      <p class="success-desc font-mono">配置已成功保存。现在在“AI 需求解构引擎”页面提交开发需求将对接真实的 AI 大模型解析。</p>
-      <div class="success-actions">
-        <Button variant="primary" on:click={finishClose}>
-          完成并关闭
-        </Button>
-      </div>
-    </div>
-  {:else if showEnginePanel && !editing && isConfigured}
-    <div class="config-overview">
-      <div class="overview-header">
+    <Alert type="success" title="配置已保存" message="AI 引擎连接与估算参数已更新，版本审计会记录本次变更。" />
+  {/if}
+
+  {#if showEnginePanel && !editing && isConfigured}
+    <section class="scw-overview" aria-label="AI 引擎配置状态">
+      <header class="scw-header">
         <div>
-          <span class="overview-kicker font-mono">AI Deconstructor</span>
-          <h4>AI 引擎配置状态摘要</h4>
-          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
+          <span class="scw-kicker">模型配置</span>
+          <h4>AI 引擎配置状态</h4>
+          <p>只读摘要集中展示模型端点、凭证与估算参数，健康状态只来自真实检测或配置完整性判断。</p>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <Switch id="ai-overview-toggle" bind:checked={enabled} on:change={() => saveConfig(true)} />
+        <div class="scw-toggle">
+          <span>启用 AI 引擎</span>
+          <Switch id="ai-overview-toggle" label="启用 AI 引擎" bind:checked={enabled} on:change={() => saveConfig(true)} />
         </div>
+      </header>
+
+      <div class="scw-status tone-{healthTone}">
+        <div class="scw-status-main">
+          <span>服务健康</span>
+          <strong>{healthLabel}</strong>
+        </div>
+        <p>{healthMessage}</p>
       </div>
 
-      <div class="overview-grid">
-        <div class="overview-row">
+      <div class="scw-read-grid">
+        <div class="scw-read-item">
           <span>AI 提供商</span>
           <strong class="font-sans">{provider || 'openai'}</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>接口基础 URL 地址</span>
           <strong class="font-mono">{baseURL || '-'}</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>大语言模型 (Model)</span>
           <strong class="font-mono">{modelName || '未指定'}</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>接口端点类型 (Endpoint Type)</span>
           <strong class="font-mono">{endpointType || 'completions'}</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>API 凭证 (Token)</span>
-          <strong>{apiToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
+          <strong>{apiToken ? '已配置，已脱敏' : '未配置'}</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>每日折算工时</span>
           <strong class="font-mono">{defaultWorkHoursPerDay || 8} 小时/天</strong>
         </div>
-        <div class="overview-row">
+        <div class="scw-read-item">
           <span>最近更新时间</span>
           <strong>{formatUpdated(lastUpdated)}</strong>
         </div>
-        <div class="overview-row">
-          <span>健康状态</span>
-          <strong class="text-success">{testSuccess || testError || '已就绪'}</strong>
-        </div>
       </div>
 
-      <div class="context-health-grid">
-        <span>设计语料 {activeContextFactCount} active</span>
-        <span>语料 tokens {totalContextFactTokens || 0}</span>
-        <span>Pack 预览 {contextPackPreview ? '已生成' : '待生成'}</span>
+      <div class="scw-metrics three">
+        <div class="scw-metric"><span>生效语料</span><strong>{activeContextFactCount} 条</strong></div>
+        <div class="scw-metric"><span>语料规模</span><strong>{totalContextFactTokens || 0} tokens</strong></div>
+        <div class="scw-metric"><span>Pack 预览</span><strong>{contextPackPreview ? '已生成' : '待生成'}</strong></div>
       </div>
 
       {#if testDetails}
-        <pre class="details-pre font-mono">{testDetails}</pre>
+        <pre class="scw-details scw-mono">{testDetails}</pre>
       {/if}
 
-      <div class="overview-actions">
+      <div class="scw-actions">
         <Button variant="secondary" loading={testing} on:click={testConnection}>健康检查</Button>
         <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
-    </div>
+    </section>
   {:else if showEnginePanel}
-    <Steps {currentStep} {steps} />
+    <section class="scw-editor" aria-label="编辑 AI 引擎配置">
+      <div class="scw-stepper" aria-label="配置步骤">
+        {#each steps as step, index}
+          {@const stepNum = index + 1}
+          <button
+            type="button"
+            class:active={currentStep === stepNum}
+            class:completed={currentStep > stepNum}
+            on:click={() => currentStep = stepNum}
+          >
+            <span class="scw-step-index">{stepNum}</span>
+            {step}
+          </button>
+        {/each}
+      </div>
 
     {#if currentStep === 1}
-      <div class="step-content">
-        <div class="info-block">
+      <div class="scw-step-body">
+        <div class="scw-info">
           <h4>大模型服务与凭证配置</h4>
           <p>well-ambient 的需求自解构引擎（Deconstructor）支持对接 OpenAI 兼容的大模型 API。当您配置并启用后，引擎会自动将复杂的需求文本拆解，并映射至 GitLab 的多仓项目中。</p>
         </div>
 
-        <div class="form-section">
-          <div class="form-group">
+        <div class="scw-form-stack">
+          <div class="scw-native-field">
             <Switch
               id="ai-enabled"
               label="启用 AI 需求解构引擎"
               bind:checked={enabled}
             />
-            <span class="helper-text-custom">开启后，自解构交互界面将不再使用 Mock 演示数据，而是通过此大模型 API 实时推理需求分配。</span>
+            <span class="scw-helper">开启后，需求解构会通过该模型 API 实时推理并生成任务分配建议。</span>
           </div>
 
           {#if enabled}
@@ -671,25 +735,25 @@
               helperText="当前主要支持兼容 OpenAI API 协议的厂商（如 OpenAI、DeepSeek、硅基流动、阿里千问等）。"
             />
 
-            <div class="form-group-custom">
-              <span class="form-label-custom">端点类型 (Endpoint Type)</span>
-              <div class="segmented-control">
+            <div class="scw-choice-field">
+              <span class="scw-native-label">端点类型 (Endpoint Type)</span>
+              <div class="scw-choice-grid two">
                 <button 
                   type="button" 
-                  class="control-btn {endpointType === 'completions' ? 'active' : ''}" 
+                  class:active={endpointType === 'completions'}
                   on:click={() => endpointType = 'completions'}
                 >
                   Completions (标准)
                 </button>
                 <button 
                   type="button" 
-                  class="control-btn {endpointType === 'responses' ? 'active' : ''}" 
+                  class:active={endpointType === 'responses'}
                   on:click={() => endpointType = 'responses'}
                 >
                   Responses (新版)
                 </button>
               </div>
-              <span class="helper-text-custom">
+              <span class="scw-helper">
                 Completions: 标准 Chat 接口（格式为 messages 数组）；Responses: 新版 Agent 接口（格式为 input 数组）。
               </span>
             </div>
@@ -712,8 +776,8 @@
                 helperText="用于鉴权访问大模型 API 的安全密钥。此值将被加密或安全存储在后端。"
               />
             {:else}
-              <div class="credential-collapsed">
-                <div>
+              <div class="scw-credential">
+                <div class="scw-credential-copy">
                   <span>AI API Key</span>
                   <strong>已配置，当前默认脱敏折叠</strong>
                 </div>
@@ -732,7 +796,7 @@
             {#if testSuccess}
               <Alert type="success" title="测试成功" message={testSuccess}>
                 {#if testDetails}
-                  <pre class="details-pre font-mono">{testDetails}</pre>
+                  <pre class="scw-details scw-mono">{testDetails}</pre>
                 {/if}
               </Alert>
             {/if}
@@ -740,34 +804,34 @@
             {#if testError}
               <Alert type="error" title="测试失败" message={testError}>
                 {#if testDetails}
-                  <pre class="details-pre font-mono">{testDetails}</pre>
+                  <pre class="scw-details scw-mono">{testDetails}</pre>
                 {/if}
               </Alert>
             {/if}
 
-            <div class="test-row">
+            <div class="scw-section-actions">
               <Button variant="secondary" loading={testing} on:click={testConnection}>
                 测试 AI 引擎连接
               </Button>
             </div>
           {/if}
 
-          <div class="context-config-panel compact-settings">
-            <div class="context-header">
-              <div>
-                <span class="context-kicker">Estimation</span>
+          <section class="scw-section">
+            <div class="scw-section-head">
+              <div class="scw-section-copy">
+                <span class="scw-kicker">估算口径</span>
                 <h4>估算折算设置</h4>
-                <p class="context-intro">系统设计、功能边界与流程资料由“系统设计语料库”维护；这里仅保留模型请求和排期折算参数。</p>
+                <p>系统设计、功能边界与流程资料由“系统设计语料库”维护；这里仅保留模型请求和排期折算参数。</p>
               </div>
-              <span class="context-chip">小时级估算</span>
+              <span class="scw-badge">小时级估算</span>
             </div>
 
-            <div class="context-grid compact">
-              <div class="form-group-custom context-field hours-field">
-                <label class="form-label-custom" for="ai-work-hours">每日折算小时</label>
+            <div class="scw-form-grid">
+              <div class="scw-native-field">
+                <label class="scw-native-label" for="ai-work-hours">每日折算小时</label>
                 <input
                   id="ai-work-hours"
-                  class="context-input"
+                  class="scw-native-input"
                   type="number"
                   min="1"
                   max="24"
@@ -776,25 +840,25 @@
                 />
               </div>
             </div>
-          </div>
+          </section>
 
         </div>
 
-        <div class="actions">
+        <div class="scw-actions">
           <Button variant="primary" on:click={nextStep}>
             下一步
           </Button>
         </div>
       </div>
     {:else if currentStep === 2}
-      <div class="step-content">
-        <div class="info-block">
+      <div class="scw-step-body">
+        <div class="scw-info">
           <h4>大模型引擎配置摘要</h4>
           <p>确认无误后点击下方按钮应用并保存配置：</p>
         </div>
 
-        <div class="summary-card">
-          <div class="summary-row">
+        <div class="scw-summary">
+          <div class="scw-summary-row">
             <span class="summary-label">自解构状态:</span>
             <span class="summary-value">
               {#if enabled}
@@ -805,27 +869,27 @@
             </span>
           </div>
           {#if enabled}
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">服务商 (Provider):</span>
               <span class="summary-value font-mono">{provider}</span>
             </div>
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">协议/端点类型:</span>
               <span class="summary-value font-mono">{endpointType === 'responses' ? 'Responses (新版)' : 'Completions (标准)'}</span>
             </div>
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">API 请求地址:</span>
               <span class="summary-value font-mono">{baseURL}</span>
             </div>
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">指定模型 (Model):</span>
               <span class="summary-value font-mono">{modelName || 'gpt-4o (默认)'}</span>
             </div>
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">系统设计语料库:</span>
               <span class="summary-value">{activeContextFactCount} active · {defaultWorkHoursPerDay || 8} 小时/天</span>
             </div>
-            <div class="summary-row">
+            <div class="scw-summary-row">
               <span class="summary-label">API 凭证 Token:</span>
               <span class="summary-value font-mono">••••••••••••••••••••••••</span>
             </div>
@@ -836,72 +900,75 @@
           <Alert type="error" title="保存失败" message={saveError} />
         {/if}
 
-        <div class="actions">
+        <div class="scw-actions">
           <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>
+          <Button variant="secondary" on:click={finishClose} disabled={saving}>取消</Button>
           <Button variant="primary" loading={saving} on:click={() => saveConfig(false)}>
             保存并应用
           </Button>
         </div>
       </div>
     {/if}
+    </section>
   {/if}
 
   {#if showContextPanel && !saveSuccess && (!editing || currentStep === 1)}
-    <div class="context-registry-panel">
-      <div class="registry-header">
-        <div>
-          <span class="context-kicker">System Design Corpus</span>
+    <section class="scw-overview" aria-label="系统设计语料库">
+      <header class="scw-header">
+        <div class="scw-header-copy">
+          <span class="scw-kicker">系统设计语料</span>
           <h4>系统设计语料库</h4>
           <p>在这里维护系统架构设计、功能设计、流程设计和估算口径；后台会将资料压缩成可缓存的上下文包，供需求解构自动引用。</p>
         </div>
-        <div class="registry-metrics font-mono">
-          <span>{activeContextFactCount} active</span>
-          <span>{totalContextFactTokens || 0} tokens</span>
+        <div class="scw-section-actions">
+          <span class="scw-badge success">{activeContextFactCount} 条生效</span>
+          <span class="scw-badge">{totalContextFactTokens || 0} tokens</span>
         </div>
-      </div>
+      </header>
 
       {#if contextFactsError}
-        <div class="registry-error">
+        <div class="scw-inline-error">
           <span>{contextFactsError}</span>
-          <button type="button" on:click={fetchContextFacts}>重试</button>
+          <div class="scw-section-actions"><button class="scw-icon-button" type="button" on:click={fetchContextFacts}>重试</button></div>
         </div>
       {/if}
 
-      <div class="registry-layout">
-        <div class="registry-list-column">
-          <div class="registry-toolbar">
-            <span class="registry-section-title">设计资料</span>
+      <div class="scw-list-layout">
+        <div class="scw-list-column">
+          <div class="scw-list-toolbar">
+            <span class="scw-list-title">设计资料</span>
             <button type="button" on:click={fetchContextFacts} disabled={contextFactsLoading}>
               {contextFactsLoading ? '加载中' : '刷新'}
             </button>
           </div>
 
           {#if contextFactsLoading}
-            <div class="registry-skeleton" aria-label="系统设计语料加载中">
+            <div class="scw-skeleton" aria-label="系统设计语料加载中">
               <span></span>
               <span></span>
               <span></span>
             </div>
           {:else if contextFacts.length === 0}
-            <div class="registry-empty">
+            <div class="scw-empty">
               <strong>暂无系统设计资料</strong>
               <p>先录入一条全局架构设计或流程设计，后端就能在预览接口中返回候选上下文包。</p>
             </div>
           {:else}
-            <div class="registry-list" role="list" aria-label="系统设计资料列表">
+            <div class="scw-list" role="list" aria-label="系统设计资料列表">
               {#each contextFacts as fact (contextFactKey(fact))}
                 <button
                   type="button"
-                  class="registry-fact-card {String(editingContextFactId) === String(fact.id ?? contextFactKey(fact)) ? 'active' : ''}"
+                  class="scw-list-item"
+                  class:active={String(editingContextFactId) === String(fact.id ?? contextFactKey(fact))}
                   on:click={() => beginEditContextFact(fact)}
                 >
-                  <div class="fact-card-top">
-                    <span class="fact-type">{labelFor(contextFactTypes, fact.type)}</span>
-                    <span class="fact-status status-{fact.status}">{labelFor(contextFactStatuses, fact.status)}</span>
+                  <div class="scw-list-meta">
+                    <span class="scw-badge">{labelFor(contextFactTypes, fact.type)}</span>
+                    <span class="scw-badge {fact.status === 'active' ? 'success' : fact.status === 'draft' ? 'warning' : ''}">{labelFor(contextFactStatuses, fact.status)}</span>
                   </div>
                   <strong>{fact.summary || '未命名事实'}</strong>
                   <p>{fact.content || '暂无内容'}</p>
-                  <div class="fact-meta font-mono">
+                  <div class="scw-list-meta scw-mono">
                     <span>{compactScope(fact)}</span>
                     <span>{fact.source || 'manual'}</span>
                     <span>{fact.token_count || 0} tk</span>
@@ -912,23 +979,23 @@
           {/if}
         </div>
 
-        <div class="registry-editor-column">
-          <div class="registry-toolbar">
-            <span class="registry-section-title">{editingContextFactId ? '更新资料' : '创建资料'}</span>
+        <div class="scw-editor-column">
+          <div class="scw-list-toolbar">
+            <span class="scw-list-title">{editingContextFactId ? '更新资料' : '创建资料'}</span>
             <button type="button" on:click={beginCreateContextFact}>新建</button>
           </div>
 
           {#if contextFactSaveError}
-            <div class="inline-error">{contextFactSaveError}</div>
+            <div class="scw-inline-error">{contextFactSaveError}</div>
           {/if}
           {#if contextFactSaveSuccess}
-            <div class="inline-success">{contextFactSaveSuccess}</div>
+            <div class="scw-inline-success">{contextFactSaveSuccess}</div>
           {/if}
 
-          <div class="registry-form-grid">
-            <div class="form-group-custom">
-              <span class="form-label-custom">资料类型</span>
-              <div class="context-choice-grid">
+          <div class="scw-form-grid">
+            <div class="scw-choice-field">
+              <span class="scw-native-label">资料类型</span>
+              <div class="scw-choice-grid">
                 {#each contextFactTypes as option}
                   <button
                     type="button"
@@ -941,9 +1008,9 @@
               </div>
             </div>
 
-            <div class="form-group-custom">
-              <span class="form-label-custom">状态</span>
-              <div class="context-choice-grid compact">
+            <div class="scw-choice-field">
+              <span class="scw-native-label">状态</span>
+              <div class="scw-choice-grid">
                 {#each contextFactStatuses as option}
                   <button
                     type="button"
@@ -956,9 +1023,9 @@
               </div>
             </div>
 
-            <div class="form-group-custom">
-              <span class="form-label-custom">适用范围</span>
-              <div class="context-choice-grid compact">
+            <div class="scw-choice-field">
+              <span class="scw-native-label">适用范围</span>
+              <div class="scw-choice-grid">
                 {#each contextFactScopes as option}
                   <button
                     type="button"
@@ -971,20 +1038,20 @@
               </div>
             </div>
 
-            <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-scope-id">范围标识</label>
+            <div class="scw-native-field">
+              <label class="scw-native-label" for="context-fact-scope-id">范围标识</label>
               <input
                 id="context-fact-scope-id"
-                class="context-input"
+                class="scw-native-input"
                 placeholder={contextFactForm.scope === 'global' ? '全局事实可留空' : 'repo/module/demand type'}
                 bind:value={contextFactForm.scope_id}
                 disabled={contextFactForm.scope === 'global'}
               />
             </div>
 
-            <div class="form-group-custom">
-              <span class="form-label-custom">来源</span>
-              <div class="context-choice-grid compact">
+            <div class="scw-choice-field">
+              <span class="scw-native-label">来源</span>
+              <div class="scw-choice-grid">
                 {#each contextFactSources as option}
                   <button
                     type="button"
@@ -997,28 +1064,28 @@
               </div>
             </div>
 
-            <div class="form-group-custom">
-              <label class="form-label-custom" for="context-fact-owner">维护人</label>
-              <input id="context-fact-owner" class="context-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} />
+            <div class="scw-native-field">
+              <label class="scw-native-label" for="context-fact-owner">维护人</label>
+              <input id="context-fact-owner" class="scw-native-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} />
             </div>
 
-            <div class="form-group-custom wide">
-              <label class="form-label-custom" for="context-fact-summary">资料摘要</label>
-              <input id="context-fact-summary" class="context-input" placeholder="一句话说明这份设计资料覆盖的系统范围" bind:value={contextFactForm.summary} />
+            <div class="scw-native-field wide">
+              <label class="scw-native-label" for="context-fact-summary">资料摘要</label>
+              <input id="context-fact-summary" class="scw-native-input" placeholder="一句话说明这份设计资料覆盖的系统范围" bind:value={contextFactForm.summary} />
             </div>
 
-            <div class="form-group-custom wide">
-              <label class="form-label-custom" for="context-fact-content">设计内容</label>
+            <div class="scw-native-field wide">
+              <label class="scw-native-label" for="context-fact-content">设计内容</label>
               <textarea
                 id="context-fact-content"
-                class="context-textarea compact"
+                class="scw-native-textarea"
                 rows="5"
                 placeholder="写入架构设计、功能边界、关键流程、依赖约束或估算规则。后台会自动计算 token、版本与上下文包命中。"
                 bind:value={contextFactForm.content}
               ></textarea>
             </div>
 
-            <div class="score-grid wide">
+            <div class="scw-score-grid wide">
               <label>
                 <span>新鲜度 <b class="font-mono">{formatScore(contextFactForm.freshness)}</b></span>
                 <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.freshness} />
@@ -1030,7 +1097,7 @@
             </div>
           </div>
 
-          <div class="registry-actions">
+          <div class="scw-actions">
             <Button variant="ghost" on:click={beginCreateContextFact}>清空</Button>
             <Button variant="primary" loading={contextFactSaving} on:click={saveContextFact}>
               {editingContextFactId ? '更新资料' : '创建资料'}
@@ -1039,10 +1106,10 @@
         </div>
       </div>
 
-      <div class="pack-preview-panel">
-        <div class="registry-header compact">
-          <div>
-            <span class="context-kicker">Pack Preview</span>
+      <section class="scw-section">
+        <div class="scw-section-head">
+          <div class="scw-section-copy">
+            <span class="scw-kicker">上下文预览</span>
             <h4>上下文包预览</h4>
             <p>输入一段需求文本，预览后端会选择哪些系统设计资料进入 AI 解构上下文。</p>
           </div>
@@ -1050,1172 +1117,83 @@
         </div>
 
         <textarea
-          class="context-textarea preview-demand"
+          class="scw-native-textarea"
           rows="3"
           placeholder="例如：为需求解构新增权限解释和上下文包归档能力，需要兼容现有粗粒度 RBAC。"
           bind:value={previewDemand}
         ></textarea>
 
         {#if contextPreviewError}
-          <div class="inline-error">{contextPreviewError}</div>
+          <div class="scw-inline-error">{contextPreviewError}</div>
         {/if}
 
         {#if contextPreviewLoading}
-          <div class="registry-skeleton slim" aria-label="上下文包预览加载中">
+          <div class="scw-skeleton" aria-label="上下文包预览加载中">
             <span></span>
             <span></span>
           </div>
         {:else if contextPackPreview}
-          <div class="pack-summary">
-            <div>
+          <div class="scw-metrics three">
+            <div class="scw-metric">
               <span>Pack ID</span>
               <strong class="font-mono">{contextPackPreview.id || 'preview'}</strong>
             </div>
-            <div>
+            <div class="scw-metric">
               <span>Token 预算</span>
               <strong class="font-mono">{contextPackPreview.token_count || 0}/{contextPackPreview.budget_tokens || 'auto'}</strong>
             </div>
-            <div>
+            <div class="scw-metric">
               <span>Cache Key</span>
               <strong class="font-mono">{contextPackPreview.cache_key || '等待后端返回'}</strong>
             </div>
           </div>
 
           {#if contextPackPreview.summary}
-            <pre class="details-pre pack-text font-mono">{contextPackPreview.summary}</pre>
+            <pre class="scw-details scw-mono">{contextPackPreview.summary}</pre>
           {/if}
 
-          <div class="pack-items">
+          <div class="scw-list">
             {#each contextPackPreview.items as item, index}
-              <div class="pack-item">
-                <div class="pack-item-top">
-                  <span class="fact-type">{index + 1}. {labelFor(contextFactTypes, item.type)}</span>
-                  <span class="fact-meta font-mono">{compactScope(item)} · {formatScore(item.score)}</span>
+              <div class="scw-list-item static">
+                <div class="scw-list-meta">
+                  <span class="scw-badge">{index + 1}. {labelFor(contextFactTypes, item.type)}</span>
+                  <span class="scw-mono">{compactScope(item)} / {formatScore(item.score)}</span>
                 </div>
                 <strong>{item.summary || '未命名候选事实'}</strong>
                 <p>{item.reason || item.content || '后端暂未返回命中说明'}</p>
               </div>
             {:else}
-              <div class="registry-empty compact">
+              <div class="scw-empty">
                 <strong>预览未选中资料</strong>
                 <p>这通常表示后端接口仍在接入，或当前需求文本与可用设计资料没有匹配结果。</p>
               </div>
             {/each}
           </div>
         {:else}
-          <div class="registry-empty compact">
+          <div class="scw-empty">
             <strong>等待预览</strong>
             <p>预览结果会展示 pack 摘要、token 占用和被选中的设计资料。</p>
           </div>
         {/if}
-      </div>
-    </div>
+      </section>
+    </section>
   {/if}
 </div>
 
 <style>
-  .wizard {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .step-content {
-    display: flex;
-    flex-direction: column;
-    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .info-block {
-    background: rgba(30, 41, 59, 0.4);
-    border-left: 4px solid #38bdf8;
-    padding: 12px 16px;
-    border-radius: 0 8px 8px 0;
-    margin-bottom: 24px;
-  }
-
-  .info-block h4 {
-    margin: 0 0 6px 0;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: #cbd5e1;
-  }
-
-  .info-block p {
-    margin: 0;
-    font-size: 0.8rem;
-    color: #94a3b8;
-    line-height: 1.5;
-  }
-
-  .form-section {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    margin-bottom: 24px;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .form-group-custom {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .form-label-custom {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #94a3b8;
-  }
-
-  .helper-text-custom {
-    font-size: 0.725rem;
-    color: #64748b;
-    margin-top: 2px;
-  }
-
-  .segmented-control {
-    display: flex;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(129, 140, 248, 0.2);
-    padding: 4px;
-    border-radius: 8px;
-    gap: 4px;
-  }
-
-  .control-btn {
-    flex: 1;
-    background: transparent;
-    border: 1px solid transparent;
-    color: #94a3b8;
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .control-btn:hover {
-    color: #cbd5e1;
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .control-btn.active {
-    color: #ffffff;
-    background: rgba(99, 102, 241, 0.25);
-    border-color: rgba(99, 102, 241, 0.4);
-    box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
-    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-  }
-
-  .test-row {
-    display: flex;
-    margin-top: 4px;
-    margin-bottom: 12px;
-  }
-
-  .config-overview {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-    animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .overview-header {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    align-items: flex-start;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
-    padding-bottom: 16px;
-  }
-
-  .overview-kicker {
-    color: #38bdf8;
-    font-size: 0.68rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .overview-header h4 {
-    margin: 4px 0 6px 0;
-    color: #f8fafc;
-    font-size: 1.05rem;
-  }
-
-  .overview-header p {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 0.8rem;
-    line-height: 1.5;
-  }
-
-  .status-pill {
-    flex: none;
-    border-radius: 999px;
-    padding: 5px 10px;
-    font-size: 0.72rem;
-    font-weight: 800;
-    border: 1px solid rgba(148, 163, 184, 0.24);
-  }
-
-  .status-pill.online {
-    color: #34d399;
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.22);
-  }
-
-  .status-pill.warning {
-    color: #fbbf24;
-    background: rgba(245, 158, 11, 0.1);
-    border-color: rgba(245, 158, 11, 0.22);
-  }
-
-  .overview-grid {
-    display: flex;
-    flex-direction: column;
-    background: rgba(15, 23, 42, 0.25);
-    border: 1px solid rgba(51, 65, 85, 0.3);
-    border-radius: 6px;
-    padding: 0 16px;
-    margin-top: 10px;
-  }
-
-  .overview-row {
-    min-width: 0;
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 0;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.2);
-    background: none;
-    border-radius: 0;
-    gap: 16px;
-  }
-  .overview-row:last-child {
-    border-bottom: none;
-  }
-
-  .credential-collapsed,
-  .context-health-grid {
-    min-width: 0;
-    background: rgba(15, 23, 42, 0.52);
-    border: 1px solid rgba(51, 65, 85, 0.48);
-    border-radius: 8px;
-    padding: 12px;
-  }
-
-  .overview-row span {
-    color: #94a3b8;
-    font-size: 0.8rem;
-    font-weight: 500;
-  }
-
-  .overview-row strong {
-    color: #f8fafc;
-    font-size: 0.85rem;
-    font-weight: 600;
-    text-align: right;
-  }
-
-  .credential-collapsed span {
-    color: #64748b;
-    font-size: 0.72rem;
-    font-weight: 700;
-  }
-
-  .credential-collapsed strong {
-    color: #e2e8f0;
-    font-size: 0.86rem;
-    overflow-wrap: anywhere;
-  }
-
-  .context-health-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
-    color: #94a3b8;
-    font-size: 0.78rem;
-    font-weight: 700;
-  }
-
-  .overview-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .credential-collapsed {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 18px;
-  }
-
-  .credential-collapsed div {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .credential-collapsed button {
-    flex: none;
-    background: transparent;
-    border: 1px solid rgba(99, 102, 241, 0.34);
-    color: #a5b4fc;
-    border-radius: 6px;
-    padding: 7px 10px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    cursor: pointer;
-  }
-
-  .credential-collapsed button:hover {
-    background: rgba(99, 102, 241, 0.12);
-  }
-
-  .context-config-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 14px;
-    background: rgba(15, 23, 42, 0.44);
-    border: 1px solid rgba(51, 65, 85, 0.55);
-    border-radius: 8px;
-    box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
-  }
-
-  .context-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .context-header h4 {
-    margin: 3px 0 0 0;
-    color: #e2e8f0;
-    font-size: 0.95rem;
-    font-weight: 700;
-  }
-
-  .context-intro {
-    max-width: 720px;
-    margin: 6px 0 0 0;
-    color: #94a3b8;
-    font-size: 0.78rem;
-    line-height: 1.55;
-  }
-
-  .context-kicker {
-    color: #38bdf8;
-    font-size: 0.65rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .context-chip {
-    flex: none;
-    padding: 4px 8px;
-    border: 1px solid rgba(56, 189, 248, 0.24);
-    border-radius: 4px;
-    background: rgba(8, 47, 73, 0.32);
-    color: #7dd3fc;
-    font-size: 0.7rem;
-    font-weight: 700;
-  }
-
-  .context-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 14px;
-  }
-
-  .context-grid.compact {
-    grid-template-columns: minmax(180px, 220px);
-  }
-
-  .context-field.wide {
-    min-width: 0;
-  }
-
-  .hours-field {
-    max-width: 220px;
-  }
-
-  .context-textarea,
-  .context-input {
-    width: 100%;
-    box-sizing: border-box;
-    background: rgba(2, 6, 23, 0.62);
-    border: 1px solid rgba(71, 85, 105, 0.62);
-    border-radius: 6px;
-    color: #e2e8f0;
-    font: inherit;
-    font-size: 0.82rem;
-    outline: none;
-    transition: border-color 0.18s ease, box-shadow 0.18s ease;
-  }
-
-  .context-textarea {
-    min-height: 92px;
-    padding: 10px 11px;
-    line-height: 1.5;
-    resize: vertical;
-  }
-
-  .context-textarea,
-  .details-pre {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(56, 189, 248, 0.5) rgba(15, 23, 42, 0.72);
-  }
-
-  .context-textarea::-webkit-scrollbar,
-  .details-pre::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-
-  .context-textarea::-webkit-scrollbar-track,
-  .details-pre::-webkit-scrollbar-track {
-    background: rgba(2, 6, 23, 0.44);
-    border-radius: 999px;
-  }
-
-  .context-textarea::-webkit-scrollbar-thumb,
-  .details-pre::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(56, 189, 248, 0.62), rgba(52, 211, 153, 0.34));
-    border: 2px solid rgba(2, 6, 23, 0.44);
-    border-radius: 999px;
-  }
-
-  .context-input {
-    height: 38px;
-    padding: 0 10px;
-  }
-
-  .context-input[type='number'] {
-    appearance: textfield;
-    -moz-appearance: textfield;
-  }
-
-  .context-input[type='number']::-webkit-outer-spin-button,
-  .context-input[type='number']::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-  }
-
-  .context-textarea:focus,
-  .context-input:focus {
-    border-color: rgba(56, 189, 248, 0.72);
-    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
-  }
-
-  .context-choice-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-    gap: 7px;
-  }
-
-  .context-choice-grid.compact {
-    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
-  }
-
-  .context-choice-grid button {
-    min-height: 34px;
-    border: 1px solid rgba(51, 65, 85, 0.58);
-    background: rgba(2, 6, 23, 0.38);
-    color: #94a3b8;
-    border-radius: 8px;
-    font-size: 0.76rem;
-    font-weight: 800;
-    cursor: pointer;
-    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
-  }
-
-  .context-choice-grid button:hover {
-    transform: translateY(-1px);
-    color: #cbd5e1;
-    border-color: rgba(56, 189, 248, 0.38);
-  }
-
-  .context-choice-grid button.active {
-    color: #f8fafc;
-    border-color: rgba(56, 189, 248, 0.54);
-    background: rgba(8, 47, 73, 0.5);
-    box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.12);
-  }
-
-  .context-registry-panel,
-  .pack-preview-panel {
-    margin-top: 18px;
-    border: 1px solid rgba(51, 65, 85, 0.52);
-    background:
-      linear-gradient(135deg, rgba(56, 189, 248, 0.06), transparent 34%),
-      rgba(15, 23, 42, 0.36);
-    border-radius: 8px;
-    padding: 16px;
-  }
-
-  .registry-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 14px;
-    padding-bottom: 14px;
-    margin-bottom: 14px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.42);
-  }
-
-  .registry-header.compact {
-    align-items: center;
-  }
-
-  .registry-header h4 {
-    margin: 4px 0 6px 0;
-    color: #f8fafc;
-    font-size: 1rem;
-  }
-
-  .registry-header p {
-    max-width: 720px;
-    margin: 0;
-    color: #94a3b8;
-    font-size: 0.8rem;
-    line-height: 1.48;
-  }
-
-  .registry-metrics {
-    flex: none;
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .registry-metrics span,
-  .registry-section-title {
-    color: #94a3b8;
-    border: 1px solid rgba(51, 65, 85, 0.52);
-    background: rgba(2, 6, 23, 0.34);
-    border-radius: 6px;
-    padding: 5px 8px;
-    font-size: 0.72rem;
-    font-weight: 800;
-  }
-
-  .registry-error,
-  .inline-error,
-  .inline-success {
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 0.8rem;
-    line-height: 1.42;
-    margin-bottom: 12px;
-  }
-
-  .registry-error,
-  .inline-error {
-    color: #fca5a5;
-    border: 1px solid rgba(239, 68, 68, 0.24);
-    background: rgba(127, 29, 29, 0.16);
-  }
-
-  .inline-success {
-    color: #86efac;
-    border: 1px solid rgba(34, 197, 94, 0.24);
-    background: rgba(6, 78, 59, 0.16);
-  }
-
-  .registry-error {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    align-items: center;
-  }
-
-  .registry-error button,
-  .registry-toolbar button {
-    border: 1px solid rgba(56, 189, 248, 0.28);
-    background: rgba(8, 47, 73, 0.28);
-    color: #7dd3fc;
-    border-radius: 6px;
-    padding: 6px 9px;
-    font-size: 0.76rem;
-    font-weight: 800;
-    cursor: pointer;
-  }
-
-  .registry-error button:hover,
-  .registry-toolbar button:hover:not(:disabled) {
-    background: rgba(8, 47, 73, 0.42);
-  }
-
-  .registry-toolbar button:disabled {
-    opacity: 0.58;
-    cursor: wait;
-  }
-
-  .registry-layout {
-    display: grid;
-    grid-template-columns: minmax(260px, 0.8fr) minmax(320px, 1.2fr);
-    gap: 14px;
-    align-items: start;
-  }
-
-  .registry-list-column,
-  .registry-editor-column {
-    min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.46);
-    background: rgba(2, 6, 23, 0.22);
-    border-radius: 8px;
-    padding: 12px;
-  }
-
-  .registry-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .registry-list {
-    display: flex;
-    flex-direction: column;
-    gap: 9px;
-    max-height: 560px;
-    overflow: auto;
-    padding-right: 3px;
-  }
-
-  .registry-fact-card {
-    width: 100%;
-    border: 1px solid rgba(51, 65, 85, 0.52);
-    background: rgba(15, 23, 42, 0.42);
-    color: #cbd5e1;
-    border-radius: 8px;
-    padding: 11px;
-    text-align: left;
-    cursor: pointer;
-    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-  }
-
-  .registry-fact-card:hover,
-  .registry-fact-card.active {
-    transform: translateY(-1px);
-    border-color: rgba(56, 189, 248, 0.46);
-    background: rgba(8, 47, 73, 0.22);
-  }
-
-  .registry-fact-card strong {
-    display: block;
-    color: #e2e8f0;
-    font-size: 0.88rem;
-    line-height: 1.35;
-    margin-top: 8px;
-  }
-
-  .registry-fact-card p {
-    margin: 6px 0 0 0;
-    color: #94a3b8;
-    font-size: 0.76rem;
-    line-height: 1.42;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .fact-card-top,
-  .pack-item-top {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .fact-type,
-  .fact-status,
-  .fact-meta {
-    display: inline-flex;
-    align-items: center;
-    width: fit-content;
-    border-radius: 999px;
-    padding: 3px 7px;
-    font-size: 0.68rem;
-    font-weight: 900;
-  }
-
-  .fact-type {
-    color: #7dd3fc;
-    background: rgba(8, 47, 73, 0.34);
-    border: 1px solid rgba(56, 189, 248, 0.24);
-  }
-
-  .fact-status {
-    color: #cbd5e1;
-    background: rgba(51, 65, 85, 0.38);
-    border: 1px solid rgba(100, 116, 139, 0.22);
-  }
-
-  .fact-status.status-active {
-    color: #86efac;
-    background: rgba(6, 78, 59, 0.2);
-    border-color: rgba(34, 197, 94, 0.24);
-  }
-
-  .fact-status.status-draft {
-    color: #fde68a;
-    background: rgba(120, 53, 15, 0.18);
-    border-color: rgba(245, 158, 11, 0.22);
-  }
-
-  .fact-status.status-paused,
-  .fact-status.status-retired {
-    color: #94a3b8;
-  }
-
-  .fact-meta {
-    gap: 7px;
-    flex-wrap: wrap;
-    color: #64748b;
-    padding: 0;
-    margin-top: 9px;
-  }
-
-  .registry-form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .registry-form-grid .wide,
-  .score-grid.wide {
-    grid-column: 1 / -1;
-  }
-
-  .score-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .score-grid label {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    border: 1px solid rgba(51, 65, 85, 0.46);
-    background: rgba(2, 6, 23, 0.28);
-    border-radius: 8px;
-    padding: 10px;
-  }
-
-  .score-grid span {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    color: #94a3b8;
-    font-size: 0.76rem;
-    font-weight: 800;
-  }
-
-  .score-grid b {
-    color: #e2e8f0;
-  }
-
-  .score-grid input[type='range'] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 100%;
-    height: 6px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, rgba(56, 189, 248, 0.82), rgba(52, 211, 153, 0.78));
-    outline: none;
-  }
-
-  .score-grid input[type='range']::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: #f8fafc;
-    border: 3px solid #0891b2;
-    box-shadow: 0 3px 10px rgba(2, 6, 23, 0.48);
-    cursor: pointer;
-  }
-
-  .score-grid input[type='range']::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: #f8fafc;
-    border: 3px solid #0891b2;
-    box-shadow: 0 3px 10px rgba(2, 6, 23, 0.48);
-    cursor: pointer;
-  }
-
-  .registry-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(51, 65, 85, 0.38);
-  }
-
-  .registry-empty,
-  .registry-skeleton {
-    border: 1px dashed rgba(71, 85, 105, 0.54);
-    background: rgba(2, 6, 23, 0.22);
-    color: #64748b;
-    border-radius: 8px;
-    padding: 16px;
-    font-size: 0.8rem;
-    line-height: 1.45;
-  }
-
-  .registry-empty strong {
-    display: block;
-    color: #cbd5e1;
-    margin-bottom: 5px;
-  }
-
-  .registry-empty p {
-    margin: 0;
-  }
-
-  .registry-empty.compact {
-    padding: 12px;
-  }
-
-  .registry-skeleton {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .registry-skeleton span {
-    height: 34px;
-    border-radius: 8px;
-    background: linear-gradient(90deg, rgba(30, 41, 59, 0.55), rgba(51, 65, 85, 0.38), rgba(30, 41, 59, 0.55));
-    background-size: 180% 100%;
-    animation: registryPulse 1.4s ease-in-out infinite;
-  }
-
-  .registry-skeleton.slim span {
-    height: 22px;
-  }
-
-  @keyframes registryPulse {
-    0% { background-position: 100% 0; }
-    100% { background-position: -100% 0; }
-  }
-
-  .pack-preview-panel {
-    background:
-      linear-gradient(135deg, rgba(52, 211, 153, 0.06), transparent 34%),
-      rgba(15, 23, 42, 0.34);
-  }
-
-  .preview-demand {
-    min-height: 86px;
-    margin-bottom: 12px;
-  }
-
-  .pack-summary {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .pack-summary div {
-    min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.46);
-    background: rgba(2, 6, 23, 0.28);
-    border-radius: 8px;
-    padding: 10px;
-  }
-
-  .pack-summary span {
-    display: block;
-    color: #64748b;
-    font-size: 0.7rem;
-    font-weight: 800;
-    margin-bottom: 4px;
-  }
-
-  .pack-summary strong {
-    display: block;
-    color: #e2e8f0;
-    font-size: 0.78rem;
-    overflow-wrap: anywhere;
-  }
-
-  .pack-text {
-    max-height: 180px;
-  }
-
-  .pack-items {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 10px;
-  }
-
-  .pack-item {
-    min-width: 0;
-    border: 1px solid rgba(51, 65, 85, 0.46);
-    background: rgba(2, 6, 23, 0.24);
-    border-radius: 8px;
-    padding: 11px;
-  }
-
-  .pack-item strong {
-    display: block;
-    color: #e2e8f0;
-    font-size: 0.86rem;
-    margin-top: 8px;
-  }
-
-  .pack-item p {
-    margin: 6px 0 0 0;
-    color: #94a3b8;
-    font-size: 0.76rem;
-    line-height: 1.45;
-  }
-
-  .details-pre {
-    margin: 12px 0 0 0;
-    padding: 12px;
-    background: #0f172a;
-    border: 1px solid rgba(51, 65, 85, 0.5);
-    border-radius: 6px;
-    color: #e2e8f0;
-    font-size: 0.75rem;
-    max-height: 120px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .summary-card {
-    background: rgba(15, 23, 42, 0.3);
-    border: 1px solid rgba(51, 65, 85, 0.4);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .summary-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    font-size: 0.85rem;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
-    padding-bottom: 8px;
-  }
-
-  .summary-row:last-of-type {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .summary-label {
-    flex: none;
-    color: #64748b;
-    font-weight: 500;
-  }
-
-  .summary-value {
-    min-width: 0;
-    color: #cbd5e1;
-    font-weight: 600;
-    text-align: right;
-    overflow-wrap: anywhere;
-  }
-
   .text-success {
-    color: #34d399;
+    color: var(--wa-success, #04966f);
   }
 
   .text-muted {
-    color: #64748b;
+    color: var(--wa-text-muted, #667789);
   }
 
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 12px;
-    border-top: 1px solid rgba(51, 65, 85, 0.4);
-    padding-top: 16px;
+  .font-mono {
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
   }
 
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateX(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-
-  /* Success Screen styles */
-  .success-screen {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 32px 16px;
-    text-align: center;
-    animation: fadeIn 0.4s ease-out;
-  }
-
-  .success-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin: 0 0 8px 0;
-    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
-  .success-desc {
-    font-size: 0.8rem;
-    color: #38bdf8;
-    margin: 0 0 24px 0;
-    max-width: 380px;
-    line-height: 1.5;
-  }
-
-  .success-icon {
-    width: 64px;
-    height: 64px;
-    margin-bottom: 20px;
-  }
-
-  .checkmark-svg {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    display: block;
-    stroke-width: 3;
-    stroke: #34d399;
-    stroke-miterlimit: 10;
-    box-shadow: inset 0px 0px 0px #34d399;
-    animation: fill .4s ease-in-out .4s forwards, scale .3s ease-in-out .9s both;
-  }
-
-  .checkmark-circle {
-    stroke-dasharray: 166;
-    stroke-dashoffset: 166;
-    stroke-width: 3;
-    stroke-miterlimit: 10;
-    stroke: #34d399;
-    fill: none;
-    animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
-  }
-
-  .checkmark-check {
-    transform-origin: 50% 50%;
-    stroke-dasharray: 48;
-    stroke-dashoffset: 48;
-    stroke-width: 3;
-    stroke: #fff;
-    animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.8s forwards;
-  }
-
-  @keyframes stroke {
-    100% {
-      stroke-dashoffset: 0;
-    }
-  }
-
-  @keyframes scale {
-    0%, 100% {
-      transform: none;
-    }
-    50% {
-      transform: scale3d(1.1, 1.1, 1);
-    }
-  }
-
-  @keyframes fill {
-    100% {
-      box-shadow: inset 0px 0px 0px 32px #34d399;
-    }
-  }
-
-  .success-actions {
-    display: flex;
-    justify-content: center;
-    width: 100%;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  @media (max-width: 820px) {
-    .overview-grid,
-    .context-health-grid,
-    .registry-layout,
-    .registry-form-grid,
-    .score-grid,
-    .pack-summary {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .registry-header,
-    .overview-header,
-    .credential-collapsed {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .context-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .hours-field {
-      max-width: none;
-    }
-
-    .context-choice-grid,
-    .context-choice-grid.compact {
-      grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-    }
-  }
-  .status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-  .indicator-online {
-    background-color: #10b981;
-    box-shadow: 0 0 8px #10b981;
-  }
-  .indicator-warning {
-    background-color: #f59e0b;
-    box-shadow: 0 0 8px #f59e0b;
+  .font-sans {
+    font-family: var(--wa-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   }
 </style>

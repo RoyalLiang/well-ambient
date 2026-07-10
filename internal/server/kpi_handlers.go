@@ -174,6 +174,11 @@ type kpiEvidenceBundle struct {
 	completed []db.TaskTelemetry
 }
 
+type kpiCoreMemberFilter struct {
+	enabled bool
+	keys    map[string]struct{}
+}
+
 // handleGetKPIPerformance gathers finished work metrics grouped by member and department.
 func (s *Server) handleGetKPIPerformance(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -188,6 +193,7 @@ func (s *Server) handleGetKPIPerformance(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	completedTasks, activeTasks, users = s.filterKPIInputsByCoreMembers(completedTasks, activeTasks, users)
 
 	response := buildKPIPerformanceResponse(window.Period, completedTasks, activeTasks, users, now)
 	w.Header().Set("Content-Type", "application/json")
@@ -226,6 +232,7 @@ func (s *Server) handleGetKPIReportPreview(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	completedTasks, activeTasks, users = s.filterKPIInputsByCoreMembers(completedTasks, activeTasks, users)
 
 	performance := buildKPIPerformanceResponse(window.Period, completedTasks, activeTasks, users, now)
 	response := buildKPIReportPreview(window, reportType, userFilter, performance, completedTasks, activeTasks, users, now)
@@ -267,6 +274,151 @@ func loadKPIInputs(since time.Time) ([]db.TaskTelemetry, []db.TaskTelemetry, []u
 	}
 
 	return completedTasks, activeTasks, users, nil
+}
+
+func (s *Server) filterKPIInputsByCoreMembers(completedTasks, activeTasks []db.TaskTelemetry, users []userdb.User) ([]db.TaskTelemetry, []db.TaskTelemetry, []userdb.User) {
+	filter := s.buildKPICoreMemberFilter(users)
+	if !filter.enabled {
+		return completedTasks, activeTasks, users
+	}
+
+	directory := newKPIUserDirectory(users)
+	return filterKPITasksByCoreMembers(completedTasks, directory, filter),
+		filterKPITasksByCoreMembers(activeTasks, directory, filter),
+		filterKPIUsersByCoreMembers(users, filter)
+}
+
+func (s *Server) buildKPICoreMemberFilter(users []userdb.User) kpiCoreMemberFilter {
+	members := s.configuredKPICoreMembers()
+	if len(members) == 0 {
+		return kpiCoreMemberFilter{}
+	}
+
+	directory := newKPIUserDirectory(users)
+	filter := kpiCoreMemberFilter{
+		enabled: true,
+		keys:    make(map[string]struct{}, len(members)*3),
+	}
+	for _, member := range members {
+		addKPICoreMemberKeys(filter.keys, member)
+		identity := directory.resolve(member)
+		addKPICoreMemberKeys(filter.keys, identity.Name)
+		addKPICoreMemberKeys(filter.keys, identity.Username)
+	}
+	return filter
+}
+
+func (s *Server) configuredKPICoreMembers() []string {
+	if s == nil || s.config == nil {
+		return nil
+	}
+
+	members := normalizeConfiguredKPICoreMembers(s.config.Jira.SyncUsers)
+	if len(members) > 0 {
+		return members
+	}
+	return normalizeConfiguredKPICoreMembers(extractJIRAAssignees(s.config.Jira.CustomJQL))
+}
+
+func normalizeConfiguredKPICoreMembers(values []string) []string {
+	members := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || value == "-" || value == "未指派" || strings.EqualFold(value, "unassigned") {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		members = append(members, value)
+	}
+	return members
+}
+
+func filterKPITasksByCoreMembers(tasks []db.TaskTelemetry, directory kpiUserDirectory, filter kpiCoreMemberFilter) []db.TaskTelemetry {
+	filtered := make([]db.TaskTelemetry, 0, len(tasks))
+	for _, task := range tasks {
+		if filter.includesAssignee(task.Assignee, directory) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func filterKPIUsersByCoreMembers(users []userdb.User, filter kpiCoreMemberFilter) []userdb.User {
+	filtered := make([]userdb.User, 0, len(users))
+	for _, user := range users {
+		if filter.includesIdentity(kpiIdentityFromUser(user)) {
+			filtered = append(filtered, user)
+		}
+	}
+	return filtered
+}
+
+func (f kpiCoreMemberFilter) includesAssignee(assignee string, directory kpiUserDirectory) bool {
+	if !f.enabled {
+		return true
+	}
+	if hasKPICoreMemberKey(f.keys, assignee) {
+		return true
+	}
+	return f.includesIdentity(directory.resolve(assignee))
+}
+
+func (f kpiCoreMemberFilter) includesIdentity(identity kpiAssigneeIdentity) bool {
+	if !f.enabled {
+		return true
+	}
+	return hasKPICoreMemberKey(f.keys, identity.Name) ||
+		hasKPICoreMemberKey(f.keys, identity.Username)
+}
+
+func addKPICoreMemberKeys(keys map[string]struct{}, value string) {
+	for _, key := range kpiCoreMemberKeyVariants(value) {
+		keys[key] = struct{}{}
+	}
+}
+
+func hasKPICoreMemberKey(keys map[string]struct{}, value string) bool {
+	for _, key := range kpiCoreMemberKeyVariants(value) {
+		if _, exists := keys[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func kpiCoreMemberKeyVariants(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "-" || value == "未指派" || strings.EqualFold(value, "unassigned") {
+		return nil
+	}
+
+	variants := []string{value, normalizeAssignee(value)}
+	if idx := strings.Index(value, "@"); idx != -1 {
+		variants = append(variants, value[:idx])
+	}
+	if fields := strings.Fields(value); len(fields) > 0 {
+		variants = append(variants, fields[0])
+	}
+
+	keys := make([]string, 0, len(variants))
+	seen := make(map[string]struct{}, len(variants))
+	for _, variant := range variants {
+		key := strings.ToLower(strings.TrimSpace(variant))
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func buildKPIPerformanceResponse(period string, completedTasks, activeTasks []db.TaskTelemetry, users []userdb.User, now time.Time) KPIPerformanceResponse {
@@ -606,9 +758,6 @@ func buildKPIEvidenceBundle(completedTasks, activeTasks []db.TaskTelemetry, dire
 }
 
 func includeTaskForReport(task db.TaskTelemetry, directory kpiUserDirectory, includedUserKeys map[string]bool, includeAll bool) bool {
-	if includeAll {
-		return true
-	}
 	identity := directory.resolve(task.Assignee)
 	return includedUserKeys[kpiStatKey(identity.Name)]
 }

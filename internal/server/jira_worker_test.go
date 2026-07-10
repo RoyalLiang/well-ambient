@@ -187,10 +187,11 @@ func TestParseJiraTime(t *testing.T) {
 func TestShouldPreserveLocalAssignee(t *testing.T) {
 	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name     string
-		task     db.TaskTelemetry
-		incoming string
-		want     bool
+		name           string
+		task           db.TaskTelemetry
+		incoming       string
+		incomingStatus string
+		want           bool
 	}{
 		{
 			name: "recent decision reassignment",
@@ -199,8 +200,20 @@ func TestShouldPreserveLocalAssignee(t *testing.T) {
 				LastUpdate:   now.Add(-2 * time.Hour),
 				DecisionLogs: "[2026-06-23 10:00:00] PM 调停干预：将指派人从 [Alice] 转派给 [Bob]。",
 			},
-			incoming: "Alice",
-			want:     true,
+			incoming:       "Alice",
+			incomingStatus: "progress",
+			want:           true,
+		},
+		{
+			name: "completed Jira status ends local protection",
+			task: db.TaskTelemetry{
+				Assignee:     "Bob",
+				LastUpdate:   now.Add(-2 * time.Hour),
+				DecisionLogs: "[2026-06-23 10:00:00] PM 调停干预：将指派人从 [Alice] 转派给 [Bob]。",
+			},
+			incoming:       "Alice",
+			incomingStatus: "done",
+			want:           false,
 		},
 		{
 			name: "stale decision can be refreshed from Jira",
@@ -209,8 +222,9 @@ func TestShouldPreserveLocalAssignee(t *testing.T) {
 				LastUpdate:   now.Add(-25 * time.Hour),
 				DecisionLogs: "[2026-06-22 10:00:00] PM 调停干预：将指派人从 [Alice] 转派给 [Bob]。",
 			},
-			incoming: "Alice",
-			want:     false,
+			incoming:       "Alice",
+			incomingStatus: "progress",
+			want:           false,
 		},
 		{
 			name: "no decision log follows Jira",
@@ -218,8 +232,9 @@ func TestShouldPreserveLocalAssignee(t *testing.T) {
 				Assignee:   "Bob",
 				LastUpdate: now.Add(-2 * time.Hour),
 			},
-			incoming: "Alice",
-			want:     false,
+			incoming:       "Alice",
+			incomingStatus: "progress",
+			want:           false,
 		},
 		{
 			name: "same assignee is not protected",
@@ -228,16 +243,71 @@ func TestShouldPreserveLocalAssignee(t *testing.T) {
 				LastUpdate:   now.Add(-2 * time.Hour),
 				DecisionLogs: "调整需求负责人：从 [Alice] 转派给 [Bob]。",
 			},
-			incoming: "Bob",
-			want:     false,
+			incoming:       "Bob",
+			incomingStatus: "progress",
+			want:           false,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := shouldPreserveLocalAssignee(tc.task, tc.incoming, now)
+			got := shouldPreserveLocalAssignee(tc.task, tc.incoming, tc.incomingStatus, now)
 			if got != tc.want {
 				t.Fatalf("shouldPreserveLocalAssignee() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShouldIncludeInJiraKeepAlive(t *testing.T) {
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		task db.TaskTelemetry
+		want bool
+	}{
+		{
+			name: "active task is always kept alive",
+			task: db.TaskTelemetry{
+				TaskID:     "FZ-2220",
+				Status:     "progress",
+				LastUpdate: now.Add(-45 * 24 * time.Hour),
+			},
+			want: true,
+		},
+		{
+			name: "recent completed issue is kept alive for owner corrections",
+			task: db.TaskTelemetry{
+				TaskID:     "FZ-2220",
+				Status:     "done",
+				LastUpdate: now.Add(-6 * 24 * time.Hour),
+			},
+			want: true,
+		},
+		{
+			name: "old completed issue exits keep alive",
+			task: db.TaskTelemetry{
+				TaskID:     "FZ-2220",
+				Status:     "done",
+				LastUpdate: now.Add(-30 * 24 * time.Hour),
+			},
+			want: false,
+		},
+		{
+			name: "completed issue without update time exits keep alive",
+			task: db.TaskTelemetry{
+				TaskID: "FZ-2220",
+				Status: "done",
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldIncludeInJiraKeepAlive(tc.task, now)
+			if got != tc.want {
+				t.Fatalf("shouldIncludeInJiraKeepAlive() = %v, want %v", got, tc.want)
 			}
 		})
 	}

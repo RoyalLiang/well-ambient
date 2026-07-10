@@ -40,7 +40,7 @@
   </button>
   
   {#if label}
-    <span class="switch-label" on:click={toggle}>{label}</span>
+    <span class="switch-label">{label}</span>
   {/if}
 </div>
 
@@ -49,16 +49,16 @@
     display: inline-flex;
     align-items: center;
     gap: 12px;
-    cursor: pointer;
+    cursor: default;
     user-select: none;
-    margin-bottom: 16px;
+    margin-bottom: 0;
   }
 
   .switch-control {
     width: 44px;
     height: 24px;
     border-radius: 9999px;
-    background-color: #334155;
+    background-color: #c8d1d8;
     border: none;
     position: relative;
     padding: 0;
@@ -68,18 +68,18 @@
   }
 
   .switch-control:focus {
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.14);
   }
 
   .switch-control.checked {
-    background-color: #4f46e5;
+    background-color: var(--wa-accent, #008f96);
   }
 
   .switch-thumb {
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background-color: #ffffff;
+    background-color: var(--wa-surface-flat, #ffffff);
     position: absolute;
     left: 3px;
     top: 3px;
@@ -94,7 +94,7 @@
   .switch-label {
     font-size: 0.875rem;
     font-weight: 500;
-    color: #cbd5e1;
+    color: var(--wa-text-main, #293847);
   }
 
   /* Disabled State */

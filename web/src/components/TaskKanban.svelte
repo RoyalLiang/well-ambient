@@ -3,6 +3,18 @@
   import { slide } from 'svelte/transition';
   import Modal from './shared/Modal.svelte';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
+  import {
+    ADMIN_TONE_CLASS,
+    formatAdminDate,
+    toneForRisk,
+    toneForStatus,
+    type AdminInspectorAction,
+    type AdminInspectorRecord,
+    type AdminMetric,
+    type AdminTableColumn,
+    type AdminTableRow,
+    type AdminTone
+  } from '../lib/admin-console/contract';
 
   interface Task {
     id: string;
@@ -58,6 +70,9 @@
     title: string;
     issue_type: string;
     assignee: string;
+    execution_assignee?: string;
+    jira_assignee?: string;
+    jira_status?: string;
     department: string;
     repo: string;
     branch: string;
@@ -99,6 +114,26 @@
     { value: 'medium', label: '中风险' },
     { value: 'safe', label: '正常' },
     { value: 'done', label: '已闭环' }
+  ];
+
+  const taskTableColumns: AdminTableColumn[] = [
+    { key: 'task', label: '任务编号 / 标题', width: '34%' },
+    { key: 'owner', label: '负责人', width: '12%' },
+    { key: 'status', label: '状态', width: '12%' },
+    { key: 'risk', label: '风险', width: '11%' },
+    { key: 'evidence', label: '代码证据', width: '15%' },
+    { key: 'lastUpdate', label: '最后同步', width: '10%' },
+    { key: 'actions', label: '操作', width: '6%', align: 'right' }
+  ];
+
+  const executionTableColumns: AdminTableColumn[] = [
+    { key: 'task', label: 'Jira Task / 标题', width: '32%' },
+    { key: 'owner', label: 'Owner', width: '12%' },
+    { key: 'result', label: '结果状态', width: '14%' },
+    { key: 'evidence', label: '代码证据', width: '16%' },
+    { key: 'risk', label: '风险', width: '12%' },
+    { key: 'lastEvidence', label: '最新证据', width: '10%' },
+    { key: 'actions', label: '操作', width: '4%', align: 'right' }
   ];
 
   function emptyExecutionSummary(): ExecutionSummary {
@@ -238,6 +273,8 @@
   // Modal details state
   let selectedTask: Task | null = null;
   let showDetails = false;
+  let selectedTaskId = '';
+  let selectedExecutionTaskId = '';
 
   let allProjects: string[] = [];
   $: projectOptions = ['all', ...allProjects];
@@ -272,12 +309,9 @@
     }
   }
 
-  $: hasShadowTasks = allTasks.some(t => !isCoreMember(t.assignee) && t.status.toLowerCase() !== 'done');
-
   $: assigneeOptions = [
     'all', 
-    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)),
-    '外部协同'
+    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b))
   ];
 
   // Reactive filtered tasks
@@ -313,20 +347,38 @@
   $: inProgress = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'progress');
   $: inReview = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'review');
   $: done = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'done');
+  $: activeTasks = sortedFilteredTasks.filter(t => t.status.toLowerCase() !== 'done');
+  $: overdueTasks = activeTasks
+    .filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3)
+    .sort((a, b) => getDelayDays(b.taskCreatedAt, b.status) - getDelayDays(a.taskCreatedAt, a.status));
+  $: criticalTasks = overdueTasks.filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 7);
+  $: focusTask = criticalTasks[0] || overdueTasks[0] || inReview[0] || inProgress[0] || backlog[0] || done[0] || null;
+  $: focusTaskDelayDays = focusTask ? getDelayDays(focusTask.taskCreatedAt, focusTask.status) : 0;
+  $: evidenceLinkedTasks = filteredTasks.filter(t => getEvidenceStatus(t).class === 'badge-has-code').length;
+  $: evidenceCoverage = filteredTasks.length > 0 ? Math.round((evidenceLinkedTasks / filteredTasks.length) * 100) : 0;
+  $: taskFlowStages = [
+    { key: 'backlog', label: '待办', value: backlog.length, tone: 'neutral' },
+    { key: 'progress', label: '进行中', value: inProgress.length, tone: 'info' },
+    { key: 'review', label: '评审', value: inReview.length, tone: 'warning' },
+    { key: 'done', label: '完成', value: done.length, tone: 'success' }
+  ].map(stage => ({
+    ...stage,
+    percent: filteredTasks.length > 0 ? Math.round((stage.value / filteredTasks.length) * 100) : 0
+  }));
   $: executionAssigneeOptions = [
     'all', 
-    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b)),
-    '外部协同'
+    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b))
   ];
   $: filteredExecutionItems = executionItems
     .filter(item => matchesExecutionFilters(item))
     .sort((a, b) => compareExecutionItems(a, b));
+  $: executionFocusItem = filteredExecutionItems[0] || executionItems[0] || null;
+  $: executionEvidenceRate = executionSummary.total > 0
+    ? Math.round((executionSummary.with_evidence / executionSummary.total) * 100)
+    : 0;
 
   $: viewAssignees = (selectedAssignee === 'all'
-    ? [
-        ...Array.from(new Set(filteredTasks.filter(t => isCoreMember(t.assignee)).map(t => t.assignee))),
-        ...(filteredTasks.some(t => !isCoreMember(t.assignee)) ? ["外部协同"] : [])
-      ]
+    ? Array.from(new Set(filteredTasks.filter(t => isCoreMember(t.assignee)).map(t => t.assignee)))
     : [selectedAssignee]
   );
 
@@ -335,8 +387,7 @@
     viewAssignees.forEach(ass => map.set(ass, []));
 
     sortedFilteredTasks.forEach(t => {
-      const isCore = isCoreMember(t.assignee);
-      const key = isCore ? t.assignee : "外部协同";
+      const key = t.assignee;
       const list = map.get(key);
       if (list) {
         list.push(t);
@@ -346,6 +397,289 @@
     });
     return map;
   })();
+  $: ownerLoadList = viewAssignees
+    .map(assignee => {
+      const tasks = assigneeTasksMap.get(assignee) || [];
+      const active = tasks.filter(t => t.status.toLowerCase() !== 'done').length;
+      const delayed = tasks.filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3).length;
+      return { assignee, total: tasks.length, active, delayed };
+    })
+    .filter(item => item.total > 0)
+    .sort((a, b) => {
+      if (b.delayed !== a.delayed) return b.delayed - a.delayed;
+      if (b.active !== a.active) return b.active - a.active;
+      return b.total - a.total;
+    });
+  $: dominantOwner = ownerLoadList[0] || null;
+
+  $: taskCompletionRate = filteredTasks.length > 0 ? Math.round((done.length / filteredTasks.length) * 100) : 0;
+  $: taskAdminMetrics = buildTaskAdminMetrics();
+  $: executionAdminMetrics = buildExecutionAdminMetrics();
+  $: activeAdminMetrics = currentView === 'execution' ? executionAdminMetrics : taskAdminMetrics;
+  $: taskTableRows = sortedFilteredTasks.map(mapTaskAdminRow);
+  $: selectedTaskForInspector = sortedFilteredTasks.find(t => t.id === selectedTaskId) || focusTask;
+  $: taskInspector = selectedTaskForInspector ? mapTaskInspector(selectedTaskForInspector) : null;
+  $: executionTableRows = filteredExecutionItems.map(mapExecutionAdminRow);
+  $: selectedExecutionItem = filteredExecutionItems.find(item => item.task_id === selectedExecutionTaskId) || executionFocusItem;
+  $: executionInspector = selectedExecutionItem ? mapExecutionInspector(selectedExecutionItem) : null;
+
+  function buildTaskAdminMetrics(): AdminMetric[] {
+    return [
+      {
+        label: '任务队列',
+        value: filteredTasks.length,
+        helper: `活跃 ${activeTasks.length} / 完成 ${done.length}`,
+        delta: selectedProject === 'all' ? '全部项目' : selectedProject,
+        tone: 'info'
+      },
+      {
+        label: '证据完整率',
+        value: `${evidenceCoverage}%`,
+        helper: `${evidenceLinkedTasks} 条已关联代码证据`,
+        tone: evidenceCoverage >= 80 ? 'success' : evidenceCoverage >= 50 ? 'warning' : 'danger'
+      },
+      {
+        label: '高风险',
+        value: criticalTasks.length,
+        helper: `延期任务 ${overdueTasks.length} 条`,
+        delta: criticalTasks.length > 0 ? '需跟进' : '稳定',
+        tone: criticalTasks.length > 0 ? 'danger' : 'success'
+      },
+      {
+        label: '闭环率',
+        value: `${taskCompletionRate}%`,
+        helper: `评审 ${inReview.length} / 进行中 ${inProgress.length}`,
+        tone: taskCompletionRate >= 70 ? 'success' : 'info'
+      }
+    ];
+  }
+
+  function buildExecutionAdminMetrics(): AdminMetric[] {
+    return [
+      {
+        label: '执行任务',
+        value: executionSummary.total,
+        helper: `活跃 ${executionSummary.active} / 已闭环 ${executionSummary.done}`,
+        tone: 'info'
+      },
+      {
+        label: '证据覆盖率',
+        value: `${executionEvidenceRate}%`,
+        helper: `${executionSummary.with_evidence} 条有代码证据`,
+        tone: executionEvidenceRate >= 80 ? 'success' : executionEvidenceRate >= 50 ? 'warning' : 'danger'
+      },
+      {
+        label: '高风险',
+        value: executionSummary.high_risk,
+        helper: `陈旧 ${executionSummary.stale} / 缺证据 ${executionSummary.missing_evidence}`,
+        tone: executionSummary.high_risk > 0 ? 'danger' : 'success'
+      },
+      {
+        label: '状态不一致',
+        value: executionSummary.mismatch,
+        helper: `未绑定需求 ${executionSummary.orphan}`,
+        tone: executionSummary.mismatch > 0 || executionSummary.orphan > 0 ? 'warning' : 'success'
+      }
+    ];
+  }
+
+  function getTaskStatusShortLabel(task: Task): string {
+    const status = task.status.toLowerCase();
+    if (status === 'backlog') return '待办';
+    if (status === 'progress') return task.issueType === 'bug' ? '排查中' : '进行中';
+    if (status === 'review') return '评审中';
+    if (status === 'done') return '已完成';
+    return task.status || '-';
+  }
+
+  function getTaskRiskLabel(task: Task): string {
+    const delayDays = getDelayDays(task.taskCreatedAt, task.status);
+    const evidence = getEvidenceStatus(task);
+    if (delayDays >= 7) return '高风险';
+    if (delayDays >= 3) return '中风险';
+    if (task.status.toLowerCase() !== 'backlog' && evidence.class === 'badge-no-code') return '缺证据';
+    return '低风险';
+  }
+
+  function getTaskRiskTone(task: Task): AdminTone {
+    return toneForRisk(getTaskRiskLabel(task));
+  }
+
+  function getEvidenceTone(task: Task): AdminTone {
+    const evidence = getEvidenceStatus(task);
+    if (evidence.class === 'badge-has-code') return 'success';
+    if (evidence.class === 'badge-branch-only') return 'warning';
+    return 'danger';
+  }
+
+  function getToneClass(tone: AdminTone | string | null | undefined): string {
+    if (tone && tone in ADMIN_TONE_CLASS) {
+      return ADMIN_TONE_CLASS[tone as AdminTone];
+    }
+    return ADMIN_TONE_CLASS.neutral;
+  }
+
+  function getTaskEvidencePercent(task: Task): number {
+    const evidence = getEvidenceStatus(task);
+    if (evidence.class === 'badge-has-code') return 100;
+    if (evidence.class === 'badge-branch-only') return 45;
+    return 0;
+  }
+
+  function mapTaskAdminRow(task: Task): AdminTableRow {
+    const evidence = getEvidenceStatus(task);
+    return {
+      id: task.id,
+      title: task.title,
+      status: getTaskStatusShortLabel(task),
+      tone: toneForStatus(task.status),
+      owner: task.assignee,
+      dueDate: formatAdminDate(task.rawLastUpdate || task.taskCreatedAt),
+      risk: getTaskRiskLabel(task),
+      cells: {
+        project: getProjectName(task.id),
+        issueType: task.issueType === 'bug' ? 'Bug' : 'Task',
+        owner: task.assignee || '未指派',
+        repo: task.repo || '-',
+        branch: task.branch || '-',
+        lastCommit: task.lastCommit || '-',
+        evidence: evidence.label,
+        evidenceTone: getEvidenceTone(task),
+        evidencePercent: getTaskEvidencePercent(task),
+        activeDays: getActiveDays(task.taskCreatedAt),
+        lastUpdate: formatTimeBrief(task.rawLastUpdate || task.taskCreatedAt),
+        parentDemand: getParentDemandId(task.taskGroupId) || '-'
+      }
+    };
+  }
+
+  function mapTaskInspector(task: Task): AdminInspectorRecord {
+    const parentDemand = getParentDemand(task.taskGroupId);
+    const evidence = getEvidenceStatus(task);
+    const delayDays = getDelayDays(task.taskCreatedAt, task.status);
+    return {
+      id: task.id,
+      title: task.title,
+      status: getTaskStatusShortLabel(task),
+      tone: getTaskRiskTone(task),
+      facts: [
+        { label: '负责人', value: task.assignee || '未指派' },
+        { label: '项目', value: getProjectName(task.id) },
+        { label: '任务类型', value: task.issueType === 'bug' ? 'Bug 缺陷' : 'Task 任务' },
+        { label: '活跃天数', value: `${getActiveDays(task.taskCreatedAt)} 天` },
+        { label: '最后同步', value: formatTimeBrief(task.rawLastUpdate || task.taskCreatedAt) }
+      ],
+      sections: [
+        {
+          title: 'Jira Demand 主线',
+          body: parentDemand ? `${parentDemand.id} ${parentDemand.title}` : '当前任务未关联父级 Demand'
+        },
+        {
+          title: '代码证据',
+          items: [
+            `证据状态: ${evidence.label}`,
+            `Branch: ${task.branch || '-'}`,
+            `Last Commit: ${task.lastCommit || '-'}`,
+            task.mrUrl && task.mrIid ? `MR: !${task.mrIid}` : 'MR: -'
+          ]
+        },
+        {
+          title: '执行风险',
+          body: delayDays >= 3
+            ? `已活跃 ${delayDays} 天，建议检查交付阻塞与证据闭环。`
+            : '当前筛选下未触发延期风险。'
+        }
+      ],
+      actions: [
+        { label: '查看证据链', kind: 'primary' },
+        { label: '代码轨迹', kind: 'secondary' }
+      ]
+    };
+  }
+
+  function getExecutionTone(item: ExecutionTaskItem): AdminTone {
+    return toneForRisk(item.risk_level || item.risk_label || item.result_state);
+  }
+
+  function mapExecutionAdminRow(item: ExecutionTaskItem): AdminTableRow {
+    return {
+      id: item.task_id,
+      title: item.title,
+      status: item.result_label,
+      tone: getExecutionTone(item),
+      owner: item.assignee || '未指派',
+      dueDate: formatAdminDate(item.last_evidence_at || item.last_update),
+      risk: item.risk_label,
+      cells: {
+        issueType: item.issue_type === 'bug' ? 'Bug' : 'Task',
+        owner: item.assignee || '未指派',
+        executionOwner: item.execution_assignee || item.assignee || '未指派',
+        jiraOwner: item.jira_assignee || '-',
+        result: item.result_label,
+        evidenceScore: item.evidence_score,
+        commitCount: item.commit_count,
+        mrCount: item.mr_count,
+        mergedMrCount: item.merged_mr_count,
+        risk: item.risk_label,
+        riskReason: item.risk_reason,
+        lastEvidence: formatAdminDate(item.last_evidence_at || item.last_update),
+        demand: item.parent_demand_id || '-',
+        branch: item.branch || '-'
+      }
+    };
+  }
+
+  function mapExecutionInspector(item: ExecutionTaskItem): AdminInspectorRecord {
+    return {
+      id: item.task_id,
+      title: item.title,
+      status: item.result_label,
+      tone: getExecutionTone(item),
+      facts: [
+        { label: '负责人', value: item.assignee || '未指派' },
+        { label: '结果', value: item.result_label || '-' },
+        { label: '证据分', value: `${item.evidence_score}%` },
+        { label: '活跃天数', value: `${item.active_days} 天` },
+        { label: 'Commit / MR', value: `${item.commit_count} / ${item.mr_count}` }
+      ],
+      sections: [
+        {
+          title: '关联 Demand',
+          body: item.parent_demand_id ? `${item.parent_demand_id} ${item.parent_demand || ''}` : '未绑定父级 Demand'
+        },
+        {
+          title: '风险说明',
+          body: item.risk_reason || item.risk_label || '当前任务未返回风险说明'
+        },
+        {
+          title: '代码证据',
+          items: [
+            `Repo: ${item.repo || '-'}`,
+            `Branch: ${item.branch || '-'}`,
+            `Last Commit: ${item.last_commit || '-'}`,
+            `最近证据: ${formatAdminDate(item.last_evidence_at || item.last_update)}`
+          ]
+        }
+      ],
+      actions: [
+        { label: '打开代码轨迹', kind: 'primary' }
+      ]
+    };
+  }
+
+  function handleTaskInspectorAction(action: AdminInspectorAction, task: Task) {
+    if (action.label === '查看证据链') {
+      openDetails(task);
+      return;
+    }
+    activeTelemetryTaskId = task.id;
+    isTelemetryDrawerOpen = true;
+  }
+
+  function handleExecutionInspectorAction(_action: AdminInspectorAction, item: ExecutionTaskItem) {
+    activeTelemetryTaskId = item.task_id;
+    isTelemetryDrawerOpen = true;
+  }
 
   // 反应式活跃度与卡点风险双驱动自适应折叠：
   $: if (viewAssignees && filteredTasks) {
@@ -355,7 +689,7 @@
           collapsedAssignees[ass] = false; // 保证首位成员必然展开讨论
         } else {
           const hasRiskTasks = filteredTasks.some(t => {
-            const isMatch = ass === "外部协同" ? !isCoreMember(t.assignee) : t.assignee === ass;
+            const isMatch = t.assignee === ass;
             if (!isMatch || t.status.toLowerCase() === 'done' || !t.taskCreatedAt) return false;
             const createdTime = new Date(t.taskCreatedAt).getTime();
             const delayDays = Math.floor((new Date().getTime() - createdTime) / (1000 * 60 * 60 * 24));
@@ -379,6 +713,11 @@
     }
   }
 
+  function focusExecutionAttention() {
+    executionRiskFilter = 'attention';
+    setTaskView('execution');
+  }
+
   function matchesExecutionFilters(item: ExecutionTaskItem): boolean {
     const query = executionSearch.trim().toLowerCase();
     if (query) {
@@ -387,6 +726,8 @@
         (item.title && item.title.toLowerCase().includes(query)) ||
         (item.issue_type && item.issue_type.toLowerCase().includes(query)) ||
         (item.assignee && item.assignee.toLowerCase().includes(query)) ||
+        (item.execution_assignee && item.execution_assignee.toLowerCase().includes(query)) ||
+        (item.jira_assignee && item.jira_assignee.toLowerCase().includes(query)) ||
         (item.department && item.department.toLowerCase().includes(query)) ||
         (item.repo && item.repo.toLowerCase().includes(query)) ||
         (item.branch && item.branch.toLowerCase().includes(query)) ||
@@ -397,11 +738,7 @@
       if (!match) return false;
     }
 
-    if (executionAssigneeFilter === '外部协同') {
-      if (isCoreMember(item.assignee)) {
-        return false;
-      }
-    } else if (executionAssigneeFilter !== 'all') {
+    if (executionAssigneeFilter !== 'all') {
       if (item.assignee !== executionAssigneeFilter) {
         return false;
       }
@@ -509,14 +846,14 @@
 
   function getEvidenceStatus(task: any) {
     if (!task.branch || task.branch === '-') {
-      return { label: '🔴 零代码证据', class: 'badge-no-code' };
+      return { label: '零代码证据', class: 'badge-no-code' };
     }
     const hasCommit = (task.lastCommit && task.lastCommit !== '-') || (task.lastCommitID && task.lastCommitID !== '-');
     const hasMR = task.mrUrl && task.mrUrl !== '';
     if (hasCommit || hasMR) {
-      return { label: '🟢 已关联代码', class: 'badge-has-code' };
+      return { label: '已关联代码', class: 'badge-has-code' };
     }
-    return { label: '🟡 有分支无提交', class: 'badge-branch-only' };
+    return { label: '有分支无提交', class: 'badge-branch-only' };
   }
 
   function getProjectName(id: string): string {
@@ -733,7 +1070,7 @@
       
       allTasks = data.map(mapTask);
       if (allProjects.length === 0 && data.length > 0) {
-        allProjects = Array.from(new Set(data.map(t => getProjectName(t.task_id || t.id)))).sort((a, b) => a.localeCompare(b));
+        allProjects = Array.from(new Set(data.map(t => getProjectName(t.task_id)))).sort((a, b) => a.localeCompare(b));
       }
       errorMsg = '';
     } catch (e: any) {
@@ -785,165 +1122,551 @@
   }
 </script>
 
-<section class="kanban-section">
-  <div class="section-header">
-    <div class="header-left">
-      <h2 class="section-title">Git 协同看板</h2>
-      <span class="sync-badge">同步中</span>
+<section class="kanban-section task-console">
+  <div class="phase41-console-header wa-admin-card">
+    <div class="phase41-header-copy">
+      <span class="phase41-kicker">任务跟踪</span>
+      <h2>研发执行任务台</h2>
+      <p>从 Jira Task、负责人、状态、代码证据和 MR 结果构建可核查的执行事实。</p>
     </div>
-    <div class="header-right-filters">
-      <!-- View Toggle -->
-      <div class="view-toggle">
+
+    <div class="phase41-header-actions">
+      <div class="view-toggle task-view-toggle" aria-label="任务视图切换">
         <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => setTaskView('status')}>
-          状态视图
+          任务表
         </button>
         <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => setTaskView('personnel')}>
-          人员视图
+          人员负载
         </button>
         <button class="toggle-btn {currentView === 'execution' ? 'active' : ''}" on:click={() => setTaskView('execution')}>
           执行追踪
         </button>
       </div>
 
-      <span class="header-desc">基于 Branch/Commit 自动流转</span>
-      
-      <!-- Project Filter -->
-      <div class="custom-select-container" bind:this={projectSelectEl}>
-        <div class="custom-select-trigger combobox-trigger">
-          <span class="filter-icon">📁</span>
-          <input 
-            type="text" 
-            class="combobox-trigger-input"
-            placeholder={selectedProject === 'all' ? '全部项目' : (projectNamesMap[selectedProject.toUpperCase()] || selectedProject)}
-            bind:value={projectSearchText}
-            on:focus|stopPropagation={() => showProjectDropdown = true}
-            on:click|stopPropagation={() => showProjectDropdown = true}
-          />
-          <span 
-            class="select-arrow"
-            on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
-            role="button"
-            tabindex="0"
-          >{showProjectDropdown ? '▲' : '▼'}</span>
-        </div>
-        {#if showProjectDropdown}
-          <div class="custom-select-options">
-            {#each projectOptions.filter(proj => {
-              if (proj === 'all') return true;
-              if (!projectSearchText) return true;
-              const term = projectSearchText.toLowerCase();
-              const keyMatch = proj.toLowerCase().includes(term);
-              const name = projectNamesMap[proj.toUpperCase()] || '';
-              const nameMatch = name.toLowerCase().includes(term);
-              return keyMatch || nameMatch;
-            }) as proj}
-              <button 
-                class="custom-option {selectedProject === proj ? 'active' : ''}" 
-                on:click={() => selectProject(proj)}
-              >
-                {proj === 'all' ? '全部项目' : (projectNamesMap[proj.toUpperCase()] || proj)}
-              </button>
-            {/each}
+      <div class="phase41-filter-row">
+        <div class="custom-select-container" bind:this={projectSelectEl}>
+          <div class="custom-select-trigger combobox-trigger task-filter-control">
+            <span class="filter-label">项目</span>
+            <input
+              type="text"
+              class="combobox-trigger-input"
+              placeholder={selectedProject === 'all' ? '全部项目' : (projectNamesMap[selectedProject.toUpperCase()] || selectedProject)}
+              bind:value={projectSearchText}
+              on:focus|stopPropagation={() => showProjectDropdown = true}
+              on:click|stopPropagation={() => showProjectDropdown = true}
+            />
+            <button
+              type="button"
+              class="select-arrow"
+              on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
+              aria-label="切换项目筛选"
+            >{showProjectDropdown ? '▲' : '▼'}</button>
           </div>
-        {/if}
-      </div>
-
-      <!-- Assignee Filter -->
-      <div class="custom-select-container" bind:this={assigneeSelectEl}>
-        <div class="custom-select-trigger combobox-trigger">
-          <span class="filter-icon">👤</span>
-          <input 
-            type="text" 
-            class="combobox-trigger-input"
-            placeholder={selectedAssignee === 'all' ? '全部经办人' : selectedAssignee}
-            bind:value={assigneeSearchText}
-            on:focus|stopPropagation={() => showAssigneeDropdown = true}
-            on:click|stopPropagation={() => showAssigneeDropdown = true}
-          />
-          <span 
-            class="select-arrow"
-            on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
-            role="button"
-            tabindex="0"
-          >{showAssigneeDropdown ? '▲' : '▼'}</span>
+          {#if showProjectDropdown}
+            <div class="custom-select-options">
+              {#each projectOptions.filter(proj => {
+                if (proj === 'all') return true;
+                if (!projectSearchText) return true;
+                const term = projectSearchText.toLowerCase();
+                const keyMatch = proj.toLowerCase().includes(term);
+                const name = projectNamesMap[proj.toUpperCase()] || '';
+                const nameMatch = name.toLowerCase().includes(term);
+                return keyMatch || nameMatch;
+              }) as proj}
+                <button
+                  class="custom-option {selectedProject === proj ? 'active' : ''}"
+                  on:click={() => selectProject(proj)}
+                >
+                  {proj === 'all' ? '全部项目' : (projectNamesMap[proj.toUpperCase()] || proj)}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
-        {#if showAssigneeDropdown}
-          <div class="custom-select-options">
-            {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
-              <button 
-                class="custom-option {selectedAssignee === ass ? 'active' : ''}" 
-                on:click={() => selectAssignee(ass)}
-              >
-                {ass === 'all' ? '全部经办人' : ass}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
 
-      <!-- 外部协同快捷跳转按钮 -->
-      {#if hasShadowTasks}
-        <button 
-          class="shadow-shortcut-btn {selectedAssignee === '外部协同' ? 'active' : ''}"
-          on:click={() => {
-            selectedAssignee = '外部协同';
-            if (currentView === 'personnel') {
-              collapsedAssignees['外部协同'] = false; // 确保展开
-              collapsedAssignees = { ...collapsedAssignees };
-              setTimeout(() => {
-                const el = document.getElementById('assignee-row-外部协同');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }, 100);
-            }
-          }}
-          title="一键查看外部/影子协作者的活跃任务"
-        >
-          👥 外部协同
+        <div class="custom-select-container" bind:this={assigneeSelectEl}>
+          <div class="custom-select-trigger combobox-trigger task-filter-control">
+            <span class="filter-label">负责人</span>
+            <input
+              type="text"
+              class="combobox-trigger-input"
+              placeholder={selectedAssignee === 'all' ? '全部负责人' : selectedAssignee}
+              bind:value={assigneeSearchText}
+              on:focus|stopPropagation={() => showAssigneeDropdown = true}
+              on:click|stopPropagation={() => showAssigneeDropdown = true}
+            />
+            <button
+              type="button"
+              class="select-arrow"
+              on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
+              aria-label="切换负责人筛选"
+            >{showAssigneeDropdown ? '▲' : '▼'}</button>
+          </div>
+          {#if showAssigneeDropdown}
+            <div class="custom-select-options">
+              {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
+                <button
+                  class="custom-option {selectedAssignee === ass ? 'active' : ''}"
+                  on:click={() => selectAssignee(ass)}
+                >
+                  {ass === 'all' ? '全部负责人' : ass}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase41-metric-grid" aria-label="任务指标">
+    {#each activeAdminMetrics as metric}
+      <article class="wa-admin-card wa-admin-metric phase41-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
+        <span>{metric.label}</span>
+        <strong>{metric.value}</strong>
+        <small>{metric.helper}</small>
+        {#if metric.delta}
+          <em>{metric.delta}</em>
+        {/if}
+      </article>
+    {/each}
+  </div>
+
+  {#if currentView !== 'execution'}
+    <div class="phase41-stage-strip" aria-label="任务阶段统计">
+      {#each taskFlowStages as stage}
+        <button class="phase41-stage-card wa-admin-card tone-{stage.tone}" type="button" on:click={() => setTaskView('status')}>
+          <span>{stage.label}</span>
+          <strong>{stage.value}</strong>
+          <em>{stage.percent}%</em>
+          <i style="width: {stage.percent}%"></i>
         </button>
-      {/if}
+      {/each}
     </div>
-  </div>
+  {/if}
 
-  <!-- 顶层效能统计面板 -->
-  <div class="kanban-metrics">
-    <div class="metric-card">
-      <span class="metric-icon">📋</span>
-      <div class="metric-info">
-        <span class="metric-label">总任务</span>
-        <span class="metric-value">{filteredTasks.length}</span>
+  {#if false}
+  <div class="task-command-surface">
+    <div class="task-command-main">
+      <div class="task-command-eyebrow">
+        <span class="font-mono">GIT DELIVERY COMMAND</span>
+        <span class="task-live-dot">同步中</span>
+      </div>
+
+      <div class="task-command-title-row">
+        <div class="task-command-copy">
+          <h2>Git 协同看板</h2>
+          <p>围绕 Jira Task、Branch、Commit、MR 和证据链组织研发执行，不再把任务状态当成孤立卡片。</p>
+        </div>
+
+        <div class="view-toggle task-view-toggle" aria-label="任务视图切换">
+          <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => setTaskView('status')}>
+            状态
+          </button>
+          <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => setTaskView('personnel')}>
+            人员
+          </button>
+          <button class="toggle-btn {currentView === 'execution' ? 'active' : ''}" on:click={() => setTaskView('execution')}>
+            执行
+          </button>
+        </div>
+      </div>
+
+      <div class="task-filter-dock">
+        <div class="custom-select-container" bind:this={projectSelectEl}>
+          <div class="custom-select-trigger combobox-trigger task-filter-control">
+            <span class="filter-label font-mono">PROJECT</span>
+            <input
+              type="text"
+              class="combobox-trigger-input"
+              placeholder={selectedProject === 'all' ? '全部项目' : (projectNamesMap[selectedProject.toUpperCase()] || selectedProject)}
+              bind:value={projectSearchText}
+              on:focus|stopPropagation={() => showProjectDropdown = true}
+              on:click|stopPropagation={() => showProjectDropdown = true}
+            />
+            <button
+              type="button"
+              class="select-arrow"
+              on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
+              aria-label="切换项目筛选"
+            >{showProjectDropdown ? '▲' : '▼'}</button>
+          </div>
+          {#if showProjectDropdown}
+            <div class="custom-select-options">
+              {#each projectOptions.filter(proj => {
+                if (proj === 'all') return true;
+                if (!projectSearchText) return true;
+                const term = projectSearchText.toLowerCase();
+                const keyMatch = proj.toLowerCase().includes(term);
+                const name = projectNamesMap[proj.toUpperCase()] || '';
+                const nameMatch = name.toLowerCase().includes(term);
+                return keyMatch || nameMatch;
+              }) as proj}
+                <button
+                  class="custom-option {selectedProject === proj ? 'active' : ''}"
+                  on:click={() => selectProject(proj)}
+                >
+                  {proj === 'all' ? '全部项目' : (projectNamesMap[proj.toUpperCase()] || proj)}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <div class="custom-select-container" bind:this={assigneeSelectEl}>
+          <div class="custom-select-trigger combobox-trigger task-filter-control">
+            <span class="filter-label font-mono">OWNER</span>
+            <input
+              type="text"
+              class="combobox-trigger-input"
+              placeholder={selectedAssignee === 'all' ? '全部经办人' : selectedAssignee}
+              bind:value={assigneeSearchText}
+              on:focus|stopPropagation={() => showAssigneeDropdown = true}
+              on:click|stopPropagation={() => showAssigneeDropdown = true}
+            />
+            <button
+              type="button"
+              class="select-arrow"
+              on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
+              aria-label="切换经办人筛选"
+            >{showAssigneeDropdown ? '▲' : '▼'}</button>
+          </div>
+          {#if showAssigneeDropdown}
+            <div class="custom-select-options">
+              {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
+                <button
+                  class="custom-option {selectedAssignee === ass ? 'active' : ''}"
+                  on:click={() => selectAssignee(ass)}
+                >
+                  {ass === 'all' ? '全部经办人' : ass}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="task-command-metrics">
+        <div class="task-metric-cell tone-total">
+          <span class="metric-label font-mono">TOTAL TASKS</span>
+          <strong>{filteredTasks.length}</strong>
+          <em>活跃 {activeTasks.length} / 完成 {done.length}</em>
+        </div>
+        <div class="task-metric-cell tone-info">
+          <span class="metric-label font-mono">EVIDENCE</span>
+          <strong>{evidenceCoverage}%</strong>
+          <em>{evidenceLinkedTasks} 条已有代码证据</em>
+        </div>
+        <div class="task-metric-cell tone-warning">
+          <span class="metric-label font-mono">REVIEW</span>
+          <strong>{inReview.length}</strong>
+          <em>等待合并或评审闭环</em>
+        </div>
+        <div class="task-metric-cell tone-danger">
+          <span class="metric-label font-mono">DELAY</span>
+          <strong>{overdueTasks.length}</strong>
+          <em>{criticalTasks.length} 项超过 7 天</em>
+        </div>
+      </div>
+
+      <div class="task-flow-strip" aria-label="任务流转阶段">
+        {#each taskFlowStages as stage}
+          <button class="task-flow-card tone-{stage.tone}" type="button" on:click={() => setTaskView('status')}>
+            <span class="font-mono">{stage.label}</span>
+            <strong>{stage.value}</strong>
+            <em>{stage.percent}%</em>
+            <i style="width: {stage.percent}%"></i>
+          </button>
+        {/each}
       </div>
     </div>
-    <div class="metric-card">
-      <span class="metric-icon text-progress-color">⚡</span>
-      <div class="metric-info">
-        <span class="metric-label">进行中</span>
-        <span class="metric-value">{filteredTasks.filter(t => t.status.toLowerCase() === 'progress').length}</span>
+
+    <aside class="task-focus-panel" aria-label="当前任务焦点">
+      <div class="focus-panel-head">
+        <span class="summary-kicker font-mono">FOCUS TASK</span>
+        {#if focusTaskDelayDays >= 7}
+          <strong class="focus-severity is-critical">CRITICAL</strong>
+        {:else if focusTaskDelayDays >= 3}
+          <strong class="focus-severity is-watch">WATCH</strong>
+        {:else}
+          <strong class="focus-severity">LIVE</strong>
+        {/if}
       </div>
-    </div>
-    <div class="metric-card">
-      <span class="metric-icon text-review-color">🔍</span>
-      <div class="metric-info">
-        <span class="metric-label">代码评审</span>
-        <span class="metric-value">{filteredTasks.filter(t => t.status.toLowerCase() === 'review').length}</span>
+
+      {#if focusTask}
+        <div class="focus-task-body">
+          <span class="focus-task-id font-mono">{focusTask.id}</span>
+          <h3>{focusTask.title}</h3>
+          <div class="focus-meta-grid">
+            <span>
+              <em>负责人</em>
+              <strong>{focusTask.assignee}</strong>
+            </span>
+            <span>
+              <em>阶段</em>
+              <strong>{getStatusLabel(focusTask.status, focusTask.issueType)}</strong>
+            </span>
+            <span>
+              <em>活跃天数</em>
+              <strong>{getActiveDays(focusTask.taskCreatedAt)} 天</strong>
+            </span>
+            <span>
+              <em>证据</em>
+              <strong>{getEvidenceStatus(focusTask).label}</strong>
+            </span>
+          </div>
+        </div>
+
+        <div class="focus-action-row">
+          <button type="button" class="focus-primary-btn" on:click={() => openDetails(focusTask)}>
+            查看证据链
+          </button>
+          <button type="button" class="focus-secondary-btn" on:click={focusExecutionAttention}>
+            执行追踪
+          </button>
+        </div>
+      {:else}
+        <div class="focus-empty font-mono">当前筛选下暂无任务</div>
+      {/if}
+
+      <div class="owner-pressure-panel">
+        <span class="summary-kicker font-mono">OWNER LOAD</span>
+        {#if dominantOwner}
+          <div class="owner-pressure-main">
+            <strong>{dominantOwner.assignee}</strong>
+            <span>{dominantOwner.active} 活跃 / {dominantOwner.delayed} 延期</span>
+          </div>
+        {:else}
+          <div class="owner-pressure-main is-empty">暂无负责人负载</div>
+        {/if}
+
+        <div class="owner-mini-list">
+          {#each ownerLoadList.slice(0, 3) as owner}
+            <span>
+              <em>{owner.assignee}</em>
+              <strong>{owner.active}</strong>
+            </span>
+          {/each}
+        </div>
       </div>
-    </div>
-    <div class="metric-card">
-      <span class="metric-icon text-done-color">✅</span>
-      <div class="metric-info">
-        <span class="metric-label">已完成</span>
-        <span class="metric-value">{filteredTasks.filter(t => t.status.toLowerCase() === 'done').length}</span>
-      </div>
-    </div>
-    <div class="metric-card overdue-card">
-      <span class="metric-icon text-critical-color">⚠️</span>
-      <div class="metric-info">
-        <span class="metric-label">延期预警</span>
-        <span class="metric-value">{filteredTasks.filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3).length}</span>
-      </div>
-    </div>
+    </aside>
   </div>
+  {/if}
 
   {#if currentView === 'execution'}
+    <div class="phase41-workbench phase41-execution-workbench">
+      <section class="wa-admin-section phase41-table-panel">
+        <div class="wa-admin-card wa-admin-toolbar phase41-table-toolbar">
+          <div>
+            <span class="phase41-kicker">执行追踪</span>
+            <strong>Jira Task 开发结果追踪</strong>
+            <small>{filteredExecutionItems.length} / {executionItems.length} 条 · {executionGeneratedAt || '未同步'}</small>
+          </div>
+
+          <div class="phase41-execution-controls">
+            <div class="execution-search-shell phase41-search-control">
+              <span class="execution-search-mark"></span>
+              <input
+                type="text"
+                placeholder="搜索 Jira Key、任务、负责人、分支、需求"
+                value={executionSearchInput}
+                on:input={handleExecutionSearch}
+              />
+            </div>
+
+            <div class="execution-risk-strip phase41-risk-strip">
+              {#each executionRiskFilters as filter}
+                <button
+                  class:active={executionRiskFilter === filter.value}
+                  on:click={() => executionRiskFilter = filter.value}
+                >
+                  {filter.label}
+                </button>
+              {/each}
+            </div>
+
+            <div class="custom-select-container execution-assignee-select phase41-assignee-select">
+              <div class="custom-select-trigger combobox-trigger">
+                <input
+                  type="text"
+                  class="combobox-trigger-input"
+                  placeholder={executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}
+                  bind:value={execAssigneeSearchText}
+                  on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
+                  on:click|stopPropagation={() => showExecutionAssigneeDropdown = true}
+                />
+                <button
+                  type="button"
+                  class="select-arrow"
+                  on:click|stopPropagation={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown}
+                  aria-label="切换执行负责人筛选"
+                >{showExecutionAssigneeDropdown ? '▲' : '▼'}</button>
+              </div>
+              {#if showExecutionAssigneeDropdown}
+                <div class="custom-select-options">
+                  {#each executionAssigneeOptions.filter(ass => ass === 'all' || !execAssigneeSearchText || ass.toLowerCase().includes(execAssigneeSearchText.toLowerCase())) as assignee}
+                    <button
+                      class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
+                      on:click={() => {
+                        executionAssigneeFilter = assignee;
+                        showExecutionAssigneeDropdown = false;
+                      }}
+                    >
+                      {assignee === 'all' ? '全部负责人' : assignee}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <button class="wa-admin-action secondary" class:is-loading={executionLoading} on:click={fetchExecutionTasks}>
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <div class="wa-admin-table-shell phase41-table-shell">
+          <table class="wa-admin-table phase41-table">
+            <thead>
+              <tr>
+                {#each executionTableColumns as column}
+                  <th style="width: {column.width || 'auto'}; text-align: {column.align || 'left'}">{column.label}</th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#if executionLoading && executionTableRows.length === 0}
+                {#each Array(6) as _}
+                  <tr class="phase41-skeleton-row"><td colspan={executionTableColumns.length}></td></tr>
+                {/each}
+              {:else if executionErrorMsg}
+                <tr><td colspan={executionTableColumns.length} class="phase41-empty-cell error">{executionErrorMsg}</td></tr>
+              {:else if executionTableRows.length === 0}
+                <tr><td colspan={executionTableColumns.length} class="phase41-empty-cell">当前筛选下暂无执行任务</td></tr>
+              {:else}
+                {#each executionTableRows as row}
+                  <tr
+                    class:is-selected={selectedExecutionItem?.task_id === row.id}
+                    tabindex="0"
+                    on:click={() => selectedExecutionTaskId = row.id}
+                    on:keydown={(event) => { if (event.key === 'Enter') selectedExecutionTaskId = row.id; }}
+                  >
+                    <td>
+                      <div class="phase41-title-cell">
+                        <div>
+                          {#if jiraBaseUrl && row.id && !row.id.startsWith('TASK-')}
+                            <a href="{jiraBaseUrl}/browse/{row.id}" target="_blank" rel="noopener noreferrer" class="phase41-id-link" on:click|stopPropagation>{row.id}</a>
+                          {:else}
+                            <span class="phase41-id-link as-text">{row.id}</span>
+                          {/if}
+                          <span class="wa-admin-pill tone-info">{row.cells.issueType}</span>
+                          {#if row.cells.demand !== '-'}
+                            <span class="wa-admin-pill tone-neutral">{row.cells.demand}</span>
+                          {/if}
+                        </div>
+                        <strong>{row.title}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="phase41-owner-cell">
+                        <strong>{row.owner}</strong>
+                        {#if row.cells.executionOwner !== row.owner}
+                          <small>执行 {row.cells.executionOwner}</small>
+                        {/if}
+                        {#if row.cells.jiraOwner !== '-'}
+                          <small>Jira {row.cells.jiraOwner}</small>
+                        {/if}
+                      </div>
+                    </td>
+                    <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[row.tone || 'neutral']}">{row.status}</span></td>
+                    <td>
+                      <div class="phase41-evidence-cell">
+                        <div class="wa-admin-progress" style="--progress: {Number(row.cells.evidenceScore) || 0}%"></div>
+                        <span>{row.cells.evidenceScore}% · {row.cells.commitCount} commit / {row.cells.mrCount} MR</span>
+                      </div>
+                    </td>
+                    <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[toneForRisk(String(row.risk || ''))]}">{row.risk || '-'}</span></td>
+                    <td>{row.cells.lastEvidence}</td>
+                    <td class="phase41-action-cell">
+                      <button
+                        type="button"
+                        class="wa-admin-action secondary compact"
+                        on:click|stopPropagation={() => {
+                          selectedExecutionTaskId = row.id;
+                          activeTelemetryTaskId = row.id;
+                          isTelemetryDrawerOpen = true;
+                        }}
+                      >
+                        轨迹
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="wa-admin-card wa-admin-inspector phase41-inspector">
+        {#if executionInspector && selectedExecutionItem}
+          <div class="phase41-inspector-head">
+            <span class="phase41-kicker">执行详情</span>
+            <h3>{executionInspector.title}</h3>
+            <div>
+              <span class="phase41-id-link as-text">{executionInspector.id}</span>
+              <span class="wa-admin-pill {ADMIN_TONE_CLASS[executionInspector.tone || 'neutral']}">{executionInspector.status}</span>
+            </div>
+          </div>
+
+          <dl class="phase41-fact-grid">
+            {#each executionInspector.facts as fact}
+              <div>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            {/each}
+          </dl>
+
+          <div class="phase41-inspector-progress">
+            <div class="wa-admin-progress" style="--progress: {selectedExecutionItem.evidence_score}%"></div>
+            <span>证据覆盖 {selectedExecutionItem.evidence_score}%</span>
+          </div>
+
+          {#each executionInspector.sections as section}
+            <section class="phase41-inspector-section">
+              <h4>{section.title}</h4>
+              {#if section.body}
+                <p>{section.body}</p>
+              {/if}
+              {#if section.items}
+                <ul>
+                  {#each section.items as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/each}
+
+          <div class="phase41-inspector-actions">
+            {#each executionInspector.actions || [] as action}
+              <button
+                type="button"
+                class="wa-admin-action {action.kind}"
+                on:click={() => handleExecutionInspectorAction(action, selectedExecutionItem)}
+              >
+                {action.label}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <div class="phase41-empty-inspector">暂无执行追踪数据</div>
+        {/if}
+      </aside>
+    </div>
+
+    {#if false}
     <div class="execution-workbench">
       <div class="execution-summary-grid">
         <div class="execution-summary-cell">
@@ -1005,12 +1728,12 @@
               on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
               on:click|stopPropagation={() => showExecutionAssigneeDropdown = true}
             />
-            <span 
+            <button
+              type="button"
               class="select-arrow" 
               on:click|stopPropagation={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown}
-              role="button"
-              tabindex="0"
-            >{showExecutionAssigneeDropdown ? '▲' : '▼'}</span>
+              aria-label="切换执行负责人筛选"
+            >{showExecutionAssigneeDropdown ? '▲' : '▼'}</button>
           </div>
           {#if showExecutionAssigneeDropdown}
             <div class="custom-select-options">
@@ -1034,12 +1757,14 @@
         </button>
       </div>
 
-      {#if executionLoading && executionItems.length === 0}
-        <div class="execution-state">正在加载执行追踪...</div>
-      {:else if executionErrorMsg}
-        <div class="execution-state error">{executionErrorMsg}</div>
-      {:else}
-        <div class="execution-table-panel">
+      <div class="execution-lab-layout">
+        <div class="execution-lab-main">
+          {#if executionLoading && executionItems.length === 0}
+            <div class="execution-state">正在加载执行追踪...</div>
+          {:else if executionErrorMsg}
+            <div class="execution-state error">{executionErrorMsg}</div>
+          {:else}
+            <div class="execution-table-panel">
           <div class="execution-table-head">
             <div>
               <span class="summary-kicker font-mono">EXECUTION OBSERVABILITY</span>
@@ -1078,6 +1803,12 @@
                     <div class="exec-grid-td">
                       <div class="exec-assignee-cell">
                         <strong>{item.assignee || '未指派'}</strong>
+                        {#if item.jira_assignee}
+                          <span class="exec-assignee-source">Jira 当前</span>
+                        {/if}
+                        {#if item.execution_assignee && item.execution_assignee !== item.assignee}
+                          <span class="exec-assignee-note">执行负责人 {item.execution_assignee}</span>
+                        {/if}
                       </div>
                     </div>
                     <div class="exec-grid-td">
@@ -1107,10 +1838,213 @@
               <div class="execution-empty font-mono">当前筛选下暂无执行任务</div>
             {/if}
           </div>
+            </div>
+          {/if}
         </div>
-      {/if}
+
+        <aside class="execution-inspector-panel" aria-label="执行追踪洞察">
+          <div class="execution-inspector-head">
+            <span class="summary-kicker font-mono">EXECUTION INSIGHT</span>
+            <strong>{executionEvidenceRate}%</strong>
+            <em>证据覆盖率</em>
+          </div>
+
+          {#if executionFocusItem}
+            <div class="execution-focus-stack">
+              <span class="exec-task-id font-mono">{executionFocusItem.task_id}</span>
+              <h3>{executionFocusItem.title}</h3>
+              <div class="execution-focus-meta">
+                <span>
+                  <em>结果</em>
+                  <strong>{executionFocusItem.result_label}</strong>
+                </span>
+                <span>
+                  <em>负责人</em>
+                  <strong>{executionFocusItem.assignee || '未指派'}</strong>
+                </span>
+                <span>
+                  <em>证据分</em>
+                  <strong>{executionFocusItem.evidence_score}%</strong>
+                </span>
+              </div>
+              <button class="exec-action-btn is-wide font-mono" type="button" on:click={() => {
+                activeTelemetryTaskId = executionFocusItem.task_id;
+                isTelemetryDrawerOpen = true;
+              }}>打开代码轨迹</button>
+            </div>
+          {:else}
+            <div class="execution-inspector-empty font-mono">暂无执行追踪数据</div>
+          {/if}
+
+          <div class="execution-inspector-stats">
+            <span><em>缺失证据</em><strong>{executionSummary.missing_evidence}</strong></span>
+            <span><em>陈旧任务</em><strong>{executionSummary.stale}</strong></span>
+            <span><em>状态不一致</em><strong>{executionSummary.mismatch}</strong></span>
+          </div>
+        </aside>
+      </div>
     </div>
+    {/if}
   {:else if currentView === 'status'}
+    <div class="phase41-workbench">
+      <section class="wa-admin-section phase41-table-panel">
+        <div class="wa-admin-card wa-admin-toolbar phase41-table-toolbar">
+          <div>
+            <span class="phase41-kicker">任务列表</span>
+            <strong>Jira Task 执行行</strong>
+            <small>{taskTableRows.length} 条核心成员可见任务 · {selectedAssignee === 'all' ? '全部负责人' : selectedAssignee}</small>
+          </div>
+          <div class="phase41-toolbar-actions">
+            {#if errorMsg}
+              <span class="phase41-inline-error">{errorMsg}</span>
+            {/if}
+            <button type="button" class="wa-admin-action secondary" on:click={fetchTasks}>
+              刷新
+            </button>
+            {#if selectedTaskForInspector}
+              <button type="button" class="wa-admin-action primary" on:click={() => openDetails(selectedTaskForInspector)}>
+                证据链
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <div class="wa-admin-table-shell phase41-table-shell">
+          <table class="wa-admin-table phase41-table">
+            <thead>
+              <tr>
+                {#each taskTableColumns as column}
+                  <th style="width: {column.width || 'auto'}; text-align: {column.align || 'left'}">{column.label}</th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#if loading && taskTableRows.length === 0}
+                {#each Array(8) as _}
+                  <tr class="phase41-skeleton-row"><td colspan={taskTableColumns.length}></td></tr>
+                {/each}
+              {:else if taskTableRows.length === 0}
+                <tr><td colspan={taskTableColumns.length} class="phase41-empty-cell">当前项目和负责人筛选下暂无任务</td></tr>
+              {:else}
+                {#each taskTableRows as row}
+                  <tr
+                    class:is-selected={selectedTaskForInspector?.id === row.id}
+                    tabindex="0"
+                    on:click={() => selectedTaskId = row.id}
+                    on:keydown={(event) => { if (event.key === 'Enter') selectedTaskId = row.id; }}
+                  >
+                    <td>
+                      <div class="phase41-title-cell">
+                        <div>
+                          {#if jiraBaseUrl && row.id && !row.id.startsWith('TASK-')}
+                            <a href="{jiraBaseUrl}/browse/{row.id}" target="_blank" rel="noopener noreferrer" class="phase41-id-link" on:click|stopPropagation>{row.id}</a>
+                          {:else}
+                            <span class="phase41-id-link as-text">{row.id}</span>
+                          {/if}
+                          <span class="wa-admin-pill tone-info">{row.cells.issueType}</span>
+                          <span class="wa-admin-pill tone-neutral">{row.cells.project}</span>
+                          {#if row.cells.parentDemand !== '-'}
+                            <span class="wa-admin-pill tone-neutral">{row.cells.parentDemand}</span>
+                          {/if}
+                        </div>
+                        <strong>{row.title}</strong>
+                        <small>{row.cells.repo}</small>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="phase41-owner-cell">
+                        <strong>{row.owner}</strong>
+                        <small>活跃 {row.cells.activeDays} 天</small>
+                      </div>
+                    </td>
+                    <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[row.tone || 'neutral']}">{row.status}</span></td>
+                    <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[toneForRisk(String(row.risk || ''))]}">{row.risk || '-'}</span></td>
+                    <td>
+                      <div class="phase41-evidence-cell">
+                        <div class="wa-admin-progress" style="--progress: {Number(row.cells.evidencePercent) || 0}%"></div>
+                        <span class="wa-admin-pill {getToneClass(String(row.cells.evidenceTone))}">{row.cells.evidence}</span>
+                      </div>
+                    </td>
+                    <td>{row.cells.lastUpdate}</td>
+                    <td class="phase41-action-cell">
+                      <button
+                        type="button"
+                        class="wa-admin-action secondary compact"
+                        on:click|stopPropagation={() => {
+                          const task = sortedFilteredTasks.find(t => t.id === row.id);
+                          if (task) openDetails(task);
+                        }}
+                      >
+                        详情
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="wa-admin-card wa-admin-inspector phase41-inspector">
+        {#if taskInspector && selectedTaskForInspector}
+          <div class="phase41-inspector-head">
+            <span class="phase41-kicker">任务详情</span>
+            <h3>{taskInspector.title}</h3>
+            <div>
+              <span class="phase41-id-link as-text">{taskInspector.id}</span>
+              <span class="wa-admin-pill {ADMIN_TONE_CLASS[taskInspector.tone || 'neutral']}">{taskInspector.status}</span>
+            </div>
+          </div>
+
+          <dl class="phase41-fact-grid">
+            {#each taskInspector.facts as fact}
+              <div>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            {/each}
+          </dl>
+
+          <div class="phase41-inspector-progress">
+            <div class="wa-admin-progress" style="--progress: {getTaskEvidencePercent(selectedTaskForInspector)}%"></div>
+            <span>证据完整度 {getTaskEvidencePercent(selectedTaskForInspector)}%</span>
+          </div>
+
+          {#each taskInspector.sections as section}
+            <section class="phase41-inspector-section">
+              <h4>{section.title}</h4>
+              {#if section.body}
+                <p>{section.body}</p>
+              {/if}
+              {#if section.items}
+                <ul>
+                  {#each section.items as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/each}
+
+          <div class="phase41-inspector-actions">
+            {#each taskInspector.actions || [] as action}
+              <button
+                type="button"
+                class="wa-admin-action {action.kind}"
+                on:click={() => handleTaskInspectorAction(action, selectedTaskForInspector)}
+              >
+                {action.label}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <div class="phase41-empty-inspector">当前筛选下暂无可查看任务</div>
+        {/if}
+      </aside>
+    </div>
+
+    {#if false}
     <div class="kanban-grid">
       <!-- Backlog -->
       <div class="column">
@@ -1129,7 +2063,7 @@
                 <div class="meta-left">
                   <span class="task-id">{task.id}</span>
                   {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                   {/if}
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge">{getProjectName(task.id)}</span>
@@ -1139,16 +2073,16 @@
               <h4 class="task-title">{task.title}</h4>
               {#if parentDemand}
                 <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  📋 关联需求: #{parentDemand.id}
+                  关联需求: #{parentDemand.id}
                 </div>
               {/if}
               <div class="task-footer">
-                <span>👤 {task.assignee}</span>
-                <span class="active-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)} 天</span>
+                <span>负责人 {task.assignee}</span>
+                <span class="active-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)} 天</span>
                 {#if getDelayDays(task.taskCreatedAt, task.status) >= 7}
-                  <span class="delay-badge text-critical">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-critical">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {:else if getDelayDays(task.taskCreatedAt, task.status) >= 3}
-                  <span class="delay-badge text-warning">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-warning">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {/if}
               </div>
             </div>
@@ -1174,7 +2108,7 @@
                 <div class="meta-left">
                   <span class="task-id id-progress">{task.id}</span>
                   {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                   {/if}
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge badge-progress-sub">{getProjectName(task.id)}</span>
@@ -1187,7 +2121,7 @@
               <h4 class="task-title text-focus">{task.title}</h4>
               {#if parentDemand}
                 <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  📋 关联需求: #{parentDemand.id}
+                  关联需求: #{parentDemand.id}
                 </div>
               {/if}
               {#if task.branch && task.branch !== '-'}
@@ -1199,12 +2133,12 @@
                 </div>
               {/if}
               <div class="task-footer">
-                <span class="assignee-active">👤 {task.assignee}</span>
-                <span class="active-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)} 天</span>
+                <span class="assignee-active">负责人 {task.assignee}</span>
+                <span class="active-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)} 天</span>
                 {#if getDelayDays(task.taskCreatedAt, task.status) >= 7}
-                  <span class="delay-badge text-critical">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-critical">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {:else if getDelayDays(task.taskCreatedAt, task.status) >= 3}
-                  <span class="delay-badge text-warning">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-warning">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {/if}
               </div>
             </div>
@@ -1230,7 +2164,7 @@
                 <div class="meta-left">
                   <span class="task-id id-review">{task.id}</span>
                   {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                   {/if}
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge badge-review-sub">{getProjectName(task.id)}</span>
@@ -1243,7 +2177,7 @@
               <h4 class="task-title text-focus">{task.title}</h4>
               {#if parentDemand}
                 <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  📋 关联需求: #{parentDemand.id}
+                  关联需求: #{parentDemand.id}
                 </div>
               {/if}
               {#if task.branch && task.branch !== '-'}
@@ -1257,12 +2191,12 @@
                 </div>
               {/if}
               <div class="task-footer">
-                <span>👤 {task.assignee}</span>
-                <span class="active-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)} 天</span>
+                <span>负责人 {task.assignee}</span>
+                <span class="active-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)} 天</span>
                 {#if getDelayDays(task.taskCreatedAt, task.status) >= 7}
-                  <span class="delay-badge text-critical">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-critical">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {:else if getDelayDays(task.taskCreatedAt, task.status) >= 3}
-                  <span class="delay-badge text-warning">⚠️ 延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
+                  <span class="delay-badge text-warning">延期 {getDelayDays(task.taskCreatedAt, task.status)} 天</span>
                 {/if}
               </div>
             </div>
@@ -1288,7 +2222,7 @@
                 <div class="meta-left">
                   <span class="task-id id-done">{task.id}</span>
                   {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                    <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                   {/if}
                   <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
                   <span class="project-badge">{getProjectName(task.id)}</span>
@@ -1301,24 +2235,25 @@
               <h4 class="task-title title-done">{task.title}</h4>
               {#if parentDemand}
                 <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  📋 关联需求: #{parentDemand.id}
+                  关联需求: #{parentDemand.id}
                 </div>
               {/if}
               <div class="task-footer">
-                <span>👤 {task.assignee}</span>
-                <span class="active-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)} 天</span>
+                <span>负责人 {task.assignee}</span>
+                <span class="active-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)} 天</span>
               </div>
             </div>
           {/each}
         </div>
       </div>
     </div>
+    {/if}
   {:else}
     <!-- Personnel View (Swimlanes) -->
     <div class="personnel-view">
       {#if viewAssignees.length === 0}
         <div class="empty-view">
-          <span>🎉 当前项目/经办人筛选下无关联的任务</span>
+          <span>当前项目/经办人筛选下无关联任务</span>
         </div>
       {:else}
         {#each viewAssignees as assignee}
@@ -1337,7 +2272,7 @@
                     <polyline points="6 9 12 15 18 9"></polyline>
                   </svg>
                 </span>
-                <span class="assignee-avatar">👤</span>
+                <span class="assignee-avatar font-mono">{assignee.slice(0, 1).toUpperCase()}</span>
                 <span class="assignee-name">{assignee}</span>
                 <span class="assignee-count">
                   {getAssigneeTaskCount(assignee, filteredTasks)} 任务
@@ -1347,19 +2282,19 @@
                 </span>
                 
                 <!-- 状态总览胶囊 -->
-                <div class="assignee-status-overview" on:click|stopPropagation>
+                <button type="button" class="assignee-status-overview" on:click|stopPropagation aria-label="{assignee} 状态概览">
                   <span class="status-summary-item text-backlog">待办 {getAssigneeStatusCount(assignee, 'backlog', filteredTasks)}</span>
                   <span class="status-summary-item text-progress">进行中 {getAssigneeStatusCount(assignee, 'progress', filteredTasks)}</span>
                   <span class="status-summary-item text-review">评审中 {getAssigneeStatusCount(assignee, 'review', filteredTasks)}</span>
                   <span class="status-summary-item text-done">已完成 {getAssigneeStatusCount(assignee, 'done', filteredTasks)}</span>
-                </div>
+                </button>
 
                 <!-- 瓶颈与负荷预警 -->
                 {#if isAssigneeHighLoad(assignee, filteredTasks)}
-                  <span class="swimlane-badge badge-warning">🔥 负载高</span>
+                  <span class="swimlane-badge badge-warning">负载高</span>
                 {/if}
                 {#if isAssigneeDelayed(assignee, filteredTasks)}
-                  <span class="swimlane-badge badge-danger">⚠️ 有延期</span>
+                  <span class="swimlane-badge badge-danger">有延期</span>
                 {/if}
               </div>
             </div>
@@ -1375,10 +2310,10 @@
                       <div class="compact-meta">
                         <span class="task-id">{task.id}</span>
                         {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                         {/if}
                         <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)}d</span>
+                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
                       </div>
                       <h5 class="compact-title">{task.title}</h5>
                     </div>
@@ -1398,10 +2333,10 @@
                       <div class="compact-meta">
                         <span class="task-id id-progress">{task.id}</span>
                         {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                         {/if}
                         <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)}d</span>
+                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
                       </div>
                       <h5 class="compact-title text-focus">{task.title}</h5>
                     </div>
@@ -1421,10 +2356,10 @@
                       <div class="compact-meta">
                         <span class="task-id id-review">{task.id}</span>
                         {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                         {/if}
                         <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)}d</span>
+                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
                       </div>
                       <h5 class="compact-title text-focus">{task.title}</h5>
                     </div>
@@ -1444,10 +2379,10 @@
                       <div class="compact-meta">
                         <span class="task-id id-done">{task.id}</span>
                         {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">🔗</a>
+                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
                         {/if}
                         <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">⏱️ {getActiveDays(task.taskCreatedAt)}d</span>
+                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
                       </div>
                       <h5 class="compact-title title-done">{task.title}</h5>
                     </div>
@@ -1475,7 +2410,7 @@
           {selectedTask.id}
           {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
             <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="jira-modal-direct-btn">
-              🔗Jira 链接
+              Jira 链接
             </a>
           {/if}
         </span>
@@ -1488,7 +2423,7 @@
         <div class="details-row">
           <span class="label">关联需求:</span>
           <span class="value parent-demand-detail font-mono">
-            📋 #{getParentDemandId(selectedTask.taskGroupId)} <span class="title-sub">{getParentDemandTitle(selectedTask.taskGroupId)}</span>
+            #{getParentDemandId(selectedTask.taskGroupId)} <span class="title-sub">{getParentDemandTitle(selectedTask.taskGroupId)}</span>
           </span>
         </div>
       {/if}
@@ -1504,7 +2439,7 @@
       </div>
       <div class="details-row">
         <span class="label">指派人:</span>
-        <span class="value">👤 {selectedTask.assignee}</span>
+        <span class="value">{selectedTask.assignee}</span>
       </div>
       <div class="details-row">
         <span class="label">当前进度阶段:</span>
@@ -1525,19 +2460,19 @@
           activeTelemetryTaskId = selectedTask ? selectedTask.id : '';
           isTelemetryDrawerOpen = true;
         }}>
-          🛰️ 展开代码提交轨迹与 MR 证据
+          展开代码提交轨迹与 MR 证据
         </button>
       </div>
       
       <!-- Evidence Chain 真实交付证据链 -->
       <div class="divider"></div>
       <div class="evidence-chain-section">
-        <span class="decoupled-title font-mono">⛓️ 真实交付证据链 (Evidence Chain)</span>
+        <span class="decoupled-title font-mono">真实交付证据链 (Evidence Chain)</span>
         
         {#if evidenceChainLoading}
           <div class="evidence-chain-loading font-mono">正在检索关联的交付证据链...</div>
         {:else if evidenceChainError}
-          <div class="evidence-chain-error font-mono">⚠️ {evidenceChainError}</div>
+          <div class="evidence-chain-error font-mono">{evidenceChainError}</div>
         {:else if evidenceChain}
           {@const summary = evidenceChain.summary || {}}
           <div class="evidence-chain-summary-panel">
@@ -1563,7 +2498,7 @@
                     <span class="node-time font-mono">{log.created_at.slice(5, 16)}</span>
                     <span class="node-repo font-mono">[{log.repo}]</span>
                     {#if log.mr_url}
-                      <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-link-chain">🔗 MR</a>
+                      <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-link-chain">MR</a>
                     {/if}
                   </div>
                   <div class="node-content">
@@ -1576,13 +2511,13 @@
               {/each}
             </div>
           {:else}
-            <div class="evidence-chain-empty font-mono">⚠️ 暂无任何 GitLab 代码提交或 MR 合并记录事实。</div>
+            <div class="evidence-chain-empty font-mono">暂无任何 GitLab 代码提交或 MR 合并记录事实。</div>
           {/if}
           
           {#if summary.signals && summary.signals.length > 0}
             <div class="evidence-chain-signals">
               {#each summary.signals as signal}
-                <span class="signal-chip font-mono">🔍 {signal}</span>
+                <span class="signal-chip font-mono">{signal}</span>
               {/each}
             </div>
           {/if}
@@ -2090,8 +3025,36 @@
   }
 
   .exec-assignee-cell {
+    display: grid;
+    gap: 5px;
     color: #cbd5e1;
     font-size: 0.78rem;
+  }
+
+  .exec-assignee-cell strong {
+    color: #e5edf8;
+    line-height: 1.25;
+  }
+
+  .exec-assignee-source,
+  .exec-assignee-note {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    line-height: 1;
+  }
+
+  .exec-assignee-source {
+    border: 1px solid rgba(56, 189, 248, 0.24);
+    padding: 4px 7px;
+    color: #bae6fd;
+    background: rgba(14, 165, 233, 0.1);
+  }
+
+  .exec-assignee-note {
+    color: #8393a8;
   }
 
   .result-merged_done,
@@ -3209,37 +4172,6 @@
     font-size: 0.95rem;
   }
 
-  .shadow-shortcut-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    background: rgba(244, 63, 94, 0.1);
-    border: 1px solid rgba(244, 63, 94, 0.25);
-    border-radius: 8px;
-    color: #f43f5e;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 4px 12px rgba(244, 63, 94, 0.05);
-    margin-left: 12px;
-  }
-
-  .shadow-shortcut-btn:hover {
-    background: rgba(244, 63, 94, 0.2);
-    border-color: rgba(244, 63, 94, 0.4);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(244, 63, 94, 0.1);
-  }
-
-  .shadow-shortcut-btn.active {
-    background: #f43f5e;
-    border-color: #f43f5e;
-    color: #ffffff;
-    box-shadow: 0 4px 14px rgba(244, 63, 94, 0.3);
-  }
-
   .text-bug {
     color: #ef4444 !important;
   }
@@ -3665,5 +4597,1384 @@
     padding: 2px 8px;
     border-radius: 9999px;
     color: #cbd5e1;
+  }
+
+  .task-console {
+    --task-panel: rgba(12, 18, 24, 0.72);
+    --task-panel-strong: rgba(8, 12, 17, 0.88);
+    --task-border: var(--wa-border-soft, rgba(203, 234, 244, 0.14));
+    --task-border-strong: var(--wa-border-strong, rgba(203, 234, 244, 0.28));
+    --task-text: var(--wa-text-main, #d8e5ec);
+    --task-strong: var(--wa-text-strong, #f4fbff);
+    --task-muted: var(--wa-text-muted, #90a8b5);
+    --task-subtle: var(--wa-text-subtle, #5f7582);
+    --task-accent: var(--wa-accent, #26ddff);
+    --task-success: var(--wa-success, #72e6b4);
+    --task-warning: var(--wa-warning, #ffc55f);
+    --task-danger: var(--wa-danger, #ff6177);
+    color: var(--task-text);
+    margin-bottom: 0;
+  }
+
+  .task-console .summary-kicker,
+  .task-console .exec-grid-th,
+  .task-console .telemetry-label,
+  .task-console .decoupled-title,
+  .task-console .node-action {
+    letter-spacing: 0;
+  }
+
+  .task-command-surface {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+
+  .task-command-main,
+  .task-focus-panel,
+  .execution-inspector-panel {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--task-border);
+    background:
+      linear-gradient(145deg, rgba(244, 251, 255, 0.075), rgba(244, 251, 255, 0.018) 42%, rgba(38, 221, 255, 0.052)),
+      var(--task-panel);
+    box-shadow: inset 0 1px 0 rgba(244, 251, 255, 0.08), 0 24px 68px rgba(1, 9, 14, 0.34);
+    backdrop-filter: blur(24px) saturate(138%);
+    -webkit-backdrop-filter: blur(24px) saturate(138%);
+  }
+
+  .task-command-main {
+    border-radius: 12px;
+    padding: 18px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .task-command-eyebrow,
+  .task-command-title-row,
+  .task-filter-dock,
+  .focus-panel-head,
+  .execution-inspector-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .task-command-eyebrow {
+    color: var(--task-subtle);
+    font-size: 0.68rem;
+    font-weight: 900;
+  }
+
+  .task-live-dot {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    border: 1px solid rgba(114, 230, 180, 0.28);
+    border-radius: 999px;
+    padding: 0 9px;
+    color: var(--task-success);
+    background: rgba(114, 230, 180, 0.1);
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+
+  .task-command-copy h2 {
+    margin: 0;
+    color: var(--task-strong);
+    font-size: clamp(1.35rem, 2vw, 2rem);
+    line-height: 1.08;
+    font-weight: 820;
+  }
+
+  .task-command-copy p {
+    max-width: 680px;
+    margin: 8px 0 0;
+    color: var(--task-muted);
+    font-size: 0.86rem;
+    line-height: 1.6;
+  }
+
+  .task-view-toggle {
+    flex: 0 0 auto;
+    border-radius: 8px;
+    background: rgba(244, 251, 255, 0.055);
+    border: 1px solid var(--task-border);
+    padding: 3px;
+  }
+
+  .task-view-toggle .toggle-btn {
+    min-width: 54px;
+    justify-content: center;
+    border-radius: 6px;
+    color: var(--task-muted);
+  }
+
+  .task-view-toggle .toggle-btn.active {
+    background: rgba(38, 221, 255, 0.16);
+    color: var(--task-strong);
+    box-shadow: inset 0 1px 0 rgba(244, 251, 255, 0.08);
+  }
+
+  .task-filter-dock {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .task-filter-dock .custom-select-container {
+    min-width: 220px;
+  }
+
+  .task-filter-control {
+    min-height: 38px;
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background: rgba(244, 251, 255, 0.048);
+    border-color: var(--task-border);
+  }
+
+  .filter-label {
+    color: var(--task-subtle);
+    font-size: 0.62rem;
+    font-weight: 900;
+  }
+
+  .task-console .select-arrow {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .task-command-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .task-metric-cell {
+    min-height: 92px;
+    border-radius: 8px;
+    border: 1px solid var(--task-border);
+    background: rgba(244, 251, 255, 0.045);
+    padding: 12px;
+    display: grid;
+    align-content: space-between;
+    gap: 8px;
+  }
+
+  .task-metric-cell .metric-label {
+    color: var(--task-subtle);
+    font-size: 0.63rem;
+    font-weight: 900;
+  }
+
+  .task-metric-cell strong {
+    color: var(--task-strong);
+    font-size: 1.7rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .task-metric-cell em {
+    color: var(--task-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+    line-height: 1.35;
+  }
+
+  .task-metric-cell.tone-total { border-top: 2px solid var(--task-accent); }
+  .task-metric-cell.tone-info { border-top: 2px solid var(--wa-info, #9bd4ff); }
+  .task-metric-cell.tone-warning { border-top: 2px solid var(--task-warning); }
+  .task-metric-cell.tone-danger { border-top: 2px solid var(--task-danger); }
+
+  .task-flow-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .task-flow-card {
+    position: relative;
+    overflow: hidden;
+    min-height: 56px;
+    border: 1px solid var(--task-border);
+    border-radius: 8px;
+    background: rgba(7, 11, 16, 0.52);
+    color: var(--task-text);
+    padding: 9px 10px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 4px 10px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .task-flow-card span {
+    color: var(--task-muted);
+    font-size: 0.7rem;
+    font-weight: 850;
+  }
+
+  .task-flow-card strong {
+    color: var(--task-strong);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .task-flow-card em {
+    color: var(--task-subtle);
+    font-size: 0.66rem;
+    font-style: normal;
+  }
+
+  .task-flow-card i {
+    grid-column: 1 / -1;
+    height: 3px;
+    min-width: 3px;
+    border-radius: 999px;
+    background: var(--task-accent);
+  }
+
+  .task-flow-card.tone-success i { background: var(--task-success); }
+  .task-flow-card.tone-warning i { background: var(--task-warning); }
+  .task-flow-card.tone-info i { background: var(--wa-info, #9bd4ff); }
+  .task-flow-card:hover {
+    border-color: var(--task-border-strong);
+    background: rgba(244, 251, 255, 0.075);
+  }
+
+  .task-focus-panel {
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    align-content: start;
+    gap: 16px;
+  }
+
+  .focus-severity {
+    display: inline-flex;
+    min-height: 22px;
+    align-items: center;
+    border-radius: 999px;
+    border: 1px solid rgba(38, 221, 255, 0.25);
+    background: rgba(38, 221, 255, 0.1);
+    color: var(--task-accent);
+    padding: 0 8px;
+    font-size: 0.65rem;
+  }
+
+  .focus-severity.is-watch {
+    border-color: rgba(255, 197, 95, 0.3);
+    background: rgba(255, 197, 95, 0.12);
+    color: var(--task-warning);
+  }
+
+  .focus-severity.is-critical {
+    border-color: rgba(255, 97, 119, 0.34);
+    background: rgba(255, 97, 119, 0.13);
+    color: var(--task-danger);
+  }
+
+  .focus-task-body {
+    display: grid;
+    gap: 12px;
+  }
+
+  .focus-task-id {
+    width: fit-content;
+    border: 1px solid rgba(38, 221, 255, 0.24);
+    border-radius: 6px;
+    background: rgba(38, 221, 255, 0.09);
+    color: var(--task-accent);
+    padding: 4px 7px;
+    font-size: 0.68rem;
+    font-weight: 900;
+  }
+
+  .focus-task-body h3,
+  .execution-focus-stack h3 {
+    margin: 0;
+    color: var(--task-strong);
+    font-size: 1.02rem;
+    line-height: 1.42;
+  }
+
+  .focus-meta-grid,
+  .execution-focus-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .focus-meta-grid span,
+  .execution-focus-meta span,
+  .execution-inspector-stats span {
+    min-width: 0;
+    border: 1px solid var(--task-border);
+    border-radius: 8px;
+    background: rgba(7, 11, 16, 0.36);
+    padding: 8px;
+    display: grid;
+    gap: 5px;
+  }
+
+  .focus-meta-grid em,
+  .execution-focus-meta em,
+  .execution-inspector-stats em {
+    color: var(--task-subtle);
+    font-size: 0.66rem;
+    font-style: normal;
+  }
+
+  .focus-meta-grid strong,
+  .execution-focus-meta strong,
+  .execution-inspector-stats strong {
+    color: var(--task-text);
+    font-size: 0.78rem;
+    line-height: 1.32;
+    overflow-wrap: anywhere;
+  }
+
+  .focus-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .focus-primary-btn,
+  .focus-secondary-btn {
+    min-height: 38px;
+    border-radius: 8px;
+    border: 1px solid var(--task-border);
+    cursor: pointer;
+    font-weight: 850;
+  }
+
+  .focus-primary-btn {
+    background: var(--task-accent);
+    border-color: rgba(184, 245, 255, 0.42);
+    color: var(--wa-accent-ink, #021318);
+  }
+
+  .focus-secondary-btn {
+    background: rgba(244, 251, 255, 0.055);
+    color: var(--task-text);
+  }
+
+  .focus-secondary-btn:hover,
+  .focus-primary-btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .owner-pressure-panel {
+    border-top: 1px solid var(--task-border);
+    padding-top: 14px;
+    display: grid;
+    gap: 10px;
+  }
+
+  .owner-pressure-main {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--task-text);
+  }
+
+  .owner-pressure-main strong {
+    color: var(--task-strong);
+  }
+
+  .owner-pressure-main span,
+  .owner-pressure-main.is-empty {
+    color: var(--task-muted);
+    font-size: 0.78rem;
+  }
+
+  .owner-mini-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .owner-mini-list span {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    color: var(--task-muted);
+    font-size: 0.74rem;
+  }
+
+  .owner-mini-list em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-style: normal;
+  }
+
+  .owner-mini-list strong {
+    color: var(--task-strong);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .execution-lab-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    gap: 12px;
+    align-items: start;
+  }
+
+  .execution-lab-main {
+    min-width: 0;
+  }
+
+  .execution-inspector-panel {
+    border-radius: 12px;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+    position: sticky;
+    top: 12px;
+  }
+
+  .execution-inspector-head {
+    align-items: end;
+  }
+
+  .execution-inspector-head strong {
+    color: var(--task-strong);
+    font-size: 2rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .execution-inspector-head em {
+    color: var(--task-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+  }
+
+  .execution-focus-stack {
+    display: grid;
+    gap: 11px;
+  }
+
+  .exec-action-btn.is-wide {
+    width: 100%;
+    min-height: 38px;
+    border-radius: 8px;
+  }
+
+  .execution-inspector-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .execution-inspector-stats span {
+    text-align: center;
+  }
+
+  .execution-inspector-stats strong {
+    color: var(--task-strong);
+    font-size: 1rem;
+  }
+
+  .execution-inspector-empty,
+  .focus-empty {
+    min-height: 96px;
+    border: 1px dashed var(--task-border);
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    color: var(--task-subtle);
+    font-size: 0.72rem;
+  }
+
+  .task-console .execution-workbench {
+    gap: 12px;
+  }
+
+  .task-console .execution-summary-cell,
+  .task-console .execution-control-panel,
+  .task-console .execution-table-panel,
+  .task-console .column,
+  .task-console .swimlane {
+    border-radius: 10px;
+    border-color: var(--task-border);
+    background: rgba(244, 251, 255, 0.042);
+    box-shadow: inset 0 1px 0 rgba(244, 251, 255, 0.05);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .task-console .execution-summary-cell {
+    min-height: 82px;
+    border-top-width: 2px;
+  }
+
+  .task-console .execution-control-panel {
+    background: rgba(8, 12, 17, 0.62);
+  }
+
+  .task-console .execution-table-panel {
+    overflow: hidden;
+  }
+
+  .task-console .exec-grid-table {
+    background: rgba(6, 9, 13, 0.88);
+  }
+
+  .task-console .exec-grid-thead {
+    background: rgba(12, 18, 24, 0.96);
+  }
+
+  .task-console .exec-grid-tr {
+    border-bottom-color: rgba(203, 234, 244, 0.08);
+  }
+
+  .task-console .exec-grid-tr:hover {
+    background: rgba(231, 247, 255, 0.055);
+  }
+
+  .task-console .kanban-grid {
+    gap: 12px;
+  }
+
+  .task-console .column {
+    min-height: 460px;
+    padding: 12px;
+  }
+
+  .task-console .column-header {
+    min-height: 34px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom-color: var(--task-border);
+  }
+
+  .task-console .column-title {
+    color: var(--task-text);
+    font-size: 0.78rem;
+  }
+
+  .task-console .count-badge {
+    border: 1px solid var(--task-border);
+    background: rgba(244, 251, 255, 0.06);
+    color: var(--task-strong);
+  }
+
+  .task-console .column-body {
+    max-height: 620px;
+    gap: 9px;
+    padding-right: 6px;
+  }
+
+  .task-console .task-card,
+  .task-console .compact-task-card {
+    border-radius: 8px;
+    border-color: rgba(203, 234, 244, 0.13);
+    background: rgba(7, 11, 16, 0.56);
+    box-shadow: none;
+  }
+
+  .task-console .task-card:hover,
+  .task-console .compact-task-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--task-border-strong);
+    background: rgba(244, 251, 255, 0.065);
+  }
+
+  .task-console .task-id,
+  .task-console .compact-days-badge,
+  .task-console .active-days-badge,
+  .task-console .project-badge,
+  .task-console .issue-type-badge,
+  .task-console .parent-demand-badge,
+  .task-console .evidence-badge-tag,
+  .task-console .jira-direct-link {
+    border-radius: 6px;
+  }
+
+  .task-console .jira-direct-link {
+    min-height: 18px;
+    padding: 1px 5px;
+    border: 1px solid rgba(38, 221, 255, 0.24);
+    background: rgba(38, 221, 255, 0.08);
+    color: var(--task-accent);
+    font-size: 0.62rem;
+    font-weight: 850;
+  }
+
+  .task-console .task-footer {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .task-console .delay-critical {
+    border-color: rgba(255, 97, 119, 0.6) !important;
+    background: rgba(255, 97, 119, 0.07) !important;
+  }
+
+  .task-console .delay-warning {
+    border-color: rgba(255, 197, 95, 0.52) !important;
+    background: rgba(255, 197, 95, 0.055) !important;
+  }
+
+  .task-console .personnel-view {
+    gap: 12px;
+  }
+
+  .task-console .swimlane {
+    padding: 12px;
+  }
+
+  .task-console .swimlane-header {
+    min-height: 42px;
+  }
+
+  .task-console .assignee-avatar {
+    width: 26px;
+    height: 26px;
+    border: 1px solid rgba(38, 221, 255, 0.24);
+    border-radius: 8px;
+    display: inline-grid;
+    place-items: center;
+    background: rgba(38, 221, 255, 0.1);
+    color: var(--task-accent);
+    font-size: 0.72rem;
+    font-weight: 900;
+  }
+
+  .task-console .assignee-status-overview {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    flex-wrap: wrap;
+  }
+
+  .task-console .swimlane-badge {
+    border-radius: 6px;
+  }
+
+  .task-console .swimlane-grid {
+    gap: 10px;
+  }
+
+  .task-console .swimlane-column {
+    border-color: var(--task-border);
+    background: rgba(7, 11, 16, 0.42);
+    border-radius: 8px;
+  }
+
+  @media (max-width: 1180px) {
+    .task-command-surface,
+    .execution-lab-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .execution-inspector-panel {
+      position: relative;
+      top: auto;
+    }
+
+    .task-command-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 760px) {
+    .task-command-main,
+    .task-focus-panel,
+    .execution-inspector-panel {
+      padding: 12px;
+    }
+
+    .task-command-title-row,
+    .task-command-eyebrow,
+    .task-filter-dock,
+    .focus-panel-head {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .task-view-toggle,
+    .task-filter-dock .custom-select-container,
+    .focus-action-row,
+    .focus-meta-grid,
+    .execution-focus-meta,
+    .execution-inspector-stats {
+      width: 100%;
+      grid-template-columns: 1fr;
+    }
+
+    .task-command-metrics,
+    .task-flow-strip {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .task-console {
+    color: var(--wa-text-main);
+    display: grid;
+    gap: var(--wa-space-4);
+    margin-bottom: 0;
+  }
+
+  .task-console > .execution-workbench,
+  .task-console > .kanban-grid {
+    display: none;
+  }
+
+  .phase41-console-header {
+    min-width: 0;
+    border-radius: var(--wa-radius-md);
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: minmax(180px, 0.62fr) minmax(420px, 1.38fr);
+    gap: var(--wa-space-3);
+    align-items: center;
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: var(--wa-shadow-sm);
+  }
+
+  .phase41-header-copy {
+    min-width: 0;
+  }
+
+  .phase41-kicker {
+    display: block;
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    line-height: 1.2;
+    font-weight: 760;
+  }
+
+  .phase41-header-copy h2 {
+    margin: 3px 0 0;
+    color: var(--wa-text-strong);
+    font-size: 18px;
+    line-height: 1.15;
+    font-weight: 850;
+    text-wrap: balance;
+  }
+
+  .phase41-header-copy p {
+    display: none;
+  }
+
+  .phase41-header-actions {
+    min-width: 0;
+    display: grid;
+    justify-items: end;
+    gap: var(--wa-space-3);
+  }
+
+  .task-console .view-toggle,
+  .task-console .task-view-toggle {
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: 3px;
+    box-shadow: none;
+  }
+
+  .task-console .toggle-btn {
+    min-height: 30px;
+    color: var(--wa-text-muted);
+    border-radius: var(--wa-radius-sm);
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 760;
+  }
+
+  .task-console .toggle-btn:hover {
+    color: var(--wa-text-strong);
+    background: rgba(255, 255, 255, 0.7);
+  }
+
+  .task-console .toggle-btn.active {
+    color: var(--wa-accent-ink);
+    background: var(--wa-accent);
+    box-shadow: 0 8px 18px rgba(0, 143, 150, 0.16);
+  }
+
+  .phase41-filter-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap: var(--wa-space-2);
+  }
+
+  .phase41-filter-row .custom-select-container {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .task-console .custom-select-trigger,
+  .task-console .task-filter-control {
+    width: 100%;
+    min-height: var(--wa-control-h);
+    box-sizing: border-box;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: rgba(255, 255, 255, 0.78);
+    color: var(--wa-text-main);
+    box-shadow: none;
+  }
+
+  .task-console .custom-select-trigger:hover,
+  .task-console .custom-select-trigger:focus-within {
+    border-color: var(--wa-border-focus);
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .task-console .filter-label {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .task-console .combobox-trigger-input {
+    color: var(--wa-text-main) !important;
+    font-size: 13px;
+  }
+
+  .task-console .combobox-trigger-input::placeholder {
+    color: var(--wa-text-subtle) !important;
+  }
+
+  .task-console .select-arrow {
+    border: 0;
+    background: transparent;
+    color: var(--wa-text-muted);
+    cursor: pointer;
+  }
+
+  .task-console .custom-select-options {
+    left: 0;
+    right: auto;
+    width: 100%;
+    min-width: 100%;
+    border: 1px solid var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: var(--wa-shadow-md);
+  }
+
+  .task-console .custom-option {
+    color: var(--wa-text-main);
+    border-radius: var(--wa-radius-sm);
+  }
+
+  .task-console .custom-option:hover,
+  .task-console .custom-option.active {
+    color: var(--wa-accent-strong);
+    background: var(--wa-accent-soft);
+  }
+
+  .phase41-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-3);
+  }
+
+  .phase41-metric {
+    border-radius: var(--wa-radius-md);
+    min-height: 112px;
+  }
+
+  .phase41-metric em {
+    color: var(--wa-text-subtle);
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 720;
+  }
+
+  .phase41-stage-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-3);
+  }
+
+  .phase41-stage-card {
+    min-width: 0;
+    min-height: 72px;
+    border-radius: var(--wa-radius-md);
+    padding: var(--wa-space-3);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 6px var(--wa-space-2);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .phase41-stage-card span {
+    color: var(--wa-text-main);
+    font-size: 13px;
+    font-weight: 760;
+  }
+
+  .phase41-stage-card strong {
+    color: var(--wa-text-strong);
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phase41-stage-card em {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+
+  .phase41-stage-card i {
+    grid-column: 1 / -1;
+    height: 3px;
+    min-width: 3px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+
+  .phase41-workbench {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, var(--wa-inspector-w));
+    gap: var(--wa-space-4);
+    align-items: start;
+  }
+
+  .phase41-table-panel {
+    min-width: 0;
+  }
+
+  .phase41-table-toolbar {
+    border-radius: var(--wa-radius-md);
+    align-items: center;
+  }
+
+  .phase41-table-toolbar > div:first-child {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .phase41-table-toolbar strong {
+    color: var(--wa-text-strong);
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .phase41-table-toolbar small {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--wa-space-2);
+    flex-wrap: wrap;
+  }
+
+  .phase41-inline-error {
+    color: var(--wa-danger);
+    font-size: 12px;
+  }
+
+  .phase41-execution-controls {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.1fr) minmax(170px, 0.7fr) auto;
+    gap: var(--wa-space-2);
+    align-items: center;
+  }
+
+  .phase41-search-control {
+    position: relative;
+    min-width: 0;
+  }
+
+  .phase41-search-control input {
+    width: 100%;
+    height: var(--wa-control-h);
+    box-sizing: border-box;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: rgba(255, 255, 255, 0.8);
+    color: var(--wa-text-main);
+    padding: 0 12px 0 34px;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .phase41-search-control input:focus {
+    border-color: var(--wa-border-focus);
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .phase41-search-control .execution-search-mark {
+    border-color: var(--wa-text-muted);
+  }
+
+  .phase41-search-control .execution-search-mark::after {
+    background: var(--wa-text-muted);
+  }
+
+  .phase41-risk-strip {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: 3px;
+    overflow-x: auto;
+  }
+
+  .phase41-risk-strip button {
+    min-height: 28px;
+    border: 0;
+    border-radius: var(--wa-radius-sm);
+    background: transparent;
+    color: var(--wa-text-muted);
+    padding: 0 9px;
+    font-size: 12px;
+    font-weight: 760;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .phase41-risk-strip button.active {
+    color: var(--wa-accent-strong);
+    background: var(--wa-accent-soft);
+  }
+
+  .phase41-assignee-select {
+    min-width: 0;
+  }
+
+  .phase41-table-shell {
+    border-radius: var(--wa-radius-md);
+  }
+
+  .phase41-table {
+    min-width: 1040px;
+  }
+
+  .phase41-table th[style*="right"],
+  .phase41-table td.phase41-action-cell {
+    text-align: right;
+  }
+
+  .phase41-table tbody tr {
+    cursor: pointer;
+  }
+
+  .phase41-table tbody tr:focus-visible {
+    outline: 2px solid var(--wa-border-focus);
+    outline-offset: -2px;
+  }
+
+  .phase41-title-cell {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+  }
+
+  .phase41-title-cell > div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .phase41-title-cell strong {
+    min-width: 0;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase41-title-cell small {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-id-link {
+    display: inline-flex;
+    min-height: 24px;
+    align-items: center;
+    border: 1px solid rgba(37, 107, 216, 0.2);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-info-soft);
+    color: var(--wa-info);
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 780;
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phase41-id-link.as-text {
+    color: var(--wa-text-main);
+    background: var(--wa-neutral-soft);
+  }
+
+  .phase41-owner-cell {
+    display: grid;
+    gap: 4px;
+  }
+
+  .phase41-owner-cell strong {
+    color: var(--wa-text-main);
+    font-size: 13px;
+  }
+
+  .phase41-owner-cell small,
+  .phase41-evidence-cell span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-evidence-cell {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .phase41-action-cell .compact {
+    min-height: 30px;
+    padding: 0 10px;
+  }
+
+  .phase41-skeleton-row td {
+    height: 48px;
+    background:
+      linear-gradient(90deg, rgba(102, 119, 137, 0.06), rgba(102, 119, 137, 0.13), rgba(102, 119, 137, 0.06));
+    background-size: 220% 100%;
+    animation: phase41Shimmer 1.2s linear infinite;
+  }
+
+  .phase41-empty-cell,
+  .phase41-empty-inspector {
+    min-height: 160px;
+    color: var(--wa-text-muted);
+    text-align: center;
+    padding: var(--wa-space-8);
+  }
+
+  .phase41-empty-cell.error {
+    color: var(--wa-danger);
+  }
+
+  .phase41-inspector {
+    position: sticky;
+    top: var(--wa-space-4);
+    border-radius: var(--wa-radius-md);
+  }
+
+  .phase41-inspector-head {
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .phase41-inspector-head h3 {
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 17px;
+    line-height: 1.35;
+    text-wrap: pretty;
+  }
+
+  .phase41-inspector-head > div {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2);
+    flex-wrap: wrap;
+  }
+
+  .phase41-fact-grid {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wa-space-2);
+  }
+
+  .phase41-fact-grid div {
+    min-width: 0;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    padding: var(--wa-space-2);
+  }
+
+  .phase41-fact-grid dt {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-fact-grid dd {
+    margin: 4px 0 0;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 760;
+    overflow-wrap: anywhere;
+  }
+
+  .phase41-inspector-progress {
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .phase41-inspector-progress span {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-inspector-section {
+    border-top: 1px solid var(--wa-border-soft);
+    padding-top: var(--wa-space-3);
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .phase41-inspector-section h4 {
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 14px;
+    line-height: 1.3;
+  }
+
+  .phase41-inspector-section p,
+  .phase41-inspector-section li {
+    margin: 0;
+    color: var(--wa-text-main);
+    font-size: 13px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .phase41-inspector-section ul {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+  }
+
+  .phase41-inspector-actions {
+    display: flex;
+    gap: var(--wa-space-2);
+    flex-wrap: wrap;
+  }
+
+  .task-console .wa-admin-action:focus-visible,
+  .task-console .toggle-btn:focus-visible,
+  .task-console .phase41-stage-card:focus-visible {
+    outline: 2px solid var(--wa-border-focus);
+    outline-offset: 2px;
+  }
+
+  .task-console .personnel-view {
+    gap: var(--wa-space-3);
+  }
+
+  .task-console .swimlane,
+  .task-console .swimlane-column {
+    border-color: var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.78);
+    box-shadow: var(--wa-shadow-sm);
+  }
+
+  .task-console .swimlane-header {
+    border-bottom-color: var(--wa-border-soft);
+  }
+
+  .task-console .assignee-name,
+  .task-console .compact-title,
+  .task-console .task-title {
+    color: var(--wa-text-strong);
+  }
+
+  .task-console .compact-task-card {
+    border-color: var(--wa-border-soft);
+    background: var(--wa-surface-flat);
+    box-shadow: none;
+  }
+
+  .task-console .compact-task-card:hover {
+    border-color: var(--wa-border-strong);
+    background: var(--wa-row-hover);
+    transform: none;
+  }
+
+  .task-console .empty-placeholder,
+  .task-console .empty-view {
+    color: var(--wa-text-muted);
+  }
+
+  @keyframes phase41Shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: -100% 0; }
+  }
+
+  @media (max-width: 1180px) {
+    .phase41-console-header,
+    .phase41-workbench {
+      grid-template-columns: 1fr;
+    }
+
+    .phase41-inspector {
+      position: relative;
+      top: auto;
+    }
+
+    .phase41-metric-grid,
+    .phase41-stage-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .phase41-execution-controls {
+      grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .phase41-console-header,
+    .phase41-table-toolbar {
+      align-items: stretch;
+    }
+
+    .phase41-header-actions {
+      justify-items: stretch;
+    }
+
+    .phase41-filter-row,
+    .phase41-metric-grid,
+    .phase41-stage-strip,
+    .phase41-execution-controls,
+    .phase41-fact-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .phase41-table-toolbar,
+    .phase41-toolbar-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
 </style>

@@ -1,0 +1,1 @@
+{"type":"preference","topic":"frontend-ui-skill-default","summary":"For all future UI-related changes in well-ambient, default to loading the global ui-skill before editing. If ui-skill cannot be loaded, fall back in order: finesse-skill, then taste-skill, and state the fallback explicitly.","created_at":"2026-07-04","updated_at":"2026-07-08","source":"user"}

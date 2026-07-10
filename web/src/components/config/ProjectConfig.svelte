@@ -4,6 +4,7 @@
   import TextInput from '../shared/TextInput.svelte';
   import Alert from '../shared/Alert.svelte';
   import Select from '../shared/Select.svelte';
+  import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
 
   const phaseOptions = [
     { value: 'POC', label: 'POC' },
@@ -48,22 +49,34 @@
   let formProjectKey = '';
   let formBasePriority = 'P2'; // Default to P2
   let formProjectPhase = '交付'; // Default to 交付
-  let formBaseScore = 60.0;
-  let formBaseScoreWeightPercent = 10;
+  let formBaseScore = '60.0';
+  let formBaseScoreWeightPercent = '10';
 
-  // Dropdown controls
-  let showKeyDropdown = false;
   let jiraProjectMap: {[key: string]: string} = {};
 
   $: availableKeys = syncProjects.filter(key => {
     return !projects.some(p => p.project_key.toUpperCase() === key.toUpperCase());
   });
 
-  $: filteredKeys = availableKeys.filter(key => {
-    const q = formProjectKey.toLowerCase();
-    const name = jiraProjectMap[key.toUpperCase()] || '';
-    return key.toLowerCase().includes(q) || name.toLowerCase().includes(q);
+  $: projectKeyOptions = availableKeys.map((key) => {
+    const projectName = cleanProjectName(jiraProjectMap[key.toUpperCase()] || '');
+    return {
+      value: key,
+      label: projectName ? `${projectName} (${key})` : key,
+      meta: projectName ? key : 'Jira Project Key'
+    };
   });
+
+  $: highPriorityCount = projects.filter((project) => ['P0', 'P1'].includes(project.base_priority)).length;
+  $: projectStatusTone = loading ? 'checking' : errorMsg ? 'error' : projects.length > 0 ? 'success' : 'unchecked';
+  $: projectStatusLabel = loading ? '加载中' : errorMsg ? '加载失败' : projects.length > 0 ? '映射可用' : '尚未配置';
+  $: projectStatusMessage = loading
+    ? '正在读取项目映射与 Jira 项目名称。'
+    : errorMsg
+      ? errorMsg
+      : projects.length > 0
+        ? `已维护 ${projects.length} 个项目映射，其中 ${highPriorityCount} 个为 P0/P1。`
+        : '尚未创建项目映射。新增项目后，优先级与阶段会用于排期和健康度计算。';
 
   onMount(async () => {
     await Promise.all([fetchProjects(), fetchJiraProjectMap()]);
@@ -127,10 +140,11 @@
     formProjectKey = '';
     formBasePriority = 'P2';
     formProjectPhase = '交付';
-    formBaseScore = 60.0;
-    formBaseScoreWeightPercent = 10;
+    formBaseScore = '60.0';
+    formBaseScoreWeightPercent = '10';
     errorMsg = '';
     successMsg = '';
+    resetSettingsWorkspaceScroll();
   }
 
   function cleanProjectName(name: string): string {
@@ -154,10 +168,17 @@
     formProjectKey = project.project_key;
     formBasePriority = project.base_priority || 'P2';
     formProjectPhase = project.project_phase || '交付';
-    formBaseScore = project.base_score !== undefined ? project.base_score : 60.0;
-    formBaseScoreWeightPercent = project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10;
+    formBaseScore = String(project.base_score !== undefined ? project.base_score : 60.0);
+    formBaseScoreWeightPercent = String(project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10);
     errorMsg = '';
     successMsg = '';
+    resetSettingsWorkspaceScroll();
+  }
+
+  function handleProjectKeyChange(event: CustomEvent<string>) {
+    const key = event.detail;
+    const projectName = cleanProjectName(jiraProjectMap[key.toUpperCase()] || '');
+    if (projectName) formProjectName = projectName;
   }
 
   async function saveProject() {
@@ -171,13 +192,16 @@
     successMsg = '';
     const token = localStorage.getItem('jwt_token');
 
+    const parsedBaseScore = Number.parseFloat(formBaseScore);
+    const parsedBaseScoreWeight = Number.parseFloat(formBaseScoreWeightPercent);
+
     const payload = {
       project_key: formProjectKey.trim().toUpperCase(),
       project_name: formProjectName.trim(),
       base_priority: formBasePriority,
       project_phase: formProjectPhase,
-      base_score: formBaseScore,
-      base_score_weight: formBaseScoreWeightPercent / 100,
+      base_score: Number.isFinite(parsedBaseScore) ? parsedBaseScore : 60,
+      base_score_weight: Number.isFinite(parsedBaseScoreWeight) ? parsedBaseScoreWeight / 100 : 0.1,
       git_repos_json: "[]"
     };
 
@@ -216,9 +240,16 @@
     editingProject = null;
     errorMsg = '';
   }
+
+  function formatUpdated(value: string) {
+    if (!value) return '暂无版本记录';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
 </script>
 
-<div class="project-config-container">
+<div class="scw-workbench">
   {#if errorMsg}
     <Alert type="error" message={errorMsg} closable={true} on:close={() => errorMsg = ''} />
   {/if}
@@ -227,59 +258,78 @@
   {/if}
 
   {#if !isEditing}
-    <div class="card-header flex-header">
-      <div>
-        <h2>📝 项目集成与优先级管理</h2>
-        <p>配置并同步 Jira 项目键（Project Key）的全局基准优先级（P0 - P5）与当前项目运作阶段。自动执行权重置顶和健康监控。</p>
+    <section class="scw-overview" aria-label="项目优先级配置">
+      <header class="scw-header">
+        <div class="scw-header-copy">
+          <span class="scw-kicker">项目映射</span>
+          <h4>项目优先级与阶段</h4>
+          <p>维护 Jira Project Key、项目阶段和基准优先级，供排期、健康度与治理规则统一引用。</p>
+        </div>
+        <div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>
+      </header>
+
+      <div class="scw-status tone-{projectStatusTone}">
+        <div class="scw-status-main">
+          <span>映射状态</span>
+          <strong>{projectStatusLabel}</strong>
+        </div>
+        <p>{projectStatusMessage}</p>
       </div>
-      <Button variant="primary" on:click={startCreate}>➕ 新建项目集成</Button>
-    </div>
+
+      <div class="scw-metrics" aria-label="项目配置概览">
+        <div class="scw-metric"><span>已配置</span><strong>{projects.length} 个项目</strong></div>
+        <div class="scw-metric"><span>待映射</span><strong>{availableKeys.length} 个 Jira Key</strong></div>
+        <div class="scw-metric"><span>高优项目</span><strong>{highPriorityCount} 个 P0/P1</strong></div>
+        <div class="scw-metric"><span>最近更新</span><strong>{formatUpdated(lastUpdated)}</strong></div>
+      </div>
 
     {#if loading && projects.length === 0}
-      <div class="loading-state font-mono">正在加载项目集成列表...</div>
+      <div class="scw-skeleton" aria-label="项目映射加载中"><span></span><span></span><span></span></div>
     {:else if projects.length === 0}
-      <div class="empty-state font-mono">
-        <p>暂无自定义项目集成。新建项目以设定基准属性。</p>
+      <div class="scw-empty">
+        <strong>暂无项目映射</strong>
+        <p>先从 Jira 同步项目中选择一个 Project Key，再设置阶段、优先级和健康度基准。</p>
+        <div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>
       </div>
     {:else}
-      <div class="table-responsive">
-        <table>
+      <div class="scw-table-wrap">
+        <table class="scw-table">
           <thead>
             <tr>
               <th>项目 (Project)</th>
               <th>运作阶段</th>
               <th>优先级</th>
               <th>基础分 (权重)</th>
-              <th style="text-align: right;">操作</th>
+              <th class="numeric">操作</th>
             </tr>
           </thead>
           <tbody>
             {#each projects as project}
               <tr>
-                <td class="font-mono text-bold highlight-key">
+                <td class="scw-primary-cell">
                   {#if jiraProjectMap[project.project_key.toUpperCase()]}
-                    {cleanProjectName(jiraProjectMap[project.project_key.toUpperCase()])} <span class="project-key-label">({project.project_key})</span>
+                    <strong>{cleanProjectName(jiraProjectMap[project.project_key.toUpperCase()])}</strong><span class="scw-mono">{project.project_key}</span>
                   {:else}
-                    {cleanProjectName(project.project_name)} <span class="project-key-label">({project.project_key})</span>
+                    <strong>{cleanProjectName(project.project_name)}</strong><span class="scw-mono">{project.project_key}</span>
                   {/if}
                 </td>
                 <td>
-                  <span class="phase-badge phase-{project.project_phase || '交付'}">
+                  <span class="scw-badge">
                     {project.project_phase || '交付'}
                   </span>
                 </td>
                 <td>
-                  <span class="priority-badge p-{project.base_priority.toLowerCase()}">
+                  <span class="scw-badge {['P0', 'P1'].includes(project.base_priority) ? 'danger' : project.base_priority === 'P2' ? 'warning' : ''}">
                     {project.base_priority}
                   </span>
                 </td>
-                <td>
-                  <span class="font-mono">
+                <td class="numeric">
+                  <span class="scw-mono scw-tabular">
                     {project.base_score !== undefined ? project.base_score : 60}分 
                     ({project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10}%)
                   </span>
                 </td>
-                <td style="text-align: right;">
+                <td class="numeric">
                   <Button size="small" variant="ghost" on:click={() => startEdit(project)}>编辑</Button>
                 </td>
               </tr>
@@ -288,14 +338,19 @@
         </table>
       </div>
     {/if}
+    </section>
   {:else}
-    <div class="card-header">
-      <h2>{editingProject ? '编辑项目配置' : '新建项目配置'}</h2>
-      <p>为项目绑定专用的 Jira Project Key，定义优先级权重与当前项目运行周期阶段。</p>
-    </div>
+    <section class="scw-editor" aria-label={editingProject ? '编辑项目配置' : '新建项目配置'}>
+      <header class="scw-header">
+        <div class="scw-header-copy">
+          <span class="scw-kicker">项目映射</span>
+          <h4>{editingProject ? '编辑项目配置' : '新建项目配置'}</h4>
+          <p>绑定 Jira Project Key，并设置项目阶段、优先级和健康度基础参数。</p>
+        </div>
+      </header>
 
-    <div class="form-container">
-      <div class="custom-select-wrapper">
+    <div class="scw-form-grid">
+      <div class="wide">
         {#if editingProject}
           <TextInput
             id="project-key"
@@ -306,60 +361,41 @@
             helperText="Jira 项目键保存后不可更改。"
           />
         {:else}
-          <TextInput
+          <Select
             id="project-key"
             label="Jira 项目键 (Project Key)"
             placeholder="搜索或选择 Jira 中同步的项目键 (如: HIT)"
             bind:value={formProjectKey}
+            options={projectKeyOptions}
+            searchable={true}
+            compact={true}
             required={true}
-            on:focus={() => showKeyDropdown = true}
-            on:blur={() => setTimeout(() => showKeyDropdown = false, 200)}
+            on:change={handleProjectKeyChange}
             helperText="已被其他项目集成配置占用的 Key 将不再列出。支持拼音与英文字符过滤。"
           />
-          {#if showKeyDropdown}
-            <div class="custom-select-dropdown">
-              {#each filteredKeys as key}
-                <button 
-                  type="button" 
-                  class="dropdown-item" 
-                  on:click={() => { 
-                    formProjectKey = key; 
-                    if (jiraProjectMap[key.toUpperCase()]) {
-                      formProjectName = jiraProjectMap[key.toUpperCase()];
-                    }
-                    showKeyDropdown = false; 
-                  }}
-                >
-                  {#if jiraProjectMap[key.toUpperCase()]}
-                    {jiraProjectMap[key.toUpperCase()]} ({key})
-                  {:else}
-                    {key}
-                  {/if}
-                </button>
-              {:else}
-                <div class="dropdown-empty">没有匹配的待配置项目键</div>
-              {/each}
-            </div>
-          {/if}
         {/if}
       </div>
 
-      <TextInput
-        id="project-name"
-        label="项目名称"
-        placeholder=""
-        bind:value={formProjectName}
-        required={true}
-        helperText="展示在项目大盘与诊断报表中的项目中文名。"
-      />
+      <div class="wide">
+        <TextInput
+          id="project-name"
+          label="项目名称"
+          placeholder=""
+          bind:value={formProjectName}
+          required={true}
+          helperText="展示在项目大盘与诊断报表中的项目中文名。"
+        />
+      </div>
 
-      <div class="form-group-row">
+      <div class="scw-form-grid wide">
         <div class="flex-1">
           <Select
             id="project-phase"
             label="项目阶段 (Project Phase)"
             bind:value={formProjectPhase}
             options={phaseOptions}
+            searchable={false}
+            compact={true}
           />
         </div>
 
@@ -369,11 +405,13 @@
             label="项目优先级 (Base Priority)"
             bind:value={formBasePriority}
             options={priorityOptions}
+            searchable={false}
+            compact={true}
           />
         </div>
       </div>
 
-      <div class="form-group-row">
+      <div class="scw-form-grid wide">
         <div class="flex-1">
           <TextInput
             id="project-base-score"
@@ -397,256 +435,17 @@
         </div>
       </div>
 
-      <div class="form-actions">
+      <div class="scw-actions wide">
         <Button variant="secondary" disabled={saving} on:click={cancelEdit}>取消</Button>
         <Button variant="primary" loading={saving} on:click={saveProject}>保存配置</Button>
       </div>
     </div>
+    </section>
   {/if}
 </div>
 
 <style>
-  .project-config-container {
-    animation: fadeIn 0.4s ease-out;
-  }
-
-  .flex-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-  }
-
-  .card-header h2 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin: 0 0 6px 0;
-    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
-  .card-header p {
-    font-size: 0.85rem;
-    color: #64748b;
-    margin: 0;
-    line-height: 1.5;
-  }
-
-  .loading-state, .empty-state {
-    padding: 32px;
-    text-align: center;
-    border: 1px dashed rgba(51, 65, 85, 0.4);
-    border-radius: 8px;
-    color: #64748b;
-    background: rgba(15, 23, 42, 0.2);
-  }
-
-  /* Table styling */
-  .table-responsive {
-    overflow-x: auto;
-    border-radius: 8px;
-    border: 1px solid rgba(51, 65, 85, 0.4);
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    text-align: left;
-  }
-
-  th {
-    background: #0b1329;
-    color: #94a3b8;
-    font-size: 0.8rem;
-    font-weight: 700;
-    padding: 12px 16px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  td {
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(51, 65, 85, 0.4);
-    font-size: 0.9rem;
-    color: #e2e8f0;
-  }
-
-  tr:last-child td {
-    border-bottom: none;
-  }
-
-  tr:hover td {
-    background: rgba(30, 41, 59, 0.2);
-  }
-
-  .highlight-key {
-    color: #38bdf8 !important;
-    font-weight: 700;
-  }
-
-  .project-key-label {
-    color: #818cf8;
-    font-size: 0.8rem;
-    font-weight: 500;
-    margin-left: 4px;
-  }
-
-  /* Phase Badge styles */
-  .phase-badge {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
-  }
-  .phase-badge.phase-POC {
-    background: rgba(168, 85, 247, 0.15);
-    color: #c084fc;
-    border: 1px solid rgba(168, 85, 247, 0.3);
-  }
-  .phase-badge.phase-交付 {
-    background: rgba(14, 165, 233, 0.15);
-    color: #38bdf8;
-    border: 1px solid rgba(14, 165, 233, 0.3);
-  }
-  .phase-badge.phase-运营 {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-    border: 1px solid rgba(16, 185, 129, 0.3);
-  }
-  .phase-badge.phase-售后 {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
-  }
-
-  /* Priority Badges */
-  .priority-badge {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: monospace;
-  }
-
-  .priority-badge.p-p0 {
-    background: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.2);
-  }
-  .priority-badge.p-p1 {
-    background: rgba(249, 115, 22, 0.15);
-    color: #fb923c;
-    border: 1px solid rgba(249, 115, 22, 0.3);
-  }
-  .priority-badge.p-p2 {
-    background: rgba(245, 158, 11, 0.15);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.3);
-  }
-  .priority-badge.p-p3 {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
-  }
-  .priority-badge.p-p4 {
-    background: rgba(99, 102, 241, 0.15);
-    color: #818cf8;
-    border: 1px solid rgba(99, 102, 241, 0.3);
-  }
-  .priority-badge.p-p5 {
-    background: rgba(148, 163, 184, 0.15);
-    color: #94a3b8;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-  }
-
-  /* Form design */
-  .form-container {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    background: rgba(15, 23, 42, 0.2);
-    border: 1px solid rgba(51, 65, 85, 0.4);
-    border-radius: 8px;
-    padding: 24px;
-    margin-top: 16px;
-  }
-
-  .form-group-row {
-    display: flex;
-    gap: 16px;
-    width: 100%;
-  }
-
   .flex-1 {
-    flex: 1;
-  }
-
-
-
-  /* Searchable Select Dropdown */
-  .custom-select-wrapper {
-    position: relative;
-    width: 100%;
-  }
-
-  .custom-select-dropdown {
-    position: absolute;
-    top: calc(100% - 10px);
-    left: 0;
-    right: 0;
-    background: #0b1329;
-    border: 1px solid rgba(56, 189, 248, 0.3);
-    border-radius: 6px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
-    z-index: 1000;
-    max-height: 200px;
-    overflow-y: auto;
-    padding: 6px 0;
-  }
-
-  .dropdown-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    padding: 8px 16px;
-    font-size: 0.85rem;
-    color: #e2e8f0;
-    cursor: pointer;
-    font-family: monospace;
-  }
-
-  .dropdown-item:hover {
-    background: rgba(56, 189, 248, 0.12);
-    color: #38bdf8;
-  }
-
-  .dropdown-empty {
-    padding: 12px 16px;
-    font-size: 0.8rem;
-    color: #64748b;
-    text-align: center;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    margin-top: 12px;
-    border-top: 1px solid rgba(51, 65, 85, 0.4);
-    padding-top: 16px;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    min-width: 0;
   }
 </style>

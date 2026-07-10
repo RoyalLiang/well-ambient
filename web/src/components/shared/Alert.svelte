@@ -16,7 +16,7 @@
 </script>
 
 {#if show}
-  <div class="alert alert-{type}">
+  <div class="alert alert-{type}" role="status">
     <div class="alert-icon">
       {#if type === 'success'}
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
@@ -51,21 +51,30 @@
   .alert {
     display: flex;
     gap: 12px;
-    padding: 14px 16px;
-    border-radius: 8px;
+    padding: 12px 14px;
+    border-radius: var(--wa-radius-lg, 8px);
     border: 1px solid transparent;
-    margin-bottom: 20px;
     position: relative;
     box-sizing: border-box;
     width: 100%;
-    animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.74),
+      0 10px 24px rgba(30, 46, 64, 0.055);
+    backdrop-filter: blur(14px) saturate(118%);
+    -webkit-backdrop-filter: blur(14px) saturate(118%);
+    animation: slideDown var(--wa-duration-fast, 140ms) var(--wa-ease, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .alert-icon {
     flex-shrink: 0;
     display: flex;
-    align-items: flex-start;
-    margin-top: 2px;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--wa-radius-md, 7px);
+    margin-top: 0;
+    background: rgba(255, 255, 255, 0.58);
   }
 
   .alert-content {
@@ -77,22 +86,26 @@
 
   .alert-title {
     margin: 0;
-    font-size: 0.85rem;
-    font-weight: 700;
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 13px;
+    font-weight: 780;
   }
 
   .alert-message {
     margin: 0;
-    font-size: 0.8rem;
-    line-height: 1.4;
+    color: var(--wa-text-main, #293847);
+    font-size: 13px;
+    line-height: 1.45;
   }
 
   .close-btn {
-    background: transparent;
-    border: none;
+    width: 26px;
+    height: 26px;
+    background: rgba(255, 255, 255, 0.5);
+    border: 0;
     cursor: pointer;
-    padding: 2px;
-    border-radius: 4px;
+    padding: 0;
+    border-radius: var(--wa-radius-sm, 6px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -106,31 +119,40 @@
 
   .close-btn:hover {
     opacity: 1;
+    background: rgba(255, 255, 255, 0.5);
   }
 
   /* Types */
   .alert-success {
-    background: rgba(16, 185, 129, 0.1);
-    border-color: rgba(16, 185, 129, 0.2);
-    color: #34d399;
+    background:
+      linear-gradient(90deg, rgba(4, 150, 111, 0.12), rgba(255, 255, 255, 0.72)),
+      rgba(255, 255, 255, 0.78);
+    border-color: rgba(4, 150, 111, 0.2);
+    color: var(--wa-success, #04966f);
   }
 
   .alert-error {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.2);
-    color: #f87171;
+    background:
+      linear-gradient(90deg, rgba(221, 75, 62, 0.12), rgba(255, 255, 255, 0.72)),
+      rgba(255, 255, 255, 0.78);
+    border-color: rgba(221, 75, 62, 0.22);
+    color: var(--wa-danger, #dd4b3e);
   }
 
   .alert-warning {
-    background: rgba(245, 158, 11, 0.1);
-    border-color: rgba(245, 158, 11, 0.2);
-    color: #fbbf24;
+    background:
+      linear-gradient(90deg, rgba(216, 135, 0, 0.14), rgba(255, 255, 255, 0.72)),
+      rgba(255, 255, 255, 0.78);
+    border-color: rgba(216, 135, 0, 0.22);
+    color: var(--wa-warning, #d88700);
   }
 
   .alert-info {
-    background: rgba(59, 130, 246, 0.1);
-    border-color: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
+    background:
+      linear-gradient(90deg, rgba(37, 107, 216, 0.12), rgba(255, 255, 255, 0.72)),
+      rgba(255, 255, 255, 0.78);
+    border-color: rgba(37, 107, 216, 0.22);
+    color: var(--wa-info, #256bd8);
   }
 
   @keyframes slideDown {

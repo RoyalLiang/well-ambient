@@ -1,6 +1,279 @@
 # Progress Log
 
+## Session: 2026-07-10 - Phase 50 Settings Column Height Synchronization
+
+### Implementation And Validation
+- **Status:** complete
+- Replaced the independent sticky audit height with a desktop grid-stretch contract driven by the left configuration surface.
+- Removed audit diff content from intrinsic grid sizing through an absolutely contained panel, preventing long payloads from inflating both columns.
+- Restored normal-flow positioning at the stacked breakpoint and retained the responsive audit height cap.
+- Replaced legacy local indigo/dark scrollbar styling with the global light-console scrollbar contract for version and diff regions.
+- Browser-checked all five integration pages with audit columns at `1600x900`; every left/right height delta is `0px`.
+- Browser-checked the `1200x760` stacked layout; no horizontal overflow and internal diff scrolling remain intact.
+- `pnpm --dir web build` and targeted `git diff --check` pass. Existing repository-wide Svelte accessibility warnings remain outside this CSS correction.
+
+### Tool Note
+- The browser wrapper does not expose `playwright.setViewportSize`; responsive verification uses the documented browser viewport capability instead.
+
+## Session: 2026-07-10 - Phase 49 Settings Adaptive Layout And Control Consistency
+
+### Audit And Root-Cause Pass
+- **Status:** complete
+- Confirmed the audit panel stretch/compression conflict, duplicated local breadcrumb ownership, GitLab `slice(0, 5)` truncation, mixed Project select implementations, and competing hover/placeholder rules.
+- Rebuilt the real Settings QA entry around `SettingsPanel`; the first reload exposed and then fixed a missing explicit `settingsInspector` declaration in the reactive async-summary update.
+- Browser verification also exposed stale breadcrumb counts caused by hidden dependencies inside `integrationDetail()`. The breadcrumb now reads the already-reactive inspector fact instead of invoking the untracked helper directly.
+
+### Tool Notes
+- A repository-root `package.json` read failed because this workspace keeps the frontend package at `web/package.json`; subsequent package commands use `pnpm --dir web`.
+- The in-app locator wrapper does not expose `hover()`. Hover and open states share the same final CSS lock, so browser validation uses the real clicked/open state and computed backgrounds instead of simulating a hover through page evaluation.
+
+### Implementation And Validation
+- **Status:** complete
+- Added shared non-Settings breadcrumb rendering through `FunctionalWorkspace`; Settings keeps its child-aware breadcrumb but no longer renders a nested first-item button.
+- Moved Settings category context exclusively into the breadcrumb and reduced the large summary header from four facts to three operational facts.
+- Rebuilt the version inspector with a 420px desktop width, viewport-bounded sticky height, separately scrollable version/diff regions, formatted JSON, and responsive full-width/narrow modes.
+- Raised version retrieval from 12 to 40, removed the page-level eight-version/eight-diff truncation, and kept long collections bounded by internal scrolling.
+- Removed GitLab's five-row overview slice and added a 360px repository table scroll boundary with sticky headings.
+- Replaced Project's bespoke Project Key dropdown and searchable phase/priority fields with shared Select modes.
+- Locked shared/native select open and hover surfaces to the light palette and set shared/global input placeholders to 12px.
+- `pnpm --dir web build` passes and target `git diff --check` passes.
+- Full `pnpm --dir web check` returns only the existing eight `TaskKanban.svelte` `parentDemand` nullability errors and 65 existing warnings; Phase 49 files add no diagnostics.
+- Browser verification covers 1600x900, 1280x720, and 390x844 layouts with no document-level horizontal overflow.
+
+## Session: 2026-07-10 - Phase 48 Unified Settings Main-Content Rebuild
+
+### Scope Correction And Audit
+- **Status:** complete
+- Confirmed that the latest page-level implementation covered GitLab only.
+- Separated shared-shell changes from actual child-page rebuilds.
+- Loaded Self-Improving, UI design-system, finesse product-UI/redesign guidance, taste anti-slop constraints, and file-based planning guidance.
+- Next action: inventory every Settings route, define the shared workbench contract, then rebuild the remaining child pages.
+
+### Error Log
+- `ProjectConfig.svelte` large patch failed on attempt 1 because a malformed deletion marker made the expected context invalid. No file changes were applied; retry strategy changed to small exact-context patches.
+- A read attempted `web/src/prototype.ts`, but the repository uses `web/src/prototype-entry.ts`; the correct entry was read on the next inspection.
+- In-app preview screenshot capture closed the active tab target after all DOM and layout measurements had completed. The tab binding was reacquired for the final static check; no application error or console failure accompanied the tool-side closure.
+- The final attempt to keep Vite Preview running on `127.0.0.1:4175` was blocked by sandbox `EPERM`; the required escalation was then rejected because the current Codex usage limit prevented approval. No workaround was attempted. The built `dist/settings-preview.html` artifact and completed browser QA remain valid, but no persistent review URL is available at handoff.
+
+### Shared Contract And Child Pages
+- **Status:** complete
+- Added `web/src/styles/settings-config-workbench.css` and loaded it from `SettingsPanel.svelte`.
+- Migrated Feishu, Jira, Project priority, AI engine, and system-design corpus markup to the shared workbench hierarchy.
+- Replaced false ready/connected defaults with explicit unchecked, incomplete, checking, error, and success states.
+- Corrected AI engine configuration detection so context facts alone do not mark the model engine configured.
+- Removed obsolete page-local style blocks and retained only component-specific rules; subsequent production builds pass without target-page unused-selector warnings.
+- Added `settings-preview.html`, a local-only Vite entry that mounts the real six config components behind deterministic API fixtures for visual QA without weakening production authentication.
+- Desktop browser review now covers GitLab, Feishu, Jira, Project priority, and AI engine overview/edit states with no document-level horizontal overflow.
+
+### Responsive QA And Final Validation
+- **Status:** complete
+- System-design list/editor and context-pack result states pass desktop overflow checks.
+- First 390px pass found and corrected GitLab grid min-content overflow; the other five child pages stayed within the document width, with Project table overflow isolated to its own scroll container.
+- GitLab, Feishu, Jira, Project, and AI narrow edit states now pass document-width checks; Feishu intentionally keeps its four-step control internally scrollable.
+- `pnpm --dir web build` passes. Full `pnpm --dir web check` remains blocked only by eight existing `TaskKanban.svelte` nullability errors; no target Settings file reports an error.
+- Target-file `git diff --check` passes. Route coverage and the built local QA entry are recorded; a persistent preview process could not be retained because sandbox escalation was unavailable.
+
+
+## Session: 2026-07-10 - Phase 45 Settings Surface System Rebuild
+
+### Phase 1: Audit and shared system
+- **Status:** complete
+- **Started:** 2026-07-10
+- Actions taken:
+  - Loaded the UI design system, existing-project redesign, finesse product UI, and file-planning guidance.
+  - Reconfirmed the light admin-console baseline and the user's preference for restrained glass.
+  - Recorded the explicit ban on nested container/capsule/control composition.
+  - Removed redundant `section-card` wrappers from GitLab, Feishu, Jira, project, AI engine, and AI context routes.
+  - Added the Phase 46 flat workbench contract: one glass surface per page column, definition-list summaries, flat form grids, flat audit rows, and restrained semantic states.
+- Files created/modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `web/src/components/SettingsPanel.svelte`
+
+### Phase 2: Browser visual verification and correction
+- **Status:** complete
+- Actions taken:
+  - Production build passed after the structural and visual-system change.
+  - Diff hygiene passed for the touched files.
+  - Ran in-app Playwright inspection against an isolated local API fixture across all 11 Settings routes.
+  - Fixed version-detail compression, rounded version/summary rows, context option wrapping, project table overflow, and permission branch card nesting.
+  - Added shared scroll reset so configuration edit modes and menu route changes always open at the workbench top.
+  - Rebuilt the <=860px shell as an off-canvas navigation drawer and verified open/close state at 760px.
+  - Removed the isolated API fixture and restored the normal Vite proxy after visual verification.
+- Files created/modified:
+  - `web/src/components/SettingsPanel.svelte`
+  - `web/src/components/prototype/FunctionalAdminShell.svelte`
+  - `web/src/components/config/GitLabConfig.svelte`
+  - `web/src/components/config/FeishuConfig.svelte`
+  - `web/src/components/config/JiraConfig.svelte`
+  - `web/src/components/config/AIConfig.svelte`
+  - `web/src/components/config/ProjectConfig.svelte`
+  - `web/src/lib/settings-ui.ts`
+
+
+## Session: 2026-07-07
+
+### Phase 40: High-Fidelity Admin Prototype Reset
+- **Status:** complete
+- **Started:** 2026-07-07
+- Actions taken:
+  - Re-ran the UI review with `finesse-skill`, `taste-skill`, `ui-skill`, and the image-first workflow because prior coded passes still did not meet the visual bar.
+  - Generated a high-fidelity reference image for a light, flat, frosted-glass management console and copied it to `output/modern-admin-reference-phase40.png`.
+  - Added `web/prototype.html` as an unauthenticated standalone Vite entry so the prototype can be reviewed without logging into the main app.
+  - Added `web/src/prototype-entry.ts` and `web/src/components/prototype/StandaloneAdminPrototype.svelte`.
+  - Reframed the prototype around a dark left rail, clean top command bar, large focus card, metric stack, risk/evidence task table, and right-side inspector.
+  - Updated `web/vite.config.ts` so both `index.html` and `prototype.html` are emitted in production builds.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `web/vite.config.ts`
+  - `web/prototype.html`
+  - `web/src/prototype-entry.ts`
+  - `web/src/components/prototype/StandaloneAdminPrototype.svelte`
+  - `output/modern-admin-reference-phase40.png`
+- Validation:
+  - `pnpm build` in `web` passed and emitted `dist/prototype.html`.
+  - `git diff --check` passed.
+  - `pnpm check` still reports the three known non-prototype TypeScript errors in `TaskKanban.svelte` and `ProjectConfig.svelte`; no prototype-specific errors were reported.
+  - Browser screenshot verification at `http://127.0.0.1:5174/prototype.html` confirmed the standalone prototype renders the left rail, focus card, task table, and inspector.
+
+## Session: 2026-07-06
+
+### Phase 37: Modern Admin UI Prototype
+- **Status:** complete
+- **Started:** 2026-07-06
+- Actions taken:
+  - Loaded planning-with-files, `finesse-skill` product UI guidance, and `ui-skill`.
+  - Set the design read to product register, restrained glass, evidence-first, SPECTACLE 2, DENSITY 9.
+  - Recorded the prototype protection rules: do not revive the rejected decision queue, delivery cockpit, or project health telemetry surfaces.
+  - Started with a coded prototype and design-token substrate rather than rewriting existing business pages.
+  - Added `modern-admin-tokens.css` with restrained acrylic, semantic status colors, density spacing, focus rings, and reduced-motion behavior.
+  - Added a static coded `ModernAdminPrototype` surface covering exception command, weekly decisions, schedule governance, evidence replay, and override preflight.
+  - Exposed the prototype as a `config:read`-gated `UI 原型` tab in `App.svelte`.
+  - Started Vite dev server for local review; sandboxed bind failed, approved local bind succeeded and Vite selected port 5174 because 5173 was occupied.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `web/src/main.ts`
+  - `web/src/App.svelte`
+  - `web/src/styles/modern-admin-tokens.css`
+  - `web/src/components/prototype/ModernAdminPrototype.svelte`
+- Validation:
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Local preview is running at `http://127.0.0.1:5174/`.
+  - Browser page-text check confirmed the app is reachable but the in-app browser is on the login screen, so visual prototype review requires logging in and opening the `UI 原型` tab.
+
+## Session: 2026-07-05
+
+### Phase 31: Hide Project Health Telemetry
+- **Status:** complete
+- **Started:** 2026-07-05
+- Actions taken:
+  - Accepted the product judgment that the visible project telemetry panel still does not prove its practical operator value.
+  - Removed `ProjectHealthTelemetry` from the evidence observatory render tree.
+  - Removed the now-unused `ProjectHealthTelemetry` import from `App.svelte`.
+  - Kept `ProjectHealthTelemetry.svelte` in the codebase so the scoring foundation can be reworked or deleted later with a clearer product contract.
+- Files modified:
+  - `web/src/App.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `git diff --check` passed.
+  - `pnpm build` in `web` passed with existing Svelte warnings in other components.
+
+### Phase 30: Project Health Telemetry Triage And Manual Intervention
+- **Status:** complete
+- **Started:** 2026-07-05
+- Actions taken:
+  - Applied `finesse-skill` guidance as a restrained product-dashboard refactor.
+  - Rebuilt the expanded project health panel around an exception command board: top risk focus, red/yellow/green counts, average health, and priority intervention cards.
+  - Derived each project's health level, weakest dimension, evidence gap, decision question, and manual intervention direction from existing SH/EQ/CE/SI/PHDI fields.
+  - Replaced raw table columns with compact evidence micro-cells, weakest-dimension diagnosis, and a dedicated manual intervention column.
+  - Reworked the details modal into an intervention dossier with urgency, decision question, weakest evidence, human action, source route, and diagnostic evidence.
+  - Removed new `ProjectHealthTelemetry.svelte` build warnings by changing the modal close path and deleting unused CSS.
+- Files modified:
+  - `web/src/components/ProjectHealthTelemetry.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `git diff --check` passed.
+  - `pnpm build` in `web` passed; remaining Svelte warnings are existing warnings in other components, not in `ProjectHealthTelemetry.svelte`.
+
 ## Session: 2026-07-04
+
+### Phase 29: Red-Zone First Paint Filtering
+- **Status:** complete
+- **Started:** 2026-07-04
+- Actions taken:
+  - Loaded the global `ui-skill` before changing the red-zone UI behavior.
+  - Confirmed the screenshot showed lower-case Git branch/commit-derived IDs such as `revert-4`, `with-5`, and `middleq-...` being rendered as story cards during the first paint.
+  - Changed dashboard bootstrap so config/member filtering finishes before the first agenda fetch populates visible red-zone cards.
+  - Added a stable Jira issue-key guard for red-zone agenda items, excluding internal `TASK-*`/`DEMAND-*` and lower-case Git branch slices from the decision cards.
+  - Left the existing auto-decision telemetry feed untouched because the reported issue was the red-zone card grid.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `web/src/components/DecisionDashboard.svelte`
+- Validation:
+  - `git diff --check` passed.
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector/chunk-size warnings.
+  - Running Vite preview received HMR for `DecisionDashboard.svelte`.
+
+### Phase 28: Schedule And Evidence UI Refinement
+- **Status:** complete
+- **Started:** 2026-07-04
+- Actions taken:
+  - Loaded the global `ui-skill` before changing the touched UI surfaces.
+  - Reworked the red-zone diagnostic card header so story/bug type and Jira number sit on one line.
+  - Locked red-zone card rows to a stable equal-height grid so upper and lower cards render consistently.
+  - Rebuilt the schedule risk calendar as an operational control panel with a primary focus line, refresh action, risk filter chips, clearer bucket hierarchy, and denser event rows.
+  - Moved the demand deconstruction engine from the evidence observatory into the schedule governance page, keeping the evidence observatory focused on health telemetry and task/evidence collaboration.
+- Files modified:
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `web/src/App.svelte`
+  - `web/src/components/DecisionDashboard.svelte`
+  - `web/src/components/DemandKanban.svelte`
+- Validation:
+  - `git diff --check` passed.
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector/chunk-size warnings.
+
+### Phase 27: Remove Delivery Cockpit And Continue Phase APIs
+- **Status:** complete
+- **Started:** 2026-07-04
+- Actions taken:
+  - Accepted the product judgment that the visible strongest-brain delivery cockpit still does not prove its value.
+  - Loaded the global `ui-skill` before touching UI code.
+  - Removed `StrongestBrainDeliveryCockpit` from the decision dashboard and deleted the frontend component.
+  - Preserved backend strongest-brain read models so later phase-specific pages can reuse evidence, exception, weekly decision, AI trace, override, and authz data.
+  - Added `GET /api/strongest-brain/exceptions` as the Phase 2 exception-center API with mode, summary, evidence, close requirements, owners, deadlines, severity, and evidence completeness.
+  - Added `GET /api/strongest-brain/weekly-decisions` as the Phase 3 decision-meeting API with mode, summary, decision cards, options, owners, evidence refs, and decision debt.
+  - Refactored strongest-brain decision snapshot construction so decision queue, exception center, and weekly decision center share one read model.
+- Files created/modified:
+  - `.agents/domains/coding.yaml`
+  - `.agents/memory/project.jsonl`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `internal/server/server.go`
+  - `internal/server/strongest_brain_handlers.go`
+  - `internal/server/strongest_brain_handlers_test.go`
+  - `web/src/components/DecisionDashboard.svelte`
+  - `web/src/components/StrongestBrainDeliveryCockpit.svelte` deleted
+- Validation:
+  - `git diff --check` passed.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestStrongestBrain(ExceptionAndWeeklyDecisionCenters|DecisionQueue|EvidenceChain|DeliveryCockpit)' -count=1` passed.
+  - `pnpm build` in `web` passed with existing Svelte a11y/unused-selector/chunk-size warnings.
 
 ### Phase 26: Strongest Brain Delivery Transformation Rollout
 - **Status:** complete
@@ -294,6 +567,10 @@
 | Frontend build | `pnpm build` in `web` | production build succeeds | passed with existing a11y warnings | pass |
 | Full Go tests after follow-up | `GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1` | all Go packages pass | passed | pass |
 | Frontend build after follow-up | `pnpm build` in `web` | production build succeeds | passed with remaining existing a11y warnings outside the Deconstructor dropdown touched area | pass |
+| Phase 45 frontend build | `pnpm -C web build` | production build succeeds | passed; existing DemandKanban and Switch warnings remain | pass |
+| Phase 45 TypeScript | `pnpm -C web exec tsc -p tsconfig.app.json --pretty false` | no type errors | passed | pass |
+| Phase 45 browser route sweep | all 11 Settings routes | no dark drift, content overflow, or nested field surfaces | passed with isolated local fixture | pass |
+| Phase 45 responsive workbench | 1024x768 and 760x900 | content remains visible and navigation usable | passed; drawer verified open and closed | pass |
 
 ### Phase 7: Modal, Department, and Date Follow-up
 - **Status:** complete
@@ -729,6 +1006,294 @@
 |----------|--------|
 | Where am I? | Complete |
 | Where am I going? | Deliver concise final summary |
-| What's the goal? | Polish four dashboard/config UI issues: Override controls, red-zone project filtering, report preview dropdown styling, and Jira JQL overflow. |
-| What have I learned? | For this app's dark cockpit UI, custom button/dropdown shells are more consistent than trying to theme native select controls, while native date inputs can remain as transparent interaction layers. |
-| What have I done? | Updated the three affected Svelte components, recorded task memory, confirmed production build, and documented existing type-check blockers outside this change set. |
+| What's the goal? | Temporarily hide the project health telemetry panel because its practical operator value is still unclear. |
+| What have I learned? | A dashboard module should stay visible only when it drives a concrete operator action; telemetry without a proven workflow should not consume the evidence observatory. |
+| What have I done? | Removed the `ProjectHealthTelemetry` mount from `App.svelte`, recorded Phase 31 in task memory, and confirmed production build plus diff hygiene. |
+
+### Phase 32: KPI R&D Performance Dashboard Refactor
+- **Status:** complete
+- Actions taken:
+  - Applied `finesse-skill` product UI direction to rebuild the KPI dashboard as a dense evaluation cockpit rather than a loose ranking board.
+  - Promoted daily/weekly report granularity to the top-level control and synchronized it with the backend `day`/`week` period values.
+  - Added a report brief panel that shows current report window, generation time, delivery totals, task/demand/Bug split, active overdue count, and MR count.
+  - Added a team average score panel and an explainable score model: output contribution, code evidence, flow efficiency, and risk health.
+  - Replaced the old member ranking cards with a member matrix showing KPI score, task/demand/Bug counts, MR/review/cycle evidence, active/overdue risk, and score breakdown.
+  - Reworked the department view into compact department mix cards with proportional delivery bars and task/demand/Bug distribution.
+  - Removed stale KPI leaderboard CSS and added responsive styles for the new dashboard structure.
+- Files modified:
+  - `web/src/components/KPIKanban.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - `.agents/state.json` parsed successfully.
+  - `pnpm check` remains blocked by 3 non-KPI errors: `TaskKanban.svelte` references missing `TaskResponse.id`, and `ProjectConfig.svelte` assigns numbers where strings are expected.
+  - Existing repository-wide Svelte a11y and unused CSS warnings remain outside the KPI component.
+
+### Phase 33: KPI Core Member Data Boundary
+- **Status:** complete
+- Actions taken:
+  - Added a server-side core member filter to the KPI endpoints so non-core member data is removed before KPI aggregation and report preview generation.
+  - Derived core members from `jira.sync_users`; when absent, fell back to assignees parsed from custom JQL `assignee in (...)`.
+  - Kept the filter disabled when no core member source is configured to avoid clearing KPI data in unconfigured test/local deployments.
+  - Matched core members by display name, username, email prefix, and first token so Jira usernames and local profile names stay aligned.
+  - Ensured KPI summary, user rows, department rows, report overview, personal sections, risks, meeting focus, and evidence are all based on the filtered task/user set.
+  - Added a regression test proving a non-core member task is excluded from KPI performance and report preview evidence.
+- Files modified:
+  - `internal/server/kpi_handlers.go`
+  - `internal/server/kpi_handlers_test.go`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestKPI(PerformanceIncludesProcessRiskFields|ReportPreviewReturnsEvidenceBackedSections|FiltersNonCoreMemberData|ReportPreviewRejectsUnknownType)' -count=1 -v` passed.
+
+### Phase 34: KPI Interaction Stability And Analysis Depth
+- **Status:** complete
+- Actions taken:
+  - Applied `finesse-skill` product UI guidance for the KPI follow-up as a dense internal performance dashboard, not a decorative redesign.
+  - Fixed click/refresh jumping by preserving the already-loaded KPI dashboard while the daily/weekly mode refreshes data.
+  - Added an inline sync indicator for background refreshes so the page does not swap to a full loading state after first load.
+  - Prevented repeated daily/weekly clicks while a refresh is in flight and removed active-state scale transforms from KPI controls.
+  - Followed up on the remaining daily/weekly layout jump by making the sync indicator a fixed reserved slot, locking dynamic copy height, and giving the report/member matrix panels stable minimum heights.
+  - Capped the member matrix as an internal scroll area with a sticky header so weekly rows do not stretch the whole page and daily rows do not collapse it.
+  - Added a performance depth diagnosis panel for delivery concentration, evidence coverage, risk load, review pressure, Bug share, and score spread.
+  - Added a breadth distribution panel for task/demand/Bug mix, score bands, department coverage, and average cycle time.
+- Files modified:
+  - `web/src/components/KPIKanban.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Existing repository-wide Svelte warnings remain outside the KPI interaction/depth pass.
+
+### Phase 35: Jira Execution Tracking Fact Alignment
+- **Status:** complete
+- Actions taken:
+  - Traced the "Jira Task 开发结果追踪" view from `TaskKanban.svelte` through `/api/execution/tasks` to `execution_handlers.go`.
+  - Confirmed bound execution rows were displaying the child execution task's assignee/status, even when the parent Jira Task demand had already been completed or reassigned in Jira.
+  - Added explicit `execution_assignee`, `jira_assignee`, and `jira_status` fields to the execution tracking DTO.
+  - Made the bound Jira Task demand drive the effective `assignee`, `status`, result state, risk state, last update, and assignee/search filters.
+  - Kept the child execution assignee visible as secondary table evidence so historical execution ownership is not lost.
+  - Updated Jira sync so a completed Jira status terminates the 24-hour local manual assignee protection window.
+  - Updated Jira keep-alive correction sync to continue probing recently completed Jira Task/Bug keys for 14 days, allowing post-completion owner changes and reopen facts to refresh even when the main custom JQL excludes `done`.
+  - Added a regression case where the parent Jira Task is `done` and reassigned to Bob while the child execution task still says Alice/progress.
+- Files modified:
+  - `internal/server/execution_handlers.go`
+  - `internal/server/jira_worker.go`
+  - `internal/server/server_test.go`
+  - `internal/server/jira_worker_test.go`
+  - `web/src/components/TaskKanban.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestShouldPreserveLocalAssignee|TestGetExecutionTasksBuildsEvidenceObservability' -count=1 -v` passed.
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestShouldPreserveLocalAssignee|TestShouldIncludeInJiraKeepAlive' -count=1 -v` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Existing repository-wide Svelte warnings remain outside the execution tracking fact-alignment fix.
+
+### Phase 36: Core Member Visibility Boundary
+- **Status:** complete
+- Actions taken:
+  - Added a shared coreMember visibility helper that reuses the configured KPI member source: `jira.sync_users` first, custom JQL assignees as fallback, disabled when no member source is configured.
+  - Applied the visibility boundary to `/api/tasks`, `/api/schedule`, `/api/execution/tasks`, and `/api/demands/options`.
+  - Made `/api/schedule` filter both demand rows and subtask stats so non-coreMember-owned subtasks do not affect the visible schedule projection.
+  - Made `/api/execution/tasks` filter by effective current owner and redact non-core `execution_assignee` / `jira_assignee` secondary fields before encoding.
+  - Added a KPI report evidence guard so report evidence remains tied to included coreMember users.
+  - Removed the visible `外部协同` assignee entries and shortcut branch from `TaskKanban.svelte` and `DemandKanban.svelte`.
+- Files modified:
+  - `internal/server/core_member_visibility.go`
+  - `internal/server/server.go`
+  - `internal/server/schedule_handlers.go`
+  - `internal/server/execution_handlers.go`
+  - `internal/server/demand_handlers.go`
+  - `internal/server/kpi_handlers.go`
+  - `internal/server/server_test.go`
+  - `web/src/components/TaskKanban.svelte`
+  - `web/src/components/DemandKanban.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'TestGetTasksFiltersNonCoreMemberData|TestGetScheduleFiltersNonCoreMemberData|TestGetExecutionTasksFiltersNonCoreMemberData|TestKPIFiltersNonCoreMemberData|TestGetExecutionTasksBuildsEvidenceObservability' -count=1 -v` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Existing repository-wide Svelte warnings remain outside this data-boundary fix.
+
+### Phase 38: Finesse Componentized Admin Prototype Refactor
+- **Status:** complete
+- Actions taken:
+  - Re-read and applied `finesse-skill` product UI guidance after the first prototype was rejected as too static and not aligned with the requested management-console feel.
+  - Reworked `modern-admin-tokens.css` from a more decorative deep-blue glass layer into a flatter charcoal/acrylic token substrate with semantic status colors, stable control sizing, and quieter surfaces.
+  - Split the prototype into local reusable pieces: `PrototypeShell`, `PrototypeMetric`, `PrototypeBadge`, `PrototypeTable`, and `PrototypeInspector`.
+  - Replaced the single-file concept-board prototype with a dense operational UI: left lane navigation, command header, search/filter/density toolbar, metric strip, exception table, weekly decision queue, selected workflow path, and right-side mediation preflight drawer.
+  - Kept the preview behind the existing `config:read` gated `UI 原型` tab instead of replacing current production pages.
+  - Attempted browser verification at `http://127.0.0.1:5174/`; the app is reachable, but the in-app browser remained on the login page and browser policy blocked local script navigation for setting a preview auth state.
+- Files modified:
+  - `web/src/styles/modern-admin-tokens.css`
+  - `web/src/components/prototype/ModernAdminPrototype.svelte`
+  - `web/src/components/prototype/PrototypeShell.svelte`
+  - `web/src/components/prototype/PrototypeMetric.svelte`
+  - `web/src/components/prototype/PrototypeBadge.svelte`
+  - `web/src/components/prototype/PrototypeTable.svelte`
+  - `web/src/components/prototype/PrototypeInspector.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - `pnpm check` still fails on 3 pre-existing non-prototype TypeScript errors: `TaskKanban.svelte` references missing `TaskResponse.id`, and `ProjectConfig.svelte` binds numeric values where string values are expected.
+  - Existing repository-wide Svelte a11y and unused CSS warnings remain outside the prototype refactor.
+
+### Phase 39: Bold Beauty Admin Prototype Pass
+- **Status:** complete
+- Actions taken:
+  - Treated the feedback "美即正义" as a `finesse-skill` bolder iteration while keeping the scope inside the preview prototype.
+  - Pushed the visual direction to an editorial control-room aesthetic: deeper substrate, stronger cyan focus, richer grain, acrylic edges, ambient grid, and more decisive contrast.
+  - Added `PrototypeTheatre.svelte` as the new first-screen visual center, combining selected issue focus, risk badge, owner/due/wait/stage facts, signal counts, and direct mediation actions.
+  - Reworked `PrototypeShell.svelte` so the rail and app stage feel intentional rather than merely functional.
+  - Refined `PrototypeMetric`, `PrototypeBadge`, `PrototypeTable`, and `PrototypeInspector` with stronger hierarchy, richer borders, more elegant status glow, sharper selected-row feedback, and a more instrument-like preflight drawer.
+  - Left production pages, auth behavior, backend routes, and real data flows untouched.
+- Files modified:
+  - `web/src/styles/modern-admin-tokens.css`
+  - `web/src/components/prototype/ModernAdminPrototype.svelte`
+  - `web/src/components/prototype/PrototypeTheatre.svelte`
+  - `web/src/components/prototype/PrototypeShell.svelte`
+  - `web/src/components/prototype/PrototypeMetric.svelte`
+  - `web/src/components/prototype/PrototypeBadge.svelte`
+  - `web/src/components/prototype/PrototypeTable.svelte`
+  - `web/src/components/prototype/PrototypeInspector.svelte`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Filtered `pnpm check` still reports only the 3 known non-prototype TypeScript errors in `TaskKanban.svelte` and `ProjectConfig.svelte`.
+  - Browser visual verification still requires logging in to the existing app and opening `UI 原型`.
+
+### Phase 41: Prototype-Aligned Multi-Agent Refactor Calibration
+- **Status:** complete
+- Actions taken:
+  - Paused further page implementation after user feedback that the current style drifted away from the original prototype and data-chain intent.
+  - Re-read AGENTS cold-start files, active state, memory hits, and frontend design skills.
+  - Reconfirmed the primary visual baseline as `output/functional-admin-console-reference.png`: `well-ambient` brand, dark left rail, light main workspace, table-first middle surface, right inspector, restrained frosted cards.
+  - Marked `output/functional-admin-console-reference-alt.png` and `output/modern-admin-reference-phase40.png` as layout references only because they still show `最强大脑`.
+  - Spawned a common worker agent to own shared Phase 41 design/data contract work before page agents edit production surfaces.
+  - Integrated the common worker output: `DESIGN.md`, `docs/admin-ui-calibration.md`, `modern-admin-tokens.css`, `FunctionalAdminShell.svelte`, `FunctionalWorkspace.svelte`, and `web/src/lib/admin-console/contract.ts`.
+  - Integrated Decision, Schedule, Task, Evidence, and KPI page workers with disjoint file ownership and Phase 41 metric/table/inspector vocabulary.
+  - Preserved the existing production data chains: decision agenda/intervention APIs, task/schedule/execution APIs, evidence/deconstruction APIs, KPI performance/report preview APIs, and settings/config/RBAC/audit APIs.
+  - Closed the stalled Settings worker and completed `SettingsPanel.svelte` in the main thread with a Phase 41 container shell, real adapter metrics, category table, and right inspector while leaving config child components functional.
+  - Confirmed no `最强大脑`, `Strongest Brain`, or `StrongestBrain` strings in the migrated page targets.
+  - Removed remaining old emoji markers from `SettingsPanel.svelte` page/control copy.
+- Files modified in this slice:
+  - `DESIGN.md`
+  - `docs/admin-ui-calibration.md`
+  - `web/src/styles/modern-admin-tokens.css`
+  - `web/src/lib/admin-console/contract.ts`
+  - `web/src/components/prototype/FunctionalAdminShell.svelte`
+  - `web/src/components/prototype/FunctionalWorkspace.svelte`
+  - `web/src/components/DecisionDashboard.svelte`
+  - `web/src/components/DemandKanban.svelte`
+  - `web/src/components/TaskKanban.svelte`
+  - `web/src/components/ProjectHealthTelemetry.svelte`
+  - `web/src/components/Deconstructor.svelte`
+  - `web/src/components/KPIKanban.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+- Validation:
+  - `pnpm exec tsc -p tsconfig.app.json --pretty false` in `web` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check -- web/src/components/SettingsPanel.svelte` passed.
+  - Targeted migrated-page brand scan passed.
+  - Existing repository-wide Svelte warnings remain, mainly in `DemandKanban.svelte`, shared modal/switch, and config child components; Settings no longer contributes new warnings.
+
+### Phase 42: Settings IA Correction
+- **Status:** complete
+- Actions taken:
+  - Converted the Settings left navigation from flat grouped labels into real collapsible submenus with `aria-expanded`.
+  - Replaced the mixed right-side stack of hero, metrics, category table, module content, and inspector with a unified right content frame.
+  - Added a breadcrumb bar above the Settings content area: `管理台配置 / group / current section`.
+  - Kept the actual business content below the breadcrumb in one content shell so GitLab, Feishu, Jira, Projects, AI, KPI, RBAC, policy, and audit flows render consistently.
+  - Preserved existing API/data flows and child config components; this was a container/IA correction only.
+- Files modified:
+  - `web/src/components/SettingsPanel.svelte`
+  - `DESIGN.md`
+  - `docs/admin-ui-calibration.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm exec tsc -p tsconfig.app.json --pretty false` in `web` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check -- web/src/components/SettingsPanel.svelte` passed.
+  - Build output has no new `SettingsPanel.svelte` warnings; remaining warnings are existing repository-wide warnings outside this IA correction.
+
+### Phase 43: Settings Rail Navigation Correction
+- **Status:** complete
+- Actions taken:
+  - Moved Settings grouped submenus out of the Settings content frame and into the global `FunctionalAdminShell` left rail.
+  - Added Shell-level Settings submenu permission filtering, active section highlight, and callback-driven section navigation.
+  - Removed the internal `SettingsPanel.svelte` sidebar markup, sidebar state, resize observer, and sidebar-specific CSS.
+  - Kept `SettingsPanel.svelte` as a single breadcrumb-plus-content frame so the right content area remains unified.
+  - Preserved existing config, KPI, RBAC, authorization, and audit data flows; this was a navigation ownership correction.
+- Files modified:
+  - `web/src/App.svelte`
+  - `web/src/components/prototype/FunctionalAdminShell.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+  - `DESIGN.md`
+  - `docs/admin-ui-calibration.md`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `.agents/state.json`
+- Validation:
+  - `pnpm exec tsc -p tsconfig.app.json --pretty false` in `web` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Targeted `SettingsPanel.svelte` scan found no internal sidebar/menu selectors or grouped-navigation helpers.
+  - Build output has no new `SettingsPanel.svelte` warnings; remaining warnings are existing repository-wide warnings outside this correction.
+
+### Phase 44: Main Content Prototype Alignment
+- **Status:** complete
+- Actions taken:
+  - Updated the local frontend UI rule so UI work defaults to `ui-skill`, then falls back to `finesse-skill` and `taste-skill`.
+  - Flattened `FunctionalWorkspace.svelte` so production pages do not render the old module hero by default.
+  - Tightened `FunctionalAdminShell.svelte` main content spacing, topbar sizing, search width, light background, and card shadow tokens toward `output/functional-admin-console-reference.png`.
+  - Converted the migrated Demand, Task, KPI, Project Health, Deconstructor, and Settings page-level headers into compact workbench toolbars instead of explanatory hero blocks.
+  - Preserved existing page data flows and child panels; this pass changes visual hierarchy only.
+- Files modified:
+  - `.agents/domains/coding.yaml`
+  - `.agents/memory/project.jsonl`
+  - `.agents/state.json`
+  - `DESIGN.md`
+  - `docs/admin-ui-calibration.md`
+  - `web/src/styles/modern-admin-tokens.css`
+  - `web/src/components/prototype/FunctionalAdminShell.svelte`
+  - `web/src/components/prototype/FunctionalWorkspace.svelte`
+  - `web/src/components/DemandKanban.svelte`
+  - `web/src/components/TaskKanban.svelte`
+  - `web/src/components/KPIKanban.svelte`
+  - `web/src/components/ProjectHealthTelemetry.svelte`
+  - `web/src/components/Deconstructor.svelte`
+  - `web/src/components/SettingsPanel.svelte`
+- Validation:
+  - `pnpm exec tsc -p tsconfig.app.json --pretty false` in `web` passed.
+  - `pnpm build` in `web` passed.
+  - `git diff --check` passed.
+  - Targeted `showContextBar` scan confirmed no production page enables the optional workspace context hero.
+  - Build still reports existing repository-wide Svelte warnings in `DemandKanban.svelte`, shared modal/switch, and config child components.

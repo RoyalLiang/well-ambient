@@ -1,46 +1,29 @@
-# well-ambient 前端设计与 UI 规则规范 (DESIGN.md)
+# well-ambient Phase 41 Admin UI Design Contract
 
-本文档定义了 `well-ambient` 系统的 UI 设计美学规范和“无感协同”交互准则，以避免通用、廉价的 AI 默认模板视觉，保障项目后续迭代的极高品味。
+`well-ambient` 当前前端重构以 Phase 41 原型为准。完整落地规范见 [docs/admin-ui-calibration.md](docs/admin-ui-calibration.md)。
 
----
+## Active Visual Baseline
 
-## 🌌 1. 视觉美学系统 (Visual System)
+- 主基准：`output/functional-admin-console-reference.png`。
+- 第一屏结构：深色左轨、浅色主工作区、白色雾面卡片、表格主导、右侧详情栏。
+- 品牌信号：左轨和顶部只使用 `well-ambient`，不得继承或放大其他阶段里的旧命名。
+- 信息密度：B 端管理台优先，首屏应能同时看到指标、状态分段、主表格和详情栏。
+- 材质：只在卡片、顶部栏、详情栏使用克制白色雾面；禁止整页暗色玻璃、舞台剧场、霓虹发光背景和装饰性大渐变。
+- 信息架构：该使用子菜单的页面必须把分组子菜单放在全局菜单栏/左轨中，不得放进主 content 区域；右侧内容区保持统一结构，上方为面包屑导航，下方为实际业务内容容器，不再混用分类索引表和独立详情栏作为同级顶层区域。
+- 主内容结构：顶部栏之后默认直接进入业务内容。`FunctionalWorkspace` 不应默认渲染模块 hero；页面自身顶部只保留低矮工具条、筛选、视图切换或面包屑。
+- UI skill 顺序：前端 UI 改造默认先用 `ui-skill`，不可用时依次回退 `finesse-skill`、`taste-skill`。
 
-### 1.1 配色方案 (Color Calibration)
-项目采用**冷色调工业暗黑科技感（Dark Tech / Hack Vibe）**，严格遵守 **Color Consistency Lock（全页色彩锁）**，全站 Grays 统一使用 Slate 暖灰与深邃蓝灰：
-*   **基础底色**：Slate-950 (`#020617`) 作为全站主体。
-*   **卡片背景**：半透明毛玻璃 (`rgba(10, 15, 30, 0.7)`)，搭配 1px 细微边界线 (`border: 1px solid rgba(51, 65, 85, 0.35)`) 和模糊滤镜 (`backdrop-filter: blur(12px)`)。
-*   **二元语义高亮**：
-    - **需求（Story/Task）侧**：使用科技靛蓝 (`#6366f1` / `#818cf8`) 和青色 (`#06b6d4`)，代表逻辑、建设和价值交付。
-    - **缺陷（Bug）侧**：使用警示橙红 (`#f43f5e` / `#ef4444`) 和玫瑰红 (`#e11d48`)，代表漏洞、防御和发布熔断。
-    - **自动遥测流**：使用极客极光绿 (`#10b981` / `#34d399`)，代表静默流转和自动化安全。
+## Superseded Guidance
 
-### 1.2 字体与排版
-*   **数据/标识展示**：所有的 Task ID、分支名、Commit Message、时间戳等遥测段落必须使用**等宽字体（Monospace）**展示（如 `JetBrains Mono`, `ui-monospace`），以体现精密的工业质感。
-*   **边角一致性 (Shape Consistency Lock)**：
-    - 按钮、输入框、卡片等所有形状统一采用微圆角设计。
-    - 卡片圆角统一为 `16px (rounded-2xl)`，小徽章与按钮圆角为 `6px / 8px`。不允许在一个页面上混合直角与全胶囊状等冲突系统。
+旧版 Dark Tech / Hack Vibe cockpit 规范只可作为历史实验参考，不再作为生产页面或页面代理的默认设计基准。除非用户明确要求“暗色大屏/战情室”，新页面和改造页面都必须走 Phase 41 浅色管理台规范。
 
----
+## Shared Contract
 
-## 📐 2. Bento Grid 栅格规范 (Bento Cell Count Rule)
+页面代理不得在业务组件内重新发明独立视觉系统。优先使用：
 
-*   **反对称格**：避免对称平铺的 Feature 列表。使用有节奏感、不对称的 Bento Grid 布局。
-*   **完美填充（Cell Count Rule）**：Bento 栅格的单元数量必须与内容本身完美契合。不允许在栅格中留下任何空白的占位卡片（Placeholder Cards）。
-*   **红区大屏布局划分**：
-    - **左上 (Bento 1)**：研发心跳与 Bug/Task 二元健康环。
-    - **左下 (Bento 2)**：AI 自流转终端控制台（Telemetry Console），纵向拉高空间。
-    - **右上 (Bento 3)**：红黄区卡点诊断盘（Bento 2列宽），横向舒展。
-    - **右下 (Bento 4)**：人工调停与干预控制台（Bento 2列宽），两列结构。
+- tokens: `web/src/styles/modern-admin-tokens.css`
+- shell/workspace: `web/src/components/prototype/FunctionalAdminShell.svelte`、`web/src/components/prototype/FunctionalWorkspace.svelte`
+- data contract: `web/src/lib/admin-console/contract.ts`
+- CSS classes: `.wa-admin-card`、`.wa-admin-metric`、`.wa-admin-section`、`.wa-admin-table`、`.wa-admin-inspector`、`.wa-admin-pill`、`.wa-admin-action`
 
----
-
-## 🤖 3. “无感协同”交互设计范式 (Ambient Interaction)
-
-*   **从“管理员修改操作”转向“AI 自治与例外干预 (Override)”**：
-    - **初衷**：无感协同的本质是“不要打扰”。大屏的作用决不是让主持人在会议中繁复地点击按钮来做状态流转，流转 100% 应由 Git Telemetry 静默自动触发。
-    - **AI 遥测流**：大屏左下角设计有自动滚动的“自动流转控制台”，用来向团队直观展现 AI 在后台默默同步的成果，向团队传递系统实时流转的温度。
-    - **干预语义**：大屏右下角的按钮定义为 **“人工调停 / 干预 (Human Override)”**。默认情况下 AI 的决策自动生效，人类只在出现例外（如资源冲突、需要重新转派）时，才点击按钮介入调停并记录决策。
-*   **物理微动效 (Tactile Feedback)**：
-    - 交互元素（如干预按钮、卡片）在被点击 `:active` 时，必须附加缩微动效 (`transform: scale(0.97)`)，增强真实操作的段落感。
-    - 卡点警告带有微弱缓慢的 `pulse` 呼吸光晕，引发警觉但拒绝花哨闪烁。
+数据接入必须保持真实 API 链路：业务页负责 fetch 和权限过滤后的事实映射，共享 UI 只消费页面 adapter 输出的 metric、table row、inspector record，不在组件内写 mock 数据或重新解释后端可见性边界。

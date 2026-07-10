@@ -1,10 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
-  import Steps from '../shared/Steps.svelte';
   import TextInput from '../shared/TextInput.svelte';
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
+  import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
 
   const dispatch = createEventDispatcher();
 
@@ -22,7 +22,7 @@
   export let lastUpdated = '';
 
   let currentStep = 1;
-  const steps = ['连接地址', '项目仓库映射', '完成应用'];
+  const steps = ['连接', '仓库', '确认'];
   let editing = false;
   let showAPITokenEditor = !config.api_token;
   let showSecretEditor = !config.secret_token;
@@ -68,6 +68,31 @@
   $: webhookReady = !!(baseURL && apiToken && secretToken && repoList.length > 0);
   $: webhookSummary = summarizeWebhookResults(webhookResults);
   $: isConfigured = !!(baseURL || apiToken || secretToken || repoList.length > 0);
+  $: filteredAvailableProjects = availableProjects
+    .filter((project) => {
+      const query = projectSearchQuery.trim().toLowerCase();
+      if (!query) return true;
+      return project.name.toLowerCase().includes(query)
+        || project.path_with_namespace.toLowerCase().includes(query)
+        || project.path.toLowerCase().includes(query);
+    })
+    .slice(0, 8);
+  $: configurationIssues = [
+    !baseURL ? 'GitLab URL' : '',
+    !secretToken ? 'Webhook Secret' : '',
+    repoList.length === 0 ? '仓库映射' : ''
+  ].filter(Boolean);
+  $: healthTone = testingConnection
+    ? 'checking'
+    : configurationIssues.length > 0
+      ? 'incomplete'
+      : testError
+        ? 'error'
+        : testSuccess
+          ? 'success'
+          : 'unchecked';
+  $: healthLabel = healthStatusLabel(healthTone);
+  $: healthMessage = healthStatusMessage(healthTone);
   $: if (!editing && !saveSuccess) {
     enabled = config.enabled ?? false;
     baseURL = config.base_url || '';
@@ -91,6 +116,7 @@
     testError = '';
     testSuccess = '';
     testDetails = '';
+    resetSettingsWorkspaceScroll();
   }
 
   function finishClose() {
@@ -259,6 +285,25 @@
     return labels[status] || status || '未知';
   }
 
+  function healthStatusLabel(status: string) {
+    const labels: Record<string, string> = {
+      checking: '检测中',
+      incomplete: '配置不完整',
+      error: '检测失败',
+      success: '检测通过',
+      unchecked: '未检测'
+    };
+    return labels[status] || '未检测';
+  }
+
+  function healthStatusMessage(status: string) {
+    if (status === 'checking') return '正在请求 GitLab 连接测试。';
+    if (status === 'incomplete') return `缺少 ${configurationIssues.join('、')}，请补齐后再巡检。`;
+    if (status === 'error') return testError || '最近一次检测失败，请查看错误详情。';
+    if (status === 'success') return testSuccess || '最近一次检测通过。';
+    return '尚未执行健康检查，不默认判定为已就绪。';
+  }
+
   async function callWebhookAutomation(mode: 'status' | 'ensure') {
     webhookSyncError = '';
     if (!webhookReady) {
@@ -337,22 +382,109 @@
   }
 </script>
 
-<div class="wizard">
+<div class="gitlab-workbench" class:editing>
   {#if saveSuccess}
-    <div class="success-screen">
-      <div class="success-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" class="checkmark-svg" viewBox="0 0 52 52">
-          <circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none"/>
-          <path class="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
-        </svg>
+    <Alert type="success" title="配置已保存" message="GitLab 连接、凭证和仓库监听清单已更新。版本审计会记录本次变更。" />
+  {/if}
+
+  {#if !editing && isConfigured}
+    <section class="config-overview" aria-label="GitLab 配置状态">
+      <header class="config-section-header">
+        <div>
+          <span class="section-kicker">仓库同步</span>
+          <h4>GitLab 配置状态</h4>
+          <p>默认以只读摘要呈现敏感配置，健康状态必须来自真实检查或明确的配置完整性判断。</p>
+        </div>
+        <div class="switch-action">
+          <span>启用 GitLab 同步</span>
+          <Switch id="gitlab-overview-toggle" label="启用 GitLab 同步" bind:checked={enabled} on:change={() => saveConfig(true)} />
+        </div>
+      </header>
+
+      <div class="state-banner tone-{healthTone}">
+        <div>
+          <span>链路健康</span>
+          <strong>{healthLabel}</strong>
+        </div>
+        <p>{healthMessage}</p>
       </div>
-      <h4 class="success-title">GitLab Webhook 配置已成功应用！</h4>
-      <p class="success-desc font-mono">Webhook 令牌与仓库监听清单已更新生效。</p>
-      <div class="webhook-automation-panel">
+
+      <div class="overview-grid">
+        <div class="overview-row">
+          <span>GitLab 基础 URL 地址</span>
+          <strong class="font-mono">{baseURL || '-'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>项目仓库绑定</span>
+          <strong>{repoList.length} 个仓库</strong>
+        </div>
+        <div class="overview-row">
+          <span>API 访问令牌</span>
+          <strong>{apiToken ? '已配置，已脱敏' : '未配置'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>Webhook 密钥凭证</span>
+          <strong>{secretToken ? '已配置，已脱敏' : '未配置'}</strong>
+        </div>
+        <div class="overview-row">
+          <span>最近更新时间</span>
+          <strong>{formatUpdated(lastUpdated)}</strong>
+        </div>
+        <div class="overview-row">
+          <span>Webhook 自动化</span>
+          <strong>{webhookReady ? '可巡检/安装' : '待补齐配置'}</strong>
+        </div>
+      </div>
+
+      {#if testDetails}
+        <pre class="details-pre font-mono">{testDetails}</pre>
+      {/if}
+
+      <section class="config-section">
+        <div class="config-section-title">
+          <div>
+            <h5>被监听项目仓库</h5>
+            <p>首屏直接显示仓库事实，不再只显示一个总数。</p>
+          </div>
+          <span class="repo-count">{repoList.length} repos</span>
+        </div>
+
+        {#if repoList.length === 0}
+          <div class="empty-repos">暂无映射仓库。进入编辑后可手动添加或从 GitLab 拉取项目。</div>
+        {:else}
+          <div class="table-container repo-overview-table">
+            <table class="repo-table">
+              <thead>
+                <tr>
+                  <th>项目名称</th>
+                  <th>GitLab 路径</th>
+                  <th>Project ID</th>
+                  <th>Webhook</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each repoList as repo}
+                  <tr>
+                    <td class="repo-main">
+                      <strong>{repo.name || '-'}</strong>
+                      <span>{repo.path || '-'}</span>
+                    </td>
+                    <td class="font-mono">{repo.path || '-'}</td>
+                    <td class="font-mono tabular">{repo.project_id || '-'}</td>
+                    <td><span class="webhook-status-pill {webhookReady ? 'ok' : 'missing'}">{webhookReady ? '可巡检' : '待配置'}</span></td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
+
+      <section class="webhook-automation-panel">
         <div class="webhook-auto-header">
           <div>
-            <h5>项目 Webhook 自动配置</h5>
-            <p>对已保存的仓库清单执行安装、更新或状态巡检。</p>
+            <h5>Webhook 自动化</h5>
+            <p>Payload URL、状态巡检与安装更新放在同一个操作区。</p>
           </div>
           <div class="webhook-auto-actions">
             <Button variant="secondary" loading={webhookStatusLoading} disabled={!webhookReady || webhookSyncLoading} on:click={() => callWebhookAutomation('status')}>
@@ -364,20 +496,24 @@
           </div>
         </div>
 
-        <div class="webhook-auto-meta font-mono">
-          <span>REPOS {repoList.length}</span>
-          <span>URL {webhookResultURL || webhookURL}</span>
-          {#if Object.keys(webhookSummary).length > 0}
-            <span>
-              {#each Object.entries(webhookSummary) as [status, count], index}
-                {index > 0 ? ' / ' : ''}{webhookStatusLabel(status)} {count}
-              {/each}
-            </span>
-          {/if}
+        <div class="webhook-display compact">
+          <div class="webhook-label-row">
+            <span class="webhook-label">Payload URL</span>
+            <button class="copy-link" type="button" on:click={copyWebhookURL}>{copied ? '已复制' : '复制链接'}</button>
+          </div>
+          <div class="webhook-url-box font-mono">{webhookResultURL || webhookURL || '等待浏览器生成地址'}</div>
         </div>
 
+        {#if Object.keys(webhookSummary).length > 0}
+          <div class="webhook-auto-meta">
+            {#each Object.entries(webhookSummary) as [status, count]}
+              <span>{webhookStatusLabel(status)} {count}</span>
+            {/each}
+          </div>
+        {/if}
+
         {#if webhookSyncError}
-          <div class="webhook-auto-error font-mono">{webhookSyncError}</div>
+          <div class="webhook-auto-error">{webhookSyncError}</div>
         {/if}
 
         {#if webhookResults.length > 0}
@@ -400,7 +536,7 @@
                         <span class="repo-path-cell font-mono">{item.path}</span>
                       {/if}
                     </td>
-                    <td class="font-mono">{item.project_id || item.hook_id || '-'}</td>
+                    <td class="font-mono tabular">{item.project_id || item.hook_id || '-'}</td>
                     <td>
                       <span class="webhook-status-pill {item.status}">{webhookStatusLabel(item.status)}</span>
                     </td>
@@ -415,325 +551,307 @@
         {#if !webhookReady}
           <div class="webhook-auto-hint">需要保存 GitLab URL、API Token、Secret Token 与至少 1 个仓库后才能自动安装。</div>
         {/if}
-      </div>
-      <div class="success-actions">
-        <Button variant="primary" on:click={finishClose}>
-          完成并关闭
-        </Button>
-      </div>
-    </div>
-  {:else if !editing && isConfigured}
-    <div class="config-overview">
-      <div class="overview-header">
-        <div>
-          <span class="overview-kicker font-mono">GitLab Integration</span>
-          <h4>GitLab 配置状态摘要</h4>
-          <p>默认以只读安全呈现各配置字段详情，支持右上角快速启用/禁用。</p>
-        </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <Switch id="gitlab-overview-toggle" bind:checked={enabled} on:change={() => saveConfig(true)} />
-        </div>
-      </div>
-
-      <div class="overview-grid">
-        <div class="overview-row">
-          <span>GitLab 基础 URL 地址</span>
-          <strong class="font-mono">{baseURL || '-'}</strong>
-        </div>
-        <div class="overview-row">
-          <span>项目仓库绑定</span>
-          <strong>已绑定 {repoList.length} 个代码多仓</strong>
-        </div>
-        <div class="overview-row">
-          <span>API 访问令牌</span>
-          <strong>{apiToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
-        </div>
-        <div class="overview-row">
-          <span>Webhook 密钥凭证</span>
-          <strong>{secretToken ? '已配置 (已脱敏保护)' : '未配置'}</strong>
-        </div>
-        <div class="overview-row">
-          <span>最近更新时间</span>
-          <strong>{formatUpdated(lastUpdated)}</strong>
-        </div>
-        <div class="overview-row">
-          <span>健康检查状态</span>
-          <strong class="text-success">{testSuccess || testError || '已就绪'}</strong>
-        </div>
-      </div>
-
-      {#if testDetails}
-        <pre class="details-pre font-mono">{testDetails}</pre>
-      {/if}
+      </section>
 
       <div class="overview-actions">
         <Button variant="secondary" loading={testingConnection} on:click={testConnection}>健康检查</Button>
         <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
-    </div>
+    </section>
   {:else}
-    <Steps {currentStep} {steps} />
-
-    {#if currentStep === 1}
-    <div class="step-content">
-      <div class="info-block">
-        <h4>GitLab System Webhook 配置引导</h4>
-        <p>well-ambient 系统需要依靠 GitLab 的 Webhook 触发来自动同步代码提交、分支及合并请求事件。请按照以下步骤完成连接配置：</p>
-      </div>
-
-      <TextInput
-        id="gitlab-url"
-        label="GitLab 基础 URL 地址"
-        placeholder="https://gitlab.yourdomain.com"
-        bind:value={baseURL}
-        required
-        helperText="请输入 GitLab 的基础 URL 地址。系统将通过对此地址进行基础 HTTP 请求测试可达性。"
-        error={testError}
-      />
-
-      {#if showAPITokenEditor}
-        <TextInput
-          id="gitlab-api-token"
-          label="GitLab API 访问令牌 (Personal Access Token)"
-          placeholder="输入用于自动拉取仓库列表的 Private Token"
-          type="password"
-          bind:value={apiToken}
-          helperText="可选。若需支持在下一步中自动拉取并勾选仓库项目，请输入具有 read_api 权限的 Personal Access Token。"
-        />
-      {:else}
-        <div class="credential-collapsed">
-          <div>
-            <span>GitLab API Token</span>
-            <strong>已配置，当前默认脱敏折叠</strong>
-          </div>
-          <button type="button" on:click={() => showAPITokenEditor = true}>编辑凭证/高级配置</button>
-        </div>
-      {/if}
-
-      <div class="webhook-display">
-        <div class="webhook-label-row">
-          <span class="webhook-label">系统 Webhook 接收地址 (Payload URL)</span>
-          <button class="copy-link" type="button" on:click={copyWebhookURL}>{copied ? '已复制!' : '复制链接'}</button>
-        </div>
-        <div class="webhook-url-box font-mono">{webhookURL}</div>
-        <p class="webhook-help">请在 GitLab 的管理中心或对应项目设置中的 <strong>Webhooks</strong> 页面，将上述链接粘贴至 <strong>URL</strong> 输入框中。</p>
-      </div>
-
-      {#if testSuccess}
-        <Alert type="success" title="连接成功" message={testSuccess}>
-          {#if testDetails}
-            <pre class="details-pre font-mono">{testDetails}</pre>
-          {/if}
-        </Alert>
-      {/if}
-
-      {#if testError && testDetails}
-        <Alert type="error" title="连接失败" message={testError}>
-          <pre class="details-pre font-mono">{testDetails}</pre>
-        </Alert>
-      {/if}
-
-      <div class="actions">
-        <Button variant="secondary" loading={testingConnection} on:click={testConnection}>
-          测试连接
-        </Button>
-        <Button variant="primary" on:click={nextStep}>
-          下一步
-        </Button>
-      </div>
-    </div>
-  {:else if currentStep === 2}
-    <div class="step-content">
-      <div class="info-block">
-        <h4>安全性与代码库范围映射</h4>
-        <p>配置安全令牌 (Secret Token) 以防止非法请求，并添加需要被 well-ambient 追踪的项目仓库。</p>
-      </div>
-
-      {#if showSecretEditor}
-        <div class="token-row">
-          <div class="token-input">
-            <TextInput
-              id="gitlab-secret"
-              label="Webhook 安全令牌 (Secret Token)"
-              placeholder="自定义或随机生成的安全令牌"
-              type="password"
-              bind:value={secretToken}
-              helperText="设置后，需同时填入 GitLab Webhook 设置中的 Secret Token 字段，用于签名校验。"
-            />
-          </div>
-          <button class="gen-btn" type="button" on:click={generateRandomToken}>
-            随机生成
+    <section class="edit-workbench" aria-label="编辑 GitLab 配置">
+      <div class="workflow-steps" aria-label="配置步骤">
+        {#each steps as step, index}
+          {@const stepNum = index + 1}
+          <button
+            type="button"
+            class:active={currentStep === stepNum}
+            class:completed={currentStep > stepNum}
+            on:click={() => currentStep = stepNum}
+          >
+            <span>{stepNum}</span>
+            {step}
           </button>
-        </div>
-      {:else}
-        <div class="credential-collapsed">
-          <div>
-            <span>Webhook Secret Token</span>
-            <strong>已配置，当前默认脱敏折叠</strong>
-          </div>
-          <button type="button" on:click={() => showSecretEditor = true}>编辑凭证/高级配置</button>
-        </div>
-      {/if}
+        {/each}
+      </div>
 
-      <!-- Autoload GitLab Repositories -->
-      {#if apiToken}
-        <div class="autoload-section font-mono" style="margin-bottom: 24px; background: rgba(30, 41, 59, 0.2); border: 1px solid rgba(51, 65, 85, 0.4); border-radius: 8px; padding: 16px;">
-          <div class="autoload-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h5 style="margin: 0; font-size: 0.9rem; color: #cbd5e1; font-weight: 700;">🔍 自动拉取 GitLab 项目并映射</h5>
-            <Button size="small" variant="ghost" loading={loadingProjects} on:click={fetchGitLabProjects}>
-              {availableProjects.length > 0 ? '🔄 重新拉取' : '📥 自动拉取项目'}
+      {#if currentStep === 1}
+        <div class="step-content">
+          <div class="info-block">
+            <h4>连接与凭证</h4>
+            <p>先维护 GitLab 地址和 API Token。Webhook 接收地址可直接复制到 GitLab 项目设置。</p>
+          </div>
+
+          <div class="form-grid">
+            <TextInput
+              id="gitlab-url"
+              label="GitLab 基础 URL 地址"
+              placeholder="https://gitlab.yourdomain.com"
+              bind:value={baseURL}
+              required
+              helperText="用于连接测试、仓库拉取和 Webhook 地址校验。"
+              error={testError && !baseURL ? testError : ''}
+            />
+
+            {#if showAPITokenEditor}
+              <TextInput
+                id="gitlab-api-token"
+                label="GitLab API 访问令牌"
+                placeholder="输入具有 read_api 权限的 Personal Access Token"
+                type="password"
+                bind:value={apiToken}
+                helperText="用于自动拉取项目和执行 Webhook 自动化。"
+              />
+            {:else}
+              <div class="credential-collapsed">
+                <div>
+                  <span>GitLab API Token</span>
+                  <strong>已配置，默认脱敏</strong>
+                </div>
+                <button type="button" on:click={() => showAPITokenEditor = true}>更换令牌</button>
+              </div>
+            {/if}
+          </div>
+
+          <div class="webhook-display">
+            <div class="webhook-label-row">
+              <span class="webhook-label">Payload URL</span>
+              <button class="copy-link" type="button" on:click={copyWebhookURL}>{copied ? '已复制' : '复制链接'}</button>
+            </div>
+            <div class="webhook-url-box font-mono">{webhookURL || '等待浏览器生成地址'}</div>
+            <p class="webhook-help">将此地址填写到 GitLab Webhooks 的 URL 字段。</p>
+          </div>
+
+          {#if testSuccess}
+            <Alert type="success" title="连接成功" message={testSuccess}>
+              {#if testDetails}
+                <pre class="details-pre font-mono">{testDetails}</pre>
+              {/if}
+            </Alert>
+          {/if}
+
+          {#if testError && testDetails}
+            <Alert type="error" title="连接失败" message={testError}>
+              <pre class="details-pre font-mono">{testDetails}</pre>
+            </Alert>
+          {/if}
+
+          <div class="actions">
+            <Button variant="secondary" loading={testingConnection} on:click={testConnection}>
+              测试连接
+            </Button>
+            <Button variant="primary" on:click={nextStep}>
+              下一步
             </Button>
           </div>
-          {#if loadProjectsError}
-            <div class="error-msg-banner" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #f87171; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; margin-bottom: 12px;">❌ {loadProjectsError}</div>
-          {/if}
-          {#if availableProjects.length > 0}
-            <div class="project-search-bar" style="margin-bottom: 12px;">
-              <input 
-                type="text" 
-                bind:value={projectSearchQuery} 
-                placeholder="输入关键字过滤 GitLab 项目 (如 backend)..." 
-                style="width: 100%; padding: 8px 12px; background: #0b0f19; border: 1px solid rgba(51, 65, 85, 0.6); border-radius: 6px; color: #f1f5f9; font-size: 0.85rem; outline: none;" 
-              />
-            </div>
-            <div class="project-cards-container" style="display: grid; grid-template-columns: repeat(1, 1fr); gap: 8px; max-height: 200px; overflow-y: auto; padding-right: 4px;">
-              {#each availableProjects.filter(p => !projectSearchQuery || p.name.toLowerCase().includes(projectSearchQuery.toLowerCase()) || p.path_with_namespace.toLowerCase().includes(projectSearchQuery.toLowerCase())).slice(0, 6) as p}
-                <div class="project-card-item" style="display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(51, 65, 85, 0.3);">
-                  <div class="proj-info" style="display: flex; flex-direction: column; gap: 2px;">
-                    <span class="proj-name" style="font-size: 0.85rem; font-weight: 700; color: #f1f5f9;">{p.name}</span>
-                    <span class="proj-path" style="font-size: 0.725rem; color: #64748b;">{p.path_with_namespace || p.path}</span>
-                    <span class="proj-id" style="font-size: 0.7rem; color: #38bdf8;">ID: {p.id}</span>
-                  </div>
-                  <Button size="small" variant="ghost" on:click={() => addAutoloadedProject(p)}>
-                    ➕ 导入
-                  </Button>
-                </div>
-              {:else}
-                <div class="empty-projects-msg" style="text-align: center; color: #64748b; font-size: 0.8rem; padding: 12px;">没有匹配的 GitLab 项目</div>
-              {/each}
-            </div>
-          {/if}
         </div>
-      {/if}
-
-      <!-- Repo Mappings -->
-      <div class="repo-mapping-section">
-        <h5 class="section-subtitle">被监听项目仓库映射清单</h5>
-        
-        {#if repoList.length === 0}
-          <div class="empty-repos">
-            暂未配置映射仓库。在下方填写表单并添加，以使任务看板能自动匹配提交流程。
+      {:else if currentStep === 2}
+        <div class="step-content">
+          <div class="info-block">
+            <h4>仓库与 Webhook Secret</h4>
+            <p>维护签名令牌和监听仓库。支持从 GitLab 拉取项目，也保留手动映射。</p>
           </div>
-        {:else}
-          <div class="table-container">
-            <table class="repo-table">
-              <thead>
-                <tr>
-                  <th>项目名称</th>
-                  <th>GitLab 路径 (Path)</th>
-                  <th>Project ID</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each repoList as repo, index}
-                  <tr>
-                    <td>{repo.name}</td>
-                    <td class="font-mono">{repo.path}</td>
-                    <td class="font-mono">{repo.project_id}</td>
-                    <td>
-                      <button class="delete-btn" type="button" on:click={() => removeRepo(index)}>
-                        删除
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
 
-        <div class="add-repo-form">
-          <h6>添加新的仓库映射</h6>
-          <div class="add-repo-inputs">
-            <TextInput
-              id="repo-name"
-              placeholder="例如：backend-core"
-              bind:value={newRepoName}
-              label="项目名称"
-            />
-            <TextInput
-              id="repo-path"
-              placeholder="例如：group/backend-core"
-              bind:value={newRepoPath}
-              label="GitLab 路径"
-            />
-            <TextInput
-              id="repo-id"
-              placeholder="例如：13"
-              bind:value={newRepoID}
-              label="Project ID"
-            />
-          </div>
-          {#if repoError}
-            <span class="error-msg">{repoError}</span>
-          {/if}
-          <Button variant="secondary" on:click={addRepo}>
-            + 添加到映射清单
-          </Button>
-        </div>
-      </div>
-
-      <div class="actions">
-        <Button variant="ghost" on:click={prevStep}>上一步</Button>
-        <Button variant="primary" on:click={nextStep}>下一步</Button>
-      </div>
-    </div>
-  {:else if currentStep === 3}
-    <div class="step-content">
-      <div class="info-block">
-        <h4>GitLab 配置摘要汇总</h4>
-        <p>确认无误后点击下方按钮应用并应用配置：</p>
-      </div>
-
-      <div class="summary-card">
-        <div class="summary-row">
-          <span class="summary-label">GitLab 连接地址:</span>
-          <span class="summary-value font-mono">{baseURL}</span>
-        </div>
-        <div class="summary-row">
-          <span class="summary-label">Webhook 安全令牌:</span>
-          <span class="summary-value font-mono">{secretToken ? '已配置 (••••••••)' : '未配置'}</span>
-        </div>
-        <div class="summary-row">
-          <span class="summary-label">同步项目数量:</span>
-          <span class="summary-value">{repoList.length} 个项目仓库</span>
-        </div>
-
-        {#if repoList.length > 0}
-          <div class="summary-repos font-mono">
-            {#each repoList as repo}
-              <div class="summary-repo-item">
-                <span>{repo.name} ({repo.path})</span>
-                <span class="badge">ID: {repo.project_id}</span>
+          {#if showSecretEditor}
+            <div class="token-row">
+              <div class="token-input">
+                <TextInput
+                  id="gitlab-secret"
+                  label="Webhook Secret Token"
+                  placeholder="自定义或随机生成的安全令牌"
+                  type="password"
+                  bind:value={secretToken}
+                  helperText="需同时填入 GitLab Webhook 设置中的 Secret Token 字段。"
+                />
               </div>
-            {/each}
+              <button class="gen-btn" type="button" on:click={generateRandomToken}>
+                随机生成
+              </button>
+            </div>
+          {:else}
+            <div class="credential-collapsed">
+              <div>
+                <span>Webhook Secret Token</span>
+                <strong>已配置，默认脱敏</strong>
+              </div>
+              <button type="button" on:click={() => showSecretEditor = true}>更换密钥</button>
+            </div>
+          {/if}
+
+          {#if apiToken}
+            <section class="autoload-section">
+              <div class="autoload-header">
+                <div>
+                  <h5>从 GitLab 拉取项目</h5>
+                  <p>按名称或命名空间筛选后导入到监听清单。</p>
+                </div>
+                <Button size="small" variant="secondary" loading={loadingProjects} on:click={fetchGitLabProjects}>
+                  {availableProjects.length > 0 ? '重新拉取' : '自动拉取项目'}
+                </Button>
+              </div>
+              {#if loadProjectsError}
+                <div class="error-msg-banner">{loadProjectsError}</div>
+              {/if}
+              {#if availableProjects.length > 0}
+                <div class="project-search-bar">
+                  <input
+                    type="text"
+                    bind:value={projectSearchQuery}
+                    placeholder="输入关键字过滤 GitLab 项目"
+                  />
+                </div>
+                <div class="project-cards-container">
+                  {#each filteredAvailableProjects as p}
+                    <div class="project-card-item">
+                      <div class="proj-info">
+                        <span class="proj-name">{p.name}</span>
+                        <span class="proj-path">{p.path_with_namespace || p.path}</span>
+                        <span class="proj-id font-mono">ID {p.id}</span>
+                      </div>
+                      <Button size="small" variant="ghost" on:click={() => addAutoloadedProject(p)}>
+                        导入
+                      </Button>
+                    </div>
+                  {:else}
+                    <div class="empty-projects-msg">没有匹配的 GitLab 项目</div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
+          {/if}
+
+          <section class="repo-mapping-section">
+            <div class="config-section-title">
+              <div>
+                <h5>被监听项目仓库</h5>
+                <p>仓库表用于持续维护，不再嵌套成深色卡片。</p>
+              </div>
+              <span class="repo-count">{repoList.length} repos</span>
+            </div>
+
+            {#if repoList.length === 0}
+              <div class="empty-repos">
+                暂未配置映射仓库。在下方填写表单并添加，以使任务看板能自动匹配提交流程。
+              </div>
+            {:else}
+              <div class="table-container">
+                <table class="repo-table">
+                  <thead>
+                    <tr>
+                      <th>项目名称</th>
+                      <th>GitLab 路径</th>
+                      <th>Project ID</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each repoList as repo, index}
+                      <tr>
+                        <td class="repo-main">
+                          <strong>{repo.name}</strong>
+                          <span>{repo.path}</span>
+                        </td>
+                        <td class="font-mono">{repo.path}</td>
+                        <td class="font-mono tabular">{repo.project_id}</td>
+                        <td>
+                          <button class="delete-btn" type="button" on:click={() => removeRepo(index)}>
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+
+            <div class="add-repo-form">
+              <h6>添加新的仓库映射</h6>
+              <div class="add-repo-inputs">
+                <TextInput
+                  id="repo-name"
+                  placeholder="例如：backend-core"
+                  bind:value={newRepoName}
+                  label="项目名称"
+                />
+                <TextInput
+                  id="repo-path"
+                  placeholder="例如：group/backend-core"
+                  bind:value={newRepoPath}
+                  label="GitLab 路径"
+                />
+                <TextInput
+                  id="repo-id"
+                  placeholder="例如：13"
+                  bind:value={newRepoID}
+                  label="Project ID"
+                />
+              </div>
+              {#if repoError}
+                <span class="error-msg">{repoError}</span>
+              {/if}
+              <Button variant="secondary" on:click={addRepo}>
+                添加到映射清单
+              </Button>
+            </div>
+          </section>
+
+          <div class="actions">
+            <Button variant="ghost" on:click={prevStep}>上一步</Button>
+            <Button variant="primary" on:click={nextStep}>下一步</Button>
           </div>
-        {/if}
-      </div>
+        </div>
+      {:else if currentStep === 3}
+        <div class="step-content">
+          <div class="info-block">
+            <h4>保存前确认</h4>
+            <p>确认 GitLab 地址、凭证状态和监听仓库数量。保存后会生成新的配置版本记录。</p>
+          </div>
 
-      {#if saveError}
-        <Alert type="error" title="保存失败" message={saveError} />
+          <div class="summary-card">
+            <div class="summary-row">
+              <span class="summary-label">GitLab 连接地址</span>
+              <span class="summary-value font-mono">{baseURL || '-'}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">API 访问令牌</span>
+              <span class="summary-value">{apiToken ? '已配置，已脱敏' : '未配置'}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">Webhook Secret</span>
+              <span class="summary-value">{secretToken ? '已配置，已脱敏' : '未配置'}</span>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">同步项目数量</span>
+              <span class="summary-value">{repoList.length} 个项目仓库</span>
+            </div>
+
+            {#if repoList.length > 0}
+              <div class="summary-repos font-mono">
+                {#each repoList as repo}
+                  <div class="summary-repo-item">
+                    <span>{repo.name} ({repo.path})</span>
+                    <span class="badge">ID {repo.project_id}</span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          {#if saveError}
+            <Alert type="error" title="保存失败" message={saveError} />
+          {/if}
+
+          <div class="actions">
+            <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>
+            <Button variant="secondary" on:click={finishClose} disabled={saving}>取消</Button>
+            <Button variant="primary" loading={saving} on:click={() => saveConfig(false)}>
+              保存并应用
+            </Button>
+          </div>
+        </div>
       {/if}
-
-      <div class="actions">
-        <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>
-        <Button variant="primary" loading={saving} on:click={() => saveConfig(false)}>
-          保存并应用
-        </Button>
-      </div>
-    </div>
-  {/if}
+    </section>
   {/if}
 </div>
 
@@ -851,12 +969,6 @@
     font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-  }
-
-  .overview-header h4 {
-    margin: 4px 0 6px 0;
-    color: #f8fafc;
-    font-size: 1.05rem;
   }
 
   .overview-header p {
@@ -1457,9 +1569,7 @@
     font-size: 1.25rem;
     font-weight: 700;
     margin: 0 0 8px 0;
-    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .success-desc {
@@ -1549,5 +1659,662 @@
   .indicator-warning {
     background-color: #f59e0b;
     box-shadow: 0 0 8px #f59e0b;
+  }
+
+  /* Phase 47 GitLab settings workbench. Native light-admin contract for the main content path. */
+  .gitlab-workbench {
+    --config-line: rgba(106, 126, 145, 0.16);
+    --config-line-strong: rgba(74, 97, 118, 0.26);
+    --config-surface-soft: rgba(246, 249, 250, 0.78);
+    --config-ink: var(--wa-text-strong, #0d1722);
+    --config-text: var(--wa-text-main, #293847);
+    --config-muted: var(--wa-text-muted, #667789);
+    --config-subtle: var(--wa-text-subtle, #8a99aa);
+    --config-accent: var(--wa-accent, #008f96);
+    --config-accent-strong: var(--wa-accent-strong, #006f76);
+    --config-accent-soft: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+    --config-success: var(--wa-success, #04966f);
+    --config-warning: var(--wa-warning, #d88700);
+    --config-danger: var(--wa-danger, #dd4b3e);
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    color: var(--config-text);
+  }
+
+  .gitlab-workbench,
+  .config-overview,
+  .edit-workbench,
+  .step-content {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .config-section,
+  .webhook-automation-panel,
+  .autoload-section,
+  .repo-mapping-section,
+  .add-repo-form,
+  .summary-card,
+  .webhook-display,
+  .credential-collapsed,
+  .info-block {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .config-section-header,
+  .webhook-auto-header,
+  .config-section-title,
+  .webhook-label-row,
+  .autoload-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .config-section-header {
+    min-height: 66px;
+    padding: 0 0 16px;
+    border-bottom: 1px solid var(--config-line);
+  }
+
+  .section-kicker,
+  .overview-kicker {
+    color: var(--config-accent-strong);
+    font-size: 11px;
+    font-weight: 780;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .config-section-header h4,
+  .config-section-title h5,
+  .autoload-header h5,
+  .webhook-auto-header h5,
+  .info-block h4 {
+    margin: 3px 0 0;
+    color: var(--config-ink);
+    font-size: 16px;
+    line-height: 1.3;
+  }
+
+  .config-section-header p,
+  .config-section-title p,
+  .autoload-header p,
+  .webhook-auto-header p,
+  .info-block p,
+  .webhook-help {
+    margin: 5px 0 0;
+    color: var(--config-muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .switch-action {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--config-muted);
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .switch-action :global(.switch-container) {
+    margin: 0;
+  }
+
+  .switch-action :global(.switch-label) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .state-banner {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.28fr) minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+    border: 1px solid var(--config-line);
+    border-radius: 8px;
+    background: var(--config-surface-soft);
+    padding: 12px 14px;
+  }
+
+  .state-banner span,
+  .overview-row span,
+  .summary-label,
+  .repo-count {
+    color: var(--config-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .state-banner strong,
+  .overview-row strong,
+  .summary-value {
+    color: var(--config-ink);
+    font-size: 13px;
+    font-weight: 740;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  .state-banner p {
+    margin: 0;
+    color: var(--config-text);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .state-banner.tone-success {
+    border-color: rgba(4, 150, 111, 0.22);
+    background: rgba(4, 150, 111, 0.08);
+  }
+
+  .state-banner.tone-error {
+    border-color: rgba(221, 75, 62, 0.24);
+    background: rgba(221, 75, 62, 0.08);
+  }
+
+  .state-banner.tone-incomplete,
+  .state-banner.tone-unchecked,
+  .state-banner.tone-checking {
+    border-color: rgba(216, 135, 0, 0.2);
+    background: rgba(216, 135, 0, 0.07);
+  }
+
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 28px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .overview-row,
+  .summary-row {
+    min-width: 0;
+    min-height: 64px;
+    display: grid;
+    align-content: center;
+    gap: 5px;
+    padding: 12px 0;
+    border: 0;
+    border-bottom: 1px solid var(--config-line);
+    background: transparent;
+  }
+
+  .config-section,
+  .webhook-automation-panel,
+  .autoload-section,
+  .repo-mapping-section,
+  .add-repo-form,
+  .summary-card,
+  .webhook-display,
+  .credential-collapsed,
+  .info-block {
+    margin: 0;
+    padding: 16px 0;
+    border: 0;
+    border-top: 1px solid var(--config-line);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .webhook-display.compact {
+    padding-bottom: 0;
+  }
+
+  .webhook-url-box,
+  .details-pre {
+    display: block;
+    max-height: 152px;
+    overflow: auto;
+    margin: 8px 0 0;
+    padding: 12px;
+    border: 1px solid var(--config-line);
+    border-radius: 7px;
+    background: rgba(246, 249, 250, 0.86);
+    color: var(--config-text);
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-all;
+    box-shadow: none;
+  }
+
+  .copy-link,
+  .credential-collapsed button,
+  .delete-btn,
+  .gen-btn {
+    min-height: 32px;
+    border: 1px solid var(--config-line);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--config-accent-strong);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 760;
+    cursor: pointer;
+    box-shadow: none;
+  }
+
+  .delete-btn {
+    color: var(--config-danger);
+    border-color: rgba(221, 75, 62, 0.18);
+    background: rgba(221, 75, 62, 0.08);
+  }
+
+  .copy-link:hover,
+  .credential-collapsed button:hover,
+  .gen-btn:hover {
+    background: rgba(0, 143, 150, 0.08);
+    color: var(--config-accent-strong);
+  }
+
+  .webhook-auto-actions,
+  .overview-actions,
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 16px 0 0;
+    border-top: 1px solid var(--config-line);
+  }
+
+  .overview-actions {
+    margin-top: 0;
+  }
+
+  .webhook-auto-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .webhook-auto-meta span,
+  .repo-count,
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    max-width: 100%;
+    border: 1px solid var(--config-line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--config-muted);
+    padding: 0 9px;
+    font-size: 11px;
+    font-weight: 760;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .webhook-auto-error,
+  .error-msg-banner,
+  .error-msg {
+    margin-top: 10px;
+    border: 1px solid rgba(221, 75, 62, 0.2);
+    border-radius: 7px;
+    background: rgba(221, 75, 62, 0.08);
+    color: var(--config-danger);
+    padding: 9px 11px;
+    font-size: 12px;
+    white-space: pre-wrap;
+  }
+
+  .webhook-auto-hint,
+  .empty-repos,
+  .empty-projects-msg {
+    border: 1px dashed var(--config-line-strong);
+    border-radius: 8px;
+    background: rgba(246, 249, 250, 0.72);
+    color: var(--config-muted);
+    padding: 18px 14px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .table-container,
+  .webhook-result-table {
+    width: 100%;
+    overflow: auto;
+    border: 1px solid var(--config-line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.46);
+    box-shadow: none;
+  }
+
+  .repo-overview-table {
+    max-height: 360px;
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .repo-overview-table .repo-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .repo-table,
+  .webhook-result-table table {
+    width: 100%;
+    min-width: 0;
+    border-collapse: collapse;
+    color: var(--config-text);
+    font-size: 12px;
+  }
+
+  .repo-table th,
+  .repo-table td,
+  .webhook-result-table th,
+  .webhook-result-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--config-line);
+    background: transparent;
+    color: var(--config-text);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .repo-table th,
+  .webhook-result-table th {
+    background: rgba(242, 247, 248, 0.76);
+    color: var(--config-muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .repo-table tr:last-child td,
+  .webhook-result-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .repo-main {
+    min-width: 0;
+  }
+
+  .repo-main strong,
+  .repo-name-cell,
+  .proj-name {
+    display: block;
+    color: var(--config-ink);
+    font-weight: 760;
+  }
+
+  .repo-main span,
+  .repo-path-cell,
+  .proj-path,
+  .proj-id {
+    display: block;
+    max-width: 42ch;
+    margin-top: 3px;
+    color: var(--config-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .webhook-status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    border-radius: 999px;
+    padding: 0 9px;
+    border: 1px solid var(--config-line);
+    background: rgba(102, 119, 137, 0.08);
+    color: var(--config-muted);
+    font-size: 11px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .webhook-status-pill.ok,
+  .webhook-status-pill.created,
+  .webhook-status-pill.updated {
+    color: var(--config-success);
+    border-color: rgba(4, 150, 111, 0.2);
+    background: rgba(4, 150, 111, 0.1);
+  }
+
+  .webhook-status-pill.drift,
+  .webhook-status-pill.missing,
+  .webhook-status-pill.skipped {
+    color: var(--config-warning);
+    border-color: rgba(216, 135, 0, 0.2);
+    background: rgba(216, 135, 0, 0.1);
+  }
+
+  .webhook-status-pill.error {
+    color: var(--config-danger);
+    border-color: rgba(221, 75, 62, 0.2);
+    background: rgba(221, 75, 62, 0.1);
+  }
+
+  .workflow-steps {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px;
+    border: 1px solid var(--config-line);
+    border-radius: 9px;
+    background: rgba(240, 245, 247, 0.76);
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .workflow-steps button {
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--config-muted);
+    padding: 0 11px;
+    font-weight: 760;
+    cursor: pointer;
+  }
+
+  .workflow-steps button.active,
+  .workflow-steps button.completed {
+    background: rgba(255, 255, 255, 0.96);
+    color: var(--config-accent-strong);
+    box-shadow: 0 1px 3px rgba(28, 54, 67, 0.1);
+  }
+
+  .workflow-steps span {
+    width: 18px;
+    height: 18px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--config-accent-soft);
+    color: var(--config-accent-strong);
+    font-size: 10px;
+  }
+
+  .form-grid,
+  .add-repo-inputs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+  }
+
+  .add-repo-inputs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-bottom: 12px;
+  }
+
+  .token-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .gen-btn {
+    height: 38px;
+    margin: 0 0 23px;
+  }
+
+  .credential-collapsed {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .credential-collapsed div {
+    display: grid;
+    gap: 4px;
+  }
+
+  .credential-collapsed span,
+  .credential-collapsed strong,
+  .add-repo-form h6,
+  .summary-repo-item,
+  .summary-card {
+    color: var(--config-text);
+  }
+
+  .project-search-bar {
+    margin: 12px 0;
+  }
+
+  .project-search-bar input {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--config-line-strong);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--config-ink);
+    padding: 0 12px;
+    outline: none;
+  }
+
+  .project-search-bar input:focus {
+    border-color: var(--config-accent);
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1);
+  }
+
+  .project-cards-container,
+  .summary-repos {
+    display: grid;
+    gap: 0;
+    max-height: 240px;
+    overflow: auto;
+    border: 1px solid var(--config-line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.46);
+  }
+
+  .project-card-item,
+  .summary-repo-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--config-line);
+    background: transparent;
+  }
+
+  .project-card-item:last-child,
+  .summary-repo-item:last-child {
+    border-bottom: 0;
+  }
+
+  .proj-info {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .summary-card {
+    display: grid;
+    gap: 0;
+  }
+
+  .summary-repos {
+    margin-top: 14px;
+    max-height: 180px;
+  }
+
+  .summary-repo-item span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .font-mono {
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  }
+
+  @media (max-width: 860px) {
+    .config-section-header,
+    .webhook-auto-header,
+    .config-section-title,
+    .autoload-header,
+    .credential-collapsed,
+    .token-row {
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    .state-banner,
+    .overview-grid,
+    .form-grid,
+    .add-repo-inputs {
+      grid-template-columns: 1fr;
+    }
+
+    .workflow-steps {
+      width: 100%;
+    }
+
+    .workflow-steps button {
+      flex: 1;
+      justify-content: center;
+    }
+
+    .actions,
+    .overview-actions,
+    .webhook-auto-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .gen-btn {
+      margin: 0;
+    }
   }
 </style>

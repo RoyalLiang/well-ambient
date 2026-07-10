@@ -30,34 +30,34 @@ type ScheduleSummaryDTO struct {
 }
 
 type ScheduleItemDTO struct {
-	DemandID      string  `json:"demand_id"`
-	Title         string  `json:"title"`
-	Description   string  `json:"description"`
-	Assignee      string  `json:"assignee"`
-	Department    string  `json:"department"`
-	Repo          string  `json:"repo"`
-	Branch        string  `json:"branch"`
-	Status        string  `json:"status"`
-	TaskGroupID   string  `json:"task_group_id"`
-	Scheduled     bool    `json:"scheduled"`
-	DueDate       string  `json:"due_date"`
-	CreatedAt     string  `json:"created_at"`
-	LastUpdate    string  `json:"last_update"`
-	CompletedAt   string  `json:"completed_at,omitempty"`
-	MRURL         string  `json:"mr_url,omitempty"`
-	EstimateDays  float64 `json:"estimate_days"`
-	EstimateHours float64 `json:"estimate_hours"`
-	Difficulty    string  `json:"difficulty"`
-	RiskLevel     string  `json:"risk_level"`
-	RiskLabel     string  `json:"risk_label"`
-	RiskReason    string  `json:"risk_reason"`
-	RiskRank      int     `json:"risk_rank"`
-	DaysRemaining int     `json:"days_remaining"`
-	SubtaskTotal  int     `json:"subtask_total"`
-	SubtaskDone   int     `json:"subtask_done"`
-	SubtaskActive int     `json:"subtask_active"`
-	SubtaskReview int     `json:"subtask_review"`
-	IssueType     string  `json:"issue_type"`
+	DemandID        string  `json:"demand_id"`
+	Title           string  `json:"title"`
+	Description     string  `json:"description"`
+	Assignee        string  `json:"assignee"`
+	Department      string  `json:"department"`
+	Repo            string  `json:"repo"`
+	Branch          string  `json:"branch"`
+	Status          string  `json:"status"`
+	TaskGroupID     string  `json:"task_group_id"`
+	Scheduled       bool    `json:"scheduled"`
+	DueDate         string  `json:"due_date"`
+	CreatedAt       string  `json:"created_at"`
+	LastUpdate      string  `json:"last_update"`
+	CompletedAt     string  `json:"completed_at,omitempty"`
+	MRURL           string  `json:"mr_url,omitempty"`
+	EstimateDays    float64 `json:"estimate_days"`
+	EstimateHours   float64 `json:"estimate_hours"`
+	Difficulty      string  `json:"difficulty"`
+	RiskLevel       string  `json:"risk_level"`
+	RiskLabel       string  `json:"risk_label"`
+	RiskReason      string  `json:"risk_reason"`
+	RiskRank        int     `json:"risk_rank"`
+	DaysRemaining   int     `json:"days_remaining"`
+	SubtaskTotal    int     `json:"subtask_total"`
+	SubtaskDone     int     `json:"subtask_done"`
+	SubtaskActive   int     `json:"subtask_active"`
+	SubtaskReview   int     `json:"subtask_review"`
+	IssueType       string  `json:"issue_type"`
 	ProjectKey      string  `json:"project_key"`
 	ProjectPriority string  `json:"project_priority"`
 }
@@ -89,6 +89,11 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	searchFilter := r.URL.Query().Get("search")
 	typeFilter := r.URL.Query().Get("type")
 	riskFilter := r.URL.Query().Get("risk")
+	visibility, users, err := s.loadCoreMemberVisibility()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query users for schedule: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// 1. 查询过滤后的 demands (主卡片)
 	tx := db.DB.Model(&db.TaskTelemetry{}).Where("status != ?", "archived")
@@ -100,14 +105,11 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	if assigneeFilter != "" && assigneeFilter != "all" {
 		if assigneeFilter == "外部协同" {
-			coreMembers := []string{
-				"梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
-				"李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
-				"Eddie", "Antigravity",
-			}
-			tx = tx.Where("assignee NOT IN ? AND assignee != ? AND assignee != ? AND assignee != ?", coreMembers, "", "-", "Unassigned")
-		} else {
+			tx = tx.Where("1 = 0")
+		} else if visibility.includesAssignee(assigneeFilter) {
 			tx = tx.Where("assignee = ?", assigneeFilter)
+		} else {
+			tx = tx.Where("1 = 0")
 		}
 	}
 
@@ -127,6 +129,7 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to query schedule demands: %v", err), http.StatusInternalServerError)
 		return
 	}
+	demands = visibility.filterTasks(demands)
 
 	// 2. 根据过滤后的 demands 收集 TaskGroupID
 	var groupIDs []string
@@ -140,21 +143,16 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	// 3. 只查询与这些 groupIDs 相关的子任务，避免全表扫描！
 	var subtasks []db.TaskTelemetry
 	if len(groupIDs) > 0 {
-		if err := db.DB.Where("task_group_id IN ? AND status != ? AND issue_type NOT IN ?", 
+		if err := db.DB.Where("task_group_id IN ? AND status != ? AND issue_type NOT IN ?",
 			groupIDs, "archived", []string{"demand", "bug", "缺陷", "故障", "defect"}).Find(&subtasks).Error; err != nil {
 			http.Error(w, fmt.Sprintf("Failed to query subtasks: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
+	subtasks = visibility.filterTasks(subtasks)
 
 	// 4. 将 demands 和 subtasks 合并作为 tasks 列表传给 buildScheduleResponse
 	allTasks := append(demands, subtasks...)
-
-	var users []userdb.User
-	if err := db.DB.Find(&users).Error; err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query users for schedule: %v", err), http.StatusInternalServerError)
-		return
-	}
 
 	response := buildScheduleResponse(allTasks, users, time.Now())
 
@@ -386,10 +384,10 @@ func resolveScheduleRisk(demand db.TaskTelemetry, stats scheduleSubtaskStats, no
 		}
 
 		return scheduleRisk{
-			Level:         "safe",
-			Label:         "修复中",
-			Reason:        "缺陷已指派负责人并处于开发修复阶段",
-			Rank:          10,
+			Level:  "safe",
+			Label:  "修复中",
+			Reason: "缺陷已指派负责人并处于开发修复阶段",
+			Rank:   10,
 		}
 	}
 
