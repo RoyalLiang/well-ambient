@@ -13,6 +13,7 @@ import (
 
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	"well-ambient/internal/delivery"
 	"well-ambient/internal/kanban"
 )
 
@@ -312,6 +313,9 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 				go runAIMrReview(cfg, taskID, repoName, branchName, mrTitle, mrURL, lastCommit, mrIID, assigneeName)
 			}
 		}
+		if db.DB != nil {
+			reconcileAutonomousExecutionMR(branchName, mrURL, action, state)
+		}
 	}
 
 	if taskID == "" {
@@ -453,6 +457,44 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 	SyncStatusToJira(cfg, telemetry.TaskID, telemetry.Status)
 
 	return nil
+}
+
+func reconcileAutonomousExecutionMR(branchName, mrURL, action, state string) {
+	var run db.ExecutionRun
+	query := db.DB.Where("topic_branch = ?", strings.TrimSpace(branchName))
+	if strings.TrimSpace(mrURL) != "" {
+		query = db.DB.Where("topic_branch = ? OR mr_url = ?", strings.TrimSpace(branchName), strings.TrimSpace(mrURL))
+	}
+	if err := query.First(&run).Error; err != nil {
+		return
+	}
+	now := time.Now()
+	if action == "merge" || state == "merged" {
+		run.MRState = "merged"
+		if run.AcceptanceState == "accepted" && run.PipelineStatus == "success" {
+			run.Status = delivery.RunDelivered
+			run.BlockReason = ""
+			run.CompletedAt = &now
+			_ = db.DB.Model(&db.TaskTelemetry{}).Where("task_id = ?", run.DemandID).Updates(map[string]interface{}{
+				"status": "done", "completed_at": &now, "last_update": now,
+			}).Error
+			_, _ = delivery.EnsureCorpusCandidates(db.DB, run)
+		} else {
+			run.Status = delivery.RunAcceptancePending
+			run.BlockReason = "MR merged; waiting for successful pipeline and human acceptance"
+		}
+	} else if action == "close" || state == "closed" {
+		run.MRState = "closed"
+		if !delivery.IsTerminalRun(run.Status) {
+			run.Status = delivery.RunRejected
+			run.BlockReason = "Draft MR closed before delivery"
+			run.CompletedAt = &now
+		}
+	} else if action == "open" || action == "reopen" || state == "opened" {
+		run.MRState = "opened"
+	}
+	run.UpdatedAt = now
+	_ = db.DB.Save(&run).Error
 }
 
 // SyncStatusToJira transitions the status of a Jira issue in the background

@@ -4,6 +4,12 @@
   import type { AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS } from '../lib/admin-console/contract';
 
+  export let currentUserPermissions: string[] = [];
+
+  function hasPermission(permission: string) {
+    return currentUserPermissions.includes(permission);
+  }
+
   let inputText = '';
   type IntentMode = 'intent' | 'summary';
   type IntentInsight = {
@@ -769,8 +775,38 @@
         throw new Error(errText || `HTTP ${res.status}`);
       }
 
+      const importResult = await res.json();
+      let specDraftCreated = false;
+      if (selectedDemandId && hasPermission('demand_spec:write')) {
+        const specRes = await fetch('/api/demand-specs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            demand_id: selectedDemandId,
+            source_archive_id: importResult.archive_id,
+            original_text: inputText,
+            summary: inputText.split('\n')[0]?.slice(0, 180) || 'AI 需求解构',
+            user_goal: inputText,
+            readiness_score: result.analysis.completeness_score,
+            acceptance_criteria: result.analysis.acceptance_criteria,
+            test_plan: result.analysis.acceptance_criteria,
+            mapped_repos: result.mappedRepos,
+            tasks: result.tasks
+          })
+        });
+        if (!specRes.ok) {
+          const specError = await specRes.text();
+          throw new Error(`任务已导入，但规格草案创建失败：${specError}`);
+        }
+        specDraftCreated = true;
+      }
       await fetchActiveDemands();
-      displayToast(`已同步 ${result.tasks.length} 个解构任务至项目看板`, 'success');
+      displayToast(
+        specDraftCreated
+          ? `已同步 ${result.tasks.length} 个影子任务，并建立可审核规格草案`
+          : `已同步 ${result.tasks.length} 个影子任务至项目看板`,
+        'success'
+      );
     } catch (e: any) {
       console.error('Import tasks failed:', e);
       displayToast(`同步失败: ${e.message}`, 'error');

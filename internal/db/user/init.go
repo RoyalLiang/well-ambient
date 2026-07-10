@@ -27,6 +27,17 @@ func InitializeSeeds(db *gorm.DB) error {
 		{Code: "policies:read", Name: "查看授权策略", Description: "有权查看策略化授权规则、作用范围与命中原因"},
 		{Code: "policies:write", Name: "管理授权策略", Description: "有权新增、修改、启停 allow/deny 授权策略"},
 		{Code: "authorization_audit:read", Name: "查看授权决策审计", Description: "有权查看拒绝或高风险授权决策的审计日志"},
+		{Code: "demand_spec:read", Name: "查看可执行需求规格", Description: "有权查看需求的版本化 AI 解构、人工修订和冻结结果"},
+		{Code: "demand_spec:write", Name: "编辑可执行需求规格", Description: "有权创建和修订需求规格草案"},
+		{Code: "demand_spec:freeze", Name: "冻结可执行需求规格", Description: "有权将人工审核后的需求规格冻结为自动执行依据"},
+		{Code: "review_contract:manage", Name: "管理审核契约", Description: "有权维护需求的审核角色、候选人、验收人与审批规则"},
+		{Code: "review_contract:resolve", Name: "解析最终审核人", Description: "有权根据真实变更路径解析并确认 MR 审核人"},
+		{Code: "execution:preflight", Name: "执行自治交付预检", Description: "有权检查需求冻结、审核契约、仓库和变更集是否满足执行条件"},
+		{Code: "execution:start", Name: "启动自治交付", Description: "有权让系统创建受控分支、提交和 Draft MR"},
+		{Code: "execution:cancel", Name: "取消自治交付", Description: "有权停止尚未交付的执行运行并保留审计记录"},
+		{Code: "execution:accept", Name: "验收自治交付", Description: "有权以审核契约中的业务验收人身份确认或拒绝交付结果"},
+		{Code: "corpus_candidate:read", Name: "查看语料候选", Description: "有权查看交付复盘生成的知识和案例候选"},
+		{Code: "corpus_candidate:review", Name: "审核语料候选", Description: "有权接受或拒绝语料候选并将接受项纳入版本化上下文事实"},
 	}
 
 	log.Println("Seeding default permissions (incremental)...")
@@ -104,6 +115,17 @@ func InitializeSeeds(db *gorm.DB) error {
 		"ai_context:preview",
 		"policies:read",
 		"authorization_audit:read",
+		"demand_spec:read",
+		"demand_spec:write",
+		"demand_spec:freeze",
+		"review_contract:manage",
+		"review_contract:resolve",
+		"execution:preflight",
+		"execution:start",
+		"execution:cancel",
+		"execution:accept",
+		"corpus_candidate:read",
+		"corpus_candidate:review",
 	}
 	for _, code := range adminPermCodes {
 		if pID, ok := permMap[code]; ok {
@@ -120,7 +142,7 @@ func InitializeSeeds(db *gorm.DB) error {
 
 	// Member gets dashboard:read, demands:read, decision:read
 	memberID := groupMap["member"]
-	memberPermCodes := []string{"dashboard:read", "demands:read", "decision:read"}
+	memberPermCodes := []string{"dashboard:read", "demands:read", "decision:read", "demand_spec:read"}
 	for _, code := range memberPermCodes {
 		if pID, ok := permMap[code]; ok {
 			var count int64

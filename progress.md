@@ -1,5 +1,74 @@
 # Progress Log
 
+## Session: 2026-07-10 — Controlled Autonomous Delivery Rollout
+
+### Phase 0: Baseline and planning
+- **Status:** complete
+- Loaded the repository cold-start rules, design routing, memory guidance, and `planning-with-files` skill.
+- Audited the existing strongest-brain plan, intent API, context-pack deconstruction, archive/import path, GitLab telemetry, and AI MR review.
+- Checkpointed all pre-existing uncommitted work as `8f50f00 chore: checkpoint admin console and strongest brain baseline`.
+- Began the versioned demand-spec, review-contract, controlled-execution, reviewer-resolution, and corpus-feedback rollout plan.
+- Added `docs/controlled-autonomous-delivery-plan.md` with lifecycle, contracts, safety boundaries, phase acceptance, and delivery definition.
+
+### Phase 1: Persistence and state machine
+- **Status:** complete
+- Next action: inspect DB migration, permission seeding, policy conventions, and GitLab configuration before adding models and transition helpers.
+- Confirmed GORM AutoMigrate, incremental permission seeds, existing policy wrapper, `RepoMapping` configuration, and an `httptest`-friendly GitLab HTTP pattern.
+- Added the four persistence roots, append-only action log, incremental permissions, and a pure execution-run state machine with tests.
+- First targeted Go test attempt was blocked before compilation by the sandboxed default Go build cache; no code diagnostic was produced.
+- Policy-compliant rerun passed: `go test ./internal/delivery ./internal/db/...`.
+
+### Phase 2: Human-reviewed executable specification
+- **Status:** complete
+- Implement draft/create/update/read/freeze behavior and review-contract manage/approve behavior with frozen-version immutability.
+- Added authenticated, permission-gated spec and contract routes.
+- Added archive hydration so a deconstruction archive can initialize the human-reviewable specification while retaining context-pack provenance.
+- Added default review-contract generation, approval checks, freeze readiness gates, immutable frozen versions, and stale-run invalidation.
+- Focused lifecycle and readiness-blocker tests pass.
+
+### Phase 3: Reviewer resolution and preflight
+- **Status:** complete
+- Implement deterministic reviewer resolution, protected-path rules, segregation of duties, validated change-set artifacts, and structured preflight checks.
+- Added protected-path glob handling, minimum approvals, author/unavailable exclusion, and structured blocker reasons.
+- Added permission-gated execution preflight that verifies frozen spec, approved contract, mapped/configured repository, safe file actions, test policy, and reviewer resolution.
+- Pure resolver/change-set tests and the endpoint integration test pass.
+
+### Phase 4: Controlled execution and GitLab adapter
+- **Status:** complete
+- Add idempotent execution runs/actions and an `httptest`-covered GitLab branch/commit/Draft-MR client.
+- Implemented run create/list/start/cancel, append-only actions, safe topic branch naming, GitLab project/reviewer/branch/commit/Draft-MR operations, and evidence projection back to the demand.
+- First HTTP contract test attempt compiled, then the sandbox blocked the local `httptest.Server` listener before requests executed.
+- Added frozen-spec AI change-set generation with source-file budgets, update-path allowlisting, deletion bans, and completions/responses protocol support.
+- Added GitLab Pipeline refresh and test-failure state handling.
+- Escalated local-only HTTP contract tests pass, including request shape, reviewer IDs, branch/commit/MR sequence, pipeline result, evidence projection, and idempotency.
+
+### Phase 5: Demand workspace and human verification
+- **Status:** complete
+- Use the UI design-system skill in the existing light admin-console register.
+- Move deconstruction/intent work into the demand workspace and add a compact demand-detail delivery control instead of a new cockpit.
+- Added `DemandDeliveryControl.svelte` with spec review, contract approval, freeze, AI generation, execute, MR/CI evidence, cancel and named-owner acceptance actions.
+- Moved Deconstructor from evidence to the demand-board workspace and made task import create a reviewable spec draft from its archive.
+- Added `execution:accept`, named acceptance-owner enforcement, and MR webhook delivery reconciliation.
+- `pnpm --dir web build` passes. `pnpm --dir web check` reports only the eight existing `TaskKanban.svelte` `parentDemand` nullability errors; the new component has no errors.
+- Human acceptance and MR reconciliation focused Go tests pass.
+
+### Phase 6: Delivery feedback and governed candidates
+- **Status:** complete
+- Generate idempotent delivery candidates and require explicit review before creating active context facts.
+- Added delivery-case, requirement-pattern and risk-rule candidates with provenance, confidence and scope.
+- Added permission-gated list/review APIs; acceptance creates a versioned active Context Fact, rejection creates none, and repeated decisions are idempotent.
+- Added a compact candidate-review surface to the existing System Design corpus page and refreshes the fact list after promotion.
+- Focused candidate quarantine/promotion tests and frontend production build pass.
+
+### Phase 7: Integration and delivery
+- **Status:** complete
+- Run full backend regression, final frontend build/check, diff hygiene, update plan/progress/findings, and commit.
+- Frontend `pnpm --dir web check` now passes with 0 errors and 65 existing warnings after replacing four unsafe `parentDemand` narrowings with existing safe helpers.
+- First full Go regression found two baseline failures: local user omission in demand options and a missing evidence-gap decision item. Both were resolved with narrow compatibility fixes that preserve the configured visibility boundary and raw execution evidence.
+- Final `GOCACHE=/tmp/well-ambient-gocache go test ./...` passes across all Go packages.
+- Final `pnpm --dir web build` passes; `pnpm --dir web check` passes with 0 errors and 65 pre-existing warnings.
+- Final `git diff --check` passes. Background-generated `task_status.md` and `well-ambient.db` changes remain intentionally outside the delivery commit.
+
 ## Session: 2026-07-10 - Phase 50 Settings Column Height Synchronization
 
 ### Implementation And Validation

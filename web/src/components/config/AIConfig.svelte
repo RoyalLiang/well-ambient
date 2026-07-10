@@ -5,6 +5,7 @@
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
+  import CorpusCandidateReview from './CorpusCandidateReview.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -39,6 +40,7 @@
   export let saveSuccess = false;
   export let lastUpdated = '';
   export let view: 'engine' | 'context' | 'all' = 'all';
+  export let currentUserPermissions: string[] = [];
 
   type ContextFactID = number | string;
 
@@ -1105,6 +1107,8 @@
           </div>
         </div>
       </div>
+
+      <CorpusCandidateReview {currentUserPermissions} on:promoted={fetchContextFacts} />
 
       <section class="scw-section">
         <div class="scw-section-head">

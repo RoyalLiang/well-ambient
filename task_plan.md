@@ -1,5 +1,48 @@
 # Task Plan: Implementation Plan Check and Fix
 
+## Current Task Addendum: Controlled Autonomous Delivery Rollout
+
+### Goal
+Turn the existing intent recognition, AI deconstruction, context-pack archive, GitLab telemetry, and AI MR review foundations into a controlled autonomous delivery loop: human-freeze a versioned demand specification, execute only through policy gates, create isolated branches/commits/Draft MRs, resolve reviewers from a review contract plus the real diff, require CI and human acceptance, and feed delivery outcomes back as auditable corpus candidates.
+
+### Protection Rules
+- Never write directly to a protected/default branch; all automated work uses a dedicated topic branch and Draft MR.
+- AI output is never promoted directly into the trusted knowledge registry; it first becomes a versioned candidate with provenance and human disposition.
+- A demand must have a frozen specification and approved review contract before execution can start.
+- Author, code reviewer, and business acceptance owner remain distinct identities; self-review cannot satisfy an approval requirement.
+- Every transition and external side effect must be idempotent, auditable, permission-checked, and recoverable.
+- Existing deconstruction, task import, schedule, telemetry, RBAC, and Settings behavior must remain compatible.
+
+### Phases
+- [x] Phase 0 — checkpoint the dirty baseline and write the delivery plan
+- [x] Phase 1 — add domain models, permissions, state machine, and migrations
+- [x] Phase 2 — add demand-spec draft/edit/freeze APIs and review-contract APIs
+- [x] Phase 3 — add reviewer resolution and execution preflight policy
+- [x] Phase 4 — add controlled execution runs, GitLab branch/commit/Draft-MR adapter, and audit actions
+- [x] Phase 5 — connect demand/deconstruction UI to human review, freeze, execute, and verification states
+- [x] Phase 6 — add delivery feedback and knowledge-candidate review loop
+- [x] Phase 7 — run focused backend/frontend regression, close gaps, update docs, and commit the completed rollout
+
+### Current Phase
+Complete — all controlled autonomous delivery phases passed final validation and are included in the delivery commit.
+
+### Validation Contract
+- Focused Go tests for every new state transition, policy gate, reviewer rule, and GitLab request.
+- `go test ./...` at final integration.
+- `pnpm --dir web build` at each UI boundary and final integration.
+- `git diff --check` before each phase commit and final delivery.
+
+### Errors Encountered
+| Error | Attempt | Resolution |
+|---|---:|---|
+| Go tests could not write the default macOS build cache under `~/Library/Caches/go-build` | 1 | Treat as an environment-only sandbox failure; use `/tmp/well-ambient-gocache` for subsequent tests and request a policy-compliant rerun of the failed validation. |
+| New `compactStrings` helper collided with an existing strongest-brain helper that accepts a limit argument | 2 | Renamed the helper, then replaced one missed call in default reviewer-candidate construction; existing shared helper remains unchanged. |
+| Phase 4 `httptest.Server` could not bind `[::1]:0` inside the sandbox | 1 | Treat as a local-listener sandbox restriction and rerun the focused HTTP contract tests with approved escalation; no real network service is contacted. |
+| Draft MR execution succeeded externally but demand evidence projection used nonexistent `mr_iid` column | 1 | Use the existing schema's `mr_i_id` column and make evidence projection transactional/error-returning instead of silently ignoring failures. |
+| Combined state/audit patch missed current gofmt-adjusted context | 1 | Re-read exact snippets and split the update into narrow patches; no partial changes were applied. |
+| AI change-set generator referenced telemetry package's private `queryLLM` | 1 | Add a server-local protocol-compatible LLM client and keep package boundaries explicit. |
+| Final `go test ./...` exposed two baseline regressions in demand-option visibility and strongest-brain evidence-missing queue rules | 1 | Reproduce each focused test, inspect current shared filtering/read-model logic, apply minimal compatibility fixes, then rerun full regression. |
+
 ## Current Task Addendum: Phase 50 Settings Column Height Synchronization
 - [x] Remove the audit pane's independent desktop viewport height
 - [x] Make the left configuration surface determine the shared desktop grid-row height

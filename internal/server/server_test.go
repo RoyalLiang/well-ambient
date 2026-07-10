@@ -1519,9 +1519,14 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 		t.Fatalf("decode demand options response: %v", err)
 	}
 
-	for _, want := range []string{"Alice Options", "Bob Options", "Task Owner", "Jira Owner", "JQL Owner"} {
+	for _, want := range []string{"Jira Owner", "JQL Owner", "middle.q"} {
 		if !stringSliceContains(response.Assignees, want) {
 			t.Fatalf("assignees missing %q: %+v", want, response.Assignees)
+		}
+	}
+	for _, notWant := range []string{"Alice Options", "Bob Options", "Task Owner"} {
+		if stringSliceContains(response.Assignees, notWant) {
+			t.Fatalf("non-core assignee should not be offered %q: %+v", notWant, response.Assignees)
 		}
 	}
 	for _, want := range []string{"AMB", "Ambient Control", "CFG", "OPS", "APP-X"} {

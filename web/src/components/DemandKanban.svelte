@@ -5,6 +5,7 @@
   import { ADMIN_TONE_CLASS, formatAdminDate, toneForRisk, toneForStatus } from '../lib/admin-console/contract';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
+  import DemandDeliveryControl from './DemandDeliveryControl.svelte';
 
   type DemandView = 'board' | 'schedule';
 
@@ -3340,6 +3341,13 @@
               <div class="detail-empty">尚未导入 AI 影子任务。</div>
             {/if}
           </div>
+
+          <DemandDeliveryControl
+            demand={detailDemand}
+            {currentUserPermissions}
+            {currentUserName}
+            {currentUserEmail}
+          />
         </div>
       </div>
     </div>

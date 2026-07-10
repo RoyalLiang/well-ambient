@@ -227,7 +227,7 @@ type ProjectConfig struct {
 	ProjectName     string    `gorm:"uniqueIndex" json:"project_name"`
 	ProjectKey      string    `gorm:"uniqueIndex;column:project_key" json:"project_key"` // e.g. "HIT"
 	GitReposJSON    string    `gorm:"type:text" json:"git_repos_json"`
-	BasePriority    string    `json:"base_priority"` // P0, P1, P2
+	BasePriority    string    `json:"base_priority"`                                          // P0, P1, P2
 	ProjectPhase    string    `gorm:"column:project_phase;default:'交付'" json:"project_phase"` // e.g. "POC", "交付", "运营", "售后"
 	BaseScore       float64   `gorm:"column:base_score;default:60.0" json:"base_score"`
 	BaseScoreWeight float64   `gorm:"column:base_score_weight;default:0.10" json:"base_score_weight"`
@@ -254,12 +254,12 @@ type ProjectScore struct {
 type DecisionEvent struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	TaskID     string    `gorm:"index" json:"task_id"`
-	Actor      string    `json:"actor"`       // 操作人 (如 "AI_Brain", "Eddie")
-	Action     string    `json:"action"`      // override_assignee, override_due, ai_infer_stuck等
+	Actor      string    `json:"actor"`  // 操作人 (如 "AI_Brain", "Eddie")
+	Action     string    `json:"action"` // override_assignee, override_due, ai_infer_stuck等
 	OldValue   string    `json:"old_value"`
 	NewValue   string    `json:"new_value"`
-	Reason     string    `json:"reason"`      // 理由
-	Confidence float64   `json:"confidence"`  // AI 置信度
+	Reason     string    `json:"reason"`     // 理由
+	Confidence float64   `json:"confidence"` // AI 置信度
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -297,6 +297,11 @@ func InitDB(dbPath string) error {
 		&ProjectConfig{},
 		&ProjectScore{},
 		&DecisionEvent{},
+		&DemandSpecVersion{},
+		&ReviewContract{},
+		&ExecutionRun{},
+		&ExecutionAction{},
+		&CorpusCandidate{},
 	)
 	if err != nil {
 		return err

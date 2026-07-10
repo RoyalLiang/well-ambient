@@ -937,13 +937,10 @@ func strongestBrainChainStatus(profile strongestBrainEvidenceProfile) string {
 func strictEvidenceChainConsistencyDecisions(execution ExecutionTasksResponseDTO, now time.Time) []StrongestBrainDecisionItem {
 	items := make([]StrongestBrainDecisionItem, 0)
 	for _, item := range execution.Items {
-		if !strings.EqualFold(strings.TrimSpace(item.Status), "done") {
+		if !strings.EqualFold(strings.TrimSpace(item.Status), "done") && !strings.EqualFold(strings.TrimSpace(item.ExecutionStatus), "done") {
 			continue
 		}
 		if executionItemHasCodeResultEvidence(item) {
-			continue
-		}
-		if item.RiskLevel != "safe" && item.RiskLevel != "done" {
 			continue
 		}
 		items = append(items, StrongestBrainDecisionItem{
@@ -951,7 +948,7 @@ func strictEvidenceChainConsistencyDecisions(execution ExecutionTasksResponseDTO
 			TaskID:          item.TaskID,
 			Title:           item.Title,
 			Problem:         "任务已完成，但缺少 commit 或 MR 结果证据",
-			Evidence:        []string{fmt.Sprintf("状态 %s，commit %d，MR %d", item.Status, item.CommitCount, item.MRCount), "分支只能证明进入排期，不能证明交付结果"},
+			Evidence:        []string{fmt.Sprintf("执行状态 %s，主线状态 %s，commit %d，MR %d", item.ExecutionStatus, item.Status, item.CommitCount, item.MRCount), "分支只能证明进入排期，不能证明交付结果"},
 			SuggestedAction: "要求负责人补齐 commit、MR 或验收证据；无法补齐时回退完成状态并记录原因",
 			ImpactScope:     executionImpactScope(item),
 			JumpLabel:       firstNonEmpty(item.ParentDemandID, item.TaskID),
@@ -1354,6 +1351,10 @@ func enrichStrongestBrainDecisionItems(items []StrongestBrainDecisionItem, profi
 		}
 		if item.EvidenceCompleteness == 0 && hasProfile {
 			item.EvidenceCompleteness = profile.EvidenceCompleteness
+		}
+		if item.RiskType == "evidence_missing" {
+			item.ChainStatus = "mismatch"
+			item.MissingLinks = append(item.MissingLinks, "completion_evidence")
 		}
 		if item.RecommendedAction == "" {
 			item.RecommendedAction = "确认事实证据后决定处理动作"

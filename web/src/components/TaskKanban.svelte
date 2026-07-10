@@ -2057,7 +2057,6 @@
         </div>
         <div class="column-body">
           {#each backlog as task}
-            {@const parentDemand = getParentDemand(task.taskGroupId)}
             <div class="task-card {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
                 <div class="meta-left">
@@ -2071,9 +2070,9 @@
                 <span class="task-repo">{task.repo !== '-' ? task.repo : ''}</span>
               </div>
               <h4 class="task-title">{task.title}</h4>
-              {#if parentDemand}
-                <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  关联需求: #{parentDemand.id}
+              {#if hasParentDemand(task.taskGroupId)}
+                <div class="parent-demand-badge font-mono" title={getParentDemandTitle(task.taskGroupId)}>
+                  关联需求: #{getParentDemandId(task.taskGroupId)}
                 </div>
               {/if}
               <div class="task-footer">
@@ -2101,7 +2100,6 @@
         </div>
         <div class="column-body">
           {#each inProgress as task}
-            {@const parentDemand = getParentDemand(task.taskGroupId)}
             {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-progress {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
@@ -2119,9 +2117,9 @@
                 </div>
               </div>
               <h4 class="task-title text-focus">{task.title}</h4>
-              {#if parentDemand}
-                <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  关联需求: #{parentDemand.id}
+              {#if hasParentDemand(task.taskGroupId)}
+                <div class="parent-demand-badge font-mono" title={getParentDemandTitle(task.taskGroupId)}>
+                  关联需求: #{getParentDemandId(task.taskGroupId)}
                 </div>
               {/if}
               {#if task.branch && task.branch !== '-'}
@@ -2157,7 +2155,6 @@
         </div>
         <div class="column-body">
           {#each inReview as task}
-            {@const parentDemand = getParentDemand(task.taskGroupId)}
             {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-review {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
@@ -2175,9 +2172,9 @@
                 </div>
               </div>
               <h4 class="task-title text-focus">{task.title}</h4>
-              {#if parentDemand}
-                <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  关联需求: #{parentDemand.id}
+              {#if hasParentDemand(task.taskGroupId)}
+                <div class="parent-demand-badge font-mono" title={getParentDemandTitle(task.taskGroupId)}>
+                  关联需求: #{getParentDemandId(task.taskGroupId)}
                 </div>
               {/if}
               {#if task.branch && task.branch !== '-'}
@@ -2215,7 +2212,6 @@
         </div>
         <div class="column-body">
           {#each done as task}
-            {@const parentDemand = getParentDemand(task.taskGroupId)}
             {@const ev = getEvidenceStatus(task)}
             <div class="task-card card-done" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
               <div class="task-meta">
@@ -2233,9 +2229,9 @@
                 </div>
               </div>
               <h4 class="task-title title-done">{task.title}</h4>
-              {#if parentDemand}
-                <div class="parent-demand-badge font-mono" title={parentDemand.title}>
-                  关联需求: #{parentDemand.id}
+              {#if hasParentDemand(task.taskGroupId)}
+                <div class="parent-demand-badge font-mono" title={getParentDemandTitle(task.taskGroupId)}>
+                  关联需求: #{getParentDemandId(task.taskGroupId)}
                 </div>
               {/if}
               <div class="task-footer">

@@ -1351,9 +1351,9 @@
     {:else if activeSection === 'projects'}
             <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} />
     {:else if activeSection === 'ai'}
-            <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} />
+            <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} {currentUserPermissions} />
     {:else if activeSection === 'ai_context'}
-            <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} />
+            <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} {currentUserPermissions} />
     {:else if activeSection === 'kpi'}
             <div class="kpi-settings-panel">
               <KPIKanban />

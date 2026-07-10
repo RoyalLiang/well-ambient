@@ -42,6 +42,7 @@ type ExecutionTaskItemDTO struct {
 	Repo              string   `json:"repo"`
 	Branch            string   `json:"branch"`
 	Status            string   `json:"status"`
+	ExecutionStatus   string   `json:"execution_status,omitempty"`
 	TaskGroupID       string   `json:"task_group_id"`
 	ParentDemandID    string   `json:"parent_demand_id,omitempty"`
 	ParentDemand      string   `json:"parent_demand,omitempty"`
@@ -272,6 +273,7 @@ func buildExecutionTasksResponse(tasks []db.TaskTelemetry, logs []db.GitCommitLo
 			Repo:              strings.TrimSpace(task.Repo),
 			Branch:            strings.TrimSpace(task.Branch),
 			Status:            effectiveStatus,
+			ExecutionStatus:   strings.TrimSpace(task.Status),
 			TaskGroupID:       groupID,
 			ParentDemandID:    strings.TrimSpace(parentDemand.TaskID),
 			ParentDemand:      strings.TrimSpace(parentDemand.Title),

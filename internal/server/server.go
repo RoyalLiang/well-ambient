@@ -104,6 +104,22 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
 	s.mux.HandleFunc("GET /api/schedule/risk-calendar", s.withPermission("demands:read", s.handleGetScheduleRiskCalendar))
 	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
+	s.mux.HandleFunc("GET /api/demand-specs", s.withPermission("demand_spec:read", s.handleListDemandSpecs))
+	s.mux.HandleFunc("POST /api/demand-specs", s.withPermission("demand_spec:write", s.handleSaveDemandSpec))
+	s.mux.HandleFunc("POST /api/demand-specs/{id}/freeze", s.withPermission("demand_spec:freeze", s.handleFreezeDemandSpec))
+	s.mux.HandleFunc("GET /api/review-contracts", s.withPermission("demand_spec:read", s.handleGetReviewContract))
+	s.mux.HandleFunc("POST /api/review-contracts", s.withPermission("review_contract:manage", s.handleSaveReviewContract))
+	s.mux.HandleFunc("POST /api/review-contracts/{id}/approve", s.withPermission("review_contract:manage", s.handleApproveReviewContract))
+	s.mux.HandleFunc("POST /api/execution/preflight", s.withPermission("execution:preflight", s.handleExecutionPreflight))
+	s.mux.HandleFunc("POST /api/execution/change-set/generate", s.withPermission("execution:preflight", s.handleGenerateExecutionChangeSet))
+	s.mux.HandleFunc("GET /api/execution/runs", s.withPermission("demand_spec:read", s.handleListExecutionRuns))
+	s.mux.HandleFunc("POST /api/execution/runs", s.withPermission("execution:preflight", s.handleCreateExecutionRun))
+	s.mux.HandleFunc("POST /api/execution/runs/{id}/start", s.withPermission("execution:start", s.handleStartExecutionRun))
+	s.mux.HandleFunc("POST /api/execution/runs/{id}/cancel", s.withPermission("execution:cancel", s.handleCancelExecutionRun))
+	s.mux.HandleFunc("POST /api/execution/runs/{id}/refresh", s.withPermission("execution:preflight", s.handleRefreshExecutionRun))
+	s.mux.HandleFunc("POST /api/execution/runs/{id}/verify", s.withPermission("execution:accept", s.handleVerifyExecutionRun))
+	s.mux.HandleFunc("GET /api/corpus-candidates", s.withPermission("corpus_candidate:read", s.handleListCorpusCandidates))
+	s.mux.HandleFunc("POST /api/corpus-candidates/{id}/review", s.withPermission("corpus_candidate:review", s.handleReviewCorpusCandidate))
 
 	// Protected Project Configs & Brain Scores
 	s.mux.HandleFunc("GET /api/projects/config", s.withAuth(s.handleGetProjectConfigs))
@@ -237,8 +253,10 @@ func resourceTypeForPermission(permission string) string {
 		return "config"
 	case "users":
 		return "user"
-	case "demands":
+	case "demands", "demand_spec", "review_contract", "execution":
 		return "demand"
+	case "corpus_candidate":
+		return "config"
 	case "ai_context":
 		return "config"
 	case "policies", "authorization_audit":

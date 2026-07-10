@@ -1,5 +1,39 @@
 # Findings & Decisions
 
+## Controlled Autonomous Delivery Rollout — Initial Findings
+
+- The repository already exposes deterministic intent recognition through `/api/ai/intent`, but the current handler does not yet call the configured LLM enhancement path.
+- AI deconstruction already selects and persists a `context_pack_id`, and task import archives the normalized output with a trace.
+- Imported AI work is represented as shadow execution tasks linked to a demand through `task_group_id`; this is the right compatibility boundary for autonomous execution.
+- GitLab webhooks already record branch/MR evidence and trigger an AI MR review report, but the application does not create branches, commits, MRs, or assign reviewers.
+- The new design should extend the existing strongest-brain and policy infrastructure instead of adding a separate cockpit or a second task system.
+- Reviewer selection needs a two-stage contract: required roles/candidates/approval rules are frozen with the demand spec, while concrete people are resolved again from the actual changed paths before the MR becomes ready.
+- Raw AI output, human edits, test evidence, review outcomes, and acceptance outcomes belong in an immutable execution/case record. Only curated, scoped, versioned candidates may enter the trusted context registry.
+- The current worktree contained substantial completed UI and visibility work. It was checkpointed as commit `8f50f00` before this rollout.
+- Database schema changes use GORM `AutoMigrate` in `internal/db/db.go`; the new delivery models can be added without a separate migration framework.
+- Permission seeding is incremental. Super admins automatically receive every new permission, while admin/member grants must be selected deliberately.
+- The existing authorization wrapper already maps permission prefixes to resource types and supports repository-scoped query parameters, so execution routes should reuse `withPermission` rather than invent another authorization layer.
+- GitLab API support currently covers project discovery and webhook management through a small authenticated HTTP client. Controlled delivery should extract a reusable API client pattern while keeping tests on `httptest.Server`.
+- `RepoMapping` already provides name, path, and project ID. That is sufficient to resolve a configured repository without adding another repository table in the first cut.
+- The existing Go 1.22 `ServeMux` path variables are already used for version rollback and can safely support spec freeze and review-contract approval routes.
+- Demand-spec lifecycle works cleanly as an extension of `TaskTelemetry`: the demand remains the root, each draft gets a monotonically increasing version, and frozen rows are immutable.
+- Creating a new draft can invalidate only unstarted older runs (`pending` and preflight states) without touching executing or completed delivery evidence.
+- Reviewer resolution is safest as a pure deterministic function. Protected-path candidates are selected first, then the general candidate pool fills the minimum approval count; the author and unavailable identities are excluded case-insensitively.
+- The execution engine can validate explicit structured file actions without interpreting shell text. Relative path normalization, `.git`/parent traversal bans, duplicate detection, and encoding validation form the v1 change-set boundary.
+- Preflight should re-resolve reviewers from the actual change paths and persist that resolution on the approved review contract; this preserves the early contract while allowing diff-aware final assignment.
+- GitLab's repository commit API is a strong safety boundary for v1: the system submits a validated list of file actions in one commit instead of executing model-authored shell commands.
+- Reviewer names must resolve to concrete active GitLab user IDs before branch creation; otherwise the run fails before any write-side effect.
+- Run-key idempotency prevents repeated create/start requests from duplicating branches, commits, or MRs. Repeated status refresh remains append-only by using unique action-event keys.
+- Automatic tests are represented by the GitLab Pipeline triggered by the pushed topic branch/Draft MR. The system records required test commands and refreshes the authoritative pipeline result instead of claiming local shell execution.
+- AI code generation is bounded to supplied source snapshots for updates; it may create safe new paths, cannot delete files, and its JSON output must pass the same deterministic preflight validator before execution.
+- Human acceptance and MR merge are separate facts. A run enters `acceptance_pending` after the named acceptance owner approves it, and only the GitLab merge webhook can close it as `delivered` when the pipeline is also successful.
+- The existing demand-detail modal is the lowest-coupling UI integration point: it keeps specification, contract, run, Pipeline, MR and acceptance context attached to one demand without adding another cockpit or task surface.
+- Moving the existing Deconstructor from the evidence page to the demand board preserves its richer editing workflow; importing reviewed shadow tasks now also creates a versioned spec draft from the archived context pack.
+- Delivery feedback needs an explicit quarantine state. `CorpusCandidate.status=pending` is never selected by context-pack assembly; accepting a candidate creates a separate versioned, active Context Fact with archive provenance and a content hash.
+- Candidate generation is idempotent by run/type/scope, so both a human-verification path and an MR webhook can safely request feedback generation without duplicates.
+- Final regression confirmed the demand-options implementation intentionally exposes only configured core/JQL identities; the stale test was updated to assert that local non-core users and historical task owners remain excluded.
+- A completed execution task without commit/MR evidence must produce `evidence_missing` even when its parent demand is independently due soon; parent schedule risk cannot suppress the stricter completion-evidence rule.
+
 ## Phase 50 Settings Column Height Synchronization
 
 ### Root Cause And Fix

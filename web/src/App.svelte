@@ -840,17 +840,21 @@
       {#if activeTab === 'decision'}
         <DecisionDashboard currentUser={currentUserName} />
       {:else if activeTab === 'schedule'}
-        <DemandKanban
-          currentUserPermissions={currentUserPermissions}
-          currentUserName={currentUserName}
-          currentUserEmail={currentUserEmail}
-          currentUserDepartment={currentUserDepartment}
-          activeDemandView={activeDemandView}
-        />
+        <div class="console-functional-stack">
+          <DemandKanban
+            currentUserPermissions={currentUserPermissions}
+            currentUserName={currentUserName}
+            currentUserEmail={currentUserEmail}
+            currentUserDepartment={currentUserDepartment}
+            activeDemandView={activeDemandView}
+          />
+          {#if activeDemandView === 'board'}
+            <Deconstructor currentUserPermissions={currentUserPermissions} />
+          {/if}
+        </div>
       {:else if activeTab === 'evidence'}
         <div class="console-functional-stack">
           <ProjectHealthTelemetry />
-          <Deconstructor />
         </div>
       {:else if activeTab === 'tasks'}
         <TaskKanban />
