@@ -1,6 +1,7 @@
 server:
     port: 8080
     host: 0.0.0.0
+    attachment_dir: ""
 gitlab:
     enabled: true
     base_url: https://devgit.westwell.cc
@@ -107,7 +108,7 @@ jira:
         - To Do
         - Awaiting fix
         - Investigation
-    custom_jql: project in (zjk,MAQT,shg,quz,ez,AB,HIT,FEL2WD,TNJ,MDL,CK,LCB,tpy,JTG,TH,PRJ23003,PRJ23096,DL,FZ,QZ,HR,ZK,FEL,AQCT,ICA,CHQ,YH,GY,LUZ,ZPU,WLY,TC,RZ,HACTLAA,WUH,PACTL,YN,NS2,HACTL2,HKAA,DG,WLY,PACTL,PD,ML,EZ) AND issuetype in (Bug, Task) and status not in (done,testing,"awaiting fix","merge request") AND created >= 2026-3-1  and  ( labels not  in( 暂不处理) or labels is empty)  and assignee in (梁志远, 朱家聪, 岳颖颖, 姜昊良, 白凌云, 陈伟华, 李厚奇, 鲁俊, 刘子翔, 张路路, 韩程程,纵涵,尹祖雷,王财和,孙海峰)
+    custom_jql: project in (zjk,MAQT,shg,quz,ez,AB,HIT,FEL2WD,TNJ,MDL,CK,LCB,tpy,JTG,TH,PRJ23003,PRJ23096,DL,FZ,QZ,HR,ZK,FEL,AQCT,ICA,CHQ,YH,GY,LUZ,ZPU,WLY,TC,RZ,HACTLAA,WUH,PACTL,YN,NS2,HACTL2,HKAA,DG,WLY,PACTL,PD,ML,EZ,YBET) AND issuetype in (Bug, Task) and status not in (done,testing,"awaiting fix","merge request") AND created >= 2026-3-1  and  ( labels not  in( 暂不处理) or labels is empty)  and assignee in (梁志远, 朱家聪, 岳颖颖, 姜昊良, 白凌云, 陈伟华, 李厚奇, 鲁俊, 刘子翔, 张路路, 韩程程,纵涵,尹祖雷,王财和,孙海峰)
 ai:
     enabled: true
     provider: Pixel

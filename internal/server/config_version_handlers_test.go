@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +12,23 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestHandleSaveConfigRejectsInvalidJiraVersionSourceBeforeApply(t *testing.T) {
+	current := &config.Config{}
+	s := &Server{config: current}
+	body := []byte(`{"jira":{"base_url":"https://jira.example.com","version_sources":[{"project_key":"OTHER","project_name":"Other","version_url":"https://jira.example.com/projects/PROJ/versions/13622"}]}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	s.handleSaveConfig(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if len(current.Jira.VersionSources) != 0 {
+		t.Fatalf("invalid Jira version source was applied: %#v", current.Jira.VersionSources)
+	}
+}
 
 func TestRedactConfigForArchiveHashesSecrets(t *testing.T) {
 	cfg := config.Config{

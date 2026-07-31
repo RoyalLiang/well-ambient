@@ -203,23 +203,28 @@ func (s *Server) handleGetStrongestBrainDeliveryCockpit(w http.ResponseWriter, r
 	}
 
 	now := time.Now()
-	schedule, err := buildStrongestBrainScheduleSnapshot(now)
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	schedule, err := buildStrongestBrainScheduleSnapshot(now, projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build schedule snapshot: %v", err), http.StatusInternalServerError)
 		return
 	}
-	execution, logs, err := buildStrongestBrainExecutionSnapshot(now)
+	execution, logs, err := buildStrongestBrainExecutionSnapshot(now, projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build execution snapshot: %v", err), http.StatusInternalServerError)
 		return
 	}
 	riskCalendar := buildScheduleRiskCalendarResponse(schedule, now)
-	decisionItems := buildStrongestBrainDeliveryDecisionItems(schedule, execution, now)
-	aiTrace := buildStrongestBrainAITraceSummary(8)
+	decisionItems := buildStrongestBrainDeliveryDecisionItems(schedule, execution, now, projectKeys)
+	aiTrace := buildStrongestBrainAITraceSummary(8, projectKeys)
 	evidence := buildStrongestBrainDeliveryEvidence(schedule, execution, logs)
 	exceptions := buildStrongestBrainDeliveryExceptions(decisionItems)
 	weekly := buildStrongestBrainDeliveryWeeklyDecisions(decisionItems, now)
-	override := buildStrongestBrainOverrideSummary(8, now)
+	override := buildStrongestBrainOverrideSummary(8, now, projectKeys)
 	authorization := buildStrongestBrainAuthorizationSummary(now)
 
 	response := StrongestBrainDeliveryCockpitResponse{
@@ -249,10 +254,15 @@ func (s *Server) handleGetStrongestBrainAITraces(w http.ResponseWriter, r *http.
 		http.Error(w, "Database not initialized", http.StatusInternalServerError)
 		return
 	}
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
 	limit := boundedQueryLimit(r, 50, 200)
 	response := map[string]interface{}{
 		"generated_at": formatDateTime(time.Now()),
-		"summary":      buildStrongestBrainAITraceSummary(limit),
+		"summary":      buildStrongestBrainAITraceSummary(limit, projectKeys),
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -267,8 +277,13 @@ func (s *Server) handleGetStrongestBrainDemandReadiness(w http.ResponseWriter, r
 		http.Error(w, "Database not initialized", http.StatusInternalServerError)
 		return
 	}
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
 	limit := boundedQueryLimit(r, 80, 200)
-	items := buildStrongestBrainAITraceItems(limit)
+	items := buildStrongestBrainAITraceItems(limit, projectKeys)
 	summary := StrongestBrainDemandReadinessSummary{Total: len(items)}
 	var scoreSum int
 	for _, item := range items {
@@ -302,8 +317,13 @@ func (s *Server) handleGetStrongestBrainOverrideAudit(w http.ResponseWriter, r *
 		http.Error(w, "Database not initialized", http.StatusInternalServerError)
 		return
 	}
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
 	limit := boundedQueryLimit(r, 60, 200)
-	summary := buildStrongestBrainOverrideSummary(limit, time.Now())
+	summary := buildStrongestBrainOverrideSummary(limit, time.Now(), projectKeys)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"generated_at": formatDateTime(time.Now()),
@@ -312,7 +332,11 @@ func (s *Server) handleGetStrongestBrainOverrideAudit(w http.ResponseWriter, r *
 	})
 }
 
-func buildStrongestBrainDeliveryDecisionItems(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, now time.Time) []StrongestBrainDecisionItem {
+func buildStrongestBrainDeliveryDecisionItems(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, now time.Time, projectScopes ...[]string) []StrongestBrainDecisionItem {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	items := make([]StrongestBrainDecisionItem, 0)
 	for _, item := range schedule.Items {
 		if item.RiskLevel == "safe" || item.RiskLevel == "done" || item.RiskLevel == "" {
@@ -326,7 +350,7 @@ func buildStrongestBrainDeliveryDecisionItems(schedule ScheduleResponseDTO, exec
 		}
 		items = append(items, decisionFromExecutionItem(item))
 	}
-	items = append(items, semanticEvidenceReviewDecisions(now)...)
+	items = append(items, semanticEvidenceReviewDecisions(now, projectKeys)...)
 	items = append(items, contextGapDecisions(now)...)
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Rank != items[j].Rank {
@@ -548,9 +572,13 @@ func buildStrongestBrainDeliverySchedule(schedule ScheduleResponseDTO, riskCalen
 	}
 }
 
-func buildStrongestBrainAITraceSummary(limit int) StrongestBrainAITraceSummary {
-	total, traceable := aiTraceCounts()
-	items := buildStrongestBrainAITraceItems(limit)
+func buildStrongestBrainAITraceSummary(limit int, projectScopes ...[]string) StrongestBrainAITraceSummary {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
+	total, traceable := aiTraceCounts(projectKeys)
+	items := buildStrongestBrainAITraceItems(limit, projectKeys)
 	summary := StrongestBrainAITraceSummary{
 		TotalOutputs:        total,
 		TraceableOutputs:    traceable,
@@ -567,12 +595,17 @@ func buildStrongestBrainAITraceSummary(limit int) StrongestBrainAITraceSummary {
 	return summary
 }
 
-func buildStrongestBrainAITraceItems(limit int) []StrongestBrainAITraceItem {
+func buildStrongestBrainAITraceItems(limit int, projectScopes ...[]string) []StrongestBrainAITraceItem {
 	if limit <= 0 {
 		limit = 20
 	}
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var archives []db.DeconstructArchive
-	if err := db.DB.Order("created_at desc, id desc").Limit(limit).Find(&archives).Error; err != nil {
+	query := db.ApplyDemandProjectScope(db.DB.Model(&db.DeconstructArchive{}), projectKeys)
+	if err := query.Order("created_at desc, id desc").Limit(limit).Find(&archives).Error; err != nil {
 		return []StrongestBrainAITraceItem{}
 	}
 	packIDs := make([]uint, 0, len(archives))
@@ -631,9 +664,14 @@ func aiTraceItemFromArchive(archive db.DeconstructArchive, pack db.ContextPack) 
 	}
 }
 
-func buildStrongestBrainOverrideSummary(limit int, now time.Time) StrongestBrainOverrideSummary {
+func buildStrongestBrainOverrideSummary(limit int, now time.Time, projectScopes ...[]string) StrongestBrainOverrideSummary {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var events []db.DecisionEvent
-	query := db.DB.Where("action LIKE ?", "override_%").Order("created_at desc, id desc").Limit(limit)
+	query := db.ApplyTaskProjectScope(db.DB.Model(&db.DecisionEvent{}), projectKeys).
+		Where("action LIKE ?", "override_%").Order("created_at desc, id desc").Limit(limit)
 	if err := query.Find(&events).Error; err != nil {
 		return StrongestBrainOverrideSummary{AuditTrailURL: "/api/strongest-brain/override-audit"}
 	}
@@ -773,11 +811,15 @@ func deliveryWeeklyDecisionOptions(item StrongestBrainDecisionItem) []string {
 	}
 }
 
-func aiTraceCounts() (int, int) {
+func aiTraceCounts(projectScopes ...[]string) (int, int) {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var total int64
 	var traceable int64
-	db.DB.Model(&db.DeconstructArchive{}).Count(&total)
-	db.DB.Model(&db.DeconstructArchive{}).Where("context_pack_id > 0").Count(&traceable)
+	db.ApplyDemandProjectScope(db.DB.Model(&db.DeconstructArchive{}), projectKeys).Count(&total)
+	db.ApplyDemandProjectScope(db.DB.Model(&db.DeconstructArchive{}), projectKeys).Where("context_pack_id > 0").Count(&traceable)
 	return int(total), int(traceable)
 }
 

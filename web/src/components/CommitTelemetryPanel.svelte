@@ -1,13 +1,19 @@
 <script lang="ts">
 
+  import { onMount } from 'svelte';
+
   export let taskID = '';
   export let isOpen = false;
   export let onClose: () => void = () => {};
+  export let presentation: 'drawer' | 'inline' | 'modal' = 'drawer';
+  export let embeddedInModal = false;
 
   let commits: any[] = [];
   let loading = false;
   let errorMsg = '';
   let lastFetchedTaskID = '';
+  let requestVersion = 0;
+  let refreshPending = false;
 
   $: if (isOpen && taskID) {
     fetchCommitsIfNeeded();
@@ -17,44 +23,75 @@
   $: mrCount = commits.filter(log => log.action && log.action.startsWith('mr_')).length;
   $: commentCount = commits.filter(log => log.action === 'jira_comment').length;
   $: latestLog = commits[0] || null;
+  $: visibleCommits = presentation === 'inline' ? commits.slice(0, 4) : commits;
   $: evidenceStateLabel = commits.length > 0 ? '已捕获代码证据' : '等待代码证据';
   $: evidenceStateTone = commits.length > 0 ? 'ready' : 'empty';
+  $: isInitialLoading = loading && commits.length === 0;
   $: if (!isOpen) {
     lastFetchedTaskID = '';
+    refreshPending = false;
   }
 
   function fetchCommitsIfNeeded() {
-    if (!taskID || loading || lastFetchedTaskID === taskID) return;
+    if (!taskID || lastFetchedTaskID === taskID) return;
     fetchCommits();
   }
 
-  async function fetchCommits() {
+  async function fetchCommits(preserveExisting = false) {
+    const requestedTaskID = taskID;
+    const currentRequestVersion = ++requestVersion;
     loading = true;
     errorMsg = '';
-    commits = [];
-    lastFetchedTaskID = taskID;
+    if (!preserveExisting) commits = [];
+    lastFetchedTaskID = requestedTaskID;
     try {
       const token = localStorage.getItem('jwt_token');
-      const res = await fetch(`/api/tasks/commits?task_id=${taskID}`, {
+      const res = await fetch(`/api/tasks/commits?task_id=${encodeURIComponent(requestedTaskID)}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        commits = data || [];
+        if (currentRequestVersion === requestVersion && requestedTaskID === taskID) {
+          commits = data || [];
+        }
       } else {
         throw new Error('获取代码轨迹失败');
       }
     } catch (e: any) {
-      errorMsg = e.message || '加载代码轨迹失败';
+      if (currentRequestVersion === requestVersion && requestedTaskID === taskID && (!preserveExisting || commits.length === 0)) {
+        errorMsg = e.message || '加载代码轨迹失败';
+      }
     } finally {
-      loading = false;
+      if (currentRequestVersion === requestVersion) {
+        loading = false;
+        if (refreshPending && isOpen && requestedTaskID === taskID) {
+          refreshPending = false;
+          lastFetchedTaskID = '';
+          void fetchCommits(true);
+        }
+      }
     }
   }
 
   function refreshCommits() {
+    if (loading) {
+      refreshPending = true;
+      return;
+    }
     lastFetchedTaskID = '';
-    fetchCommitsIfNeeded();
+    void fetchCommits(true);
   }
+
+  function handleTelemetryUpdated(event: Event) {
+    const updatedTaskID = String((event as CustomEvent<{ task_id?: string }>).detail?.task_id || '').trim();
+    if (!isOpen || !taskID || !updatedTaskID || updatedTaskID.toLowerCase() !== taskID.toLowerCase()) return;
+    refreshCommits();
+  }
+
+  onMount(() => {
+    window.addEventListener('well-ambient:telemetry-updated', handleTelemetryUpdated);
+    return () => window.removeEventListener('well-ambient:telemetry-updated', handleTelemetryUpdated);
+  });
 
   function formatTimeBrief(timeStr: string): string {
     if (!timeStr) return '';
@@ -64,7 +101,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && isOpen) {
+    if (event.key === 'Escape' && isOpen && presentation === 'drawer') {
       onClose();
     }
   }
@@ -82,10 +119,23 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="drawer-root">
-    <button class="drawer-backdrop" type="button" aria-label="关闭代码轨迹面板" on:click={onClose}></button>
-    <aside class="drawer-panel font-sans" aria-label="代码提交轨迹">
-      <div class="drawer-header">
+  <div class="drawer-root" class:is-inline={presentation !== 'drawer'}>
+    {#if presentation === 'drawer'}
+      <button class="drawer-backdrop" type="button" aria-label="关闭代码轨迹面板" on:click={onClose}></button>
+    {/if}
+    <aside
+      class="drawer-panel font-sans"
+      class:is-inline={presentation !== 'drawer'}
+      class:is-modal={presentation === 'modal'}
+      aria-label="代码提交轨迹"
+    >
+      {#if embeddedInModal}
+        <div class="modal-context-bar">
+          <span class="drawer-subtitle font-mono" title={taskID}>{taskID || '未选择任务'}</span>
+          <button class="refresh-btn font-mono" type="button" on:click={refreshCommits} disabled={loading}>刷新</button>
+        </div>
+      {:else}
+        <div class="drawer-header">
         <div class="drawer-title-stack">
           <span class="drawer-kicker font-mono">GIT TELEMETRY TRACKER</span>
           <h3>代码提交轨迹</h3>
@@ -93,9 +143,12 @@
         </div>
         <div class="drawer-actions">
           <button class="refresh-btn font-mono" type="button" on:click={refreshCommits} disabled={loading}>刷新</button>
-          <button class="close-btn" type="button" on:click={onClose} aria-label="关闭代码轨迹面板">&times;</button>
+          {#if presentation === 'drawer'}
+            <button class="close-btn" type="button" on:click={onClose} aria-label="关闭代码轨迹面板">&times;</button>
+          {/if}
         </div>
-      </div>
+        </div>
+      {/if}
 
       <div class="telemetry-summary">
         <div class="summary-cell state-{evidenceStateTone}">
@@ -117,7 +170,7 @@
       </div>
 
       <div class="drawer-body">
-        {#if loading}
+        {#if isInitialLoading}
           <div class="loading-state" aria-label="正在加载代码轨迹">
             <div class="skeleton-line wide"></div>
             <div class="skeleton-card"></div>
@@ -139,7 +192,7 @@
             </div>
           {/if}
           <div class="commit-timeline">
-            {#each commits as log}
+            {#each visibleCommits as log}
               <div class="timeline-item">
                 <div class="timeline-badge-container">
                   <span class="timeline-badge badge-{log.action}">
@@ -150,16 +203,16 @@
                 <div class="timeline-content">
                   <div class="timeline-meta">
                     {#if log.action === 'jira_comment'}
-                      <span class="meta-repo">Jira 评论</span>
+                      <span class="meta-repo" title="Jira 评论">Jira 评论</span>
                     {:else}
-                      <span class="meta-repo">{log.repo || '未知仓库'}</span>
-                      <span class="meta-branch">{log.branch || '未知分支'}</span>
+                      <span class="meta-repo" title={log.repo || '未知仓库'}>{log.repo || '未知仓库'}</span>
+                      <span class="meta-branch" title={log.branch || '未知分支'}>{log.branch || '未知分支'}</span>
                       {#if log.commit_id}
-                        <span class="meta-hash font-mono" title="Commit Hash">{log.commit_id.substring(0, 8)}</span>
+                        <span class="meta-hash font-mono" title={log.commit_id}>{log.commit_id.substring(0, 8)}</span>
                       {/if}
                     {/if}
                   </div>
-                  <div class="timeline-body font-mono">
+                  <div class="timeline-body font-mono" title={log.message || ''}>
                     {#if log.mr_url}
                       <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-timeline-link">
                         !{log.mr_iid}: {log.message}
@@ -175,6 +228,9 @@
               </div>
             {/each}
           </div>
+          {#if presentation === 'inline' && commits.length > visibleCommits.length}
+            <p class="inline-overflow-note font-mono">另有 {commits.length - visibleCommits.length} 条轨迹，可在任务跟踪中查看完整记录。</p>
+          {/if}
         {:else}
           <div class="empty-state">
             <span class="font-mono">NO TELEMETRY</span>
@@ -254,6 +310,20 @@
     gap: 20px;
     padding: 28px 28px 18px;
     border-bottom: 1px solid rgba(103, 119, 137, 0.18);
+  }
+
+  .modal-context-bar {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 24px 12px;
+  }
+
+  .modal-context-bar .drawer-subtitle {
+    min-width: 0;
+    max-width: none;
   }
 
   .drawer-title-stack {
@@ -652,7 +722,9 @@
     color: rgba(24, 33, 47, 0.62);
     font-size: 0.72rem;
     line-height: 1.2;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .meta-hash {
@@ -669,10 +741,16 @@
     color: rgba(24, 33, 47, 0.82);
     font-size: 0.78rem;
     line-height: 1.62;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mr-timeline-link {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: #33467f;
     text-decoration: none;
     border-bottom: 1px solid rgba(64, 86, 154, 0.3);
@@ -710,6 +788,278 @@
     .drawer-actions {
       flex-direction: column-reverse;
       align-items: flex-end;
+    }
+
+    .modal-context-bar {
+      padding-inline: 18px;
+    }
+  }
+
+  .drawer-root.is-inline {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    display: block;
+    min-width: 0;
+    animation: none;
+  }
+
+  .drawer-panel.is-inline {
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    animation: none;
+  }
+
+  .drawer-panel.is-inline::before {
+    display: none;
+  }
+
+  .drawer-panel.is-inline .drawer-header {
+    align-items: center;
+    gap: 12px;
+    padding: 0 0 12px;
+    border-bottom-color: rgba(103, 119, 137, 0.16);
+  }
+
+  .drawer-panel.is-inline .drawer-title-stack {
+    gap: 3px;
+  }
+
+  .drawer-panel.is-inline .drawer-kicker {
+    display: none;
+  }
+
+  .drawer-panel.is-inline .drawer-header h3 {
+    font-size: 0.94rem;
+    line-height: 1.25;
+  }
+
+  .drawer-panel.is-inline .drawer-subtitle {
+    font-size: 0.7rem;
+  }
+
+  .drawer-panel.is-inline .refresh-btn {
+    min-height: 32px;
+    padding-inline: 11px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .drawer-panel.is-inline .telemetry-summary {
+    grid-template-columns: minmax(0, 1.45fr) repeat(3, minmax(52px, 0.7fr));
+    margin: 12px 0;
+    border-radius: 8px;
+  }
+
+  .drawer-panel.is-inline .summary-cell {
+    min-height: 56px;
+    padding: 9px 10px;
+  }
+
+  .drawer-panel.is-inline .summary-cell strong {
+    font-size: 0.92rem;
+  }
+
+  .drawer-panel.is-inline .drawer-body {
+    overflow: visible;
+    padding: 0;
+  }
+
+  .drawer-panel.is-inline .latest-signal {
+    gap: 4px;
+    margin: 0 0 10px;
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid rgba(103, 119, 137, 0.16);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .drawer-panel.is-inline .commit-timeline {
+    gap: 10px;
+    padding-left: 15px;
+  }
+
+  .drawer-panel.is-inline .timeline-badge-container::before {
+    left: -15px;
+  }
+
+  .drawer-panel.is-inline .timeline-content {
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid rgba(103, 119, 137, 0.14);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .drawer-panel.is-inline .timeline-body {
+    padding: 8px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .drawer-panel.is-inline .inline-overflow-note {
+    margin: 10px 0 0;
+    color: rgba(24, 33, 47, 0.56);
+    font-size: 0.7rem;
+    line-height: 1.45;
+  }
+
+  .drawer-panel.is-inline .error-state,
+  .drawer-panel.is-inline .empty-state {
+    padding: 18px 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* The schedule inspector owns the viewport; inline telemetry stays dense and complete. */
+  .drawer-panel.is-inline .drawer-header {
+    padding-bottom: 8px;
+  }
+
+  .drawer-panel.is-inline .refresh-btn {
+    min-height: 28px;
+  }
+
+  .drawer-panel.is-inline .telemetry-summary {
+    margin: 8px 0;
+  }
+
+  .drawer-panel.is-inline .summary-cell {
+    min-height: 42px;
+    padding: 6px 8px;
+  }
+
+  .drawer-panel.is-inline .summary-cell strong {
+    font-size: 0.82rem;
+  }
+
+  .drawer-panel.is-inline .latest-signal {
+    display: none;
+  }
+
+  .drawer-panel.is-inline .commit-timeline {
+    gap: 5px;
+    padding-left: 13px;
+  }
+
+  .drawer-panel.is-inline .commit-timeline::before {
+    left: 3px;
+  }
+
+  .drawer-panel.is-inline .timeline-item {
+    grid-template-columns: 92px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+  }
+
+  .drawer-panel.is-inline .timeline-badge-container {
+    min-height: 24px;
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 2px;
+    padding-top: 5px;
+  }
+
+  .drawer-panel.is-inline .timeline-badge-container::before {
+    left: -13px;
+    top: 10px;
+    width: 7px;
+    height: 7px;
+    box-shadow: 0 0 0 3px rgba(32, 197, 183, 0.12);
+  }
+
+  .drawer-panel.is-inline .timeline-badge {
+    min-height: 20px;
+    padding: 2px 6px;
+  }
+
+  .drawer-panel.is-inline .timeline-time {
+    font-size: 0.64rem;
+  }
+
+  .drawer-panel.is-inline .timeline-content {
+    padding: 5px 0;
+  }
+
+  .drawer-panel.is-inline .timeline-meta {
+    flex-wrap: nowrap;
+    gap: 4px;
+    margin-bottom: 2px;
+  }
+
+  .drawer-panel.is-inline .meta-repo,
+  .drawer-panel.is-inline .meta-branch,
+  .drawer-panel.is-inline .meta-hash {
+    min-width: 0;
+    min-height: 20px;
+    overflow: hidden;
+    padding: 2px 6px;
+    font-size: 0.64rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drawer-panel.is-inline .timeline-body {
+    display: -webkit-box;
+    overflow: hidden;
+    padding: 3px 0;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .drawer-panel.is-inline .timeline-footer {
+    margin-top: 2px;
+    font-size: 0.64rem;
+  }
+
+  .drawer-panel.is-modal .telemetry-summary {
+    margin: 0 24px 16px;
+  }
+
+  .drawer-panel.is-modal .drawer-body {
+    padding: 0 24px 24px;
+  }
+
+  .drawer-panel.is-modal .timeline-body {
+    display: block;
+    overflow: hidden;
+    line-clamp: unset;
+    -webkit-line-clamp: unset;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 640px) {
+    .drawer-panel.is-modal .telemetry-summary {
+      margin-inline: 18px;
+    }
+
+    .drawer-panel.is-modal .drawer-body {
+      padding-inline: 18px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .drawer-root,
+    .drawer-panel,
+    .skeleton-line::after,
+    .skeleton-card::after {
+      animation: none;
     }
   }
 

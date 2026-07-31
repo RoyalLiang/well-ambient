@@ -62,6 +62,10 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
 		return
 	}
+	if err := config.NormalizeJiraVersionSources(&newCfg.Jira); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid Jira version sources: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	previous := *s.config
 	if err := s.applyConfig(newCfg); err != nil {

@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/deliveryplanning"
 	"well-ambient/internal/kanban"
 )
 
@@ -21,6 +23,39 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+func TestScheduleResponseV1CompatibilityFixture(t *testing.T) {
+	setupServerTestDB(t)
+	srv := NewServer(&config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+	}, "")
+
+	request := httptest.NewRequest(http.MethodGet, "/api/schedule", nil)
+	recorder := httptest.NewRecorder()
+	srv.handleGetSchedule(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /api/schedule status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var actual map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&actual); err != nil {
+		t.Fatalf("decode actual schedule response: %v", err)
+	}
+	actual["generated_at"] = "<generated-at>"
+
+	fixtureBytes, err := os.ReadFile("testdata/schedule_response_v1.json")
+	if err != nil {
+		t.Fatalf("read schedule compatibility fixture: %v", err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(fixtureBytes, &fixture); err != nil {
+		t.Fatalf("decode schedule compatibility fixture: %v", err)
+	}
+	if !reflect.DeepEqual(actual, fixture) {
+		actualJSON, _ := json.MarshalIndent(actual, "", "  ")
+		t.Fatalf("schedule response drifted from v1 fixture:\n%s", actualJSON)
+	}
 }
 
 func TestServerEndpoints(t *testing.T) {
@@ -212,6 +247,46 @@ func TestGetTasksFiltersNonCoreMemberData(t *testing.T) {
 	}
 }
 
+func TestGetTasksSupportsRepeatedProjectAndAssigneeFilters(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "multi-filter-reader@westwell-lab.com", "Multi Filter Reader", []string{"dashboard:read"})
+	cfg := &config.Config{
+		Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"},
+		Jira:   config.JiraConfig{SyncUsers: []string{"Alice", "Bob"}},
+	}
+	srv := NewServer(cfg, "")
+
+	tasks := []db.TaskTelemetry{
+		{TaskID: "HIT-1", Title: "HIT task", Assignee: "Alice", Status: "progress", IssueType: "task", LastUpdate: time.Now()},
+		{TaskID: "NS2-2", Title: "NS2 task", Assignee: "Bob", Status: "review", IssueType: "task", LastUpdate: time.Now()},
+		{TaskID: "DG-3", Title: "DG task", Assignee: "Alice", Status: "progress", IssueType: "task", LastUpdate: time.Now()},
+		{TaskID: "HIT-4", Title: "External task", Assignee: "Vendor", Status: "progress", IssueType: "task", LastUpdate: time.Now()},
+	}
+	if err := db.DB.Create(&tasks).Error; err != nil {
+		t.Fatalf("seed tasks: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks?project=HIT&project=NS2&assignee=Alice&assignee=Bob", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET repeated task filters status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response []db.TaskTelemetry
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode repeated-filter response: %v", err)
+	}
+	returned := make(map[string]bool, len(response))
+	for _, task := range response {
+		returned[task.TaskID] = true
+	}
+	if len(response) != 2 || !returned["HIT-1"] || !returned["NS2-2"] {
+		t.Fatalf("repeated filters returned %+v, want HIT-1 and NS2-2", response)
+	}
+}
+
 func TestGetScheduleFiltersNonCoreMemberData(t *testing.T) {
 	setupServerTestDB(t)
 	token := superAdminToken(t, "schedule-reader@westwell-lab.com", "Schedule Reader", []string{"demands:read"})
@@ -265,8 +340,8 @@ func TestGetExecutionTasksFiltersNonCoreMemberData(t *testing.T) {
 	now := time.Now()
 	tasks := []db.TaskTelemetry{
 		{TaskID: "DEMAND-CORE", Title: "Core parent demand", Assignee: "Bob", Status: "progress", IssueType: "demand", TaskGroupID: "group-core", LastUpdate: now},
-		{TaskID: "EXEC-CORE", Title: "Core execution with hidden external child owner", Assignee: "Vendor", Status: "progress", IssueType: "task", TaskGroupID: "group-core", LastUpdate: now},
-		{TaskID: "EXEC-EXT", Title: "External execution", Assignee: "Vendor", Status: "progress", IssueType: "task", LastUpdate: now},
+		{TaskID: "EXEC-CORE", Title: "Core execution with hidden external child owner", Source: "jira", Assignee: "Vendor", Status: "progress", IssueType: "task", TaskGroupID: "group-core", LastUpdate: now},
+		{TaskID: "EXEC-EXT", Title: "External execution", Source: "jira", Assignee: "Vendor", Status: "progress", IssueType: "task", LastUpdate: now},
 	}
 	for _, task := range tasks {
 		if err := db.DB.Create(&task).Error; err != nil {
@@ -1022,7 +1097,7 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 		t.Fatalf("decode execution response: %v", err)
 	}
 
-	if response.Summary.Total != 6 || response.Summary.Bound != 2 || response.Summary.Orphan != 4 || response.Summary.HighRisk != 2 {
+	if response.Summary.Total != 6 || response.Summary.Bound != 3 || response.Summary.Orphan != 3 || response.Summary.HighRisk != 2 {
 		t.Fatalf("unexpected execution summary: %+v", response.Summary)
 	}
 
@@ -1049,8 +1124,8 @@ func TestGetExecutionTasksBuildsEvidenceObservability(t *testing.T) {
 	if byID["JIRA-106"].Status != "done" || byID["JIRA-106"].JiraStatus != "done" || byID["JIRA-106"].ResultState != "jira_done" || byID["JIRA-106"].RiskLevel != "done" {
 		t.Fatalf("Jira parent completion should drive execution status/result: %+v", byID["JIRA-106"])
 	}
-	if byID["BUG-105"].IssueType != "bug" || byID["BUG-105"].EvidenceScore == 0 {
-		t.Fatalf("bug evidence mismatch: %+v", byID["BUG-105"])
+	if byID["BUG-105"].ParentIssueType != deliveryplanning.WorkItemBug || byID["BUG-105"].EvidenceScore == 0 {
+		t.Fatalf("evidence-backed Bug must be projected as a real execution row: %+v", byID["BUG-105"])
 	}
 
 	filterReq := httptest.NewRequest(http.MethodGet, "/api/execution/tasks?assignee=Bob", nil)
@@ -1519,12 +1594,12 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 		t.Fatalf("decode demand options response: %v", err)
 	}
 
-	for _, want := range []string{"Jira Owner", "JQL Owner", "middle.q"} {
+	for _, want := range []string{"Jira Owner"} {
 		if !stringSliceContains(response.Assignees, want) {
 			t.Fatalf("assignees missing %q: %+v", want, response.Assignees)
 		}
 	}
-	for _, notWant := range []string{"Alice Options", "Bob Options", "Task Owner"} {
+	for _, notWant := range []string{"Alice Options", "Bob Options", "Task Owner", "JQL Owner", "middle.q"} {
 		if stringSliceContains(response.Assignees, notWant) {
 			t.Fatalf("non-core assignee should not be offered %q: %+v", notWant, response.Assignees)
 		}
@@ -1537,6 +1612,37 @@ func TestGetDemandOptionsBuildsFormCandidates(t *testing.T) {
 	for _, notWant := range []string{"platform-core", "legacy-web", "group/platform-core", "42"} {
 		if stringSliceContains(response.Projects, notWant) {
 			t.Fatalf("projects should not include repo candidate %q: %+v", notWant, response.Projects)
+		}
+	}
+}
+
+func TestGetDemandOptionsUsesCustomJQLAssigneesAsFallback(t *testing.T) {
+	setupServerTestDB(t)
+
+	token := superAdminToken(t, "pm-jql-fallback@westwell-lab.com", "PM JQL Fallback", []string{"demands:write"})
+	srv := NewServer(&config.Config{
+		Server: config.ServerConfig{Port: 9107, Host: "127.0.0.1"},
+		Jira: config.JiraConfig{
+			CustomJQL: `project = OPS AND assignee in ("JQL Owner", middle.q)`,
+		},
+	}, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/demands/options", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/demands/options failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var response DemandOptionsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode demand options response: %v", err)
+	}
+	for _, want := range []string{"JQL Owner", "middle.q"} {
+		if !stringSliceContains(response.Assignees, want) {
+			t.Fatalf("fallback assignees missing %q: %+v", want, response.Assignees)
 		}
 	}
 }
@@ -2442,5 +2548,41 @@ func TestGetTaskCommitsCombinesGitAndJiraLogs(t *testing.T) {
 	}
 	if activities[1].Action != "git_push" || activities[1].CommitID != "git-sha-123" {
 		t.Errorf("Expected second item to be Git push, got %+v", activities[1])
+	}
+}
+
+func TestGetTaskCommitsIncludesHistoricalCaseVariantsAcrossRepositories(t *testing.T) {
+	setupServerTestDB(t)
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9090, Host: "127.0.0.1"}}, "")
+	if err := db.DB.Create(&db.TaskTelemetry{
+		TaskID: "FZ-2247", ExternalKey: "FZ-2247", Source: "jira", IssueType: "requirement", Title: "吊具检测驶离保护",
+	}).Error; err != nil {
+		t.Fatalf("seed work item: %v", err)
+	}
+	logs := []db.GitCommitLog{
+		{TaskID: "fz-2247", Repo: "task_executor", CommitID: "task-executor-sha", Message: "feat: FZ-2247 task executor", Action: "git_push", CreatedAt: time.Now().Add(-time.Minute)},
+		{TaskID: "FZ-2247", Repo: "crane_manager", CommitID: "crane-manager-sha", Message: "feat: FZ-2247 crane manager", Action: "git_push", CreatedAt: time.Now()},
+	}
+	if err := db.DB.Create(&logs).Error; err != nil {
+		t.Fatalf("seed multi-repository evidence: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks/commits?task_id=FZ-2247", nil)
+	rr := httptest.NewRecorder()
+	srv.handleGetTaskCommits(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET task commits status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var activities []TelemetryActivityDTO
+	if err := json.NewDecoder(rr.Body).Decode(&activities); err != nil {
+		t.Fatalf("decode activities: %v", err)
+	}
+	if len(activities) != 2 {
+		t.Fatalf("activity count = %d, want 2: %+v", len(activities), activities)
+	}
+	if activities[0].Repo != "crane_manager" || activities[1].Repo != "task_executor" {
+		t.Fatalf("activity repositories = [%s, %s], want [crane_manager, task_executor]", activities[0].Repo, activities[1].Repo)
 	}
 }

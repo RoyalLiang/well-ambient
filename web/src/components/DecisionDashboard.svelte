@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { createEventDispatcher, onMount, tick } from 'svelte';
   import type {
     AdminInspectorRecord,
     AdminMetric,
@@ -15,9 +15,31 @@
   } from '../lib/admin-console/contract';
   import Alert from './shared/Alert.svelte';
   import DatePicker from './shared/DatePicker.svelte';
+  import Modal from './shared/Modal.svelte';
+  import MultiSelect from './shared/MultiSelect.svelte';
   import Select from './shared/Select.svelte';
+  import { showToast } from '../lib/toast';
+  import {
+    fetchDeliveryDirectory,
+    type DeliveryAssigneeOption,
+    type DeliveryProjectOption
+  } from '../lib/delivery-directory';
 
   export let currentUser = '';
+  export let timelineDrawerRequest = 0;
+
+  const dispatch = createEventDispatcher<{
+    timelineSummary: {
+      kind: 'automatic' | 'manual';
+      kindLabel: string;
+      taskId: string;
+      title: string;
+      message: string;
+      dateLabel: string;
+      timeLabel: string;
+      dateTime: string;
+    } | null;
+  }>();
 
   interface TelemetrySnippet {
     branch: string;
@@ -41,6 +63,7 @@
 
   interface AutoDecision {
     time: string;
+    occurred_at?: string;
     task_id: string;
     message: string;
     assignee?: string;
@@ -48,19 +71,38 @@
     commit_url?: string;
   }
 
-  interface ResolutionDraft {
-    assignee: string;
-    due_date: string;
-    note: string;
+  interface LocalDecision {
+    createdAt: string;
+    taskId: string;
+    actionLabel: string;
+    operator: string;
+    message: string;
+  }
+
+  interface DecisionTimelineEvent {
+    id: string;
+    kind: 'automatic' | 'manual';
+    dateKey: string;
+    dateLabel: string;
+    timeLabel: string;
+    dateTime: string;
+    sortValue: number;
+    taskId: string;
+    title: string;
+    message: string;
+    actor: string;
+    commitId?: string;
+    commitUrl?: string;
+  }
+
+  interface DecisionTimelineGroup {
+    dateKey: string;
+    dateLabel: string;
+    events: DecisionTimelineEvent[];
   }
 
   interface AgendaAdminRow extends AdminTableRow {
     source: AgendaItem;
-  }
-
-  interface ProjectConfigRecord {
-    project_key: string;
-    project_name: string;
   }
 
   const agendaColumns: AdminTableColumn[] = [
@@ -71,6 +113,9 @@
     { key: 'due', label: '计划日', width: '116px' },
     { key: 'status', label: '状态', width: '96px' }
   ];
+  const configurableAgendaColumnOptions = agendaColumns
+    .filter((column) => column.key !== 'task_id')
+    .map((column) => ({ value: column.key, label: column.label }));
 
   let agendaItems: AgendaItem[] = [];
   let autoDecisions: AutoDecision[] = [];
@@ -80,41 +125,36 @@
 
   let selectedItem: AgendaItem | null = null;
   let decisionLoading = false;
-  let decisionSuccess = '';
-  let decisionError = '';
 
   let newAssignee = '';
   let newDueDate = '';
   let decisionNote = '';
   let operator = '';
-  let localDecisions: string[] = [];
+  let localDecisions: LocalDecision[] = [];
+  let adminMetrics: AdminMetric[] = [];
+  let visibleAgendaColumnKeys = agendaColumns.map((column) => column.key);
+  let columnPreferenceSaving = false;
+  let columnPreferenceError = '';
+  let columnPreferenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   let currentFilter: 'all' | 'task' | 'bug' = 'all';
   let selectedAssignee = 'all';
   let selectedRepo = 'all';
   let showRiskLevel: 'all' | 'risks' = 'risks';
   let searchText = '';
-  let inspectorContentEl: HTMLElement;
-  let decisionPanelHeight = 'clamp(640px, calc(100dvh - 112px), 820px)';
+  let detailDrawerOpen = false;
+  let detailDrawerReturnEl: HTMLElement | null = null;
+  let timelineDrawerOpen = false;
+  let handledTimelineDrawerRequest = timelineDrawerRequest;
+  let publishedTimelineSummaryKey = '';
+  let timelineDrawerEl: HTMLElement;
+  let timelineDrawerCloseButton: HTMLButtonElement;
 
-  let coreMembers = new Set([
-    '梁志远',
-    '朱家聪',
-    '岳颖颖',
-    'Yue Yingying',
-    '姜昊良',
-    '白凌云',
-    '陈伟华',
-    '李厚奇',
-    '鲁俊',
-    '刘子翔',
-    '张路路',
-    'qiang.deng',
-    'MiddleQ',
-    'zhongkou.chang',
-    'Eddie',
-    'Antigravity'
-  ]);
+  let coreMembers = new Set<string>();
+  let deliveryAssignees: DeliveryAssigneeOption[] = [];
+  let deliveryProjects: DeliveryProjectOption[] = [];
+  let deliveryDirectoryReady = false;
+  let coreMemberAliases = new Set<string>();
 
   let jiraBaseUrl = '';
   let gitlabBaseUrl = '';
@@ -127,8 +167,8 @@
   $: filteredAgendaItems = configReady ? agendaItems.filter((item) => isVisibleAgendaItem(item)) : [];
   $: filteredAutoDecisions = autoDecisions.filter((dec) => !dec.assignee || isCoreMember(dec.assignee));
 
-  $: activeBugCount = filteredAgendaItems.filter((item) => item.issue_type === 'bug').length;
-  $: activeTaskCount = filteredAgendaItems.filter((item) => item.issue_type !== 'bug').length;
+  $: activeBugCount = filteredAgendaItems.filter((item) => isBugIssueType(item.issue_type)).length;
+  $: activeTaskCount = filteredAgendaItems.filter((item) => !isBugIssueType(item.issue_type)).length;
   $: redZoneCount = filteredAgendaItems.filter((item) => item.risk_level === 'critical').length;
   $: warningCount = filteredAgendaItems.filter((item) => item.risk_level === 'warning').length;
   $: visibleRiskCount = filteredAgendaItems.filter((item) => item.risk_level !== 'safe').length;
@@ -141,15 +181,19 @@
 
   $: assigneesList = [
     'all',
-    ...Array.from(new Set(filteredAgendaItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) =>
-      a.localeCompare(b)
-    )
+    ...(deliveryDirectoryReady
+      ? deliveryAssignees.map((option) => option.value)
+      : Array.from(new Set(filteredAgendaItems.map((item) => item.assignee).filter(Boolean))).sort((a, b) =>
+          a.localeCompare(b)
+        ))
   ];
   $: projectList = [
     'all',
-    ...Array.from(
-      new Set(filteredAgendaItems.map((item) => getAgendaProjectKey(item)).filter((project): project is string => !!project))
-    ).sort((a, b) => a.localeCompare(b))
+    ...(deliveryDirectoryReady
+      ? deliveryProjects.map((project) => project.project_key)
+      : Array.from(
+          new Set(filteredAgendaItems.map((item) => getAgendaProjectKey(item)).filter((project): project is string => !!project))
+        ).sort((a, b) => a.localeCompare(b)))
   ];
   $: assigneeOptions = assigneesList.map((name) => ({
     value: name,
@@ -179,8 +223,8 @@
 
   $: filteredItems = filteredAgendaItems
     .filter((item) => {
-      if (currentFilter === 'task' && item.issue_type === 'bug') return false;
-      if (currentFilter === 'bug' && item.issue_type !== 'bug') return false;
+      if (currentFilter === 'task' && isBugIssueType(item.issue_type)) return false;
+      if (currentFilter === 'bug' && !isBugIssueType(item.issue_type)) return false;
       if (selectedAssignee !== 'all' && item.assignee !== selectedAssignee) return false;
       if (selectedRepo !== 'all' && getAgendaProjectKey(item) !== selectedRepo) return false;
       if (showRiskLevel === 'risks' && item.risk_level === 'safe') return false;
@@ -204,14 +248,156 @@
     })
     .sort((a, b) => riskPriority(b) - riskPriority(a));
 
-  $: adminMetrics = adaptMetrics();
+  $: {
+    const _metricDependencies = [
+      filteredAgendaItems.length,
+      activeTaskCount,
+      activeBugCount,
+      redZoneCount,
+      warningCount,
+      filteredAutoDecisions.length
+    ];
+    adminMetrics = adaptMetrics();
+  }
   $: agendaRows = filteredItems.map(adaptAgendaRow);
+  $: visibleAgendaColumns = agendaColumns.filter((column) => visibleAgendaColumnKeys.includes(column.key));
+  $: configurableVisibleAgendaColumnKeys = visibleAgendaColumnKeys.filter((key) => key !== 'task_id');
   $: inspectorRecord = selectedItem ? adaptInspectorRecord(selectedItem) : null;
-  $: resolutionDraft = getResolutionDraft(selectedItem);
+  $: currentDueDate = selectedItem?.due_date ? formatAdminDate(selectedItem.due_date) : '';
+  $: hasDueDateChange = !!newDueDate && newDueDate !== currentDueDate;
+  $: decisionTimelineGroups = buildDecisionTimelineGroups(filteredAutoDecisions, localDecisions);
+  $: decisionTimelineEvents = decisionTimelineGroups.flatMap((group) => group.events);
+  $: latestDecisionTimelineEvent = decisionTimelineEvents[0] || null;
+  $: latestTimelineSummaryKey = latestDecisionTimelineEvent
+    ? `${latestDecisionTimelineEvent.id}:${latestDecisionTimelineEvent.sortValue}`
+    : 'empty';
+  $: if (latestTimelineSummaryKey !== publishedTimelineSummaryKey) {
+    publishedTimelineSummaryKey = latestTimelineSummaryKey;
+    dispatch('timelineSummary', latestDecisionTimelineEvent
+      ? {
+          kind: latestDecisionTimelineEvent.kind,
+          kindLabel: latestDecisionTimelineEvent.kind === 'automatic' ? '自动流转' : '人工调停',
+          taskId: latestDecisionTimelineEvent.taskId,
+          title: latestDecisionTimelineEvent.title,
+          message: latestDecisionTimelineEvent.message,
+          dateLabel: latestDecisionTimelineEvent.dateLabel,
+          timeLabel: latestDecisionTimelineEvent.timeLabel,
+          dateTime: latestDecisionTimelineEvent.dateTime
+        }
+      : null);
+  }
+  $: if (timelineDrawerRequest > handledTimelineDrawerRequest) {
+    handledTimelineDrawerRequest = timelineDrawerRequest;
+    openTimelineDrawer();
+  }
+
+  function handleDueDateChange(event: CustomEvent<string>) {
+    newDueDate = event.detail;
+  }
+
+  function formatPendingDueDate(value: string): string {
+    const [year, month, day] = value.split('-');
+    if (!year || !month || !day) return value;
+    return `${month}/${day}`;
+  }
+
+  function parseTimelineDate(rawValue: string): Date {
+    const raw = (rawValue || '').trim();
+    const parsed = new Date(raw);
+    if (raw && !Number.isNaN(parsed.getTime()) && /\d{4}[-/]\d{1,2}[-/]\d{1,2}|T/.test(raw)) {
+      return parsed;
+    }
+
+    const fallback = new Date();
+    const timeMatch = raw.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatch) {
+      fallback.setHours(Number(timeMatch[1]), Number(timeMatch[2]), Number(timeMatch[3] || 0), 0);
+      if (fallback.getTime() > Date.now()) {
+        fallback.setDate(fallback.getDate() - 1);
+      }
+    }
+    return fallback;
+  }
+
+  function timelineDateKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function timelineDateLabel(date: Date): string {
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    const key = timelineDateKey(date);
+    if (key === timelineDateKey(today)) return '今天';
+    if (key === timelineDateKey(yesterday)) return '昨天';
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  function timelineTimeLabel(date: Date): string {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+
+  function buildDecisionTimelineGroups(
+    automaticEvents: AutoDecision[],
+    manualEvents: LocalDecision[]
+  ): DecisionTimelineGroup[] {
+    const events: DecisionTimelineEvent[] = automaticEvents.map((event, index) => {
+      const date = parseTimelineDate(event.occurred_at || event.time);
+      return {
+        id: `automatic-${event.task_id}-${event.time}-${index}`,
+        kind: 'automatic',
+        dateKey: timelineDateKey(date),
+        dateLabel: timelineDateLabel(date),
+        timeLabel: timelineTimeLabel(date),
+        dateTime: date.toISOString(),
+        sortValue: date.getTime(),
+        taskId: event.task_id,
+        title: '自动流转',
+        message: event.message,
+        actor: event.assignee || '系统',
+        commitId: event.commit_id,
+        commitUrl: event.commit_url
+      };
+    });
+
+    manualEvents.forEach((event, index) => {
+      const date = parseTimelineDate(event.createdAt);
+      events.push({
+        id: `manual-${event.taskId}-${event.createdAt}-${index}`,
+        kind: 'manual',
+        dateKey: timelineDateKey(date),
+        dateLabel: timelineDateLabel(date),
+        timeLabel: timelineTimeLabel(date),
+        dateTime: date.toISOString(),
+        sortValue: date.getTime(),
+        taskId: event.taskId,
+        title: event.actionLabel,
+        message: event.message,
+        actor: event.operator || '人工调停'
+      });
+    });
+
+    events.sort((a, b) => b.sortValue - a.sortValue);
+    const grouped = new Map<string, DecisionTimelineGroup>();
+    events.forEach((event) => {
+      const group = grouped.get(event.dateKey) || {
+        dateKey: event.dateKey,
+        dateLabel: event.dateLabel,
+        events: []
+      };
+      group.events.push(event);
+      grouped.set(event.dateKey, group);
+    });
+    return Array.from(grouped.values());
+  }
 
   function isCoreMember(name: string): boolean {
     if (!name) return false;
-    return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
+    if (!deliveryDirectoryReady) return true;
+    const normalized = name.trim().toLocaleLowerCase('zh-CN');
+    return coreMemberAliases.has(normalized) || coreMemberAliases.has(normalized.split(' ')[0]);
   }
 
   function isStableJiraIssueKey(taskId: string): boolean {
@@ -226,26 +412,25 @@
     return isStableJiraIssueKey(item.task_id) && isCoreMember(item.assignee);
   }
 
-  function updateCoreMembers(config: any) {
-    let users: string[] = [];
-    if (config.jira) {
-      if (config.jira.sync_users && config.jira.sync_users.length > 0) {
-        users = [...config.jira.sync_users];
-      } else if (config.jira.custom_jql) {
-        const match = config.jira.custom_jql.match(/assignee\s+in\s*\(([^)]+)\)/i);
-        if (match && match[1]) {
-          users = match[1].split(',').map((name: string) => name.trim().replace(/['"]/g, ''));
-        }
-      }
-    }
-
-    if (users.length > 0) {
-      users = users.filter((name) => name !== '未指派' && name !== '-');
-      coreMembers = new Set(users);
-    }
-  }
-
   async function fetchConfig() {
+    try {
+      const directory = await fetchDeliveryDirectory();
+      deliveryAssignees = directory.assignees;
+      deliveryProjects = directory.projects;
+      coreMembers = new Set(directory.assignees.map((option) => option.value));
+      coreMemberAliases = new Set(
+        directory.assignees.flatMap((option) => [option.value, ...(option.aliases || [])])
+          .map((value) => value.trim().toLocaleLowerCase('zh-CN'))
+          .filter(Boolean)
+      );
+      projectNamesMap = Object.fromEntries(
+        directory.projects.map((project) => [project.project_key, cleanProjectName(project.project_name) || project.project_key])
+      );
+      deliveryDirectoryReady = true;
+    } catch (error) {
+      console.error('Failed to fetch shared delivery directory on dashboard:', error);
+    }
+
     try {
       const jiraRes = await fetch('/api/jira/link-config');
       if (jiraRes.ok) {
@@ -257,7 +442,6 @@
       if (res.ok) {
         const data = await res.json();
         if (data) {
-          updateCoreMembers(data);
           if (!jiraBaseUrl) {
             jiraBaseUrl = data?.jira?.base_url ? data.jira.base_url.replace(/\/+$/, '') : '';
           }
@@ -265,18 +449,6 @@
         }
       }
 
-      const projectsRes = await fetch('/api/projects/config');
-      if (projectsRes.ok) {
-        const projects: ProjectConfigRecord[] = await projectsRes.json();
-        projectNamesMap = Array.isArray(projects)
-          ? projects.reduce((acc, project) => {
-              const key = normalizeProjectKey(project.project_key);
-              const name = cleanProjectName(project.project_name);
-              if (key && name) acc[key] = name;
-              return acc;
-            }, {} as Record<string, string>)
-          : {};
-      }
     } catch (e) {
       console.error('Failed to fetch config on dashboard:', e);
     } finally {
@@ -313,11 +485,81 @@
     }
   }
 
+  async function fetchDecisionTableColumns() {
+    try {
+      const response = await fetch('/api/me/decision-table-columns');
+      if (!response.ok) throw new Error('加载显示列配置失败');
+      const data = await response.json();
+      const configured = Array.isArray(data?.visible_columns) ? data.visible_columns : [];
+      const known = new Set(agendaColumns.map((column) => column.key));
+      const next = agendaColumns
+        .map((column) => column.key)
+        .filter((key) => configured.includes(key) && known.has(key));
+      visibleAgendaColumnKeys = next.includes('task_id') ? next : agendaColumns.map((column) => column.key);
+    } catch (error: any) {
+      columnPreferenceError = error?.message || '显示列配置暂不可用';
+    }
+  }
+
+  async function saveDecisionTableColumns(columns: string[]) {
+    columnPreferenceSaving = true;
+    columnPreferenceError = '';
+    try {
+      const response = await fetch('/api/me/decision-table-columns', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visible_columns: columns })
+      });
+      if (!response.ok) throw new Error((await response.text()) || '保存显示列配置失败');
+      const data = await response.json();
+      if (Array.isArray(data?.visible_columns)) {
+        visibleAgendaColumnKeys = data.visible_columns;
+      }
+    } catch (error: any) {
+      columnPreferenceError = error?.message || '保存显示列配置失败';
+    } finally {
+      columnPreferenceSaving = false;
+    }
+  }
+
+  function handleAgendaColumnsChange(event: CustomEvent<string[]>) {
+    const selected = new Set(event.detail || []);
+    visibleAgendaColumnKeys = agendaColumns
+      .map((column) => column.key)
+      .filter((key) => key === 'task_id' || selected.has(key));
+    if (columnPreferenceTimer) clearTimeout(columnPreferenceTimer);
+    const snapshot = [...visibleAgendaColumnKeys];
+    columnPreferenceTimer = setTimeout(() => {
+      columnPreferenceTimer = null;
+      void saveDecisionTableColumns(snapshot);
+    }, 220);
+  }
+
   function selectItem(item: AgendaItem) {
     selectedItem = item;
     syncInterventionDraft(item);
-    decisionSuccess = '';
-    decisionError = '';
+  }
+
+  async function openDetailDrawer(item: AgendaItem, event?: Event) {
+    selectItem(item);
+    const trigger = event?.currentTarget;
+    detailDrawerReturnEl = trigger instanceof HTMLElement ? trigger : null;
+    detailDrawerOpen = true;
+  }
+
+  async function closeDetailDrawer() {
+    if (!detailDrawerOpen) return;
+    detailDrawerOpen = false;
+    await tick();
+    if (detailDrawerReturnEl?.isConnected) {
+      detailDrawerReturnEl.focus();
+    }
+  }
+
+  function handleRowKeydown(event: KeyboardEvent, item: AgendaItem) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    openDetailDrawer(item, event);
   }
 
   function syncInterventionDraft(item: AgendaItem) {
@@ -330,20 +572,23 @@
   async function submitDecision(action: 'reassign' | 'reschedule') {
     if (!selectedItem) return;
     decisionLoading = true;
-    decisionSuccess = '';
-    decisionError = '';
 
     let value = '';
     if (action === 'reassign') {
       if (!newAssignee.trim()) {
-        decisionError = '请输入转派负责人';
+        showToast('请输入转派负责人。', { type: 'error', title: '无法提交人工调停' });
         decisionLoading = false;
         return;
       }
       value = newAssignee;
     } else {
       if (!newDueDate) {
-        decisionError = '请选择新的截止时间';
+        showToast('请选择新的截止时间。', { type: 'error', title: '无法提交人工调停' });
+        decisionLoading = false;
+        return;
+      }
+      if (!hasDueDateChange) {
+        showToast('新的截止日期必须与当前日期不同。', { type: 'error', title: '无法提交人工调停' });
         decisionLoading = false;
         return;
       }
@@ -358,7 +603,7 @@
           task_id: selectedItem.task_id,
           action,
           value,
-          reason: decisionNote || '人工调停干预'
+          meeting_note: decisionNote.trim()
         })
       });
 
@@ -367,18 +612,37 @@
         throw new Error(text || '提交人工干预指令失败');
       }
 
-      await res.json();
-      decisionSuccess = '人工干预已记录至事件账本并更新状态。';
+      const result = await res.json();
+      if (action === 'reschedule' && result?.due_date !== newDueDate) {
+        throw new Error(`截止日期更新校验失败：期望 ${newDueDate}，实际 ${result?.due_date || '未返回'}`);
+      }
+      const successMessage = action === 'reschedule'
+        ? `截止日期已调整为 ${newDueDate}，排期数据已同步。`
+        : '人工干预已记录至事件账本并更新状态。';
+      showToast(successMessage, {
+        title: result?.meeting_note_synced
+          ? '人工调停已保存，会议备注已提交 Jira 同步'
+          : '人工调停已保存'
+      });
 
       const actionName = action === 'reassign' ? '覆盖指派' : '调整截止期';
-      localDecisions = [
-        `[${new Date().toLocaleTimeString()}] ${operator || '系统管理员'} 调停 ${selectedItem.task_id}：${actionName}`,
-        ...localDecisions
-      ];
+      const createdAt = new Date().toISOString();
+      localDecisions = [{
+        createdAt,
+        taskId: selectedItem.task_id,
+        actionLabel: actionName,
+        operator: operator || '系统管理员',
+        message: `${operator || '系统管理员'} 调停 ${selectedItem.task_id}：${actionName}${decisionNote ? ` · ${decisionNote}` : ''}`
+      }, ...localDecisions];
 
       await fetchAgenda();
+      window.dispatchEvent(new CustomEvent('decision-events-updated'));
+      await closeDetailDrawer();
     } catch (err: any) {
-      decisionError = err.message || '提交干预请求时出错';
+      showToast(err.message || '提交干预请求时出错', {
+        type: 'error',
+        title: '人工调停提交失败'
+      });
     } finally {
       decisionLoading = false;
     }
@@ -387,22 +651,22 @@
   function adaptMetrics(): AdminMetric[] {
     return [
       {
-        label: '决策事项',
+        label: '可见事项',
         value: filteredAgendaItems.length,
-        helper: `需求 ${activeTaskCount} / 缺陷 ${activeBugCount}`,
-        tone: 'info'
+        helper: `${filteredAgendaItems.length} 条活跃议程`,
+        tone: 'neutral'
       },
       {
         label: '高风险',
         value: redZoneCount,
-        helper: warningCount > 0 ? `另有 ${warningCount} 个中风险` : 'critical 卡点',
+        helper: '需要立即决策',
         tone: redZoneCount > 0 ? 'danger' : 'success'
       },
       {
-        label: '流转健康度',
-        value: `${decisionHealthPercent}%`,
-        helper: decisionHealthLabel,
-        tone: decisionHealthPercent < 80 ? 'warning' : 'success'
+        label: '中风险',
+        value: warningCount,
+        helper: '本周持续观察',
+        tone: warningCount > 0 ? 'warning' : 'success'
       },
       {
         label: '自动记录',
@@ -482,28 +746,6 @@
     };
   }
 
-  function getResolutionDraft(item: AgendaItem | null): ResolutionDraft {
-    if (!item) return { assignee: '', due_date: '', note: '' };
-    const existingDue = item.due_date ? formatAdminDate(item.due_date) : '';
-    return {
-      assignee: item.assignee || '',
-      due_date: existingDue && existingDue !== '-' ? existingDue : '',
-      note:
-        item.risk_level === 'critical'
-          ? '会中确认阻塞事实，并明确下一位负责人或新的截止时间。'
-          : '会中确认推进节奏，补齐下一次状态更新时间。'
-    };
-  }
-
-  function applyResolutionDraft() {
-    if (!selectedItem) return;
-    newAssignee = resolutionDraft.assignee;
-    newDueDate = resolutionDraft.due_date;
-    decisionNote = resolutionDraft.note;
-    decisionSuccess = '已带入处置草稿，尚未提交。';
-    decisionError = '';
-  }
-
   function getAgendaProjectKey(item: AgendaItem) {
     const taskId = (item.task_id || '').trim();
     const delimiterIndex = taskId.indexOf('-');
@@ -536,8 +778,12 @@
     return getProjectDisplayName(key) || item.repo || key;
   }
 
+  function isBugIssueType(issueType: string) {
+    return ['bug', 'defect', '缺陷', '故障'].includes((issueType || '').trim().toLowerCase());
+  }
+
   function getIssueTypeLabel(issueType: string) {
-    return issueType === 'bug' ? '缺陷' : '需求';
+    return isBugIssueType(issueType) ? '缺陷' : '任务';
   }
 
   function getRiskLevelLabel(riskLevel: string) {
@@ -675,139 +921,154 @@
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  function portalToConsole(node: HTMLElement) {
+    const target = document.querySelector<HTMLElement>('.functional-console') || document.body;
+    target.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
+
+  async function openTimelineDrawer() {
+    timelineDrawerOpen = true;
+    await tick();
+    timelineDrawerCloseButton?.focus();
+  }
+
+  async function closeTimelineDrawer() {
+    if (!timelineDrawerOpen) return;
+    timelineDrawerOpen = false;
+    await tick();
+    document.querySelector<HTMLButtonElement>('.workspace-latest-event')?.focus();
+  }
+
+  function trapDrawerFocus(event: KeyboardEvent, drawer: HTMLElement | undefined) {
+    if (event.key !== 'Tab' || !drawer) return;
+    const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((element) => !element.hasAttribute('hidden'));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function handleDrawerKeydown(event: KeyboardEvent) {
+    if (detailDrawerOpen) return;
+    if (!timelineDrawerOpen) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTimelineDrawer();
+      return;
+    }
+    trapDrawerFocus(event, timelineDrawerEl);
+  }
+
   onMount(() => {
     let disposed = false;
     let interval: ReturnType<typeof setInterval> | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let measureFrame = 0;
-
-    const syncDecisionPanelHeight = () => {
-      if (measureFrame) {
-        window.cancelAnimationFrame(measureFrame);
-      }
-      measureFrame = window.requestAnimationFrame(() => {
-        if (!inspectorContentEl) return;
-        const panelChromeHeight = 34;
-        const nextHeight = Math.max(620, Math.ceil(inspectorContentEl.scrollHeight + panelChromeHeight));
-        decisionPanelHeight = `${nextHeight}px`;
-      });
+    const handleProjectPreferencesUpdated = () => {
+      void fetchAgenda();
     };
 
     const bootstrapDashboard = async () => {
-      await fetchConfig();
+      await Promise.all([fetchConfig(), fetchDecisionTableColumns()]);
       if (disposed) return;
       await fetchAgenda();
       if (disposed) return;
-      syncDecisionPanelHeight();
       interval = setInterval(() => {
         fetchAgenda();
       }, 15000);
     };
 
-    syncDecisionPanelHeight();
-    if (typeof ResizeObserver !== 'undefined' && inspectorContentEl) {
-      resizeObserver = new ResizeObserver(syncDecisionPanelHeight);
-      resizeObserver.observe(inspectorContentEl);
-    }
-    window.addEventListener('resize', syncDecisionPanelHeight);
-
     bootstrapDashboard();
+    window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
 
     return () => {
       disposed = true;
       if (interval) clearInterval(interval);
-      if (resizeObserver) resizeObserver.disconnect();
-      if (measureFrame) window.cancelAnimationFrame(measureFrame);
-      window.removeEventListener('resize', syncDecisionPanelHeight);
+      if (columnPreferenceTimer) clearTimeout(columnPreferenceTimer);
+      window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+      dispatch('timelineSummary', null);
     };
   });
 </script>
 
+<svelte:window on:keydown={handleDrawerKeydown} />
+
 <div class="decision-admin">
-  <section class="decision-command-strip wa-glass" aria-label="决策看板概览">
-    <div class="command-copy">
-      <span class="command-kicker">实时 Agenda</span>
-      <h2>核心决策流转</h2>
-      <span class="command-subline">{decisionHealthLabel}</span>
+  <section class="decision-summary-panel" aria-label="决策看板总览">
+    <div class="decision-metrics" aria-label="决策看板指标">
+      {#each adminMetrics as metric}
+        <article class="wa-admin-card wa-admin-metric decision-metric metric-{metric.tone || 'neutral'}">
+          <div class="metric-topline">
+            <span>{metric.label}</span>
+            <i aria-hidden="true"></i>
+          </div>
+          <strong>{metric.value}</strong>
+          <small>{metric.helper}</small>
+        </article>
+      {/each}
     </div>
-    <div class="command-signal-grid">
-      <div class="command-signal">
-        <span>可见事项</span>
-        <strong>{agendaRows.length}</strong>
-      </div>
-      <div class="command-signal tone-danger">
-        <span>高风险</span>
+
+    <div class="decision-stage-strip" aria-label="状态分段">
+      <button
+        type="button"
+        class="stage-chip {currentFilter === 'all' && showRiskLevel === 'all' ? 'active' : ''}"
+        on:click={() => {
+          currentFilter = 'all';
+          showRiskLevel = 'all';
+        }}
+      >
+        <span>全部活跃</span>
+        <strong>{filteredAgendaItems.length}</strong>
+      </button>
+      <button
+        type="button"
+        class="stage-chip {showRiskLevel === 'risks' ? 'active' : ''}"
+        on:click={() => {
+          currentFilter = 'all';
+          showRiskLevel = 'risks';
+        }}
+      >
+        <span>待处理风险</span>
         <strong>{visibleRiskCount}</strong>
-      </div>
-      <div class="command-signal tone-info">
-        <span>自动记录</span>
-        <strong>{filteredAutoDecisions.length}</strong>
-      </div>
+      </button>
+      <button
+        type="button"
+        class="stage-chip {currentFilter === 'task' ? 'active' : ''}"
+        on:click={() => {
+          currentFilter = 'task';
+          showRiskLevel = 'all';
+        }}
+      >
+        <span>需求</span>
+        <strong>{activeTaskCount}</strong>
+      </button>
+      <button
+        type="button"
+        class="stage-chip {currentFilter === 'bug' ? 'active' : ''}"
+        on:click={() => {
+          currentFilter = 'bug';
+          showRiskLevel = 'all';
+        }}
+      >
+        <span>缺陷</span>
+        <strong>{activeBugCount}</strong>
+      </button>
     </div>
   </section>
 
-  <section class="decision-metrics" aria-label="决策看板指标">
-    {#each adminMetrics as metric}
-      <article class="wa-admin-card wa-admin-metric decision-metric metric-{metric.tone || 'neutral'}">
-        <div class="metric-topline">
-          <span>{metric.label}</span>
-          <i aria-hidden="true"></i>
-        </div>
-        <strong>{metric.value}</strong>
-        <small>{metric.helper}</small>
-      </article>
-    {/each}
-  </section>
-
-  <section class="decision-stage-strip" aria-label="状态分段">
-    <button
-      type="button"
-      class="stage-chip {currentFilter === 'all' && showRiskLevel === 'all' ? 'active' : ''}"
-      on:click={() => {
-        currentFilter = 'all';
-        showRiskLevel = 'all';
-      }}
-    >
-      <span>全部活跃</span>
-      <strong>{filteredAgendaItems.length}</strong>
-    </button>
-    <button
-      type="button"
-      class="stage-chip {showRiskLevel === 'risks' ? 'active' : ''}"
-      on:click={() => {
-        currentFilter = 'all';
-        showRiskLevel = 'risks';
-      }}
-    >
-      <span>待处理风险</span>
-      <strong>{visibleRiskCount}</strong>
-    </button>
-    <button
-      type="button"
-      class="stage-chip {currentFilter === 'task' ? 'active' : ''}"
-      on:click={() => {
-        currentFilter = 'task';
-        showRiskLevel = 'all';
-      }}
-    >
-      <span>需求</span>
-      <strong>{activeTaskCount}</strong>
-    </button>
-    <button
-      type="button"
-      class="stage-chip {currentFilter === 'bug' ? 'active' : ''}"
-      on:click={() => {
-        currentFilter = 'bug';
-        showRiskLevel = 'all';
-      }}
-    >
-      <span>缺陷</span>
-      <strong>{activeBugCount}</strong>
-    </button>
-  </section>
-
-  <div class="decision-main-grid" style={`--decision-panel-height: ${decisionPanelHeight};`}>
-    <section class="wa-admin-section decision-table-section" aria-label="决策事项列表">
+  <div class="decision-main-grid">
+    <section class="wa-admin-section decision-table-section" class:has-feedback={!!errorMsg} aria-label="决策事项列表">
       <div class="wa-admin-toolbar decision-toolbar">
         <div class="toolbar-copy">
           <span>Selection</span>
@@ -839,6 +1100,23 @@
               compact={true}
             />
           </div>
+          <div class="toolbar-select column-select">
+            <MultiSelect
+              values={configurableVisibleAgendaColumnKeys}
+              options={configurableAgendaColumnOptions}
+              placeholder="选择显示列"
+              searchPlaceholder="搜索列"
+              controlLabel="显示列"
+              ariaLabel="配置事项列表显示列"
+              summaryMode={true}
+              overlay={true}
+              compact={true}
+              on:change={handleAgendaColumnsChange}
+            />
+            <span class="column-preference-state" class:error={!!columnPreferenceError} aria-live="polite">
+              {columnPreferenceSaving ? '正在保存显示列' : columnPreferenceError}
+            </span>
+          </div>
           <button class="wa-admin-action secondary" type="button" on:click={fetchAgenda} disabled={loading}>
             刷新
           </button>
@@ -854,7 +1132,7 @@
           <thead>
             <tr>
               <th class="select-col" aria-label="选择"></th>
-              {#each agendaColumns as column}
+              {#each visibleAgendaColumns as column}
                 <th
                   class:sticky-status-col={column.key === 'status'}
                   style={column.width ? `width: ${column.width}` : undefined}
@@ -867,13 +1145,13 @@
           <tbody>
             {#if loading && agendaRows.length === 0}
               <tr>
-                <td colspan={agendaColumns.length + 1}>
+                <td colspan={visibleAgendaColumns.length + 1}>
                   <div class="table-state">正在加载真实 Agenda 数据...</div>
                 </td>
               </tr>
             {:else if agendaRows.length === 0}
               <tr>
-                <td colspan={agendaColumns.length + 1}>
+                <td colspan={visibleAgendaColumns.length + 1}>
                   <div class="table-state">当前过滤条件下没有可见决策事项。</div>
                 </td>
               </tr>
@@ -881,25 +1159,36 @@
               {#each agendaRows as row}
                 <tr
                   class:is-selected={selectedItem?.task_id === row.id}
-                  on:click={() => selectItem(row.source)}
-                  on:keydown={(event) => event.key === 'Enter' && selectItem(row.source)}
+                  on:click={(event) => openDetailDrawer(row.source, event)}
+                  on:keydown={(event) => handleRowKeydown(event, row.source)}
                   role="button"
                   tabindex="0"
+                  aria-haspopup="dialog"
                 >
                   <td class="select-col">
                     <span class="row-check" class:checked={selectedItem?.task_id === row.id}></span>
                   </td>
-                  {#each agendaColumns as column}
+                  {#each visibleAgendaColumns as column}
                     <td class="cell-{column.key}" class:sticky-status-col={column.key === 'status'}>
                       {#if column.key === 'task_id'}
                         {@const jiraUrl = getJiraUrl(row.id)}
-                        {#if jiraUrl}
-                          <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                            {row.cells.task_id}
-                          </a>
-                        {:else}
-                          <span class="table-id">{row.cells.task_id}</span>
-                        {/if}
+                        <div class="issue-id-cell">
+                          <span
+                            class="issue-type-mark"
+                            class:bug={isBugIssueType(row.source.issue_type)}
+                            aria-label={isBugIssueType(row.source.issue_type) ? 'Bug' : 'Task'}
+                            title={isBugIssueType(row.source.issue_type) ? 'Bug' : 'Task'}
+                          >
+                            <span aria-hidden="true">{isBugIssueType(row.source.issue_type) ? 'B' : 'T'}</span>
+                          </span>
+                          {#if jiraUrl}
+                            <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
+                              {row.cells.task_id}
+                            </a>
+                          {:else}
+                            <span class="table-id">{row.cells.task_id}</span>
+                          {/if}
+                        </div>
                       {:else if column.key === 'title'}
                         <div class="title-stack">
                           <strong>{row.title}</strong>
@@ -920,186 +1209,207 @@
         </table>
       </div>
     </section>
+  </div>
 
-    <aside class="wa-admin-card wa-admin-inspector decision-inspector" aria-label="事项详情">
-      <div class="inspector-content" bind:this={inspectorContentEl}>
-        {#if inspectorRecord && selectedItem}
-          <div class="inspector-head">
-            <div>
-              <span class="inspector-kicker">需求详情</span>
-              <h2>{inspectorRecord.title}</h2>
-            </div>
-            <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{inspectorRecord.status}</span>
+  {#if inspectorRecord && selectedItem}
+    <Modal
+      show={detailDrawerOpen}
+      title={inspectorRecord.title}
+      size="wide"
+      closeLabel="关闭需求详情"
+      on:close={closeDetailDrawer}
+    >
+      <div class="requirement-drawer-body requirement-modal-body">
+        <div class="requirement-drawer-meta requirement-modal-meta">
+          <span class="inspector-kicker">需求详情</span>
+          {#if getJiraUrl(inspectorRecord.id)}
+            <a class="table-link" href={getJiraUrl(inspectorRecord.id)} target="_blank" rel="noopener noreferrer">{inspectorRecord.id}</a>
+          {:else}
+            <strong>{inspectorRecord.id}</strong>
+          {/if}
+          <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{inspectorRecord.status}</span>
+          <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{getRiskLevelLabel(selectedItem.risk_level)}</span>
+        </div>
+
+        <section class="requirement-drawer-section fact-section" aria-labelledby="requirement-facts-title">
+          <div class="drawer-section-heading">
+            <h3 id="requirement-facts-title">事项概览</h3>
+            <span>Agenda 实时数据</span>
           </div>
-
-          <div class="inspector-id-row">
-            {#if getJiraUrl(inspectorRecord.id)}
-              <a class="table-link" href={getJiraUrl(inspectorRecord.id)} target="_blank" rel="noopener noreferrer">{inspectorRecord.id}</a>
-            {:else}
-              <strong>{inspectorRecord.id}</strong>
-            {/if}
-            <span class="wa-admin-pill {toneClass(inspectorRecord.tone)}">{getRiskLevelLabel(selectedItem.risk_level)}</span>
-          </div>
-
           <dl class="fact-grid">
             {#each inspectorRecord.facts as fact}
-              <div>
+              <div class:project-fact={fact.label === '所属项目'}>
                 <dt>{fact.label}</dt>
                 <dd>{fact.value}</dd>
               </div>
             {/each}
           </dl>
+        </section>
 
-          <div class="inspector-section-grid">
-            {#each inspectorRecord.sections as section}
-              <section class="inspector-section">
-                <h3>{section.title}</h3>
-                {#if section.body}
-                  <p>{section.body}</p>
-                {/if}
-                {#if section.items}
-                  <ul>
-                    {#each section.items as item}
-                      <li>{item}</li>
-                    {/each}
-                  </ul>
-                {/if}
+        <div class="inspector-section-grid">
+          {#each inspectorRecord.sections as section}
+            <section
+              class="inspector-section"
+              class:empty-history-section={section.title === '人工干预记录' && section.items?.length === 1 && section.items[0] === '暂无人工干预记录'}
+            >
+              <h3>{section.title}</h3>
+              {#if section.body}
+                <p>{section.body}</p>
+              {/if}
+              {#if section.items}
+                <ul>
+                  {#each section.items as item}
+                    <li>{item}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/each}
+        </div>
+
+        <section class="inspector-section intervention-section">
+          <div class="section-row-head">
+            <div>
+              <h3>人工调停</h3>
+              <span>确认负责人或调整计划日后再提交</span>
+            </div>
+          </div>
+
+          <div class="intervention-form">
+            <div class="form-field">
+              <Select
+                label="指派负责人"
+                bind:value={newAssignee}
+                options={overrideAssigneeSelectOptions}
+                placeholder="选择负责人"
+                searchPlaceholder="搜索负责人"
+                compact={true}
+              />
+            </div>
+            <div class="form-field">
+              <DatePicker
+                label="新的截止日"
+                value={newDueDate}
+                placeholder="选择新的截止日"
+                compact={true}
+                on:change={handleDueDateChange}
+              />
+            </div>
+            <label class="wide-field">
+              <span>会议备注（选填）</span>
+              <input class="wa-control" type="text" bind:value={decisionNote} placeholder="填写后将按原文同步为 Jira 评论；留空则不评论" />
+            </label>
+            <label>
+              <span>调停决策人</span>
+              <input class="wa-control" type="text" bind:value={operator} readonly />
+            </label>
+          </div>
+
+        </section>
+      </div>
+
+      <div slot="footer" class="intervention-actions">
+        <button class="wa-admin-action primary" type="button" on:click={() => submitDecision('reassign')} disabled={decisionLoading}>
+          覆盖指派
+        </button>
+        <button class="wa-admin-action secondary" type="button" on:click={() => submitDecision('reschedule')} disabled={decisionLoading || !hasDueDateChange}>
+          {hasDueDateChange ? `调整至 ${formatPendingDueDate(newDueDate)}` : '调整截止'}
+        </button>
+      </div>
+    </Modal>
+  {/if}
+
+  {#if timelineDrawerOpen}
+    <div use:portalToConsole class="timeline-drawer-layer">
+      <button
+        type="button"
+        class="timeline-drawer-backdrop"
+        aria-label="关闭事件记录"
+        on:click={closeTimelineDrawer}
+      ></button>
+      <div
+        class="timeline-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="timeline-drawer-title"
+        bind:this={timelineDrawerEl}
+      >
+        <header class="timeline-drawer-header">
+          <div>
+            <span class="timeline-drawer-eyebrow">决策证据</span>
+            <h2 id="timeline-drawer-title">事件记录</h2>
+            <p>全部可见事件按发生时间倒序展示，最新记录在前。</p>
+          </div>
+          <div class="timeline-drawer-actions">
+            <strong class="timeline-drawer-count">{decisionTimelineEvents.length} 条</strong>
+            <button
+              type="button"
+              class="timeline-drawer-close"
+              aria-label="关闭事件记录"
+              bind:this={timelineDrawerCloseButton}
+              on:click={closeTimelineDrawer}
+            >×</button>
+          </div>
+        </header>
+
+        <div class="timeline-drawer-body">
+          {#if decisionTimelineGroups.length === 0}
+            <div class="timeline-drawer-empty">
+              <strong>暂无事件记录</strong>
+              <span>自动流转或人工调停发生后会在这里按时间归档。</span>
+            </div>
+          {:else}
+            {#each decisionTimelineGroups as group}
+              <section class="timeline-day" aria-labelledby={`timeline-day-${group.dateKey}`}>
+                <div class="timeline-day-heading">
+                  <h3 id={`timeline-day-${group.dateKey}`}>{group.dateLabel}</h3>
+                  <span>{group.events.length} 条</span>
+                </div>
+                <ol>
+                  {#each group.events as event, index (event.id)}
+                    <li class="timeline-drawer-event {event.kind}" aria-current={group === decisionTimelineGroups[0] && index === 0 ? 'true' : undefined}>
+                      <div class="timeline-event-time">
+                        <time datetime={event.dateTime}>{event.timeLabel}</time>
+                        <span class="timeline-event-kind">{event.kind === 'automatic' ? '自动流转' : '人工调停'}</span>
+                      </div>
+                      <div class="timeline-event-content">
+                        <div class="timeline-event-title">
+                          <strong>{event.title}</strong>
+                          {#if getJiraUrl(event.taskId)}
+                            <a href={getJiraUrl(event.taskId)} target="_blank" rel="noopener noreferrer">{event.taskId}</a>
+                          {:else}
+                            <span>{event.taskId}</span>
+                          {/if}
+                        </div>
+                        <p>{event.message}</p>
+                        <div class="timeline-event-evidence">
+                          <span>{event.actor}</span>
+                          {#if event.commitId}
+                            {#if normalizedCommitUrl(event.commitUrl)}
+                              <a
+                                href={normalizedCommitUrl(event.commitUrl)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={event.commitId}
+                                on:click={(clickEvent) => openCommitUrl(clickEvent, event.commitUrl)}
+                              >commit {shortCommit(event.commitId)}</a>
+                            {:else}
+                              <span>commit {shortCommit(event.commitId)}</span>
+                            {/if}
+                          {/if}
+                        </div>
+                      </div>
+                    </li>
+                  {/each}
+                </ol>
               </section>
             {/each}
-          </div>
-
-          <section class="inspector-section intervention-section">
-            <div class="section-row-head">
-              <h3>人工调停</h3>
-              <button class="wa-admin-action secondary" type="button" on:click={applyResolutionDraft}>
-                带入草稿
-              </button>
-            </div>
-
-            <div class="intervention-form">
-              <div class="form-field">
-                <Select
-                  label="指派负责人"
-                  bind:value={newAssignee}
-                  options={overrideAssigneeSelectOptions}
-                  placeholder="选择负责人"
-                  searchPlaceholder="搜索负责人"
-                  compact={true}
-                />
-              </div>
-              <div class="form-field">
-                <DatePicker
-                  label="新的截止日"
-                  bind:value={newDueDate}
-                  placeholder="选择新的截止日"
-                  compact={true}
-                />
-              </div>
-              <label class="wide-field">
-                <span>会议备注</span>
-                <input class="wa-control" type="text" bind:value={decisionNote} placeholder="填写调停依据或下一步动作" />
-              </label>
-              <label>
-                <span>调停决策人</span>
-                <input class="wa-control" type="text" bind:value={operator} />
-              </label>
-            </div>
-
-            <div class="intervention-actions">
-              <button class="wa-admin-action primary" type="button" on:click={() => submitDecision('reassign')} disabled={decisionLoading}>
-                覆盖指派
-              </button>
-              <button class="wa-admin-action secondary" type="button" on:click={() => submitDecision('reschedule')} disabled={decisionLoading}>
-                调整截止
-              </button>
-            </div>
-
-            {#if decisionSuccess}
-              <Alert type="success" message={decisionSuccess} />
-            {/if}
-            {#if decisionError}
-              <Alert type="error" message={decisionError} />
-            {/if}
-          </section>
-        {:else}
-          <div class="inspector-empty">
-            <strong>暂无可查看事项</strong>
-            <p>当前数据或过滤条件下没有真实 Agenda 记录。</p>
-          </div>
-        {/if}
-      </div>
-    </aside>
-  </div>
-
-  <section class="decision-log-grid" aria-label="决策流转记录">
-    <div class="wa-admin-card log-panel auto-log-panel">
-      <div class="log-head">
-        <div>
-          <strong>自动流转记录</strong>
-          <small>系统检测、提交证据与状态推进</small>
+          {/if}
         </div>
-        <span>{filteredAutoDecisions.length} 条</span>
-      </div>
-      <div class="log-list">
-        {#if filteredAutoDecisions.length === 0}
-          <div class="log-empty">当前没有可见自动流转记录。</div>
-        {:else}
-          {#each filteredAutoDecisions as dec}
-            <article class="log-item">
-              <div class="log-meta">
-                <span>{dec.time || '-'}</span>
-                {#if getJiraUrl(dec.task_id)}
-                  <a href={getJiraUrl(dec.task_id)} target="_blank" rel="noopener noreferrer">{dec.task_id}</a>
-                {:else}
-                  <strong>{dec.task_id}</strong>
-                {/if}
-                {#if dec.commit_id}
-                  {#if normalizedCommitUrl(dec.commit_url)}
-                    <a
-                      href={normalizedCommitUrl(dec.commit_url)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={dec.commit_id}
-                      on:click={(event) => openCommitUrl(event, dec.commit_url)}
-                    >
-                      {shortCommit(dec.commit_id)}
-                    </a>
-                  {:else}
-                    <strong>{shortCommit(dec.commit_id)}</strong>
-                  {/if}
-                {/if}
-              </div>
-              <p>{dec.message}</p>
-            </article>
-          {/each}
-        {/if}
       </div>
     </div>
+  {/if}
 
-    <div class="wa-admin-card log-panel manual-log-panel">
-      <div class="log-head">
-        <div>
-          <strong>本次会议操作</strong>
-          <small>人工调停动作</small>
-        </div>
-        <span>{localDecisions.length} 条</span>
-      </div>
-      <div class="log-list">
-        {#if localDecisions.length === 0}
-          <div class="log-empty">等待人工调停动作触发。</div>
-        {:else}
-          {#each localDecisions as feed}
-            <article class="log-item local">
-              <div class="log-meta">
-                <span>INTERVENTION</span>
-              </div>
-              <p>{feed}</p>
-            </article>
-          {/each}
-        {/if}
-      </div>
-    </div>
-  </section>
 </div>
 
 <style>
@@ -1109,10 +1419,14 @@
     --decision-radius-control: 12px;
     position: relative;
     display: grid;
+    grid-template-rows: 68px 48px minmax(0, 1fr);
     width: 100%;
+    height: 100%;
     min-width: 0;
-    gap: var(--wa-space-5);
-    padding-bottom: var(--wa-space-4);
+    min-height: 0;
+    gap: 12px;
+    padding-bottom: 0;
+    overflow: hidden;
     color: var(--wa-text-main);
     font-family: var(--wa-font-sans);
     isolation: isolate;
@@ -1128,8 +1442,8 @@
     background:
       linear-gradient(135deg, rgba(0, 143, 150, 0.1), transparent 42%),
       linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0));
-    mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.78) 45%, transparent 100%);
-    -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.78) 45%, transparent 100%);
+    mask-image: linear-gradient(180deg, rgb(13, 23, 34) 0%, rgba(13, 23, 34, 0.78) 45%, transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, rgb(13, 23, 34) 0%, rgba(13, 23, 34, 0.78) 45%, transparent 100%);
   }
 
   .decision-command-strip {
@@ -1193,15 +1507,6 @@
     letter-spacing: 0;
   }
 
-  .command-copy h2 {
-    margin: 0;
-    color: var(--wa-text-strong);
-    font-size: 25px;
-    line-height: 1.12;
-    font-weight: 850;
-    letter-spacing: 0;
-  }
-
   .command-subline {
     color: var(--wa-text-main);
     font-weight: 680;
@@ -1242,14 +1547,21 @@
   .decision-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--wa-space-4);
+    gap: 12px;
+    min-height: 0;
   }
 
   .decision-metric {
     position: relative;
     overflow: hidden;
-    min-height: 124px;
-    padding: 18px;
+    min-height: 0;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 14px;
+    padding: 9px 14px 9px 17px;
     border-color: rgba(255, 255, 255, 0.66);
     border-radius: var(--decision-radius-card);
     background:
@@ -1263,7 +1575,7 @@
   .decision-metric::before {
     content: "";
     position: absolute;
-    inset: 14px auto 14px 0;
+    inset: 10px auto 10px 0;
     width: 3px;
     border-radius: 999px;
     background: var(--wa-border-soft);
@@ -1286,10 +1598,10 @@
   }
 
   .metric-topline {
-    display: flex;
+    display: block;
     align-items: center;
     justify-content: space-between;
-    gap: var(--wa-space-3);
+    min-width: 0;
   }
 
   .metric-topline span {
@@ -1300,13 +1612,7 @@
   }
 
   .metric-topline i {
-    position: relative;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--decision-radius-control);
-    background: var(--wa-neutral-soft);
-    border: 1px solid var(--wa-border-soft);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+    display: none;
   }
 
   .metric-topline i::before,
@@ -1358,11 +1664,14 @@
   }
 
   .decision-metric strong {
-    align-self: end;
-    margin-top: 8px;
+    grid-column: 2;
+    grid-row: 1 / 3;
+    justify-self: end;
+    align-self: center;
+    margin: 0;
     color: var(--wa-text-strong);
     font-family: var(--wa-font-mono);
-    font-size: clamp(30px, 2.6vw, 38px);
+    font-size: 28px;
     line-height: 0.95;
     font-weight: 780;
     letter-spacing: 0;
@@ -1370,29 +1679,34 @@
   }
 
   .decision-metric small {
+    min-width: 0;
+    overflow: hidden;
     color: var(--wa-text-muted);
-    font-size: 12px;
-    line-height: 1.35;
+    font-size: 11px;
+    line-height: 1.25;
     font-weight: 620;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .decision-stage-strip {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--wa-space-3);
+    gap: 12px;
+    min-height: 0;
   }
 
   .stage-chip {
     position: relative;
     min-width: 0;
-    min-height: 70px;
+    min-height: 0;
+    height: 100%;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--wa-space-3);
-    padding: var(--wa-space-3) var(--wa-space-4) var(--wa-space-3) 18px;
+    padding: 8px 14px;
     border: 1px solid var(--wa-border-soft);
-    border-left: 4px solid rgba(123, 143, 160, 0.18);
     border-radius: var(--decision-radius-card);
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(246, 251, 253, 0.64)),
@@ -1428,21 +1742,21 @@
   .stage-chip strong {
     color: var(--wa-text-strong);
     font-family: var(--wa-font-mono);
-    font-size: 25px;
+    font-size: 20px;
     font-weight: 760;
     font-variant-numeric: tabular-nums;
   }
 
   .decision-main-grid {
-    --decision-panel-height: clamp(640px, calc(100dvh - 112px), 820px);
     position: relative;
     display: grid;
-    grid-template-columns: minmax(540px, 1.16fr) minmax(500px, 0.84fr);
-    grid-template-areas: "inspector selector";
-    gap: var(--wa-space-4);
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "selector";
+    align-items: stretch;
+    height: 100%;
     min-height: 0;
-    overflow: visible;
+    overflow: hidden;
   }
 
   .decision-table-section {
@@ -1450,11 +1764,12 @@
     position: relative;
     z-index: 20;
     min-width: 0;
-    height: var(--decision-panel-height);
-    max-height: var(--decision-panel-height);
-    min-height: var(--decision-panel-height);
+    align-self: stretch;
+    height: 100%;
+    max-height: none;
+    min-height: 0;
     box-sizing: border-box;
-    padding: 18px;
+    padding: 14px;
     overflow: visible;
     border: 1px solid rgba(255, 255, 255, 0.66);
     border-radius: var(--decision-radius-panel);
@@ -1467,8 +1782,12 @@
     backdrop-filter: blur(18px) saturate(126%);
     -webkit-backdrop-filter: blur(18px) saturate(126%);
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .decision-table-section.has-feedback {
     grid-template-rows: auto auto minmax(0, 1fr);
-    gap: var(--wa-space-4);
   }
 
   .decision-table-section:focus-within {
@@ -1479,9 +1798,9 @@
     position: relative;
     z-index: 45;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 10px;
+    grid-template-columns: minmax(220px, 0.72fr) minmax(640px, 1.28fr);
+    align-items: center;
+    gap: 14px;
     overflow: visible;
     padding: 0;
     border: 0;
@@ -1493,7 +1812,7 @@
 
   .toolbar-copy {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: baseline;
     gap: 4px 10px;
     min-width: 0;
@@ -1515,7 +1834,8 @@
   }
 
   .toolbar-copy small {
-    justify-self: end;
+    grid-column: 2;
+    justify-self: start;
     color: var(--wa-text-muted);
     font-size: 12px;
     white-space: nowrap;
@@ -1527,7 +1847,7 @@
     width: 100%;
     min-width: 0;
     display: grid;
-    grid-template-columns: minmax(140px, 1.25fr) minmax(112px, 0.82fr) minmax(136px, 0.96fr) auto;
+    grid-template-columns: minmax(140px, 1.18fr) minmax(108px, 0.76fr) minmax(128px, 0.9fr) minmax(126px, 0.84fr) auto;
     align-items: center;
     justify-content: stretch;
     gap: var(--wa-space-2);
@@ -1556,6 +1876,28 @@
     width: 100%;
   }
 
+  .column-preference-state {
+    position: absolute;
+    top: calc(100% + 3px);
+    right: 2px;
+    z-index: 1;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    color: var(--wa-text-muted, #667789);
+    font-size: 9px;
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .column-preference-state.error {
+    width: auto;
+    height: auto;
+    overflow: visible;
+    color: var(--wa-danger, #c9473c);
+    clip-path: none;
+  }
+
   .toolbar-controls .wa-admin-action {
     width: auto;
     min-width: 64px;
@@ -1566,7 +1908,7 @@
   .decision-table-shell {
     position: relative;
     z-index: 1;
-    grid-row: 3;
+    grid-row: auto;
     height: auto;
     max-height: none;
     min-height: 0;
@@ -1598,6 +1940,7 @@
   .decision-table-shell .wa-admin-table td {
     height: 48px;
     padding: 10px 12px;
+    background: var(--decision-row-bg, var(--wa-surface-flat, #fbfdfe));
     color: var(--wa-text-main);
   }
 
@@ -1605,31 +1948,22 @@
     position: sticky;
     right: 0;
     z-index: 3;
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.98) 30%),
-      rgba(255, 255, 255, 0.96);
-    box-shadow: -12px 0 18px rgba(26, 41, 58, 0.08);
+    background: var(--decision-row-bg, var(--wa-surface-flat, #fbfdfe));
+    box-shadow: none;
   }
 
   .decision-table-shell thead .sticky-status-col {
     z-index: 5;
-    background:
-      linear-gradient(90deg, rgba(248, 251, 254, 0.82), rgba(248, 251, 254, 0.98) 32%),
-      rgba(248, 251, 254, 0.98);
-  }
-
-  .decision-table-shell tbody tr.is-selected .sticky-status-col {
-    background:
-      linear-gradient(90deg, rgba(242, 250, 250, 0.82), rgba(242, 250, 250, 0.98) 32%),
-      rgba(242, 250, 250, 0.98);
+    background: var(--wa-surface-inset, #f5f8fb);
   }
 
   .decision-table-shell .wa-admin-table tbody tr:hover {
-    background: rgba(242, 248, 251, 0.9);
+    --decision-row-bg: var(--wa-row-hover, #f1f6f8);
   }
 
   .decision-table-shell .wa-admin-table tbody tr.is-selected {
-    background: rgba(0, 143, 150, 0.06);
+    --decision-row-bg: var(--wa-row-active, #e9f5f4);
+    background: var(--decision-row-bg);
     box-shadow:
       inset 3px 0 0 var(--wa-accent),
       inset 0 0 0 1px rgba(0, 143, 150, 0.14);
@@ -1646,7 +1980,7 @@
     height: 14px;
     border: 1px solid var(--wa-border-soft);
     border-radius: var(--wa-radius-xs);
-    background: #ffffff;
+    background: var(--wa-surface-flat, #fbfdff);
     vertical-align: middle;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   }
@@ -1679,6 +2013,32 @@
     font-weight: 760;
   }
 
+  .issue-id-cell {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .issue-type-mark {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    flex: none;
+    place-items: center;
+    border: 1px solid rgba(43, 105, 179, 0.24);
+    border-radius: 6px;
+    background: rgba(43, 105, 179, 0.08);
+    color: #2b69b3;
+    font: 800 10px/1 var(--wa-font-mono);
+  }
+
+  .issue-type-mark.bug {
+    border-color: rgba(201, 71, 60, 0.25);
+    background: rgba(201, 71, 60, 0.08);
+    color: var(--wa-danger, #c9473c);
+  }
+
   .title-stack {
     display: grid;
     gap: 2px;
@@ -1701,105 +2061,104 @@
     text-align: center;
   }
 
-  .decision-inspector {
-    --wa-control-h: 34px;
-    grid-area: inspector;
-    align-self: start;
-    z-index: 30;
-    position: sticky;
-    top: var(--wa-space-4);
-    height: var(--decision-panel-height);
-    max-height: var(--decision-panel-height);
-    min-height: var(--decision-panel-height);
-    box-sizing: border-box;
-    gap: 12px;
-    padding: 16px;
-    overflow: visible;
-    border-color: rgba(255, 255, 255, 0.68);
-    border-radius: var(--decision-radius-panel);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 253, 0.66)),
-      var(--wa-chrome-1);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.88),
-      0 18px 46px rgba(30, 46, 64, 0.1);
-  }
-
-  .inspector-content {
-    display: grid;
-    align-content: start;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .decision-inspector:focus-within {
-    z-index: 90;
-  }
-
-  .inspector-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--wa-space-3);
-  }
-
-  .inspector-head > div {
-    min-width: 0;
-  }
-
-  .inspector-head .wa-admin-pill {
-    flex: none;
-  }
-
   .inspector-kicker {
     display: block;
-    margin-bottom: 2px;
+    margin: 0;
     color: var(--wa-text-muted);
     font-size: 11px;
     font-weight: 780;
   }
 
-  .inspector-head h2 {
-    margin: 0;
-    color: var(--wa-text-strong);
-    font-size: 17px;
-    line-height: 1.28;
-    font-weight: 820;
-    letter-spacing: 0;
-  }
-
-  .inspector-id-row,
+  .requirement-drawer-meta,
   .section-row-head,
-  .intervention-actions,
-  .log-head,
-  .log-meta {
+  .intervention-actions {
     display: flex;
     align-items: center;
     gap: var(--wa-space-2);
   }
 
-  .inspector-id-row,
-  .section-row-head,
-  .log-head {
+  .requirement-drawer-meta {
+    flex-wrap: wrap;
+  }
+
+  .section-row-head {
     justify-content: space-between;
   }
 
-  .inspector-id-row strong {
+  .requirement-drawer-meta strong {
     color: var(--wa-text-strong);
     font-variant-numeric: tabular-nums;
   }
 
+  .requirement-drawer-body {
+    --wa-control-h: 38px;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto auto;
+    align-content: start;
+    gap: 12px;
+    padding: 16px 22px 18px;
+    overflow: visible;
+  }
+
+  .requirement-modal-meta {
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .requirement-drawer-section,
+  .inspector-section,
+  .intervention-section {
+    min-width: 0;
+  }
+
+  .requirement-drawer-section {
+    display: grid;
+    gap: 10px;
+    padding: 0 0 14px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .drawer-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .drawer-section-heading h3,
+  .drawer-section-heading span {
+    margin: 0;
+  }
+
+  .drawer-section-heading h3 {
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .drawer-section-heading span,
+  .section-row-head span {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 660;
+  }
+
   .fact-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px 20px;
     margin: 0;
   }
 
   .fact-grid div {
     min-width: 0;
-    padding: 0 0 7px;
-    border-bottom: 1px solid rgba(123, 143, 160, 0.14);
+    padding: 2px 0;
+  }
+
+  .fact-grid .project-fact {
+    grid-column: span 2;
   }
 
   .fact-grid dt {
@@ -1812,7 +2171,7 @@
   .fact-grid dd {
     margin: 2px 0 0;
     color: var(--wa-text-strong);
-    font-size: 12.5px;
+    font-size: 13px;
     line-height: 1.3;
     font-weight: 760;
     overflow-wrap: anywhere;
@@ -1820,12 +2179,18 @@
 
   .inspector-section-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px 16px;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+    grid-template-rows: minmax(108px, 0.85fr) minmax(140px, 1.15fr);
+    gap: 0;
     align-items: stretch;
+    height: 100%;
     min-width: 0;
-    padding-top: 10px;
-    border-top: 1px solid rgba(121, 139, 159, 0.16);
+    min-height: 0;
+  }
+
+  .requirement-modal-body .inspector-section-grid {
+    grid-template-rows: auto auto;
+    height: auto;
   }
 
   .inspector-section {
@@ -1833,9 +2198,27 @@
     gap: 6px;
     align-content: start;
     min-width: 0;
-    min-height: 94px;
-    padding: 0 0 10px;
-    border-bottom: 1px solid rgba(121, 139, 159, 0.12);
+    min-height: min-content;
+    height: 100%;
+    padding: 14px 0;
+  }
+
+  .inspector-section-grid > .inspector-section:nth-child(odd) {
+    padding-right: 20px;
+  }
+
+  .inspector-section-grid > .inspector-section:nth-child(even) {
+    padding-left: 20px;
+    border-left: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .inspector-section-grid > .inspector-section:nth-child(-n + 2) {
+    padding-top: 2px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .inspector-section-grid > .inspector-section:nth-child(n + 3) {
+    padding-bottom: 2px;
   }
 
   .inspector-section h3 {
@@ -1849,7 +2232,7 @@
   .inspector-section li {
     color: var(--wa-text-main);
     font-size: 12.5px;
-    line-height: 1.45;
+    line-height: 1.5;
   }
 
   .inspector-section p,
@@ -1868,11 +2251,23 @@
     padding-left: 16px;
   }
 
+  .empty-history-section {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+  }
+
+  .empty-history-section ul {
+    padding-left: 0;
+    list-style: none;
+    place-content: center;
+    text-align: center;
+  }
+
   .intervention-form {
     position: relative;
     z-index: 2;
     display: grid;
-    grid-template-columns: minmax(104px, 1fr) minmax(108px, 0.92fr) minmax(132px, 1.18fr) minmax(92px, 0.78fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: end;
     gap: 8px;
   }
@@ -1912,16 +2307,15 @@
   .intervention-section {
     position: relative;
     z-index: 2;
-    min-height: 128px;
-    padding: 12px 0 0;
-    border-bottom: 0;
-    background: transparent;
+    min-height: max-content;
+    padding: 14px 0 0;
+    border-top: 1px solid rgba(116, 139, 156, 0.18);
     overflow: visible;
   }
 
   .intervention-actions {
     justify-content: flex-start;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
@@ -1940,217 +2334,298 @@
     padding: 8px 10px;
   }
 
-  .inspector-empty {
-    min-height: 320px;
+  .timeline-drawer-layer {
+    position: fixed;
+    inset: 0;
+    z-index: var(--wa-layer-modal, 120);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(440px, 560px);
+    pointer-events: none;
+  }
+
+  .timeline-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(13, 23, 34, 0.28);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    cursor: default;
+    pointer-events: auto;
+  }
+
+  .timeline-drawer {
+    position: relative;
+    z-index: 1;
+    grid-column: 2;
+    min-width: 0;
+    height: 100dvh;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    border-left: 1px solid var(--wa-border-soft);
+    background: var(--wa-surface-flat, #fbfdff);
+    box-shadow: -16px 0 40px rgba(13, 23, 34, 0.18);
+    pointer-events: auto;
+  }
+
+  .timeline-drawer-header {
+    min-height: 112px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--wa-space-4);
+    padding: 20px 22px;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+
+  .timeline-drawer-header > div:first-child {
+    min-width: 0;
+    display: grid;
+    gap: var(--wa-space-1);
+  }
+
+  .timeline-drawer-eyebrow,
+  .timeline-drawer-header h2,
+  .timeline-drawer-header p {
+    margin: 0;
+  }
+
+  .timeline-drawer-eyebrow {
+    color: var(--wa-accent-strong);
+    font-size: 10px;
+    font-weight: 780;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .timeline-drawer-header h2 {
+    color: var(--wa-text-strong);
+    font-size: 20px;
+    line-height: 1.25;
+  }
+
+  .timeline-drawer-header p {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .timeline-drawer-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2);
+  }
+
+  .timeline-drawer-count {
+    color: var(--wa-text-muted);
+    font-family: var(--wa-font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .timeline-drawer-close {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-main);
+    font: inherit;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .timeline-drawer-close:hover,
+  .timeline-drawer-close:focus-visible {
+    outline: none;
+    border-color: var(--wa-accent);
+    background: var(--wa-row-hover);
+    color: var(--wa-accent-strong);
+  }
+
+  .timeline-drawer-body {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding: 0 22px 28px;
+  }
+
+  .timeline-day {
+    display: grid;
+  }
+
+  .timeline-day-heading {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
+    padding: 14px 0 10px;
+    border-bottom: 1px solid var(--wa-border-soft);
+    background: var(--wa-surface-flat, #fbfdff);
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .timeline-day-heading h3,
+  .timeline-day-heading span {
+    margin: 0;
+    color: inherit;
+    font: inherit;
+  }
+
+  .timeline-day ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .timeline-drawer-event {
+    position: relative;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: var(--wa-space-4);
+    padding: 16px 0 16px 24px;
+  }
+
+  .timeline-drawer-event::before {
+    content: "";
+    position: absolute;
+    top: 22px;
+    left: 4px;
+    z-index: 1;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: var(--wa-info);
+    box-shadow: 0 0 0 4px var(--wa-info-soft);
+  }
+
+  .timeline-drawer-event.manual::before {
+    background: var(--wa-accent);
+    box-shadow: 0 0 0 4px var(--wa-accent-soft);
+  }
+
+  .timeline-drawer-event:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 33px;
+    bottom: -6px;
+    left: 8px;
+    width: 1px;
+    background: var(--wa-border-soft);
+  }
+
+  .timeline-event-time {
+    display: grid;
+    align-content: start;
+    gap: var(--wa-space-1);
+  }
+
+  .timeline-event-time time {
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .timeline-event-kind {
+    color: var(--wa-info);
+    font-size: 10px;
+    font-weight: 760;
+  }
+
+  .timeline-drawer-event.manual .timeline-event-kind {
+    color: var(--wa-accent-strong);
+  }
+
+  .timeline-event-content {
+    min-width: 0;
+    display: grid;
+    gap: var(--wa-space-2);
+  }
+
+  .timeline-event-title,
+  .timeline-event-evidence {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2);
+  }
+
+  .timeline-event-title strong {
+    min-width: 0;
+    color: var(--wa-text-strong);
+    font-size: 12px;
+  }
+
+  .timeline-event-title a,
+  .timeline-event-evidence a {
+    color: var(--wa-info);
+    text-decoration: none;
+  }
+
+  .timeline-event-title a:hover,
+  .timeline-event-evidence a:hover {
+    color: var(--wa-accent-strong);
+  }
+
+  .timeline-event-content p,
+  .timeline-drawer-empty p {
+    margin: 0;
+    color: var(--wa-text-main);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .timeline-event-evidence {
+    color: var(--wa-text-muted);
+    font-size: 10px;
+  }
+
+  .timeline-event-evidence span {
+    color: inherit;
+  }
+
+  .timeline-drawer-empty {
+    min-height: 240px;
     display: grid;
     place-content: center;
     gap: var(--wa-space-2);
     text-align: center;
-    color: var(--wa-text-muted);
   }
 
-  .inspector-empty strong {
+  .timeline-drawer-empty strong {
     color: var(--wa-text-strong);
-  }
-
-  .decision-log-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.34fr) minmax(300px, 0.66fr);
-    gap: var(--wa-space-4);
-  }
-
-  .log-panel {
-    min-width: 0;
-    padding: 18px;
-    display: grid;
-    gap: var(--wa-space-3);
-    border-color: rgba(255, 255, 255, 0.66);
-    border-radius: var(--decision-radius-panel);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(247, 251, 253, 0.62)),
-      var(--wa-chrome-1);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.86),
-      0 14px 34px rgba(30, 46, 64, 0.075);
-  }
-
-  .auto-log-panel {
-    min-height: 320px;
-  }
-
-  .manual-log-panel {
-    min-height: 320px;
-  }
-
-  .log-head > div {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-  }
-
-  .log-head strong {
-    color: var(--wa-text-strong);
-    font-size: 15px;
-  }
-
-  .log-head small {
-    overflow: hidden;
-    color: var(--wa-text-muted);
-    font-size: 12px;
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .log-head span {
-    color: var(--wa-text-muted);
-    font-size: 12px;
-  }
-
-  .log-list {
-    display: grid;
-    gap: 8px;
-    max-height: 316px;
-    overflow: auto;
-    padding-right: 2px;
-  }
-
-  .log-item {
-    position: relative;
-    display: grid;
-    gap: 7px;
-    padding: 10px 12px 10px 18px;
-    border: 1px solid rgba(121, 139, 159, 0.15);
-    border-radius: var(--decision-radius-card);
-    background: rgba(255, 255, 255, 0.5);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  }
-
-  .log-item::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 10px;
-    bottom: 10px;
-    width: 3px;
-    border-radius: 999px;
-    background: var(--wa-info);
-    opacity: 0.72;
-  }
-
-  .log-item.local {
-    border-color: rgba(0, 143, 150, 0.18);
-    background: rgba(0, 143, 150, 0.055);
-  }
-
-  .log-item.local::before {
-    background: var(--wa-accent);
-  }
-
-  .log-meta {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 6px;
-    color: var(--wa-text-muted);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .log-meta span,
-  .log-meta strong,
-  .log-meta a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 22px;
-    padding: 0 7px;
-    border-radius: var(--wa-radius-sm);
-    background: rgba(121, 139, 159, 0.09);
-  }
-
-  .log-meta strong {
-    color: var(--wa-text-main);
-  }
-
-  .log-item p,
-  .log-empty {
-    margin: 0;
-    color: var(--wa-text-main);
-    font-size: 13px;
-    line-height: 1.5;
-  }
-
-  .log-empty {
-    padding: var(--wa-space-5);
-    color: var(--wa-text-muted);
-    text-align: center;
-  }
-
-  @media (max-width: 1280px) {
-    .decision-main-grid {
-      --decision-panel-height: auto !important;
-      grid-template-areas:
-        "inspector"
-        "selector";
-      grid-template-columns: 1fr;
-      min-height: 0;
-    }
-
-    .decision-inspector {
-      position: static;
-      height: auto;
-      max-height: none;
-      overflow: visible;
-    }
-
-    .inspector-section p {
-      display: block;
-      max-height: none;
-      overflow: visible;
-      -webkit-line-clamp: unset;
-    }
-
-    .inspector-section ul {
-      max-height: none;
-      overflow: visible;
-    }
-
-    .decision-table-section {
-      height: auto;
-      max-height: none;
-      min-height: 560px;
-    }
   }
 
   @media (max-width: 900px) {
-    .decision-command-strip {
-      flex-direction: column;
-      gap: var(--wa-space-4);
-    }
-
-    .command-signal-grid {
-      width: 100%;
-    }
-
-    .decision-metrics,
-    .decision-stage-strip,
-    .decision-log-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .decision-toolbar {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+      gap: 8px;
     }
 
     .toolbar-controls {
-      grid-template-columns: minmax(160px, 1.35fr) minmax(120px, 0.8fr) minmax(140px, 0.95fr) auto;
+      grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
     }
 
-    .inspector-section-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .intervention-form {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .wide-field {
-      grid-column: 1 / -1;
+    .search-control {
+      grid-column: span 2;
     }
 
     .search-control,
@@ -2160,26 +2635,96 @@
   }
 
   @media (max-width: 640px) {
-    .decision-command-strip,
-    .decision-table-section,
-    .decision-inspector,
-    .log-panel {
-      padding: var(--wa-space-3);
+    .decision-admin {
+      grid-template-rows: 116px 96px minmax(0, 1fr);
+      gap: 10px;
     }
 
-    .command-signal-grid,
     .decision-metrics,
-    .decision-stage-strip,
-    .decision-log-grid,
+    .decision-stage-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .decision-metric {
+      padding-block: 7px;
+    }
+
+    .decision-table-section {
+      padding: 10px;
+    }
+
+    .column-select :global(.multi-select-group.summary-mode .multi-select-trigger) {
+      height: 44px;
+      min-height: 44px;
+    }
+
+    .requirement-drawer-body {
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      padding: 12px 16px 16px;
+    }
+
+    .inspector-section-grid {
+      grid-template-rows: none;
+      grid-auto-rows: max-content;
+      min-height: max-content;
+      height: max-content;
+    }
+
+    .inspector-section {
+      min-height: max-content;
+      height: auto;
+    }
+
     .fact-grid,
     .intervention-form {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .intervention-actions {
+      flex-wrap: nowrap;
+    }
+
+    .intervention-actions .wa-admin-action {
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 44px;
+      padding-inline: 10px;
+    }
+
+    .timeline-drawer-layer {
       grid-template-columns: 1fr;
     }
 
-    .decision-toolbar,
+    .timeline-drawer {
+      grid-column: 1;
+      width: 100%;
+    }
+
+    .timeline-drawer-header {
+      min-height: 104px;
+      padding: 16px;
+    }
+
+    .timeline-drawer-body {
+      padding: 0 16px 24px;
+    }
+
+    .timeline-drawer-event {
+      grid-template-columns: 1fr;
+      gap: var(--wa-space-2);
+    }
+
+    .timeline-event-time {
+      display: flex;
+      align-items: baseline;
+      gap: var(--wa-space-2);
+    }
+
     .intervention-actions {
       align-items: stretch;
-      flex-direction: column;
+      flex-direction: row;
     }
 
     .toolbar-copy {
@@ -2191,22 +2736,76 @@
     }
 
     .toolbar-controls {
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       align-items: stretch;
     }
 
     .search-control,
     .toolbar-select,
-    .toolbar-controls .wa-admin-action {
+    .toolbar-controls .wa-admin-action,
+    .wide-field {
       width: 100%;
     }
   }
 
-  /* Strongest-brain page contract: inherit shell surface and spacing. */
+  @media (max-width: 460px) {
+    .requirement-drawer-body {
+      grid-template-rows: auto auto auto;
+      align-content: start;
+    }
+
+    .inspector-section-grid,
+    .intervention-form {
+      grid-template-columns: 1fr;
+    }
+
+    .inspector-section-grid {
+      grid-template-rows: none;
+      grid-auto-rows: max-content;
+      min-height: max-content;
+      height: max-content;
+    }
+
+    .inspector-section-grid > .inspector-section,
+    .inspector-section-grid > .inspector-section:nth-child(odd),
+    .inspector-section-grid > .inspector-section:nth-child(even),
+    .inspector-section-grid > .inspector-section:nth-child(-n + 2),
+    .inspector-section-grid > .inspector-section:nth-child(n + 3) {
+      padding: 14px 0;
+      border-left: 0;
+      border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+    }
+
+    .inspector-section-grid > .inspector-section:last-child {
+      border-bottom: 0;
+    }
+  }
+
+  @media (max-height: 760px) {
+    .requirement-drawer-body {
+      grid-template-rows: auto auto auto;
+      align-content: start;
+    }
+
+    .inspector-section-grid {
+      grid-template-rows: none;
+      grid-auto-rows: max-content;
+      min-height: max-content;
+      height: max-content;
+    }
+
+    .inspector-section {
+      min-height: max-content;
+      height: auto;
+    }
+  }
+
+  /* Component-owned surface hierarchy: one summary panel and one table panel. */
   .decision-admin {
-    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
-    gap: var(--wa-page-gap, 16px);
-    padding-bottom: 0;
+    --decision-radius-panel: var(--wa-radius-lg, 14px);
+    --decision-radius-card: var(--wa-radius-sm, 8px);
+    --decision-radius-control: var(--wa-radius-pill, 999px);
+    grid-template-rows: 116px minmax(0, 1fr);
     background: transparent;
   }
 
@@ -2214,24 +2813,153 @@
     display: none;
   }
 
-  .decision-command-strip,
-  .decision-table-section,
-  .decision-inspector,
-  .log-panel,
-  .stage-chip,
-  .metric-card,
-  .command-copy,
-  .command-signal {
-    border-color: rgba(255, 255, 255, 0.7);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 253, 0.68)),
-      var(--wa-chrome-1, rgba(255, 255, 255, 0.86));
+  .decision-summary-panel {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 68px 48px;
+    overflow: hidden;
+    border: 1px solid var(--wa-glass-outline, rgba(72, 98, 118, 0.18));
+    border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
+    border-radius: var(--decision-radius-panel);
+    background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
+    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
   }
 
-  .decision-main-grid,
-  .decision-log-grid,
   .decision-metrics,
   .decision-stage-strip {
-    gap: var(--wa-page-gap, 16px);
+    gap: 0;
   }
+
+  .decision-summary-panel .decision-metric {
+    min-height: 0;
+    padding: 10px 16px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .decision-summary-panel .decision-metric:not(:first-child) {
+    border-left: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+  }
+
+  .decision-summary-panel .decision-metric::before {
+    display: none;
+  }
+
+  .decision-metric small {
+    font-size: 12px;
+  }
+
+  .decision-stage-strip {
+    gap: 6px;
+    padding: 5px;
+    border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    background: rgba(255, 255, 255, 0.24);
+  }
+
+  .decision-summary-panel .stage-chip {
+    min-height: 0;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    border-radius: var(--wa-radius-pill, 999px);
+    background: rgba(255, 255, 255, 0.4);
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transform: none;
+  }
+
+  .decision-summary-panel .stage-chip:hover {
+    border-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
+    background: rgba(255, 255, 255, 0.7);
+    box-shadow: none;
+    transform: none;
+  }
+
+  .decision-summary-panel .stage-chip.active {
+    border-color: rgba(1, 139, 141, 0.24);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.1));
+    color: var(--wa-accent-strong, #006f76);
+    box-shadow: inset 0 0 0 1px rgba(1, 139, 141, 0.08);
+    transform: none;
+  }
+
+  .decision-summary-panel .stage-chip.active span,
+  .decision-summary-panel .stage-chip.active strong {
+    color: inherit;
+  }
+
+  .decision-table-section {
+    padding: 14px 16px 0;
+    border: 1px solid var(--wa-glass-outline, rgba(72, 98, 118, 0.18));
+    border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
+    border-radius: var(--decision-radius-panel);
+    background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
+    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
+  }
+
+  .decision-toolbar {
+    padding-bottom: 12px;
+  }
+
+  .decision-table-shell {
+    border: 0;
+    border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .decision-table-shell .wa-admin-table th,
+  .decision-table-shell thead .sticky-status-col {
+    background: var(--wa-surface-inset, #f5f8fb);
+    background-image: none;
+  }
+
+  .decision-table-shell .wa-admin-table tbody tr {
+    --decision-row-bg: var(--wa-surface-flat, #fbfdfe);
+    background: var(--decision-row-bg);
+  }
+
+  @media (max-width: 640px) {
+    .decision-admin {
+      grid-template-rows: 212px minmax(0, 1fr);
+    }
+
+    .decision-summary-panel {
+      grid-template-rows: 116px 96px;
+    }
+
+    .decision-summary-panel .decision-metric:nth-child(odd),
+    .decision-summary-panel .stage-chip:nth-child(odd) {
+      border-left: 0;
+    }
+
+    .decision-summary-panel .decision-metric:nth-child(n + 3),
+    .decision-summary-panel .stage-chip:nth-child(n + 3) {
+      border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    }
+
+    .decision-table-section {
+      padding: 12px 12px 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage-chip {
+      transition: none;
+    }
+  }
+
 </style>

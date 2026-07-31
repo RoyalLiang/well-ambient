@@ -1,10 +1,9 @@
 package server
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/kanban"
+	providerllm "well-ambient/internal/llm"
 	"well-ambient/internal/telemetry"
 
 	"gorm.io/gorm"
@@ -22,7 +22,9 @@ import (
 const defaultEstimateHoursPerDay = 8
 
 type DeconstructRequest struct {
-	Text string `json:"text"`
+	Text        string `json:"text"`
+	DemandID    string `json:"demand_id,omitempty"`
+	TaskGroupID string `json:"task_group_id,omitempty"`
 }
 
 type TaskDetail struct {
@@ -44,6 +46,13 @@ type DeconstructAnalysis struct {
 	MissingInfo           []string `json:"missing_info"`
 	Risks                 []string `json:"risks"`
 	Dependencies          []string `json:"dependencies"`
+	BusinessRules         []string `json:"business_rules"`
+	MainFlows             []string `json:"main_flows"`
+	ExceptionFlows        []string `json:"exception_flows"`
+	PermissionRules       []string `json:"permission_rules"`
+	DataImpact            []string `json:"data_impact"`
+	APIImpact             []string `json:"api_impact"`
+	UIImpact              []string `json:"ui_impact"`
 	AcceptanceCriteria    []string `json:"acceptance_criteria"`
 	ScheduleNotes         []string `json:"schedule_notes"`
 	MeetingQuestions      []string `json:"meeting_questions"`
@@ -60,8 +69,17 @@ type DeconstructResponse struct {
 	Analysis       DeconstructAnalysis     `json:"analysis"`
 	ContextPackID  uint                    `json:"context_pack_id,omitempty"`
 	ContextPackKey string                  `json:"context_pack_key,omitempty"`
+	AttachmentIDs  []uint                  `json:"attachment_ids,omitempty"`
 	Trace          *AIOutputTraceReadModel `json:"trace,omitempty"`
 	IsMock         bool                    `json:"is_mock,omitempty"`
+}
+
+type deconstructStreamEvent struct {
+	Type    string               `json:"type"`
+	Phase   string               `json:"phase,omitempty"`
+	Message string               `json:"message,omitempty"`
+	Delta   string               `json:"delta,omitempty"`
+	Result  *DeconstructResponse `json:"result,omitempty"`
 }
 
 // handleDeconstruct processes deconstruction requests
@@ -71,24 +89,26 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req DeconstructRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if strings.TrimSpace(req.Text) == "" {
-		http.Error(w, "Request text cannot be empty", http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
 	// If AI is not enabled or not configured, return an error and block request
 	if !s.config.AI.Enabled || s.config.AI.APIToken == "" || s.config.AI.BaseURL == "" {
 		http.Error(w, "AI 需求解构引擎未启用，请在集成面板中配置并开启大模型服务。", http.StatusBadRequest)
 		return
 	}
+
+	req, attachments, err := s.readDeconstructRequest(w, r)
+	if err != nil {
+		http.Error(w, err.Error(), deconstructRequestErrorStatus(err))
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" && len(attachments) == 0 {
+		http.Error(w, "Request text or attachment cannot be empty", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		req.Text = "请结合上传的需求附件完成需求解构。"
+	}
+
+	streamToBrowser := strings.Contains(strings.ToLower(r.Header.Get("Accept")), "application/x-ndjson")
 
 	// 1. Get current maximum TaskID number in database to prevent collision
 	maxIDNum := getNextTaskIDNum()
@@ -131,6 +151,27 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 			contextPackKey = contextPack.CacheKey
 		}
 	}
+	attachmentIDs := make([]uint, 0, len(attachments))
+	for index := range attachments {
+		attachmentIDs = append(attachmentIDs, attachments[index].ID)
+		attachments[index].DemandID = strings.TrimSpace(req.DemandID)
+		attachments[index].TaskGroupID = strings.TrimSpace(req.TaskGroupID)
+		attachments[index].ContextPackID = contextPackID
+	}
+	if len(attachmentIDs) > 0 && db.DB != nil {
+		if err := db.DB.Model(&db.DemandAttachment{}).
+			Where("id IN ?", attachmentIDs).
+			Updates(map[string]interface{}{
+				"demand_id":       strings.TrimSpace(req.DemandID),
+				"task_group_id":   strings.TrimSpace(req.TaskGroupID),
+				"context_pack_id": contextPackID,
+				"status":          "ready_for_llm",
+				"updated_at":      time.Now(),
+			}).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to associate attachments: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
 
 	// 3. Assemble Prompt
 	systemPrompt := fmt.Sprintf(`你是一个专业的软件需求自解构引擎（Deconstructor）。你负责将用户的产品需求/开发任务（一段自然语言描述）解构成多个独立的、可执行的具体开发任务（Task），并将其映射到系统的多仓库中。
@@ -157,7 +198,7 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 4. 评估任务优先级 "priority"（可选 "High", "Medium", "Low"）、复杂度 "complexity"（可选 "High", "Medium", "Low"）与估算难度 "difficulty"（可选 "High", "Medium", "Low"）。"difficulty" 表示交付综合难度，必须结合技术不确定性、跨系统协作、验收复杂度和风险暴露，不要只复制 complexity。
 5. 必须给出整体估算："analysis.overall_estimated_hours"、"analysis.overall_estimated_days" 和 "analysis.overall_difficulty"。整体估算必须能够覆盖所有子任务的关键路径，不等同于简单相加。
 6. 必须为每个子任务输出 "estimated_hours"、"estimated_days"、"difficulty" 和 "estimate_basis"。子任务估算总量应与整体估算一致或可解释，允许并行任务让子任务合计大于整体关键路径。
-7. 必须额外输出 "analysis" 字段，帮助产品/研发评估需求完整性、风险、依赖、排期和验收口径。字段缺失时用空数组或中性分数，不要省略字段。
+	7. 必须额外输出 "analysis" 字段，形成可以直接指导实现的规格。除了完整性、风险、依赖、排期和验收口径，还必须明确业务规则、主流程、异常流程、权限规则、数据影响、API 影响和 UI 影响。字段缺失时用空数组或中性分数，不要省略字段。
 8. 必须只返回一个紧凑的 JSON 对象，不能包含任何 Markdown 包裹标记（如三个反引号开头的 json 代码块），也不要包含 any 额外的说明文本，因为输出将直接由程序进行 JSON 反序列化。
 
 【输出 JSON 格式要求】
@@ -184,165 +225,91 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
     "overall_difficulty": "Medium",
     "estimate_basis": "整体估算依据，说明关键路径、并行空间和主要不确定性",
     "missing_info": ["仍需补充的业务背景、边界条件、数据口径或权限规则"],
-    "risks": ["可能导致返工、延期、质量问题或跨系统影响的风险"],
-    "dependencies": ["依赖的接口、数据、账号权限、上游决策或外部系统"],
-    "acceptance_criteria": ["可验证的验收标准，必须可测试、可观察"],
+	    "risks": ["可能导致返工、延期、质量问题或跨系统影响的风险"],
+	    "dependencies": ["依赖的接口、数据、账号权限、上游决策或外部系统"],
+	    "business_rules": ["实现必须遵守且可以被测试的业务规则"],
+	    "main_flows": ["按用户动作和系统响应描述的主成功路径"],
+	    "exception_flows": ["失败、回退、重试、并发冲突和边界输入的处理路径"],
+	    "permission_rules": ["角色、资源范围、读写边界和高风险操作约束"],
+	    "data_impact": ["新增或变更的数据实体、字段、迁移、兼容和审计要求"],
+	    "api_impact": ["新增或变更的接口、请求响应、错误码、幂等和兼容要求"],
+	    "ui_impact": ["涉及的页面、组件、状态、交互、响应式和可访问性要求"],
+	    "acceptance_criteria": ["可验证的验收标准，必须可测试、可观察"],
     "schedule_notes": ["排期建议、并行/串行关系、关键路径或建议里程碑"],
     "meeting_questions": ["下次需求评审会议必须确认的问题"],
     "confidence": 0.78
   }
 }`, projectContext, strings.Join(repoNames, ", "), workHoursPerDay, maxIDNum, maxIDNum+1, membersStr, exampleAssignee, exampleAssignee)
 
-	// 4. Construct request to AI API
-	apiURL := s.config.AI.GetRealAPIURL()
-	endpointType := strings.ToLower(s.config.AI.EndpointType)
-	if endpointType == "" {
-		endpointType = "completions"
-	}
-
-	modelName := s.config.AI.Model
-	if modelName == "" {
-		modelName = "gpt-4o"
-	}
-
-	requestPayload := map[string]interface{}{
-		"model": modelName,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": req.Text},
-		},
-		"temperature": 0.2,
-	}
-
-	reqBytes, err := json.Marshal(requestPayload)
+	// 4. Stream attachments into the provider, then use the unified provider client.
+	providerFileIDs, providerFilesEndpoint, err := s.uploadAttachmentsToProvider(r.Context(), attachments)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to marshal LLM request: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	aiReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create HTTP request to LLM: %v", err), http.StatusInternalServerError)
-		return
-	}
-	aiReq.Header.Set("Content-Type", "application/json")
-	aiReq.Header.Set("Authorization", "Bearer "+s.config.AI.APIToken)
-
-	log.Printf("[AI Deconstruct] Outgoing HTTP POST to: %s", apiURL)
-	log.Printf("[AI Deconstruct] Target Model: %s, Protocol Mode: %s", modelName, endpointType)
-	log.Printf("[AI Deconstruct] Request payload size: %d bytes", len(reqBytes))
-
-	client := http.Client{Timeout: 30 * time.Second}
-	aiResp, err := client.Do(aiReq)
-	if err != nil {
-		log.Printf("[AI Deconstruct] Direct request failed: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to connect to LLM provider: %v", err), http.StatusBadGateway)
-		return
-	}
-	defer aiResp.Body.Close()
-
-	log.Printf("[AI Deconstruct] LLM HTTP Response received. Status: %s, Content-Type: %s", aiResp.Status, aiResp.Header.Get("Content-Type"))
-
-	bodyBytes, err := io.ReadAll(aiResp.Body)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read LLM response body: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if aiResp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("LLM provider returned status code %d: %s", aiResp.StatusCode, string(bodyBytes)), http.StatusBadGateway)
-		return
-	}
-
-	// 5. Parse LLM response
-	contentType := aiResp.Header.Get("Content-Type")
-	if strings.Contains(strings.ToLower(contentType), "text/html") {
-		snippetLen := 300
-		if len(bodyBytes) < snippetLen {
-			snippetLen = len(bodyBytes)
+		if len(attachmentIDs) > 0 && db.DB != nil {
+			_ = db.DB.Model(&db.DemandAttachment{}).Where("id IN ?", attachmentIDs).Updates(map[string]interface{}{"status": "provider_failed", "updated_at": time.Now()}).Error
 		}
-		htmlSnippet := string(bodyBytes[:snippetLen])
-		errMsg := fmt.Sprintf("大模型提供商返回了非 JSON 的 HTML 网页。这通常是因为您的 API 请求地址填写有误，或者是您的 API 密钥失效被网关拦截。网页前 %d 字符为：%s", snippetLen, htmlSnippet)
-		http.Error(w, errMsg, http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("Failed to stream attachments to LLM provider: %v", err), deconstructRequestErrorStatus(err))
 		return
 	}
+	if len(providerFileIDs) > 0 {
+		cleanupClient := &http.Client{Timeout: 30 * time.Second}
+		defer s.deleteProviderFiles(context.Background(), cleanupClient, providerFilesEndpoint, providerFileIDs)
+	}
 
-	var rawContent string
-	if endpointType == "responses" {
-		var responsesResp struct {
-			Output []struct {
-				Type    string `json:"type"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal(bodyBytes, &responsesResp); err != nil {
-			// Fallback to chat completion format
-			var chatCompletion struct {
-				Choices []struct {
-					Message struct {
-						Content string `json:"content"`
-					} `json:"message"`
-				} `json:"choices"`
-			}
-			if err2 := json.Unmarshal(bodyBytes, &chatCompletion); err2 == nil && len(chatCompletion.Choices) > 0 {
-				rawContent = chatCompletion.Choices[0].Message.Content
-			} else {
-				bodyStr := string(bodyBytes)
-				snippetLen := 300
-				if len(bodyStr) < snippetLen {
-					snippetLen = len(bodyStr)
-				}
-				snippet := bodyStr[:snippetLen]
-				diagnosticMsg := fmt.Sprintf("无法解析大模型返回的 Responses JSON。解析错误：%v。响应前 %d 字符为：%s", err, snippetLen, snippet)
-				http.Error(w, diagnosticMsg, http.StatusInternalServerError)
-				return
-			}
-		} else {
-			for _, item := range responsesResp.Output {
-				if item.Type == "message" {
-					for _, c := range item.Content {
-						if c.Type == "text" && c.Text != "" {
-							rawContent += c.Text
-						}
-					}
-				}
-			}
-		}
-	} else {
-		var chatCompletion struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(bodyBytes, &chatCompletion); err != nil {
-			bodyStr := string(bodyBytes)
-			snippetLen := 300
-			if len(bodyStr) < snippetLen {
-				snippetLen = len(bodyStr)
-			}
-			snippet := bodyStr[:snippetLen]
-
-			var diagnosticMsg string
-			if strings.Contains(strings.ToLower(snippet), "<html") || strings.Contains(strings.ToLower(snippet), "<!doctype") {
-				diagnosticMsg = fmt.Sprintf("大模型端点返回了 HTML 页面而非 JSON 格式数据。这通常是由于 API 请求地址填写错误或 API 请求被中间网关拦截。响应前 %d 字符为：%s", snippetLen, snippet)
-			} else {
-				diagnosticMsg = fmt.Sprintf("无法解析大模型返回的 Completions JSON。解析错误：%v。响应前 %d 字符为：%s", err, snippetLen, snippet)
-			}
-			http.Error(w, diagnosticMsg, http.StatusInternalServerError)
+	var writeStreamEvent func(deconstructStreamEvent) bool
+	if streamToBrowser {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming is not supported", http.StatusInternalServerError)
 			return
 		}
-		if len(chatCompletion.Choices) > 0 {
-			rawContent = chatCompletion.Choices[0].Message.Content
+		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("X-Accel-Buffering", "no")
+		writeStreamEvent = func(event deconstructStreamEvent) bool {
+			data, marshalErr := json.Marshal(event)
+			if marshalErr != nil {
+				return false
+			}
+			if _, writeErr := w.Write(append(data, '\n')); writeErr != nil {
+				return false
+			}
+			flusher.Flush()
+			return true
 		}
+		if !writeStreamEvent(deconstructStreamEvent{Type: "status", Phase: "generating", Message: "AI 已建立流式连接，正在解构需求"}) {
+			return
+		}
+	} else {
+		w.Header().Set("Content-Type", "application/json")
 	}
 
-	if rawContent == "" {
-		http.Error(w, "LLM returned empty output", http.StatusInternalServerError)
+	providerClient := providerllm.Client{Config: s.config.AI}
+	providerRequest := providerllm.Request{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   req.Text,
+		FileIDs:      providerFileIDs,
+	}
+	var rawContent string
+	if streamToBrowser {
+		rawContent, err = providerClient.Stream(r.Context(), providerRequest, func(delta string) error {
+			if !writeStreamEvent(deconstructStreamEvent{Type: "provider_delta", Phase: "generating", Delta: delta}) {
+				return fmt.Errorf("client disconnected while receiving LLM stream")
+			}
+			return nil
+		})
+	} else {
+		rawContent, err = providerClient.Generate(r.Context(), providerRequest)
+	}
+	if err != nil {
+		log.Printf("[AI Deconstruct] Provider request failed: %v", err)
+		if streamToBrowser {
+			writeStreamEvent(deconstructStreamEvent{Type: "error", Phase: "generating", Message: err.Error()})
+		} else {
+			http.Error(w, fmt.Sprintf("Failed to connect to LLM provider: %v", err), http.StatusBadGateway)
+		}
+		return
+	}
+	if streamToBrowser && !writeStreamEvent(deconstructStreamEvent{Type: "status", Phase: "parsing", Message: "生成完成，正在校验解构结果"}) {
 		return
 	}
 
@@ -350,11 +317,19 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Raw LLM output: %s", rawContent)
 		log.Printf("Cleaned LLM output: %s", cleanedContent)
-		http.Error(w, fmt.Sprintf("Failed to parse deconstruction JSON: %v. Raw response: %s", err, rawContent), http.StatusInternalServerError)
+		if streamToBrowser {
+			writeStreamEvent(deconstructStreamEvent{Type: "error", Phase: "parsing", Message: fmt.Sprintf("Failed to parse deconstruction JSON: %v", err)})
+		} else {
+			http.Error(w, fmt.Sprintf("Failed to parse deconstruction JSON: %v. Raw response: %s", err, rawContent), http.StatusInternalServerError)
+		}
 		return
 	}
 	result.ContextPackID = contextPackID
 	result.ContextPackKey = contextPackKey
+	result.AttachmentIDs = attachmentIDs
+	if len(attachmentIDs) > 0 && db.DB != nil {
+		_ = db.DB.Model(&db.DemandAttachment{}).Where("id IN ?", attachmentIDs).Updates(map[string]interface{}{"status": "processed", "updated_at": time.Now()}).Error
+	}
 	trace, err := s.buildAIOutputTraceFromOutput(db.DB, nil, req.Text, "", "", contextPackID, aiTraceOutputFromDeconstructResponse(result), time.Now())
 	if err != nil {
 		log.Printf("[AI Deconstruct] Trace response assembly failed: %v", err)
@@ -362,6 +337,10 @@ func (s *Server) handleDeconstruct(w http.ResponseWriter, r *http.Request) {
 		result.Trace = &trace
 	}
 
+	if streamToBrowser {
+		writeStreamEvent(deconstructStreamEvent{Type: "complete", Phase: "complete", Message: "AI 需求解构已完成", Result: &result})
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
 		log.Printf("Error writing deconstruction response: %v", err)
@@ -896,110 +875,30 @@ func testAIConnection(cfg *config.AIConfig) (bool, string, string) {
 		return false, "AI API Base URL and API Token are required", ""
 	}
 
-	apiURL := cfg.GetRealAPIURL()
-	endpointType := strings.ToLower(cfg.EndpointType)
-	if endpointType == "" {
-		endpointType = "completions"
-	}
-
-	modelName := cfg.Model
+	modelName := strings.TrimSpace(cfg.Model)
 	if modelName == "" {
 		modelName = "gpt-4o"
 	}
-
-	requestBody, err := json.Marshal(map[string]interface{}{
-		"model": modelName,
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
-		},
-		"max_tokens": 5,
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	client := providerllm.Client{
+		Config:     *cfg,
+		HTTPClient: &http.Client{Timeout: 8 * time.Second},
+	}
+	log.Printf("[AI Connection Test] Outgoing HTTP POST to: %s", cfg.GetRealAPIURL())
+	log.Printf("[AI Connection Test] Target Model: %s, Protocol Mode: %s", modelName, cfg.Protocol())
+	output, err := client.Generate(ctx, providerllm.Request{
+		UserPrompt:      "ping",
+		MaxOutputTokens: 5,
 	})
-
-	if err != nil {
-		return false, "Failed to serialize AI test request", err.Error()
-	}
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(requestBody))
-	if err != nil {
-		return false, "Failed to construct AI verification request", err.Error()
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIToken)
-
-	log.Printf("[AI Connection Test] Outgoing HTTP POST to: %s", apiURL)
-	log.Printf("[AI Connection Test] Target Model: %s, Protocol Mode: %s", modelName, endpointType)
-
-	client := http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("[AI Connection Test] Connection error: %v", err)
 		return false, "Failed to contact AI API endpoint", err.Error()
 	}
-	defer resp.Body.Close()
-
-	log.Printf("[AI Connection Test] Response received. Status: %s, Content-Type: %s", resp.Status, resp.Header.Get("Content-Type"))
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, "Failed to read AI verification response body", err.Error()
+	if strings.TrimSpace(output) == "" {
+		return false, "AI API returned an empty response", ""
 	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(strings.ToLower(contentType), "text/html") {
-		snippetLen := 300
-		if len(bodyBytes) < snippetLen {
-			snippetLen = len(bodyBytes)
-		}
-		return false, "AI host returned HTML response instead of JSON. Check your API URL config.", string(bodyBytes[:snippetLen])
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		errDetails := string(bodyBytes)
-		if len(errDetails) > 300 {
-			errDetails = errDetails[:300]
-		}
-		if errDetails == "" {
-			errDetails = fmt.Sprintf("HTTP Status: %s", resp.Status)
-		}
-		return false, fmt.Sprintf("AI host responded with status code %d", resp.StatusCode), errDetails
-	}
-
-	if endpointType == "responses" {
-		var responsesResp struct {
-			Output []struct {
-				Type string `json:"type"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal(bodyBytes, &responsesResp); err != nil {
-			var chatCompletion struct {
-				Choices []struct {
-					Index int `json:"index"`
-				} `json:"choices"`
-			}
-			if err2 := json.Unmarshal(bodyBytes, &chatCompletion); err2 != nil {
-				snippetLen := 200
-				if len(bodyBytes) < snippetLen {
-					snippetLen = len(bodyBytes)
-				}
-				return false, "AI API returned invalid JSON for Responses protocol", string(bodyBytes[:snippetLen])
-			}
-		}
-	} else {
-		var chatCompletion struct {
-			Choices []struct {
-				Index int `json:"index"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(bodyBytes, &chatCompletion); err != nil {
-			snippetLen := 200
-			if len(bodyBytes) < snippetLen {
-				snippetLen = len(bodyBytes)
-			}
-			return false, "AI API returned invalid JSON for Completions protocol", string(bodyBytes[:snippetLen])
-		}
-	}
-
-	return true, "AI connection successful.", fmt.Sprintf("Model '%s' is reachable and responded successfully.", modelName)
+	return true, "AI connection successful.", fmt.Sprintf("Model '%s' is reachable through %s and responded successfully.", modelName, cfg.Protocol())
 }
 
 // handleImportTasks imports generated shadow tasks into database
@@ -1021,6 +920,7 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		MappedRepos   []string             `json:"mappedRepos"`
 		Analysis      *DeconstructAnalysis `json:"analysis"`
 		ContextPackID uint                 `json:"context_pack_id"`
+		AttachmentIDs []uint               `json:"attachment_ids"`
 		IsMock        bool                 `json:"is_mock"`
 		Tasks         []TaskDetail         `json:"tasks"`
 	}
@@ -1100,6 +1000,29 @@ func (s *Server) handleImportTasks(w http.ResponseWriter, r *http.Request) {
 		tx.Rollback()
 		http.Error(w, fmt.Sprintf("Failed to archive deconstruction estimate: %v", err), http.StatusInternalServerError)
 		return
+	}
+	if len(req.AttachmentIDs) > 0 {
+		uploadedBy := strings.TrimSpace(r.Header.Get("x-authenticated-user-id"))
+		attachmentUpdate := tx.Model(&db.DemandAttachment{}).
+			Where("id IN ? AND uploaded_by = ?", req.AttachmentIDs, uploadedBy).
+			Updates(map[string]interface{}{
+				"demand_id":              demandID,
+				"task_group_id":          taskGroupID,
+				"context_pack_id":        contextPackID,
+				"deconstruct_archive_id": archiveID,
+				"status":                 "linked",
+				"updated_at":             now,
+			})
+		if attachmentUpdate.Error != nil {
+			tx.Rollback()
+			http.Error(w, fmt.Sprintf("Failed to link deconstruction attachments: %v", attachmentUpdate.Error), http.StatusInternalServerError)
+			return
+		}
+		if attachmentUpdate.RowsAffected != int64(len(req.AttachmentIDs)) {
+			tx.Rollback()
+			http.Error(w, "One or more deconstruction attachments are missing or not owned by the current user", http.StatusForbidden)
+			return
+		}
 	}
 	trace, err := s.buildAIOutputTraceReadModel(tx, aiTraceQuery{ArchiveID: archiveID})
 	if err != nil {

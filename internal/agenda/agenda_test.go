@@ -194,6 +194,29 @@ func TestGenerateAutonomousDecisionsIncludesCommitReference(t *testing.T) {
 	if found.CommitURL != commitURL {
 		t.Fatalf("CommitURL = %q, want %q", found.CommitURL, commitURL)
 	}
+	if !found.OccurredAt.Equal(task.LastUpdate) {
+		t.Fatalf("OccurredAt = %s, want %s", found.OccurredAt, task.LastUpdate)
+	}
+}
+
+func TestGenerateAutonomousDecisionsFallbacksCarryFullTimestamps(t *testing.T) {
+	startedAt := time.Now()
+	decisions := GenerateAutonomousDecisions(nil)
+	if len(decisions) != 3 {
+		t.Fatalf("len(decisions) = %d, want 3", len(decisions))
+	}
+
+	for _, decision := range decisions {
+		if decision.OccurredAt.IsZero() {
+			t.Fatalf("decision %s has zero OccurredAt", decision.TaskID)
+		}
+		if decision.OccurredAt.After(time.Now()) {
+			t.Fatalf("decision %s occurs in the future: %s", decision.TaskID, decision.OccurredAt)
+		}
+		if decision.OccurredAt.Before(startedAt.Add(-3 * time.Hour)) {
+			t.Fatalf("decision %s is outside fallback history window: %s", decision.TaskID, decision.OccurredAt)
+		}
+	}
 }
 
 func TestGenerateAutonomousDecisionsSkipsWeakSemanticCommitReference(t *testing.T) {

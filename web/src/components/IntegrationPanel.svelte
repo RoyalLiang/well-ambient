@@ -79,7 +79,7 @@
       enabled: false,
       provider: 'openai',
       base_url: '',
-      endpoint_type: 'completions',
+      endpoint_type: 'responses',
       api_token: '',
       model: '',
       project_architecture: '',
@@ -300,9 +300,7 @@
   .section-title {
     font-size: 1.5rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #e2e8f0;
     margin: 0;
   }
 

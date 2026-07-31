@@ -30,9 +30,14 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	projectKeys, err := db.LoadUserProjectPreferenceKeys(db.DB, r.Header.Get("x-authenticated-user-id"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
 	var allTasks []db.TaskTelemetry
 	// Query all tasks (including done, for generating history auto decisions)
-	if err := db.DB.Find(&allTasks).Error; err != nil {
+	if err := db.ApplyTaskProjectScope(db.DB.Model(&db.TaskTelemetry{}), projectKeys).Find(&allTasks).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to query tasks: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -116,6 +121,15 @@ func HandlePostAgendaDecision(w http.ResponseWriter, r *http.Request) {
 
 	var task db.TaskTelemetry
 	if err := db.DB.Where("task_id = ?", req.TaskID).First(&task).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Task %s not found", req.TaskID), http.StatusNotFound)
+		return
+	}
+	projectKeys, err := db.LoadUserProjectPreferenceKeys(db.DB, r.Header.Get("x-authenticated-user-id"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !db.TaskMatchesExplicitProjectScope(task.ProjectKey, task.TaskID, projectKeys) {
 		http.Error(w, fmt.Sprintf("Task %s not found", req.TaskID), http.StatusNotFound)
 		return
 	}

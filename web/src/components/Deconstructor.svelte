@@ -3,14 +3,24 @@
   import { slide } from 'svelte/transition';
   import type { AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS } from '../lib/admin-console/contract';
+  import { readDeconstructStream } from '../lib/deconstruct-stream';
+  import { fetchDeliveryDirectory } from '../lib/delivery-directory';
+  import { showToast } from '../lib/toast';
 
   export let currentUserPermissions: string[] = [];
+  export let initialText = '';
+  export let initialTitle = '';
+  export let initialDescription = '';
+  export let initialDemandId = '';
+  export let embedded = false;
+  export let compact = false;
 
   function hasPermission(permission: string) {
     return currentUserPermissions.includes(permission);
   }
 
-  let inputText = '';
+  let demandTitle = initialTitle;
+  let inputText = initialDescription || initialText;
   type IntentMode = 'intent' | 'summary';
   type IntentInsight = {
     intent: string;
@@ -24,6 +34,7 @@
   };
 
   let isLoading = false;
+  let streamMessage = '正在建立 AI 流式连接…';
   let hasResult = false;
   let isAIEnabled = false;
   let intentInputText = '';
@@ -41,6 +52,13 @@
     missing_info: string[];
     risks: string[];
     dependencies: string[];
+    business_rules: string[];
+    main_flows: string[];
+    exception_flows: string[];
+    permission_rules: string[];
+    data_impact: string[];
+    api_impact: string[];
+    ui_impact: string[];
     acceptance_criteria: string[];
     schedule_notes: string[];
     meeting_questions: string[];
@@ -56,6 +74,13 @@
     missing_info: [],
     risks: [],
     dependencies: [],
+    business_rules: [],
+    main_flows: [],
+    exception_flows: [],
+    permission_rules: [],
+    data_impact: [],
+    api_impact: [],
+    ui_impact: [],
     acceptance_criteria: [],
     schedule_notes: [],
     meeting_questions: [],
@@ -90,10 +115,11 @@
     mappedRepos: [] as string[],
     tasks: [] as GeneratedTask[],
     analysis: emptyAnalysis(),
-    context_pack_id: 0
+    context_pack_id: 0,
+    attachment_ids: [] as number[]
   };
 
-  let assigneesList: string[] = ['Eddie', 'Antigravity'];
+  let assigneesList: string[] = [];
   let currentTaskGroupId = '';
   let activeGeneratedTaskId = '';
   let selectedGeneratedTask: GeneratedTask | null = null;
@@ -101,15 +127,23 @@
   let isMockResponse = false;
 
   let isDragging = false;
-  let uploadedFileName = '';
-  let uploadedFileSize = 0;
+  let uploadedFiles: File[] = [];
   let showPromptSettings = false;
   let isImporting = false;
 
   let activeDemands: any[] = [];
   let selectedDemandId = '';
   let showDemandDropdown = false;
+  let demandSearchText = '';
   let selectedDemandTitle = '选择要关联的产品需求 (可选)';
+
+  $: filteredActiveDemands = activeDemands.filter((demand: any) => {
+    const query = demandSearchText.trim().toLowerCase();
+    if (!query) return true;
+    return [demand.task_id, demand.title, demand.assignee, demand.repo, demand.project_name]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
 
   $: if (hasResult && result.tasks.length > 0 && !result.tasks.some(task => task.id === activeGeneratedTaskId)) {
     activeGeneratedTaskId = result.tasks[0].id;
@@ -170,6 +204,7 @@
       selectedDemandId = '';
       selectedDemandTitle = '不关联需求，仅同步任务';
       showDemandDropdown = false;
+      demandSearchText = '';
       return;
     }
 
@@ -182,6 +217,22 @@
       currentTaskGroupId = createTaskGroupId(demand.task_id);
     }
     showDemandDropdown = false;
+    demandSearchText = '';
+  }
+
+  function toggleDemandLinkDropdown() {
+    if (!showDemandDropdown) demandSearchText = '';
+    showDemandDropdown = !showDemandDropdown;
+  }
+
+  function openDemandLinkDropdown() {
+    if (!showDemandDropdown) demandSearchText = '';
+    showDemandDropdown = true;
+  }
+
+  function handleDemandSearchInput(event: Event) {
+    demandSearchText = (event.currentTarget as HTMLInputElement).value;
+    showDemandDropdown = true;
   }
 
   async function fetchActiveDemands() {
@@ -190,6 +241,10 @@
       if (res.ok) {
         const data = await res.json();
         activeDemands = (data || []).filter((t: any) => t.issue_type === 'demand' && t.status !== 'archived');
+        if (initialDemandId && !selectedDemandId) {
+          const initialDemand = activeDemands.find((item: any) => item.task_id === initialDemandId);
+          if (initialDemand) selectDemandLink(initialDemand);
+        }
       }
     } catch (e) {
       console.error('[Deconstructor] Failed to load active demands:', e);
@@ -242,10 +297,31 @@
     const normalized = emptyAnalysis();
     if (!analysis || typeof analysis !== 'object') return normalized;
 
-    const listFields: Array<'missing_info' | 'risks' | 'dependencies' | 'acceptance_criteria' | 'schedule_notes' | 'meeting_questions'> = [
+    const listFields: Array<
+      | 'missing_info'
+      | 'risks'
+      | 'dependencies'
+      | 'business_rules'
+      | 'main_flows'
+      | 'exception_flows'
+      | 'permission_rules'
+      | 'data_impact'
+      | 'api_impact'
+      | 'ui_impact'
+      | 'acceptance_criteria'
+      | 'schedule_notes'
+      | 'meeting_questions'
+    > = [
       'missing_info',
       'risks',
       'dependencies',
+      'business_rules',
+      'main_flows',
+      'exception_flows',
+      'permission_rules',
+      'data_impact',
+      'api_impact',
+      'ui_impact',
       'acceptance_criteria',
       'schedule_notes',
       'meeting_questions'
@@ -527,27 +603,18 @@
       if (res.ok) {
         const config = await res.json();
         isAIEnabled = !!(config.ai && config.ai.enabled);
-
-        let users: string[] = [];
-        if (config.jira) {
-          if (config.jira.sync_users && config.jira.sync_users.length > 0) {
-            users = [...config.jira.sync_users];
-          } else if (config.jira.custom_jql) {
-            const match = config.jira.custom_jql.match(/assignee\s+in\s*\(([^)]+)\)/i);
-            if (match && match[1]) {
-              users = match[1].split(',').map((name: string) => name.trim().replace(/['"]/g, ''));
-            }
-          }
-        }
-        if (users.length > 0) {
-          assigneesList = users.filter(name => name !== '未指派' && name !== '-');
-          console.log('[Deconstructor] Loaded team members from config:', assigneesList);
-        } else {
-          assigneesList = ['Eddie', 'Antigravity'];
-        }
       }
     } catch (e) {
       console.error('[Deconstructor] Failed to load config:', e);
+    }
+  }
+
+  async function fetchSharedDeliveryDirectory() {
+    try {
+      const directory = await fetchDeliveryDirectory();
+      assigneesList = directory.assignees.map((option) => option.value);
+    } catch (error) {
+      console.error('[Deconstructor] Failed to load shared delivery directory:', error);
     }
   }
 
@@ -557,34 +624,19 @@
     console.log('[Deconstructor] Received config-updated event:', config);
     if (config) {
       isAIEnabled = !!(config.ai && config.ai.enabled);
-
-      let users: string[] = [];
-      if (config.jira) {
-        if (config.jira.sync_users && config.jira.sync_users.length > 0) {
-          users = [...config.jira.sync_users];
-        } else if (config.jira.custom_jql) {
-          const match = config.jira.custom_jql.match(/assignee\s+in\s*\(([^)]+)\)/i);
-          if (match && match[1]) {
-            users = match[1].split(',').map((name: string) => name.trim().replace(/['"]/g, ''));
-          }
-        }
-      }
-      if (users.length > 0) {
-        assigneesList = users.filter(name => name !== '未指派' && name !== '-');
-        console.log('[Deconstructor] Hot-updated team members from config-updated:', assigneesList);
-      } else {
-        assigneesList = ['Eddie', 'Antigravity'];
-      }
+      void fetchSharedDeliveryDirectory();
       console.log('[Deconstructor] Updated isAIEnabled to =', isAIEnabled);
     }
   }
 
   onMount(() => {
     fetchConfig();
+    fetchSharedDeliveryDirectory();
     fetchActiveDemands();
 
     const handleWindowFocus = () => {
       fetchConfig();
+      fetchSharedDeliveryDirectory();
       fetchActiveDemands();
     };
 
@@ -595,6 +647,7 @@
       }
       if (showDemandDropdown && !target.closest('.deconstruct-demand-link-select')) {
         showDemandDropdown = false;
+        demandSearchText = '';
       }
     };
 
@@ -613,34 +666,61 @@
   });
 
   async function handleDeconstruct() {
-    if (!inputText.trim()) {
-      displayToast('请先输入要解构的需求描述', 'error');
+    if (!inputText.trim() && !demandTitle.trim() && uploadedFiles.length === 0) {
+      displayToast('请填写需求标题、需求内容或上传需求附件', 'error');
       return;
     }
 
     isLoading = true;
+    streamMessage = '正在建立 AI 流式连接…';
     hasResult = false;
     isMockResponse = false;
     currentTaskGroupId = '';
 
+    const structuredDemandText = [
+      '【需求标题】',
+      demandTitle.trim() || '未提供',
+      '',
+      '【需求内容】',
+      inputText.trim() || '请结合上传附件完成需求分析。'
+    ].join('\n');
+
+    const linkedTaskGroupID = getSelectedDemandTaskGroupId() || (selectedDemandId ? createTaskGroupId(selectedDemandId) : '');
+
     try {
-      const res = await fetch('/api/deconstruct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text: inputText })
-      });
+      let requestBody: BodyInit;
+      let requestHeaders: HeadersInit | undefined;
+      if (uploadedFiles.length > 0) {
+        const formData = new FormData();
+        formData.append('text', structuredDemandText);
+        formData.append('demand_id', selectedDemandId);
+        formData.append('task_group_id', linkedTaskGroupID);
+        uploadedFiles.forEach((file) => formData.append('files', file, file.name));
+        requestBody = formData;
+        requestHeaders = { Accept: 'application/x-ndjson' };
+      } else {
+        requestHeaders = { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' };
+        requestBody = JSON.stringify({
+          text: structuredDemandText,
+          demand_id: selectedDemandId,
+          task_group_id: linkedTaskGroupID
+        });
+      }
+
+      const res = await fetch('/api/deconstruct', { method: 'POST', headers: requestHeaders, body: requestBody });
 
       if (!res.ok) {
         const errText = await res.text();
         throw new Error(errText || `HTTP 错误 ${res.status}`);
       }
 
-      const data = await res.json();
+      const data: any = await readDeconstructStream(res, (event) => {
+        if (event.type === 'status' && event.message) streamMessage = event.message;
+        if (event.type === 'provider_delta') streamMessage = '正在接收并校验模型输出…';
+      });
       const rawTasks = data.tasks || [];
 
-      // 规范化负责人：模糊匹配真实 sync_users 列表中的名字，不符合的强制指派
+      // 规范化负责人：模糊匹配共享交付目录中的核心成员，不符合的强制指派
       const tasksWithDefaults = rawTasks.map((t: any) => {
         let assigned = t.assignee || '';
         let matchedMember = '';
@@ -669,7 +749,8 @@
         mappedRepos: data.mappedRepos || [],
         tasks: tasksWithDefaults,
         analysis: normalizeAnalysis(data.analysis),
-        context_pack_id: Number(data.context_pack_id) || 0
+        context_pack_id: Number(data.context_pack_id) || 0,
+        attachment_ids: Array.isArray(data.attachment_ids) ? data.attachment_ids.map(Number).filter(Number.isFinite) : []
       };
 
       // 成功生成解构任务时，优先沿用已选需求的任务组 ID，保证二次解构仍挂在同一父需求上。
@@ -684,19 +765,8 @@
     }
   }
 
-  let toastMsg = '';
-  let toastType: 'success' | 'error' | 'info' = 'info';
-  let showToast = false;
-  let toastTimeout: any;
-
   function displayToast(msg: string, type: 'success' | 'error' | 'info' = 'info') {
-    toastMsg = msg;
-    toastType = type;
-    showToast = true;
-    if (toastTimeout) clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
-      showToast = false;
-    }, 3000);
+    showToast(msg, { type });
   }
 
   function handleDragOver(e: DragEvent) {
@@ -715,7 +785,7 @@
     if (!isAIEnabled) return;
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      processFile(files[0]);
+      selectAttachmentFiles(Array.from(files));
     }
   }
 
@@ -723,30 +793,29 @@
     const input = e.target as HTMLInputElement;
     const files = input.files;
     if (files && files.length > 0) {
-      processFile(files[0]);
+      selectAttachmentFiles(Array.from(files));
     }
+    input.value = '';
   }
 
-  function processFile(file: File) {
-    const allowedExtensions = ['.txt', '.md', '.json', '.csv', '.xml', '.html'];
-    const fileName = file.name.toLowerCase();
-    const isAllowed = allowedExtensions.some(ext => fileName.endsWith(ext));
-
-    if (!isAllowed) {
-      displayToast('仅支持文本类文件 (如 .txt, .md, .json 等)', 'error');
+  function selectAttachmentFiles(files: File[]) {
+    const allowedExtensions = ['.txt', '.md', '.json', '.csv', '.xml', '.html', '.pdf', '.doc', '.docx'];
+    if (files.length > 3) {
+      displayToast('每次最多上传 3 个需求附件', 'error');
       return;
     }
-
-    uploadedFileName = file.name;
-    uploadedFileSize = file.size;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      inputText = text;
-      displayToast(`已成功读取文档 "${file.name}" 并填充到需求描述中。`, 'success');
-    };
-    reader.readAsText(file);
+    const unsupported = files.find((file) => !allowedExtensions.some((extension) => file.name.toLowerCase().endsWith(extension)));
+    if (unsupported) {
+      displayToast(`不支持附件格式：${unsupported.name}`, 'error');
+      return;
+    }
+    const oversized = files.find((file) => file.size > 20 * 1024 * 1024);
+    if (oversized) {
+      displayToast(`附件不能超过 20 MB：${oversized.name}`, 'error');
+      return;
+    }
+    uploadedFiles = files;
+    displayToast(`已选择 ${files.length} 个附件，将随需求发送给 LLM`, 'success');
   }
 
   async function importTasksToKanban() {
@@ -765,6 +834,7 @@
           mappedRepos: result.mappedRepos,
           analysis: result.analysis,
           context_pack_id: result.context_pack_id,
+          attachment_ids: result.attachment_ids,
           is_mock: isMockResponse,
           tasks: result.tasks
         })
@@ -788,6 +858,16 @@
             summary: inputText.split('\n')[0]?.slice(0, 180) || 'AI 需求解构',
             user_goal: inputText,
             readiness_score: result.analysis.completeness_score,
+            business_rules: result.analysis.business_rules,
+            main_flows: result.analysis.main_flows,
+            exception_flows: result.analysis.exception_flows,
+            permission_rules: result.analysis.permission_rules,
+            data_impact: result.analysis.data_impact,
+            api_impact: result.analysis.api_impact,
+            ui_impact: result.analysis.ui_impact,
+            missing_context: result.analysis.missing_info,
+            risks: result.analysis.risks,
+            dependencies: result.analysis.dependencies,
             acceptance_criteria: result.analysis.acceptance_criteria,
             test_plan: result.analysis.acceptance_criteria,
             mapped_repos: result.mappedRepos,
@@ -821,7 +901,7 @@
   }
 </script>
 
-<section class="deconstructor-workbench wa-grain">
+<section class="deconstructor-workbench wa-grain" class:embedded class:compact>
   <div class="deconstructor-header">
     <div>
       <span class="eyebrow">需求证据解构</span>
@@ -831,15 +911,17 @@
     <span class="wa-admin-pill {isAIEnabled ? 'tone-success' : 'tone-danger'}">{isAIEnabled ? 'AI 已启用' : 'AI 未启用'}</span>
   </div>
 
-  <div class="deconstructor-metrics" aria-label="解构事实指标">
-    {#each deconstructMetrics as metric}
-      <div class="wa-admin-card wa-admin-metric deconstructor-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
-        <span>{metric.label}</span>
-        <strong>{metric.value}</strong>
-        <em>{metric.helper}</em>
-      </div>
-    {/each}
-  </div>
+  {#if !compact}
+    <div class="deconstructor-metrics" aria-label="解构事实指标">
+      {#each deconstructMetrics as metric}
+        <div class="wa-admin-card wa-admin-metric deconstructor-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
+          <span>{metric.label}</span>
+          <strong>{metric.value}</strong>
+          <em>{metric.helper}</em>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <div class="deconstructor-entry-card wa-admin-card {!isAIEnabled ? 'disabled-panel' : ''}">
     <div class="entry-card-head">
@@ -861,6 +943,61 @@
       </button>
     </div>
 
+    {#if compact}
+      <div class="compact-demand-link deconstruct-demand-link-select">
+        <div>
+          <span>关联需求</span>
+          <small>解构结果将归入所选需求的任务组；不关联时仅生成独立任务。</small>
+        </div>
+        <div class="custom-dropdown-container">
+          <div class="demand-combobox-shell">
+            <input
+              type="search"
+              class="demand-combobox-input"
+              role="combobox"
+              aria-label="搜索并关联需求"
+              aria-expanded={showDemandDropdown}
+              aria-controls="deconstruct-demand-options-entry"
+              aria-autocomplete="list"
+              autocomplete="off"
+              value={showDemandDropdown ? demandSearchText : (selectedDemandId ? selectedDemandTitle : '')}
+              placeholder={`搜索并选择可关联需求（${activeDemands.length}）`}
+              on:focus={openDemandLinkDropdown}
+              on:input={handleDemandSearchInput}
+              on:click|stopPropagation
+            />
+            <button
+              type="button"
+              class="demand-combobox-toggle"
+              aria-label={showDemandDropdown ? '收起关联需求选项' : '展开关联需求选项'}
+              on:click|stopPropagation={toggleDemandLinkDropdown}
+            >
+              <span class="arrow-icon {showDemandDropdown ? 'open' : ''}">▼</span>
+            </button>
+          </div>
+          {#if showDemandDropdown}
+            <div id="deconstruct-demand-options-entry" class="dropdown-options-list glass-panel compact-demand-options" role="listbox">
+              <button type="button" class="dropdown-option-item {selectedDemandId === '' ? 'selected' : ''}" on:click={() => selectDemandLink(null)}>
+                不关联需求，仅生成独立任务
+              </button>
+              {#each filteredActiveDemands as demand}
+                <button
+                  type="button"
+                  class="dropdown-option-item {selectedDemandId === demand.task_id ? 'selected' : ''}"
+                  on:click={() => selectDemandLink(demand)}
+                >
+                  {getDemandDisplayTitle(demand)}
+                </button>
+              {/each}
+              {#if filteredActiveDemands.length === 0}
+                <div class="demand-search-empty">未找到匹配需求</div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     {#if !isAIEnabled}
       <div class="ai-disabled-indicator">
         <span class="status-dot danger" aria-hidden="true"></span>
@@ -873,6 +1010,18 @@
 
     <div class="entry-grid">
       <div class="entry-input-column">
+        {#if compact}
+          <label class="compact-title-field" for="deconstruct-demand-title">
+            <span>需求标题</span>
+            <input
+              id="deconstruct-demand-title"
+              type="text"
+              bind:value={demandTitle}
+              disabled={!isAIEnabled}
+              placeholder={isAIEnabled ? '输入需要解构的需求标题' : 'AI 服务未启用，不可输入'}
+            />
+          </label>
+        {/if}
         {#if isAIEnabled}
           <div
             class="file-dropzone {isDragging ? 'dragging' : ''}"
@@ -885,22 +1034,22 @@
             <input
               type="file"
               id="file-upload"
-              accept=".txt,.md,.json,.csv,.xml,.html"
+              accept=".txt,.md,.json,.csv,.xml,.html,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               on:change={handleFileSelect}
+              multiple
               class="file-input"
             />
             <label for="file-upload" class="dropzone-label">
               <span class="upload-symbol">DOC</span>
-              {#if uploadedFileName}
-                <span class="upload-text text-indigo">已加载：{uploadedFileName} ({uploadedFileSize} 字节)</span>
+              {#if uploadedFiles.length > 0}
+                <span class="upload-text text-indigo">已选择 {uploadedFiles.length} 个附件：{uploadedFiles.map((file) => file.name).join('、')}</span>
               {:else}
-                <span class="upload-text">拖拽 .md / .txt / .json 文档，或 <span class="browse-link">浏览文件</span></span>
+                <span class="upload-text">上传 PDF、Word（.doc/.docx）或文本资料，最多 3 个、单个 20 MB；原件将压缩归档并交由 LLM 解析，或 <span class="browse-link">浏览文件</span></span>
               {/if}
             </label>
           </div>
         {/if}
-
-        <label for="raw-demand" class="input-label">非结构化需求或缺陷描述</label>
+        <label for="raw-demand" class="input-label">需求内容 / 规格说明</label>
         <textarea
           id="raw-demand"
           bind:value={inputText}
@@ -910,6 +1059,7 @@
         ></textarea>
       </div>
 
+      {#if !compact}
       <div class="intent-console-panel">
         <div class="intent-console-header">
           <div>
@@ -1024,9 +1174,10 @@
           {/if}
         </div>
       </div>
+      {/if}
     </div>
 
-    {#if isAIEnabled}
+    {#if isAIEnabled && !compact}
       <div class="prompt-constraint-panel">
         <button class="prompt-toggle-btn" on:click={() => showPromptSettings = !showPromptSettings}>
           <span>解构 Prompt 约束</span>
@@ -1083,7 +1234,32 @@
     </div>
   {/if}
 
+  {#if !compact || isLoading || hasResult}
   <div class="deconstructor-main-grid">
+    {#if compact}
+      <section class="compact-result-panel wa-admin-card" aria-label="AI 解构结果">
+        <div class="deconstructor-table-head">
+          <div>
+            <span class="eyebrow">解构结果</span>
+            <h3>{isLoading ? '正在生成任务建议' : `${result.tasks.length} 个任务建议`}</h3>
+          </div>
+          {#if hasResult}<span class="wa-admin-pill tone-info">完整性 {percentLabel(result.analysis.completeness_score)}</span>{/if}
+        </div>
+        {#if isLoading}
+          <div class="compact-loading"><span class="spinner-small"></span><span>{streamMessage}</span></div>
+        {:else}
+          <div class="compact-task-list">
+            {#each result.tasks as task (task.id)}
+              <button type="button" class="compact-task-row" class:is-selected={activeGeneratedTaskId === task.id} on:click={() => selectGeneratedTask(task)}>
+                <span class="compact-task-index font-mono">{task.id}</span>
+                <span class="compact-task-copy"><strong>{task.title}</strong><small>{task.repo} · {task.assignee}</small></span>
+                <span class="compact-task-meta"><em>{getHoursLabel(task.estimated_hours)}</em><em>{difficultyLabel(task.difficulty)}</em></span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {:else}
     <section class="deconstructor-table-stack wa-admin-section" aria-label="任务证据列表">
       <div class="deconstructor-table-card wa-admin-card">
         <div class="deconstructor-table-head">
@@ -1097,7 +1273,7 @@
         {#if isLoading}
           <div class="state-panel">
             <div class="spinner-large"></div>
-            <p class="loading-text">正在匹配仓库、负责人和验收检查项</p>
+            <p class="loading-text">{streamMessage}</p>
           </div>
         {:else if !hasResult}
           <div class="state-panel">
@@ -1295,6 +1471,7 @@
         {/if}
       </div>
     </section>
+    {/if}
 
     <aside class="deconstructor-inspector wa-admin-card wa-admin-inspector" aria-label="解构详情与同步检查">
       <div class="inspector-title-row">
@@ -1336,16 +1513,33 @@
         <div class="inspector-sync-section">
           <h4>同步目标</h4>
           <div class="custom-dropdown-container deconstruct-demand-link-select">
-            <button
-              type="button"
-              class="dropdown-trigger"
-              on:click|stopPropagation={() => showDemandDropdown = !showDemandDropdown}
-            >
-              <span>{selectedDemandId === '' ? '不关联需求，仅同步任务' : selectedDemandTitle}</span>
-              <span class="arrow-icon {showDemandDropdown ? 'open' : ''}">▼</span>
-            </button>
+            <div class="demand-combobox-shell">
+              <input
+                type="search"
+                class="demand-combobox-input"
+                role="combobox"
+                aria-label="搜索并关联需求"
+                aria-expanded={showDemandDropdown}
+                aria-controls="deconstruct-demand-options-sync"
+                aria-autocomplete="list"
+                autocomplete="off"
+                value={showDemandDropdown ? demandSearchText : (selectedDemandId ? selectedDemandTitle : '')}
+                placeholder={`搜索并选择可关联需求（${activeDemands.length}）`}
+                on:focus={openDemandLinkDropdown}
+                on:input={handleDemandSearchInput}
+                on:click|stopPropagation
+              />
+              <button
+                type="button"
+                class="demand-combobox-toggle"
+                aria-label={showDemandDropdown ? '收起关联需求选项' : '展开关联需求选项'}
+                on:click|stopPropagation={toggleDemandLinkDropdown}
+              >
+                <span class="arrow-icon {showDemandDropdown ? 'open' : ''}">▼</span>
+              </button>
+            </div>
             {#if showDemandDropdown}
-              <div class="dropdown-options-list glass-panel">
+              <div id="deconstruct-demand-options-sync" class="dropdown-options-list glass-panel" role="listbox">
                 <button
                   type="button"
                   class="dropdown-option-item {selectedDemandId === '' ? 'selected' : ''}"
@@ -1353,7 +1547,7 @@
                 >
                   不关联需求，仅同步任务
                 </button>
-                {#each activeDemands as demand}
+                {#each filteredActiveDemands as demand}
                   <button
                     type="button"
                     class="dropdown-option-item {selectedDemandId === demand.task_id ? 'selected' : ''}"
@@ -1362,6 +1556,9 @@
                     {getDemandDisplayTitle(demand)}
                   </button>
                 {/each}
+                {#if filteredActiveDemands.length === 0}
+                  <div class="demand-search-empty">未找到匹配需求</div>
+                {/if}
               </div>
             {/if}
           </div>
@@ -1467,11 +1664,8 @@
       {/if}
     </aside>
   </div>
+  {/if}
 
-  <div class="toast {toastType} {showToast ? 'show' : ''}">
-    <span class="toast-status-dot" aria-hidden="true"></span>
-    <span>{toastMsg}</span>
-  </div>
 </section>
 
 <style>
@@ -1504,10 +1698,7 @@
   .section-title {
     font-size: 1.5rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #e2e8f0;
     margin: 0;
   }
 
@@ -2531,51 +2722,6 @@
     font-weight: 600;
   }
 
-  /* Toast Notification */
-  .toast {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 50;
-    padding: 12px 20px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-    border: 1px solid;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    transform: translateY(100px);
-    opacity: 0;
-  }
-
-  .toast.show {
-    transform: translateY(0);
-    opacity: 1;
-  }
-
-  .toast.success {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.4);
-    color: #34d399;
-  }
-
-  .toast.error {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #f87171;
-  }
-
-  .toast.info {
-    background: rgba(99, 102, 241, 0.15);
-    border-color: rgba(99, 102, 241, 0.4);
-    color: #818cf8;
-  }
-
   .mock-alert-banner {
     display: flex;
     align-items: flex-start;
@@ -2743,34 +2889,6 @@
   .deconstruct-demand-link-select {
     width: 220px;
     font-size: 0.72rem;
-  }
-
-  .deconstruct-demand-link-select .dropdown-trigger {
-    width: 100%;
-    background: rgba(15, 23, 42, 0.6);
-    border: 1px solid rgba(129, 140, 248, 0.25);
-    color: #cbd5e1;
-    padding: 4px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    user-select: none;
-    transition: all 0.2s;
-    font: inherit;
-  }
-
-  .deconstruct-demand-link-select .dropdown-trigger:hover {
-    border-color: rgba(99, 102, 241, 0.5);
-    background: rgba(30, 41, 59, 0.8);
-  }
-
-  .deconstruct-demand-link-select .dropdown-trigger span {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 190px;
   }
 
   .deconstruct-demand-link-select .dropdown-options-list {
@@ -3040,8 +3158,7 @@
     line-height: 1.45;
   }
 
-  .status-dot,
-  .toast-status-dot {
+  .status-dot {
     width: 8px;
     height: 8px;
     margin-top: 5px;
@@ -3278,8 +3395,7 @@
     color: var(--wa-text-subtle);
   }
 
-  .custom-dropdown-trigger,
-  .deconstruct-demand-link-select .dropdown-trigger {
+  .custom-dropdown-trigger {
     min-height: 30px;
     border: 1px solid var(--wa-border-soft);
     border-radius: var(--wa-radius-sm);
@@ -3290,8 +3406,7 @@
   }
 
   .custom-dropdown-trigger:hover,
-  .custom-dropdown-trigger:focus,
-  .deconstruct-demand-link-select .dropdown-trigger:hover {
+  .custom-dropdown-trigger:focus {
     border-color: var(--wa-border-strong);
     background: #ffffff;
     color: var(--wa-text-strong);
@@ -3403,10 +3518,6 @@
     width: 100%;
   }
 
-  .deconstruct-demand-link-select .dropdown-trigger span {
-    max-width: 300px;
-  }
-
   .selected-task-pills {
     display: flex;
     flex-wrap: wrap;
@@ -3450,25 +3561,6 @@
     background: var(--wa-accent);
   }
 
-  .toast {
-    border-color: var(--wa-border-soft);
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: var(--wa-shadow-md);
-    color: var(--wa-text-main);
-  }
-
-  .toast.success .toast-status-dot {
-    background: var(--wa-success);
-  }
-
-  .toast.error .toast-status-dot {
-    background: var(--wa-danger);
-  }
-
-  .toast.info .toast-status-dot {
-    background: var(--wa-info);
-  }
-
   @media (max-width: 1180px) {
     .entry-grid,
     .deconstructor-main-grid {
@@ -3496,6 +3588,456 @@
     .intent-actions-row {
       flex-direction: column;
       align-items: stretch;
+    }
+  }
+
+  .deconstructor-workbench.embedded {
+    margin: 0;
+    gap: 12px;
+  }
+
+  .deconstructor-workbench.compact {
+    gap: 10px;
+  }
+
+  .deconstructor-workbench.compact .deconstructor-entry-card {
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .deconstructor-workbench.compact .entry-grid,
+  .deconstructor-workbench.compact .deconstructor-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .deconstructor-workbench.compact .demand-textarea {
+    height: clamp(150px, 24dvh, 230px);
+    min-height: 130px;
+    resize: vertical;
+  }
+
+  .compact-title-field {
+    display: grid;
+    gap: 5px;
+    padding: 10px 11px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .compact-title-field span {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .compact-title-field input {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 8px;
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 650;
+    padding: 0 10px;
+    outline: none;
+    transition: border-color var(--wa-duration-fast) var(--wa-ease), box-shadow var(--wa-duration-fast) var(--wa-ease), background var(--wa-duration-fast) var(--wa-ease);
+  }
+
+  .compact-title-field input:focus {
+    border-color: var(--wa-border-focus);
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
+  .compact-title-field input::placeholder {
+    color: var(--wa-text-subtle);
+  }
+
+  .compact-title-field input:disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+
+  .compact-demand-link {
+    position: relative;
+    z-index: 12;
+    display: grid;
+    grid-template-columns: minmax(220px, 0.72fr) minmax(280px, 1.28fr);
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 11px;
+    background: var(--wa-surface-inset);
+  }
+
+  .compact-demand-link > div:first-child {
+    display: grid;
+    gap: 3px;
+  }
+
+  .compact-demand-link > div:first-child > span {
+    color: var(--wa-text-strong);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .compact-demand-link small {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .compact-demand-link .demand-combobox-shell {
+    min-height: 38px;
+    border-color: var(--wa-border-soft);
+    background: #fff;
+    color: var(--wa-text-main);
+  }
+
+  .compact-demand-options {
+    max-height: min(320px, 42dvh);
+    overflow-y: auto;
+  }
+
+  .demand-combobox-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.84);
+    transition: border-color var(--wa-duration-fast) var(--wa-ease), box-shadow var(--wa-duration-fast) var(--wa-ease), background var(--wa-duration-fast) var(--wa-ease);
+  }
+
+  .demand-combobox-shell:focus-within {
+    border-color: var(--wa-border-focus);
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
+  .demand-combobox-input {
+    width: 100%;
+    min-width: 0;
+    height: 36px;
+    box-sizing: border-box;
+    border: 0;
+    background: transparent;
+    color: var(--wa-text-main);
+    padding: 0 10px;
+    font: inherit;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .demand-combobox-input::placeholder {
+    color: var(--wa-text-subtle);
+  }
+
+  .demand-combobox-input::-webkit-search-cancel-button {
+    cursor: pointer;
+  }
+
+  .demand-combobox-toggle {
+    width: 34px;
+    border: 0;
+    border-left: 1px solid var(--wa-border-soft);
+    background: transparent;
+    color: var(--wa-text-subtle);
+    cursor: pointer;
+  }
+
+  .demand-combobox-toggle:hover {
+    background: var(--wa-row-hover);
+    color: var(--wa-accent-strong);
+  }
+
+  .demand-search-empty {
+    padding: 18px 10px;
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .deconstructor-workbench.compact .inspector-sync-section .deconstruct-demand-link-select {
+    display: none;
+  }
+
+  .deconstructor-workbench.compact .deconstructor-table-card,
+  .deconstructor-workbench.compact .deconstructor-inspector {
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .compact-result-panel {
+    min-width: 0;
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 14px;
+    box-shadow: none;
+  }
+
+  .compact-loading {
+    min-height: 92px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 1px dashed var(--wa-border-soft);
+    border-radius: 11px;
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .compact-task-list {
+    display: grid;
+    gap: 7px;
+  }
+
+  .compact-task-row {
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--wa-text-main);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .compact-task-row:hover,
+  .compact-task-row.is-selected {
+    border-color: var(--wa-border-focus);
+    background: var(--wa-accent-soft);
+  }
+
+  .compact-task-index {
+    color: var(--wa-accent-strong);
+    font-size: 10px;
+  }
+
+  .compact-task-copy {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .compact-task-copy strong,
+  .compact-task-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .compact-task-copy strong {
+    color: var(--wa-text-strong);
+    font-size: 12px;
+  }
+
+  .compact-task-copy small {
+    color: var(--wa-text-muted);
+    font-size: 10px;
+  }
+
+  .compact-task-meta {
+    display: flex;
+    gap: 5px;
+  }
+
+  .compact-task-meta em {
+    padding: 3px 6px;
+    border-radius: 7px;
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-muted);
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .deconstructor-workbench.embedded .deconstructor-header {
+    display: none;
+  }
+
+  .deconstructor-workbench.embedded .deconstructor-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  /* The companion lives inside the new-demand modal, so that modal is the
+     single workbench surface. Compact sections use dividers and rows instead
+     of stacking another card at every level. */
+  .deconstructor-workbench.compact.embedded {
+    gap: 0;
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstructor-entry-card,
+  .deconstructor-workbench.compact.embedded .compact-result-panel,
+  .deconstructor-workbench.compact.embedded .deconstructor-inspector {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstructor-entry-card {
+    padding: 0;
+  }
+
+  .deconstructor-workbench.compact.embedded .entry-card-head {
+    padding: 2px 2px 12px;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-demand-link {
+    padding: 12px 2px;
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .deconstructor-workbench.compact.embedded .entry-grid {
+    padding: 12px 2px 2px;
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-title-field {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .deconstructor-workbench.compact.embedded .file-dropzone {
+    padding: 10px 12px;
+    border-radius: 9px;
+    background: rgba(243, 247, 248, 0.72);
+  }
+
+  .deconstructor-workbench.compact.embedded .mock-alert-banner {
+    margin-top: 12px;
+    border: 0;
+    border-radius: 9px;
+    box-shadow: none;
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstructor-main-grid {
+    gap: 0;
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-result-panel {
+    padding: 16px 2px 4px;
+    border-top: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-task-list {
+    gap: 0;
+    border-top: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-task-row {
+    padding: 10px 4px;
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .deconstructor-workbench.compact.embedded .compact-task-row:hover,
+  .deconstructor-workbench.compact.embedded .compact-task-row.is-selected {
+    border-color: var(--wa-border-soft);
+    border-radius: 8px;
+    background: var(--wa-row-active);
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstructor-inspector {
+    position: static;
+    display: grid;
+    gap: 12px;
+    padding: 16px 2px 2px;
+    border-top: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstruct-inspector-facts {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0;
+    border-top: 1px solid var(--wa-border-soft);
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstruct-inspector-facts div {
+    padding: 10px 12px;
+    border: 0;
+    border-right: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .deconstructor-workbench.compact.embedded .deconstruct-inspector-facts div:last-child {
+    border-right: 0;
+  }
+
+  .deconstructor-workbench.compact.embedded .inspector-sync-section,
+  .deconstructor-workbench.compact.embedded .inspector-task-section,
+  .deconstructor-workbench.compact.embedded .inspector-analysis-section,
+  .deconstructor-workbench.compact.embedded .inspector-empty-state {
+    padding: 12px 0 0;
+    border: 0;
+    border-top: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .deconstructor-workbench.compact.embedded .inspector-checklist-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 16px;
+    border-top: 1px solid var(--wa-border-soft);
+  }
+
+  .deconstructor-workbench.compact.embedded .analysis-cell,
+  .deconstructor-workbench.compact.embedded .analysis-cell.risk-cell {
+    padding: 12px 0;
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  @media (max-width: 900px) {
+    .deconstructor-workbench.embedded .deconstructor-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .compact-demand-link {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .deconstructor-workbench.compact.embedded .deconstruct-inspector-facts,
+    .deconstructor-workbench.compact.embedded .inspector-checklist-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .deconstructor-workbench.compact.embedded .deconstruct-inspector-facts div:nth-child(2) {
+      border-right: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner,
+    .loading-spinner,
+    .modal-overlay {
+      animation: none !important;
     }
   }
 </style>

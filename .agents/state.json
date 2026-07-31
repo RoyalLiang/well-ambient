@@ -1,39 +1,90 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-07-10T15:57:00+08:00",
+  "updated_at": "2026-07-31T23:59:00+08:00",
   "active_task": {
-    "goal": "Synchronize Settings configuration and version-audit column heights and scrollbar styling",
-    "intent": "coding",
+    "goal": "Restore FZ-2247 realtime code evidence across task_executor and crane_manager",
+    "intent": "bugfix",
     "complexity": "multi_step",
     "continuity": "multi_turn",
     "freshness": "local_repo",
     "risk": "medium",
-    "phase": "phase50-settings-column-height-synchronization",
+    "phase": "fz-2247-dual-repository-trajectory-local-repair-complete",
     "loaded_modules": [
       "core-lite",
       "state-lite",
       "domains/coding",
       "workflow/default",
       "runtime/memory",
-      "ui-skill",
-      "finesse-skill",
+      "impeccable",
       "taste-skill",
-      "browser"
+      "finesse-skill",
+      "diagnosing-bugs",
+      "browser",
+      "self-improvement"
     ]
   },
   "warm_memory": {
-    "summary": "Phase 50 fixes Settings integration-page column synchronization. The left configuration surface now determines the desktop grid-row height, while the audit panel fills that height without contributing long diff payloads to intrinsic sizing. Version and diff regions scroll internally with the global light-console scrollbar treatment. All five audit-enabled integration pages have a measured 0px left/right height delta; the stacked breakpoint remains bounded and overflow-safe.",
+    "summary": "FZ-2247 Git evidence now canonicalizes to the Jira Work Item, preserves its owner, captures every commit in multi-commit pushes, reads historical case variants, and refreshes an open trajectory through task-scoped SSE. Isolated validation showed task_executor and crane_manager together with no lowercase duplicate; production still needs crane_manager webhook delivery verification.",
+    "latest_diagnostic": {
+      "goal": "Make FZ-2247 code trajectory capture and display commits from task_executor and crane_manager in realtime.",
+      "status": "complete_locally",
+      "findings": [
+        "ExtractTaskID emitted lowercase fz-2247, splitting new Git evidence from the uppercase Jira FZ-2247 row and making the exact commits API miss it.",
+        "Canonicalizing directly onto the Jira row initially exposed a second defect: Git authors could overwrite the Jira assignee and make the Work Item disappear under core-member visibility.",
+        "The push handler only checked the branch and last commit; a Jira key carried by an earlier commit in the same crane_manager batch could be missed.",
+        "The open CommitTelemetryPanel fetched once and did not consume application SSE updates.",
+        "Current database evidence has task_executor webhook delivery for FZ-2247 but no crane_manager webhook delivery at all, even though the repository is configured."
+      ],
+      "validation": [
+        "env GOCACHE=/tmp/well-ambient-fz2247-gocache go test ./... -count=1 passed",
+        "pnpm check passed with 0 errors and existing warnings; pnpm build passed",
+        "affected-file Impeccable detection returned []; Finesse reported P0=0",
+        "authenticated isolated browser validation showed PUSH advance from 3 to 4 without manual refresh and displayed two task_executor plus two crane_manager commits under FZ-2247",
+        "isolated SQLite verification showed one Jira FZ-2247 row owned by 梁志远, zero lowercase duplicate rows, and two commits per repository",
+        "1440x900, 760x900, and 390x844 trajectory modal checks had zero document/panel horizontal overflow, a working close path, and zero browser warnings or errors"
+      ],
+      "touched_files": [
+        "internal/telemetry/handler.go",
+        "internal/telemetry/task_identity_test.go",
+        "internal/server/notification_handlers.go",
+        "internal/server/notification_telemetry_sse_test.go",
+        "internal/server/server.go",
+        "internal/server/server_test.go",
+        "web/src/App.svelte",
+        "web/src/components/CommitTelemetryPanel.svelte",
+        ".agents/state.json",
+        ".learnings/ERRORS.md",
+        "task_plan.md",
+        "progress.md"
+      ],
+      "next_action": "Deploy the local repair, then use the existing GitLab webhook status/ensure workflow to verify crane_manager sends Push Hook events; no external GitLab mutation was performed in this run."
+    },
     "constraints": [
+      "Daily Jira must keep agenda/manual decision work intact and remain a decision submenu, not a new top-level cockpit.",
+      "Daily Jira core-member filtering must still show unassigned Jira so morning meetings can dispatch them; external assignees remain hidden.",
       "Do not revive the rejected visible decision-queue surface",
       "Do not revive the visible delivery cockpit unless the product value is redefined",
       "Keep runtime/generated `task_status.md` and `well-ambient.db` changes out of source commits unless explicitly requested",
-      "Use `ui-skill` by default for frontend UI changes, falling back to `finesse-skill` then `taste-skill`",
+      "Do not edit frontend or UI code until Impeccable, design-taste-frontend, and finesse-ui complete a recorded three-way review; do not silently fall back when any gate is missing",
       "Do not remount the project health telemetry panel unless its operator workflow is redefined",
       "Jira Task is the demand mainline in this deployment; execution subtasks are supporting evidence",
       "Continue the UI redesign by routing real modules through the new shell while avoiding broad rewrites of legacy business panels",
-      "Browser visual verification currently requires a real login; do not attempt browser policy workarounds"
+      "Browser visual verification currently requires a real login; do not attempt browser policy workarounds",
+      "Every UI delivery requires browser simulation and screenshot review of the affected authenticated state; if authentication blocks access, wait for the user"
+      ,"Do not start the main database with temporary YAML for validation because active database configuration supersedes the file and can re-enable external integrations"
     ],
     "decisions": [
+      "Unify Daily Jira through the existing Phase 41 tokens, 16/20px radius scale, matte structural panels, and table/inspector geometry; do not copy DecisionDashboard metric-card theater or introduce a second component system.",
+      "At stacked breakpoints derive the table panel height from the visible row count within a 320-560px cap; at CSS widths up to 760px hide project and recent-activity columns so the table fits without document horizontal overflow.",
+      "Use non-overlapping natural-day cohorts: age 0, age 3-6, and age 7+; keep age 1-2 as a watch count outside the requested checkpoints.",
+      "Persist daily Jira follow-up, escalation, and reassignment as DecisionEvent plus legacy DecisionLogs; only reassignment changes LastUpdate and invokes Jira assignee sync.",
+      "Keep Daily Jira as one flat table with an inline inspector; shell owns the submenu and App owns decision-view breadcrumbs.",
+      "Use shared Select for demand difficulty to inherit the verified selection, dismissal, keyboard, and adaptive-placement contract.",
+      "Scope task-detail color correction to .task-detail-surface at the end of TaskKanban styles rather than changing shared Modal or the dark task board.",
+      "Treat TaskTelemetry due_date as the shared source of truth for decision and schedule; reject no-op reschedules instead of recording misleading success events.",
+      "Preserve automatic-decision dates at the API boundary with occurred_at; keep the old time field only for compatibility.",
+      "Place automatic flow and meeting interventions in one main-panel event timeline because they form one operational chronology; preserve distinct markers and evidence links.",
+      "Implement vertical overlay placement in shared Select and DatePicker primitives so all consuming pages inherit the behavior.",
       "Treat the Phase 41 redesign as product UI: SPECTACLE=2, DENSITY=8, light management workspace, table-first, inspector-backed, and evidence-first.",
       "Add the coded prototype before full migration because existing Svelte pages are large and business-critical.",
       "Gate the prototype behind `config:read` rather than replacing decision/schedule/evidence/settings pages.",
@@ -43,12 +94,39 @@
       "Use grouped submenus when a page has multiple configuration/security subareas, but render those submenus in the global shell rail/menu rather than inside the page content frame.",
       "Keep the right content area structurally unified: breadcrumb navigation above, actual business content below.",
       "Do not render `FunctionalWorkspace`'s context bar by default on production pages; the topbar is the page identity layer and content should begin with metrics, compact controls, tables, and inspectors.",
-      "Use `ui-skill` first for frontend UI changes, then fall back to `finesse-skill` and `taste-skill`.",
+      "Require a recorded Impeccable + design-taste-frontend + finesse-ui consensus before frontend edits, then run Impeccable detection and authenticated browser validation after implementation.",
       "Preserve child configuration components during Settings shell migration so real save/test/RBAC/audit flows keep working.",
       "Use `/prototype.html` for no-login visual review and the authenticated app route for real production functionality.",
-      "Let the left Settings configuration surface determine desktop row height; absolutely contain the audit panel so long diffs cannot inflate both columns."
+      "Let the left Settings configuration surface determine desktop row height; absolutely contain the audit panel so long diffs cannot inflate both columns.",
+      "Treat the new-demand and AI pre-deconstruction dialogs as one centered desktop group with a 16px gap and measured equal height.",
+      "Keep demand title and description as separate UI fields and serialize them into labeled LLM prompt sections instead of concatenating unmarked text.",
+      "Keep demand search inside the association dropdown so operators can filter and select without leaving the current AI workflow."
+      ,"Stream human-readable Markdown before a fixed delimiter and structured JSON after it; display the Markdown live while retaining the JSON as the governed persistence model."
+      ,"Emit stream completion only after both the demand spec and default review contract commit successfully."
+      ,"Treat Markdown as the canonical editable document surface while retaining structured specification fields as progressively disclosed execution metadata."
+      ,"Use one bounded CodeMirror workbench boundary and hairline-separated sections instead of delivery-stage or preview cards nested inside the detail modal."
+      ,"Keep persisted demand specifications preview-only at rest; use double-click direct manipulation for editing and commit changed Markdown when the pointer moves outside the workbench."
+      ,"Use a 960px demand-detail maximum and a two-group reviewer/policy contract rather than equal three-column form density."
+      ,"Keep KPI as a top-level metric surface only; Settings route metadata must not expose a duplicate KPI configuration page."
+      ,"Use glass only for Settings structural chrome, primary workbench, audit inspector, and overlays; keep inner facts, forms, tables, and permission branches flat with hairlines."
+      ,"Centralize Settings section labels, permissions, fallback order, and navigation metadata in web/src/lib/settings-sections.ts."
     ],
     "findings": [
+      "Authenticated 2133x903 validation measured the Daily Jira table and inspector at the same 691px height/top edge; medium 3-row state contracts the table to 340px and places the inspector 16px below it.",
+      "At effective CSS widths of 750px and 478px the table has no horizontal overflow, project/recent-activity columns collapse, and the inspector follows the bounded table naturally.",
+      "Real search validation aligned ICA-10903 across the selected row, Jira deep link, and inspector title; final default state reopened 7+ days with 133 rows and ZPU-2769 selected.",
+      "TaskTelemetry already provides Jira key, project, assignee, status, issue type, creation date, last activity, due date, and legacy decision logs needed for the audit.",
+      "Browser QA proved search filtering must update the selected inspector item; the reactive selection now follows the first visible row or clears on an empty result.",
+      "Authenticated fixture validation showed all three cohorts, warning/watch indicators, Jira deep link, decision controls, and structured history at desktop, 1024, and 760 without mutating real Jira data.",
+      "The difficulty backend path already persists Low/Medium/High correctly; the unreliable layer was the page-local custom selector.",
+      "Task detail unreadability came from legacy #e2e8f0/#f1f5f9 and dark evidence surfaces rendered inside the newer light Modal.",
+      "HR-4202 TaskTelemetry and its latest DecisionEvent both showed the submitted reschedule value remained 2026-06-25; schedule was not stale.",
+      "The strongest-brain intervention and schedule projection share TaskTelemetry, so client target capture and server no-op validation were the correct boundary fixes.",
+      "The future-looking timeline was caused by the backend formatting LastUpdate as HH:mm:ss and the frontend supplying today's date, not by a visual timeline issue.",
+      "Read-only database evidence showed TPY-6597 at 2026-06-19 21:08:05+08:00, HIT-999 at 2026-07-09 17:54:33+08:00, and HR-4260 at 2026-07-08 17:53:34+08:00.",
+      "FunctionalAdminShell was the active notification surface and lacked the outside-click listener already present in the legacy App branch.",
+      "Browser QA confirmed shared Select opens downward with room and uses drop-up near the bottom of a 1280x520 viewport without console errors.",
+      "Authenticated notification and DecisionDashboard browser paths were unavailable from the no-login preview, so those paths were validated statically and through the production build.",
       "`DESIGN.md` and `docs/admin-ui-calibration.md` now explicitly supersede the older dark cockpit direction for Phase 41.",
       "`FunctionalAdminShell.svelte` and `FunctionalWorkspace.svelte` now match the generated light-console reference rather than the previous dark cockpit prototype.",
       "`DecisionDashboard.svelte` preserves agenda summary, core-member/Jira-key filtering, 15-second refresh, and strongest-brain intervention posting while adopting the Phase 41 workbench layout.",
@@ -60,9 +138,30 @@
       "`FunctionalAdminShell.svelte` now owns Settings submenus, permission filtering, and active-section highlighting; `SettingsPanel.svelte` keeps only the breadcrumb-plus-business-content frame.",
       "`FunctionalWorkspace.svelte` now defaults to pass-through content framing via `showContextBar = false`; target scan found no production page enabling the optional context hero.",
       "Demand, Task, KPI, ProjectHealth, Deconstructor, and Settings page-level headers are now compact workbench toolbars rather than descriptive hero blocks.",
-      "At 1600x900, GitLab, Feishu, Jira, Project priority, and AI engine all have 0px primary/audit height delta; GitLab diff overflow remains internal."
+      "At 1600x900, GitLab, Feishu, Jira, Project priority, and AI engine all have 0px primary/audit height delta; GitLab diff overflow remains internal.",
+      "Authenticated browser audit at 2048x925 measured the new-demand modal at 680x599.27 and AI companion at 620x597 with a 16px gap; their combined center was exactly the 1024px viewport center and no horizontal overflow was present.",
+      "Browser inspection confirmed the AI companion shows the title and requirement body in distinct fields and both dialog surfaces use the same rgba(255,255,255,0.94) surface and rgba(255,255,255,0.76) border.",
+      "Authenticated browser validation filtered the 101-item demand association menu to HR-4202, selected it successfully, closed the menu, retained the association, and reported no console errors or horizontal overflow.",
+      "Global search returned exact ZPU-2769 and HR-4202 results; selecting HR-4202 focused both the schedule table row and inspector after navigation.",
+      "At 2133x902 the inspector facts render as eight 30px pills in a 67px wrapping block with no horizontal overflow.",
+      "At 1280x720 the isolated login preview renders a transparent prefix input and 32px rounded suffix inside one 49px field surface."
+      ,"The original AI draft flow serialized two slow LLM calls and used a 30-second deconstruction provider timeout, delaying first byte and compounding proxy timeout risk."
+      ,"The stream regression exposed and fixed a real UTF-8 boundary bug when delimiter look-behind bisected multibyte Chinese output."
+      ,"The post-Phase-53 nested-card complaint was caused by retaining delivery-control, delivery-stage, and markdown-preview/spec-editor container styling after changing only the rendered content."
+      ,"Authenticated DG-319 testing measured a 460px workbench with equal 351px desktop split panes; at 760px split mode expands to 700px with two unclipped 282px panes and no horizontal overflow."
+      ,"Authenticated Phase 55 testing verified no visible mode switch, successful double-click entry, a 1136-to-1137 trailing-space edit, outside-click temporary save, payload trimming, and automatic return to preview."
+      ,"At 1280px the detail modal measures 960px with 475px and 404px review groups; at 760px it remains 732px and collapses the review groups into one overflow-free column."
+      ,"Authenticated Settings validation opened all 10 remaining routes with the expected page heading and region, no KPI Settings entry, and no load-failure state."
+      ,"Settings screenshots passed at 2133x902, 1024x900, 760x900, and 480x900; the first phone pass exposed and corrected a switch inflated by the generic 44px touch rule."
     ],
     "touched_files": [
+      "internal/server/daily_jira_handlers.go",
+      "internal/server/daily_jira_handlers_test.go",
+      "web/src/components/DailyJiraAudit.svelte",
+      "internal/agenda/agenda.go",
+      "internal/agenda/agenda_test.go",
+      "web/src/components/shared/Select.svelte",
+      "web/src/components/shared/DatePicker.svelte",
       ".agents/domains/coding.yaml",
       ".agents/memory/project.jsonl",
       ".agents/state.json",
@@ -82,33 +181,112 @@
       "web/src/components/KPIKanban.svelte",
       "web/src/components/DecisionDashboard.svelte",
       "web/src/components/SettingsPanel.svelte",
+      ".agents/output/delivery.yaml",
+      "output/ui-validation-demand-ai-responsive.png",
+      "output/ui-validation-demand-ai-wide.png",
+      "output/ui-validation-demand-association-search.png",
       "web/src/components/prototype/SettingsConfigPreview.svelte",
       "task_plan.md",
       "findings.md",
       "progress.md"
+      ,"internal/db/autonomous_delivery.go"
+      ,"internal/server/autonomous_delivery_handlers.go"
+      ,"internal/server/demand_spec_ai_stream.go"
+      ,"internal/server/demand_spec_ai_stream_test.go"
+      ,"internal/server/notification_handlers.go"
+      ,"internal/server/server.go"
+      ,"web/src/components/DemandDeliveryControl.svelte"
+      ,"web/src/components/shared/MarkdownWorkbench.svelte"
+      ,"web/package.json"
+      ,"web/pnpm-lock.yaml"
+      ,"AGENTS.md"
+      ,".agents/skills/impeccable"
+      ,"output/ui-validation-markdown-workbench-desktop.png"
+      ,"output/ui-validation-markdown-workbench-split.png"
+      ,"output/ui-validation-markdown-workbench-760.png"
+      ,"output/ui-validation-markdown-workbench-preview-760.png"
+      ,"output/ui-validation-inline-markdown-preview.png"
+      ,"output/ui-validation-review-contract-wide.png"
+      ,"output/ui-validation-review-contract-760.png"
+      ,"web/src/lib/settings-sections.ts"
+      ,"web/src/components/config/GitLabConfig.svelte"
+      ,"web/src/components/config/CorpusCandidateReview.svelte"
+      ,"web/src/styles/settings-config-workbench.css"
     ],
     "validation": [
+      "Daily Jira visual unification: pnpm -C web check and app TypeScript passed with 0 errors; 74 existing warnings remain outside DailyJiraAudit",
+      "Daily Jira visual unification: pnpm -C web build, tracked/untracked diff hygiene, Impeccable complete/layout detection, and Finesse P0 detection passed",
+      "Authenticated Daily Jira screenshots and geometry passed at 2133x903, medium 3-row stack, CSS 750px, and CSS 478px with zero document horizontal overflow and no console errors",
+      "Live GET /api/decision/daily-jira changed from 404 to 401 after restarting the confirmed repository backend",
+      "Vite-proxied GET http://127.0.0.1:5173/api/decision/daily-jira also returns 401, proving the frontend path reaches the loaded protected route",
+      "GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -count=1 passed",
+      "Focused Daily Jira cohort, visibility, reassignment, audit-history, and LastUpdate tests passed",
+      "pnpm -C web exec svelte-check --tsconfig ./tsconfig.app.json --output machine passed with 0 errors and 74 existing warnings outside DailyJiraAudit",
+      "pnpm -C web exec tsc -p tsconfig.app.json --pretty false, pnpm -C web build, and git diff --check passed",
+      "Impeccable and finesse target detectors returned no DailyJiraAudit findings",
+      "Authenticated desktop, 1024, and 760 screenshots/DOM checks passed submenu, cohorts, search-detail linkage, table/inspector responsiveness, reassign guard, and clean console validation",
+      "Difficulty/task-detail `pnpm --dir web check` passed with 0 errors and 74 existing warnings",
+      "Difficulty/task-detail `pnpm --dir web build` and `git diff --check` passed",
+      "Focused TestDemandAndKPILogic passed and confirms High difficulty persists as manual_adjusted",
+      "Focused strongest-brain intervention test passed, including June 25 to July 13 schedule projection and repeated-date 409 rejection",
+      "Reschedule correction frontend check/build passed with 0 errors and 74 existing warnings",
+      "Corrective timeline date `GOCACHE=/tmp/well-ambient-gocache go test ./internal/agenda` passed",
+      "Corrective timeline date frontend check and build passed with 0 errors and 74 existing warnings",
+      "Read-only SQLite verification confirmed screenshot events span historical dates rather than today",
+      "Adaptive overlay and timeline `pnpm --dir web check` passed with 0 errors and 74 existing warnings",
+      "Adaptive overlay and timeline `pnpm --dir web build` passed",
+      "Adaptive overlay and timeline `git diff --check` passed",
+      "Browser Select down/up placement at 1280x520 passed with zero console errors",
       "`pnpm exec tsc -p tsconfig.app.json --pretty false` in web passed",
       "`pnpm build` in web passed",
       "`git diff --check` passed",
       "Targeted `showContextBar` scan confirmed no production page enables the optional workspace context hero",
-      "Targeted UI skill rule scan confirmed `.agents/domains/coding.yaml`, `.agents/memory/project.jsonl`, and `DESIGN.md` record `ui-skill -> finesse-skill -> taste-skill`",
+      "Historical Phase 41 UI skill routing was superseded by the mandatory Impeccable + design-taste-frontend + finesse-ui review gate",
       "Targeted SettingsPanel scan found no internal sidebar/menu selectors or grouped-navigation helpers",
       "Phase 42 Settings IA correction has no new SettingsPanel build warnings",
       "Targeted migrated-page scan found no `最强大脑`, `Strongest Brain`, or `StrongestBrain` strings",
       "Targeted SettingsPanel emoji scan passed with no matches",
       "Build still reports existing repository-wide warnings in DemandKanban, shared modal/switch, and config child components",
       "Phase 50 `pnpm --dir web build` and targeted `git diff --check` passed",
-      "Phase 50 browser checks passed at 1600x900 and 1200x760 with no console errors or horizontal overflow"
+      "Phase 50 browser checks passed at 1600x900 and 1200x760 with no console errors or horizontal overflow",
+      "Authenticated browser screenshot validation passed for the new-demand and AI pre-deconstruction workflow at the default responsive viewport and 2048x925",
+      "2048x925 layout audit: group center 1024px, 16px inter-dialog gap, approximately 2px height delta, no page or AI-panel horizontal overflow",
+      "`pnpm build`, `pnpm exec tsc -p tsconfig.app.json --pretty false`, and `git diff --check` passed after the dialog and prompt changes",
+      "Authenticated demand association search filtered 101 items to HR-4202, selected and retained the result, and produced no console errors or horizontal overflow",
+      "Demand association search `pnpm build`, `pnpm exec tsc -p tsconfig.app.json --pretty false`, and `git diff --check` passed",
+      "Phase 52 `pnpm -C web exec tsc -p tsconfig.app.json --pretty false`, `pnpm -C web build`, and `git diff --check` passed",
+      "Authenticated global search returned and selected non-first-row HR-4202 with exact table/inspector focus and zero console errors",
+      "Authenticated 2133x902 schedule screenshot and isolated 1280x720 login screenshot passed visual hierarchy, spacing, alignment, overflow, and focus-state review"
+      ,"Focused TestStreamAIDemandSpec plus DemandSpec lifecycle tests passed with loopback permission"
+      ,"Focused loopback development-login tests passed and confirm the guarded local path does not require WellOS"
+      ,"DemandDeliveryControl TypeScript compilation and production build passed; existing repository-wide Svelte warnings remain"
+      ,"git diff --check passed"
+      ,"Authenticated DG-319 flow-board detail preview passed at 1280x720 with 14 headings, 6 lists, zero result textareas, modal-owned scrolling, and no horizontal overflow"
+      ,"Authenticated 760x900 narrow preview passed with a 732px modal, 14px side safety space, stacked header controls, and no horizontal overflow"
+      ,"Preview/Edit interaction passed without saving or mutating business data; browser console errors were zero"
+      ,"Visual evidence saved to output/ui-validation-ai-spec-markdown-desktop.png, output/ui-validation-ai-spec-markdown-body.png, output/ui-validation-ai-spec-edit-mode.png, and output/ui-validation-ai-spec-markdown-760.png"
+      ,"Impeccable detector returned [] for MarkdownWorkbench.svelte and DemandDeliveryControl.svelte"
+      ,"Phase 54 pnpm check passed with 0 errors; 78 existing warnings remain outside the target files"
+      ,"Phase 54 pnpm build and git diff --check passed"
+      ,"Authenticated DG-319 edit/split/preview tests passed at 1280x720 and 760x900 with zero console errors, no nested workbench, no clipped narrow split panes, and no horizontal overflow"
+      ,"Phase 55 targeted complete Impeccable scan and three-file layout-scope scan returned []"
+      ,"Phase 55 pnpm check passed with 0 errors; pnpm build and git diff --check passed"
+      ,"Authenticated DG-319 double-click edit and outside-click temporary save returned to preview with the trimmed Markdown unchanged"
+      ,"Authenticated 1280x720 and 760x900 review-contract layout checks passed with zero browser console errors and no horizontal overflow"
+      ,"Phase 63 TypeScript compilation, Svelte check with 0 errors, production build, targeted Impeccable detection, and git diff --check passed"
+      ,"Authenticated Phase 63 browser audit passed for all 10 Settings routes, GitLab overview/edit states, 2133x902, 1024x900, 760x900, and 480x900 with zero console errors"
+      ,"Viewport-height demand drawer passed authenticated 2133x1038 and 760x800 screenshot/geometry validation, linked AI companion separation, Escape/backdrop/focus/body-scroll behavior, zero horizontal overflow, and empty console errors"
+      ,"Dark teal filled controls passed authenticated computed-style and wide/mobile visual validation at 5.70:1 contrast; light drawer and dark rail pairings remain above AA"
+      ,"Viewport drawer and surface contrast pnpm -C web check, pnpm -C web build, git diff --check, reduced-motion, and detector P0 gates passed"
     ],
     "blockers": [],
-    "next_action": "Await user review of the Phase 50 Settings preview; address any remaining concrete visual mismatch without changing configuration behavior."
+    "next_action": "No remaining local implementation action; deploy or restart the main service only when requested."
   },
   "compression": {
-    "meaningful_tool_calls": 119,
+    "meaningful_tool_calls": 154,
     "turns_on_task": 0,
-    "last_compressed_at": "2026-07-10T15:57:00+08:00",
-    "last_trigger": "phase_50_settings_column_height_synchronization"
+    "last_compressed_at": "2026-07-12T22:50:00+08:00",
+    "last_trigger": "phase_63_configuration_center_unified_glass_workbench_complete"
   },
   "long_memory_index": {
     "root": "./.agents/memory",

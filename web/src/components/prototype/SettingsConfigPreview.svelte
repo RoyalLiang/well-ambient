@@ -1,5 +1,6 @@
 <script lang="ts">
   import SettingsPanel from '../SettingsPanel.svelte';
+  import ToastHost from '../shared/ToastHost.svelte';
 
   type PreviewSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context';
 
@@ -17,6 +18,9 @@
     'config:write',
     'ai_context:read',
     'ai_context:write',
+    'ai_context:preview',
+    'corpus_candidate:read',
+    'corpus_candidate:review',
     'kpi:read',
     'users:read',
     'users:write',
@@ -59,16 +63,19 @@
     {/each}
   </nav>
 
-  <section class="preview-settings-host">
-    {#key activeSection}
-      <SettingsPanel
-        currentUserEmail="preview@well-ambient.local"
-        currentUserPermissions={previewPermissions}
-        activeSettingsSection={activeSection}
-        onSectionChange={handleSectionChange}
-      />
-    {/key}
-  </section>
+  <div class="preview-content-stage">
+    <section class="preview-settings-host">
+      {#key activeSection}
+        <SettingsPanel
+          currentUserEmail="preview@well-ambient.local"
+          currentUserPermissions={previewPermissions}
+          activeSettingsSection={activeSection}
+          onSectionChange={handleSectionChange}
+        />
+      {/key}
+    </section>
+    <ToastHost />
+  </div>
 </main>
 
 <style>
@@ -88,12 +95,17 @@
 
   .preview-page {
     width: min(1760px, 100%);
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     margin: 0 auto;
     padding: 14px 18px 32px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .preview-topbar {
+    flex: 0 0 auto;
     min-height: 58px;
     display: flex;
     align-items: center;
@@ -121,6 +133,7 @@
   }
 
   .preview-tabs {
+    flex: 0 0 auto;
     display: flex;
     gap: 4px;
     overflow-x: auto;
@@ -148,8 +161,19 @@
     color: var(--wa-accent-strong, #006f76);
   }
 
+  .preview-content-stage {
+    position: relative;
+    isolation: isolate;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
   .preview-settings-host {
     min-width: 0;
+    height: 100%;
+    overflow: auto;
   }
 
   .preview-settings-host :global(.settings-container) {

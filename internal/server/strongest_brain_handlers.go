@@ -252,7 +252,12 @@ func (s *Server) handleGetStrongestBrainDecisionQueue(w http.ResponseWriter, r *
 	}
 
 	now := time.Now()
-	readModel, err := buildStrongestBrainDecisionSnapshot(now)
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	readModel, err := buildStrongestBrainDecisionSnapshot(now, projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build strongest brain decision snapshot: %v", err), http.StatusInternalServerError)
 		return
@@ -277,7 +282,12 @@ func (s *Server) handleGetStrongestBrainExceptions(w http.ResponseWriter, r *htt
 	}
 
 	now := time.Now()
-	readModel, err := buildStrongestBrainDecisionSnapshot(now)
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	readModel, err := buildStrongestBrainDecisionSnapshot(now, projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build strongest brain exception snapshot: %v", err), http.StatusInternalServerError)
 		return
@@ -302,7 +312,12 @@ func (s *Server) handleGetStrongestBrainWeeklyDecisions(w http.ResponseWriter, r
 	}
 
 	now := time.Now()
-	readModel, err := buildStrongestBrainDecisionSnapshot(now)
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	readModel, err := buildStrongestBrainDecisionSnapshot(now, projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build strongest brain weekly decisions: %v", err), http.StatusInternalServerError)
 		return
@@ -331,6 +346,15 @@ func (s *Server) handleGetStrongestBrainEvidenceChain(w http.ResponseWriter, r *
 	taskID := strings.TrimSpace(r.URL.Query().Get("task_id"))
 	if taskID == "" {
 		http.Error(w, "Bad Request: task_id is required", http.StatusBadRequest)
+		return
+	}
+	allowed, err := requestCanAccessTask(r, taskID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		http.Error(w, fmt.Sprintf("Task %s not found", taskID), http.StatusNotFound)
 		return
 	}
 
@@ -446,9 +470,14 @@ func (s *Server) handleAIIntentSummary(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func buildStrongestBrainScheduleSnapshot(now time.Time) (ScheduleResponseDTO, error) {
+func buildStrongestBrainScheduleSnapshot(now time.Time, projectScopes ...[]string) (ScheduleResponseDTO, error) {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var tasks []db.TaskTelemetry
-	if err := db.DB.Where("status != ?", "archived").Find(&tasks).Error; err != nil {
+	query := db.ApplyTaskProjectScope(db.DB.Where("status != ?", "archived"), projectKeys)
+	if err := query.Find(&tasks).Error; err != nil {
 		return ScheduleResponseDTO{}, err
 	}
 	var users []userdb.User
@@ -458,9 +487,14 @@ func buildStrongestBrainScheduleSnapshot(now time.Time) (ScheduleResponseDTO, er
 	return buildScheduleResponse(tasks, users, now), nil
 }
 
-func buildStrongestBrainExecutionSnapshot(now time.Time) (ExecutionTasksResponseDTO, []db.GitCommitLog, error) {
+func buildStrongestBrainExecutionSnapshot(now time.Time, projectScopes ...[]string) (ExecutionTasksResponseDTO, []db.GitCommitLog, error) {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var tasks []db.TaskTelemetry
-	if err := db.DB.Where("status != ?", "archived").Find(&tasks).Error; err != nil {
+	query := db.ApplyTaskProjectScope(db.DB.Where("status != ?", "archived"), projectKeys)
+	if err := query.Find(&tasks).Error; err != nil {
 		return ExecutionTasksResponseDTO{}, nil, err
 	}
 	var taskIDs []string
@@ -522,19 +556,27 @@ type strongestBrainLogStats struct {
 	EvidenceRefs []string
 }
 
-func buildStrongestBrainDecisionSnapshot(now time.Time) (strongestBrainDecisionReadModel, error) {
-	schedule, err := buildStrongestBrainScheduleSnapshot(now)
+func buildStrongestBrainDecisionSnapshot(now time.Time, projectScopes ...[]string) (strongestBrainDecisionReadModel, error) {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
+	schedule, err := buildStrongestBrainScheduleSnapshot(now, projectKeys)
 	if err != nil {
 		return strongestBrainDecisionReadModel{}, fmt.Errorf("build schedule snapshot: %w", err)
 	}
-	execution, logs, err := buildStrongestBrainExecutionSnapshot(now)
+	execution, logs, err := buildStrongestBrainExecutionSnapshot(now, projectKeys)
 	if err != nil {
 		return strongestBrainDecisionReadModel{}, fmt.Errorf("build execution snapshot: %w", err)
 	}
-	return buildStrongestBrainDecisionReadModel(schedule, execution, logs, now), nil
+	return buildStrongestBrainDecisionReadModel(schedule, execution, logs, now, projectKeys), nil
 }
 
-func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog, now time.Time) strongestBrainDecisionReadModel {
+func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, execution ExecutionTasksResponseDTO, logs []db.GitCommitLog, now time.Time, projectScopes ...[]string) strongestBrainDecisionReadModel {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	profiles := buildStrongestBrainEvidenceProfiles(schedule, execution, logs)
 	items := make([]StrongestBrainDecisionItem, 0)
 
@@ -551,7 +593,7 @@ func buildStrongestBrainDecisionReadModel(schedule ScheduleResponseDTO, executio
 		items = append(items, decisionFromExecutionItem(item))
 	}
 	items = append(items, strictEvidenceChainConsistencyDecisions(execution, now)...)
-	items = append(items, semanticEvidenceReviewDecisions(now)...)
+	items = append(items, semanticEvidenceReviewDecisions(now, projectKeys)...)
 	items = append(items, contextGapDecisions(now)...)
 
 	items = enrichStrongestBrainDecisionItems(items, profiles, now)
@@ -1053,7 +1095,11 @@ func contextGapDecisions(now time.Time) []StrongestBrainDecisionItem {
 	}}
 }
 
-func semanticEvidenceReviewDecisions(now time.Time) []StrongestBrainDecisionItem {
+func semanticEvidenceReviewDecisions(now time.Time, projectScopes ...[]string) []StrongestBrainDecisionItem {
+	var projectKeys []string
+	if len(projectScopes) > 0 {
+		projectKeys = projectScopes[0]
+	}
 	var notifications []db.Notification
 	if err := db.DB.
 		Where("type = ?", telemetry.SemanticLinkerType).
@@ -1070,6 +1116,11 @@ func semanticEvidenceReviewDecisions(now time.Time) []StrongestBrainDecisionItem
 		if taskID == "" {
 			continue
 		}
+		var task db.TaskTelemetry
+		_ = db.DB.Where("task_id = ?", taskID).First(&task).Error
+		if !db.TaskMatchesExplicitProjectScope(task.ProjectKey, taskID, projectKeys) {
+			continue
+		}
 
 		var log db.GitCommitLog
 		if err := db.DB.
@@ -1083,8 +1134,6 @@ func semanticEvidenceReviewDecisions(now time.Time) []StrongestBrainDecisionItem
 		}
 		seenLogs[log.ID] = true
 
-		var task db.TaskTelemetry
-		_ = db.DB.Where("task_id = ?", taskID).First(&task).Error
 		shortCommit := strings.TrimSpace(log.CommitID)
 		if len(shortCommit) > 8 {
 			shortCommit = shortCommit[:8]
@@ -1982,10 +2031,11 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 	}
 
 	var req struct {
-		TaskID string `json:"task_id"`
-		Action string `json:"action"` // "reassign", "reschedule", "link_repo"
-		Value  string `json:"value"`  // 新指派人, 新截止日期, 新仓库名等
-		Reason string `json:"reason"` // 理由
+		TaskID      string `json:"task_id"`
+		Action      string `json:"action"` // "reassign", "reschedule", "link_repo"
+		Value       string `json:"value"`  // 新指派人, 新截止日期, 新仓库名等
+		Reason      string `json:"reason"` // 兼容旧客户端的本地审计理由
+		MeetingNote string `json:"meeting_note"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2000,6 +2050,15 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 
 	var task db.TaskTelemetry
 	if err := db.DB.Where("task_id = ?", req.TaskID).First(&task).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Task %s not found", req.TaskID), http.StatusNotFound)
+		return
+	}
+	allowed, err := requestCanAccessTask(r, task.TaskID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
 		http.Error(w, fmt.Sprintf("Task %s not found", req.TaskID), http.StatusNotFound)
 		return
 	}
@@ -2034,6 +2093,11 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 			}
 			t = t2
 		}
+		newDueDate := t.Format("2006-01-02")
+		if oldVal == newDueDate {
+			http.Error(w, "Bad Request: new due date must differ from the current due date", http.StatusConflict)
+			return
+		}
 
 		task.DueDate = &t
 		task.LastUpdate = time.Now()
@@ -2053,13 +2117,18 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 		return
 	}
 
+	meetingNote := strings.TrimSpace(req.MeetingNote)
+	auditReason := meetingNote
+	if auditReason == "" {
+		auditReason = strings.TrimSpace(req.Reason)
+	}
 	event := db.DecisionEvent{
 		TaskID:    req.TaskID,
 		Actor:     actor,
 		Action:    "override_" + req.Action,
 		OldValue:  oldVal,
 		NewValue:  req.Value,
-		Reason:    req.Reason,
+		Reason:    auditReason,
 		CreatedAt: time.Now(),
 	}
 	if err := tx.Create(&event).Error; err != nil {
@@ -2068,11 +2137,35 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 		return
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to commit intervention: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jiraCommentRequested := false
+	if s.config.Jira.Enabled && !strings.HasPrefix(task.TaskID, "TASK-") {
+		switch req.Action {
+		case "reassign":
+			go s.jiraAssigneeSync(task.TaskID, task.Assignee)
+		case "reschedule":
+			go s.jiraDueDateSync(task.TaskID, task.DueDate.Format("2006-01-02"))
+		}
+		if meetingNote != "" {
+			jiraCommentRequested = true
+			go s.jiraCommentSync(task.TaskID, meetingNote)
+		}
+	}
+
+	dueDate := ""
+	if task.DueDate != nil {
+		dueDate = task.DueDate.Format("2006-01-02")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "success",
-		"event":  event,
+		"status":              "success",
+		"event":               event,
+		"due_date":            dueDate,
+		"meeting_note_synced": jiraCommentRequested,
 	})
 }

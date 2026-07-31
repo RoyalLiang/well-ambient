@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { AdminInspectorRecord, AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
+  import type { AdminInspectorRecord, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS, formatAdminDate } from '../lib/admin-console/contract';
 
   interface ProjectScore {
@@ -17,6 +17,7 @@
   }
 
   type HealthLevel = 'red' | 'yellow' | 'green';
+  type HealthFilter = 'all' | HealthLevel;
   type DimensionTone = 'schedule' | 'engineering' | 'collaboration' | 'stability';
 
   interface DimensionInsight {
@@ -58,7 +59,7 @@
   let loading = false;
   let errorMsg = '';
   let searchQuery = '';
-  let expandedProjectKey: string | null = null;
+  let healthFilter: HealthFilter = 'all';
   let isPanelCollapsed = false;
   let activeProjectKey = '';
   let activeProjectScore: ProjectScore | null = null;
@@ -121,14 +122,16 @@
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!resScores.ok) throw new Error('获取项目健康度打分失败');
-      scores = await resScores.json();
+      const scorePayload = await resScores.json();
+      scores = Array.isArray(scorePayload) ? scorePayload : [];
 
       // 2. Fetch configs for robust names matching
       const resConfigs = await fetch('/api/projects/config', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (resConfigs.ok) {
-        projectConfigs = await resConfigs.json();
+        const configPayload = await resConfigs.json();
+        projectConfigs = Array.isArray(configPayload) ? configPayload : [];
       }
 
       // 3. Fetch agenda summary for project name matching
@@ -136,7 +139,7 @@
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (resSummary.ok) {
-        const summaryData = await resSummary.json();
+        const summaryData = (await resSummary.json()) || {};
         const items = summaryData.agenda_items || [];
         const newMap: {[key: string]: string} = summaryData.project_map || {};
         
@@ -194,67 +197,34 @@
     return cleanProjectName(score.project_name) || score.project_key;
   }
 
-  $: filteredScores = scores.filter(s => {
+  $: searchMatchedScores = scores.filter(s => {
     const displayName = getDisplayName(s);
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return s.project_key.toLowerCase().includes(q) || 
            displayName.toLowerCase().includes(q);
   });
+  $: filteredScores = searchMatchedScores.filter(score =>
+    healthFilter === 'all' || getProjectHealthLevel(score) === healthFilter
+  );
   $: rankedFilteredScores = [...filteredScores].sort((a, b) => {
-    const levelDelta = getHealthRank(getHealthLevel(b.compound_score)) - getHealthRank(getHealthLevel(a.compound_score));
+    const levelDelta = getHealthRank(getProjectHealthLevel(b)) - getHealthRank(getProjectHealthLevel(a));
     if (levelDelta !== 0) return levelDelta;
     return a.compound_score - b.compound_score;
   });
-  $: redProjectCount = filteredScores.filter(s => getHealthLevel(s.compound_score) === 'red').length;
-  $: yellowProjectCount = filteredScores.filter(s => getHealthLevel(s.compound_score) === 'yellow').length;
-  $: greenProjectCount = filteredScores.filter(s => getHealthLevel(s.compound_score) === 'green').length;
-  $: averageScore = filteredScores.length
-    ? Math.round(filteredScores.reduce((sum, s) => sum + s.compound_score, 0) / filteredScores.length)
+  $: redProjectCount = searchMatchedScores.filter(s => getProjectHealthLevel(s) === 'red').length;
+  $: yellowProjectCount = searchMatchedScores.filter(s => getProjectHealthLevel(s) === 'yellow').length;
+  $: greenProjectCount = searchMatchedScores.filter(s => getProjectHealthLevel(s) === 'green').length;
+  $: averageScore = searchMatchedScores.length
+    ? Math.round(searchMatchedScores.reduce((sum, s) => sum + s.compound_score, 0) / searchMatchedScores.length)
     : 0;
-  $: priorityScores = rankedFilteredScores.filter(s => getHealthLevel(s.compound_score) !== 'green').slice(0, 3);
+  $: priorityScores = rankedFilteredScores.filter(s => getProjectHealthLevel(s) !== 'green').slice(0, 3);
   $: topPriorityScore = priorityScores[0] || rankedFilteredScores[0] || null;
   $: if (!activeProjectKey && topPriorityScore) {
     activeProjectKey = topPriorityScore.project_key;
   }
   $: activeProjectScore = rankedFilteredScores.find(s => s.project_key === activeProjectKey) || topPriorityScore || rankedFilteredScores[0] || null;
   $: activeProjectRecord = buildProjectInspectorRecord(activeProjectScore);
-  $: projectHealthMetrics = [
-    {
-      label: '项目队列',
-      value: filteredScores.length,
-      helper: `共 ${scores.length} 个项目`,
-      delta: searchQuery ? '已应用筛选' : '全部可见项目',
-      tone: 'info'
-    },
-    {
-      label: '需介入',
-      value: redProjectCount + yellowProjectCount,
-      helper: `${redProjectCount} 红区 / ${yellowProjectCount} 黄区`,
-      delta: redProjectCount > 0 ? '优先处理红区' : '关注黄区证据',
-      tone: redProjectCount > 0 ? 'danger' : (yellowProjectCount > 0 ? 'warning' : 'success')
-    },
-    {
-      label: '平均健康度',
-      value: `${averageScore}%`,
-      helper: filteredScores.length ? '按当前筛选计算' : '暂无数据',
-      delta: averageScore >= 85 ? '整体稳定' : '需要补齐证据',
-      tone: healthTone(averageScore)
-    },
-    {
-      label: '稳定项目',
-      value: greenProjectCount,
-      helper: '绿区无需主动打扰',
-      delta: `${Math.max(0, filteredScores.length - greenProjectCount)} 项仍需观察`,
-      tone: greenProjectCount === filteredScores.length ? 'success' : 'neutral'
-    }
-  ] satisfies AdminMetric[];
-  $: projectHealthSegments = [
-    { label: '红区介入', value: redProjectCount, helper: '今天确认负责人和证据', tone: 'danger' as AdminTone },
-    { label: '黄区观察', value: yellowProjectCount, helper: '本周补齐缺口', tone: 'warning' as AdminTone },
-    { label: '稳定运行', value: greenProjectCount, helper: '继续后台观测', tone: 'success' as AdminTone },
-    { label: '当前选中', value: activeProjectScore?.project_key || '-', helper: activeProjectScore ? getDisplayName(activeProjectScore) : '等待项目数据', tone: activeProjectScore ? healthTone(activeProjectScore.compound_score) : 'neutral' as AdminTone }
-  ];
   $: projectHealthRows = rankedFilteredScores.map(buildProjectHealthRow) satisfies AdminTableRow[];
 
   function getScoreColorClass(score: number): string {
@@ -269,21 +239,33 @@
     return 'red';
   }
 
+  function getProjectHealthLevel(score: ProjectScore): HealthLevel {
+    const weakestDimension = Math.min(
+      score.schedule_health_score,
+      score.engineering_quality,
+      score.collaboration_effic,
+      score.stability_index
+    );
+    if (score.compound_score < 70 || weakestDimension < 70) return 'red';
+    if (score.compound_score < 85 || weakestDimension < 85) return 'yellow';
+    return 'green';
+  }
+
   function getHealthRank(level: HealthLevel): number {
     if (level === 'red') return 3;
     if (level === 'yellow') return 2;
     return 1;
   }
 
-  function getHealthLabel(score: number): string {
-    const level = getHealthLevel(score);
+  function getHealthLabel(score: ProjectScore): string {
+    const level = getProjectHealthLevel(score);
     if (level === 'red') return '红区介入';
     if (level === 'yellow') return '黄区观察';
     return '稳定运行';
   }
 
-  function healthTone(score: number): AdminTone {
-    const level = getHealthLevel(score);
+  function healthTone(score: ProjectScore): AdminTone {
+    const level = getProjectHealthLevel(score);
     if (level === 'red') return 'danger';
     if (level === 'yellow') return 'warning';
     return 'success';
@@ -343,8 +325,8 @@
   function getProjectDiagnosis(score: ProjectScore): ProjectDiagnosis {
     const dimensions = getDimensionInsights(score);
     const weakest = [...dimensions].sort((a, b) => a.score - b.score)[0];
-    const level = getHealthLevel(score.compound_score);
-    const label = getHealthLabel(score.compound_score);
+    const level = getProjectHealthLevel(score);
+    const label = getHealthLabel(score);
     const urgency = level === 'red' ? '今天必须介入' : (level === 'yellow' ? '本周补证据' : '无需打扰');
     const summary = level === 'green'
       ? '当前项目指标稳定，系统继续观测即可。'
@@ -377,7 +359,7 @@
       id: score.project_key,
       title: getDisplayName(score),
       status: diagnosis.label,
-      tone: healthTone(score.compound_score),
+      tone: healthTone(score),
       owner: diagnosis.weakest.label,
       dueDate: formatAdminDate(score.snapshot_date),
       priority: config?.base_priority || '',
@@ -402,7 +384,7 @@
       id: score.project_key,
       title: getDisplayName(score),
       status: diagnosis.label,
-      tone: healthTone(score.compound_score),
+      tone: healthTone(score),
       facts: [
         { label: '项目编号', value: score.project_key },
         { label: '综合健康度', value: `${score.compound_score}%` },
@@ -427,22 +409,13 @@
         }
       ],
       actions: [
-        { label: '查看计算细节', kind: 'primary' },
-        { label: expandedProjectKey === score.project_key ? '收起诊断' : '展开诊断', kind: 'secondary' }
+        { label: '查看计算细节', kind: 'primary' }
       ]
     };
   }
 
   function selectProject(score: ProjectScore) {
     activeProjectKey = score.project_key;
-  }
-
-  function toggleDiagnostic(key: string) {
-    if (expandedProjectKey === key) {
-      expandedProjectKey = null;
-    } else {
-      expandedProjectKey = key;
-    }
   }
 
   function portal(node: HTMLElement) {
@@ -457,69 +430,35 @@
   }
 </script>
 
-<div class="project-health-workbench wa-grain">
-  <div class="project-health-header">
-    <div>
-      <span class="eyebrow">项目证据链</span>
-      <h2>项目介入优先级</h2>
-      <p>基于项目分数、项目配置和议程摘要，定位需要补证据或人工介入的项目。</p>
-    </div>
-
-    <div class="project-health-actions">
-      <div class="project-health-search">
-        <span class="search-icon" aria-hidden="true"></span>
-        <input
-          type="text"
-          placeholder="搜索项目、编号"
-          bind:value={searchQuery}
-          class="telemetry-search-input"
-        />
-      </div>
-      <button class="wa-admin-action secondary font-mono" on:click={fetchScoresAndConfigs} disabled={loading}>
-        {loading ? '同步中' : '刷新'}
-      </button>
-      <button class="wa-admin-action secondary font-mono" on:click={() => isPanelCollapsed = !isPanelCollapsed}>
-        {isPanelCollapsed ? '展开' : '收起'}
-      </button>
-    </div>
-  </div>
-
+<div class="project-health-workbench">
   {#if !isPanelCollapsed}
     {#if loading && scores.length === 0}
       <div class="project-health-state wa-admin-card font-mono">正在加载项目证据健康数据</div>
     {:else if errorMsg}
       <div class="project-health-state is-error wa-admin-card font-mono">加载失败 · {errorMsg}</div>
-    {:else if filteredScores.length === 0}
+    {:else if searchMatchedScores.length === 0}
       <div class="project-health-state wa-admin-card font-mono">没有匹配的项目证据数据</div>
     {:else}
-      <div class="project-health-metrics" aria-label="项目证据指标">
-        {#each projectHealthMetrics as metric}
-          <div class="wa-admin-card wa-admin-metric project-health-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
-            <span>{metric.label}</span>
-            <strong>{metric.value}</strong>
-            <em>{metric.helper}</em>
-            {#if metric.delta}
-              <small>{metric.delta}</small>
-            {/if}
-          </div>
-        {/each}
-      </div>
-
-      <div class="project-health-segments" aria-label="项目状态分段">
-        {#each projectHealthSegments as segment}
-          <button
-            type="button"
-            class="project-health-segment wa-admin-card {ADMIN_TONE_CLASS[segment.tone || 'neutral']}"
-            on:click={() => {
-              const target = rankedFilteredScores.find((score) => healthTone(score.compound_score) === segment.tone);
-              if (target) selectProject(target);
-            }}
-          >
-            <span>{segment.label}</span>
-            <strong class="font-mono">{segment.value}</strong>
-            <em>{segment.helper}</em>
+      <div class="health-decision-strip wa-admin-card" aria-label="证据健康异常筛选">
+        <div class="health-decision-copy">
+          <span class="eyebrow">Evidence triage</span>
+          <strong>{redProjectCount > 0 ? `${redProjectCount} 个红区项目需要今天介入` : yellowProjectCount > 0 ? `${yellowProjectCount} 个黄区项目需要本周补证据` : '当前项目证据健康稳定'}</strong>
+          <small>{searchMatchedScores.length} 个可见项目 · 平均健康度 {averageScore}% · 按最低证据维度排序</small>
+        </div>
+        <div class="health-filter-group" role="group" aria-label="按健康状态筛选">
+          <button type="button" class:active={healthFilter === 'all'} on:click={() => healthFilter = 'all'}>
+            <span>全部</span><strong>{searchMatchedScores.length}</strong>
           </button>
-        {/each}
+          <button type="button" class:active={healthFilter === 'red'} class:tone-danger={redProjectCount > 0} on:click={() => healthFilter = 'red'}>
+            <span>红区介入</span><strong>{redProjectCount}</strong>
+          </button>
+          <button type="button" class:active={healthFilter === 'yellow'} class:tone-warning={yellowProjectCount > 0} on:click={() => healthFilter = 'yellow'}>
+            <span>黄区补证</span><strong>{yellowProjectCount}</strong>
+          </button>
+          <button type="button" class:active={healthFilter === 'green'} class:tone-success={greenProjectCount > 0} on:click={() => healthFilter = 'green'}>
+            <span>稳定运行</span><strong>{greenProjectCount}</strong>
+          </button>
+        </div>
       </div>
 
       <div class="project-health-main-grid">
@@ -530,7 +469,14 @@
                 <span class="eyebrow">项目列表</span>
                 <h3>证据健康总表</h3>
               </div>
-              <span class="project-health-count font-mono">{projectHealthRows.length} / {scores.length}</span>
+              <div class="project-health-actions">
+                <div class="project-health-search">
+                  <span class="search-icon" aria-hidden="true"></span>
+                  <input type="text" placeholder="搜索项目、编号" bind:value={searchQuery} class="telemetry-search-input" />
+                </div>
+                <span class="project-health-count font-mono">{projectHealthRows.length} / {scores.length}</span>
+                <button class="wa-admin-action secondary font-mono" on:click={fetchScoresAndConfigs} disabled={loading}>{loading ? '同步中' : '刷新'}</button>
+              </div>
             </div>
 
             <div class="wa-admin-table-shell">
@@ -550,12 +496,16 @@
                   </tr>
                 </thead>
                 <tbody>
+                  {#if rankedFilteredScores.length === 0}
+                    <tr>
+                      <td colspan={projectHealthColumns.length + 1} class="project-health-empty-row">当前状态筛选下暂无项目</td>
+                    </tr>
+                  {:else}
                   {#each rankedFilteredScores as score}
                     {@const row = buildProjectHealthRow(score)}
                     {@const diagnosis = getProjectDiagnosis(score)}
                     <tr
                       class:is-selected={activeProjectScore?.project_key === score.project_key}
-                      class:has-expanded={expandedProjectKey === score.project_key}
                       on:click={() => selectProject(score)}
                     >
                       <td>
@@ -577,8 +527,8 @@
                         <div class="metric-micro-grid">
                           {#each diagnosis.dimensions as dim}
                             <div class="metric-micro-item {ADMIN_TONE_CLASS[dimensionTone(dim.tone)]}">
-                              <span class="font-mono">{dim.code}</span>
-                              <strong class="font-mono">{Math.round(dim.score)}</strong>
+                              <span>{dim.label}</span>
+                              <strong class="font-mono">{Math.round(dim.score)}%</strong>
                               <i style="width: {dim.score}%"></i>
                             </div>
                           {/each}
@@ -602,25 +552,8 @@
                         </button>
                       </td>
                     </tr>
-                    {#if expandedProjectKey === score.project_key}
-                      <tr class="diagnostic-expand-row">
-                        <td colspan={projectHealthColumns.length + 1}>
-                          <div class="diagnostic-panel {ADMIN_TONE_CLASS[row.tone || 'neutral']}">
-                            <div class="diagnostic-title">
-                              <span class="pulse-diagnostic-dot {getScoreColorClass(score.compound_score)}"></span>
-                              诊断证据 ({score.project_key})
-                            </div>
-                            <p class="diagnostic-content">{score.diagnostic || '当前项目运转状态良好，暂未扫描到风险点。'}</p>
-                            <div class="diagnostic-action-line">
-                              <strong>人工介入:</strong>
-                              <span>{diagnosis.manualDirection}</span>
-                            </div>
-                            <div class="diagnostic-footer">数据截止: {formatAdminDate(score.snapshot_date)} · well-ambient</div>
-                          </div>
-                        </td>
-                      </tr>
-                    {/if}
                   {/each}
+                  {/if}
                 </tbody>
               </table>
             </div>
@@ -673,9 +606,6 @@
               <button class="wa-admin-action primary" type="button" on:click={() => showProjectDetails(activeProjectScore)}>
                 查看计算细节
               </button>
-              <button class="wa-admin-action secondary" type="button" on:click={() => toggleDiagnostic(activeProjectScore.project_key)}>
-                {expandedProjectKey === activeProjectScore.project_key ? '收起诊断' : '展开诊断'}
-              </button>
             </div>
           {:else}
             <div class="project-health-inspector-empty">
@@ -697,20 +627,26 @@
       on:click={handleModalBackdropClick}
       on:keydown={handleModalBackdropKeydown}
     >
-      <div class="modal-content glass-panel" role="dialog" aria-modal="true" aria-label="{getDisplayName(selectedProjectScore)} 健康诊断与介入方案">
+      <div class="modal-content glass-panel health-diagnosis-modal" role="dialog" aria-modal="true" aria-label="{getDisplayName(selectedProjectScore)} 健康诊断与介入方案">
         <div class="modal-header">
-          <h3>{getDisplayName(selectedProjectScore)} 健康诊断与介入方案</h3>
-          <button class="close-btn" on:click={closeDetailsModal}>&times;</button>
+          <div class="modal-title-block">
+            <span>项目健康诊断</span>
+            <h3>{getDisplayName(selectedProjectScore)} 健康诊断与介入方案</h3>
+          </div>
+          <button class="close-btn" on:click={closeDetailsModal} aria-label="关闭健康诊断弹窗">&times;</button>
         </div>
         
-        <div class="modal-body font-mono">
+        <div class="modal-body">
           <section class="intervention-brief-card {getScoreColorClass(selectedProjectScore.compound_score)}">
             <div class="intervention-brief-head">
               <div>
                 <span>{selectedDiagnosis.urgency}</span>
                 <h4>{selectedDiagnosis.decisionQuestion}</h4>
               </div>
-              <strong class="font-mono">{selectedProjectScore.compound_score}</strong>
+              <div class="intervention-brief-score">
+                <span>综合健康度</span>
+                <strong class="font-mono">{selectedProjectScore.compound_score}</strong>
+              </div>
             </div>
             <div class="intervention-brief-grid">
               <div>
@@ -739,15 +675,15 @@
                       <span class="pulse-diagnostic-dot {getScoreColorClass(selectedProjectScore.compound_score)}"></span>
                       <span>DIAGNOSIS EVIDENCE</span>
                     </div>
-                    <p style="margin: 0; white-space: pre-wrap; line-height: 1.6;">{selectedProjectScore.diagnostic}</p>
+                    <p class="diagnostic-copy">{selectedProjectScore.diagnostic}</p>
                   </div>
                 </div>
               {/if}
 
-              <div class="detail-section" style="margin-top: 10px;">
+              <div class="detail-section">
                 <h4>PHDI 综合健康度分析</h4>
                 <div class="phdi-display">
-                  <div class="phdi-score-row" style="display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 12px; border-bottom: 1px dashed rgba(255, 255, 255, 0.05); padding-bottom: 12px;">
+                  <div class="phdi-score-row">
                     <span class="big-score {getScoreColorClass(selectedProjectScore.compound_score)}">
                       {selectedProjectScore.compound_score} <span class="unit">分</span>
                     </span>
@@ -756,8 +692,8 @@
                     </span>
                   </div>
                   
-                  <div class="formula-breakdown" style="width: 100%;">
-                    <h5 style="margin-top: 0;">计算公式权重剖析:</h5>
+                  <div class="formula-breakdown">
+                    <h5>计算公式权重剖析</h5>
                     {#if selectedConfig?.base_score_weight !== undefined}
                       {@const w = selectedConfig.base_score_weight}
                       {@const s = selectedConfig.base_score}
@@ -830,14 +766,14 @@
                 </div>
               </div>
 
-              <div class="detail-section" style="margin-top: 15px;">
+              <div class="detail-section">
                 <h4>核心维度明细</h4>
                 <div class="metrics-grid-vertical">
                   <!-- SH -->
-                  <div class="metric-row-card">
-                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
+                  <div class="metric-row-card {selectedProjectScore.schedule_health_score >= 85 ? 'metric-tone-safe' : (selectedProjectScore.schedule_health_score >= 70 ? 'metric-tone-warn' : 'metric-tone-danger')}">
+                    <div class="row-header">
                       <span class="row-title">进度排期健康 [SH]</span>
-                      <div style="display: flex; gap: 8px; align-items: center;">
+                      <div class="row-status">
                         <span class="row-status-tag font-mono {selectedProjectScore.schedule_health_score >= 85 ? 'text-emerald' : (selectedProjectScore.schedule_health_score >= 70 ? 'text-amber' : 'text-rose')}">
                           {selectedProjectScore.schedule_health_score >= 85 ? '正常' : (selectedProjectScore.schedule_health_score >= 70 ? '风险' : '滞后')}
                         </span>
@@ -849,10 +785,10 @@
                     </div>
                   </div>
                   <!-- EQ -->
-                  <div class="metric-row-card">
-                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
+                  <div class="metric-row-card {selectedProjectScore.engineering_quality >= 85 ? 'metric-tone-safe' : (selectedProjectScore.engineering_quality >= 70 ? 'metric-tone-warn' : 'metric-tone-danger')}">
+                    <div class="row-header">
                       <span class="row-title">工程质量 [EQ]</span>
-                      <div style="display: flex; gap: 8px; align-items: center;">
+                      <div class="row-status">
                         <span class="row-status-tag font-mono {selectedProjectScore.engineering_quality >= 85 ? 'text-emerald' : (selectedProjectScore.engineering_quality >= 70 ? 'text-amber' : 'text-rose')}">
                           {selectedProjectScore.engineering_quality >= 85 ? '正常' : (selectedProjectScore.engineering_quality >= 70 ? '待绑' : '无提交')}
                         </span>
@@ -864,10 +800,10 @@
                     </div>
                   </div>
                   <!-- CE -->
-                  <div class="metric-row-card">
-                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
+                  <div class="metric-row-card {selectedProjectScore.collaboration_effic >= 85 ? 'metric-tone-safe' : (selectedProjectScore.collaboration_effic >= 70 ? 'metric-tone-warn' : 'metric-tone-danger')}">
+                    <div class="row-header">
                       <span class="row-title">指派协同效率 [CE]</span>
-                      <div style="display: flex; gap: 8px; align-items: center;">
+                      <div class="row-status">
                         <span class="row-status-tag font-mono {selectedProjectScore.collaboration_effic >= 85 ? 'text-emerald' : (selectedProjectScore.collaboration_effic >= 70 ? 'text-amber' : 'text-rose')}">
                           {selectedProjectScore.collaboration_effic >= 85 ? '均衡' : (selectedProjectScore.collaboration_effic >= 70 ? '偏载' : '严重不均')}
                         </span>
@@ -879,10 +815,10 @@
                     </div>
                   </div>
                   <!-- SI -->
-                  <div class="metric-row-card">
-                    <div class="row-header" style="display: flex; justify-content: space-between; align-items: center;">
+                  <div class="metric-row-card {selectedProjectScore.stability_index >= 85 ? 'metric-tone-safe' : (selectedProjectScore.stability_index >= 70 ? 'metric-tone-warn' : 'metric-tone-danger')}">
+                    <div class="row-header">
                       <span class="row-title">缺陷与稳定性 [SI]</span>
-                      <div style="display: flex; gap: 8px; align-items: center;">
+                      <div class="row-status">
                         <span class="row-status-tag font-mono {selectedProjectScore.stability_index >= 85 ? 'text-emerald' : (selectedProjectScore.stability_index >= 70 ? 'text-amber' : 'text-rose')}">
                           {selectedProjectScore.stability_index >= 85 ? '稳定' : (selectedProjectScore.stability_index >= 70 ? '新增' : '高危')}
                         </span>
@@ -897,7 +833,7 @@
               </div>
 
               <!-- well-ambient 改进建议 -->
-              <div class="detail-section" style="margin-top: 15px;">
+              <div class="detail-section">
                 <h4>人工介入方向</h4>
                 <div class="action-recommendations">
                   {#each selectedDiagnosis.dimensions.filter(d => d.tone !== 'safe') as dim}
@@ -2576,7 +2512,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
     gap: var(--wa-space-4);
-    align-items: start;
+    align-items: stretch;
   }
 
   .project-health-table-card {
@@ -2792,8 +2728,11 @@
   }
 
   .project-health-inspector {
-    position: sticky;
-    top: var(--wa-space-4);
+    position: static;
+    top: auto;
+    height: 100%;
+    max-height: none;
+    overflow: visible;
   }
 
   .inspector-title-row {
@@ -2998,6 +2937,699 @@
     background: rgba(121, 139, 159, 0.34);
   }
 
+  /* Health diagnosis modal: calm light workbench contract */
+  .health-diagnosis-modal {
+    width: min(920px, calc(100vw - 40px));
+    max-width: none;
+    max-height: min(860px, calc(100dvh - 40px));
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(123, 143, 160, 0.22);
+    border-radius: 18px;
+    background: #fbfdfe;
+    box-shadow: 0 26px 70px rgba(30, 46, 64, 0.16), 0 2px 8px rgba(30, 46, 64, 0.05);
+    font-family: var(--wa-font-sans);
+  }
+
+  .health-diagnosis-modal:hover {
+    border-color: rgba(123, 143, 160, 0.22);
+  }
+
+  .health-diagnosis-modal .modal-header {
+    flex: none;
+    min-height: 68px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 14px 18px 13px 20px;
+    border-bottom: 1px solid var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  .health-diagnosis-modal .modal-title-block {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .health-diagnosis-modal .modal-title-block > span {
+    color: var(--wa-text-subtle);
+    font-size: 10px;
+    line-height: 1.2;
+    font-weight: 760;
+    letter-spacing: 0.04em;
+  }
+
+  .health-diagnosis-modal .modal-header h3 {
+    overflow: hidden;
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 15px;
+    line-height: 1.3;
+    font-weight: 780;
+    letter-spacing: -0.01em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .health-diagnosis-modal .close-btn {
+    width: 36px;
+    height: 36px;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--wa-text-muted);
+    font-size: 21px;
+    line-height: 1;
+  }
+
+  .health-diagnosis-modal .close-btn:hover {
+    border-color: var(--wa-border-soft);
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-strong);
+  }
+
+  .health-diagnosis-modal .close-btn:focus-visible {
+    outline: 3px solid var(--wa-accent-soft);
+    outline-offset: 1px;
+  }
+
+  .health-diagnosis-modal .modal-body {
+    min-height: 0;
+    padding: 16px 18px 20px 20px;
+    gap: 18px;
+    overflow-y: auto;
+    scrollbar-color: rgba(102, 119, 137, 0.34) transparent;
+  }
+
+  .health-diagnosis-modal .modal-body::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .health-diagnosis-modal .modal-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .health-diagnosis-modal .modal-body::-webkit-scrollbar-thumb {
+    border: 2px solid #fbfdfe;
+    border-radius: 999px;
+    background: rgba(102, 119, 137, 0.32);
+  }
+
+  .health-diagnosis-modal .intervention-brief-card {
+    position: relative;
+    gap: 12px;
+    padding: 14px 16px 13px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 12px;
+    background: #f5f8fa;
+  }
+
+  .health-diagnosis-modal .intervention-brief-card.score-red {
+    border-color: rgba(221, 75, 62, 0.18);
+    background: color-mix(in srgb, var(--wa-danger-soft) 34%, #f7f9fb);
+  }
+
+  .health-diagnosis-modal .intervention-brief-card.score-yellow {
+    border-color: rgba(216, 135, 0, 0.18);
+    background: color-mix(in srgb, var(--wa-warning-soft) 30%, #f7f9fb);
+  }
+
+  .health-diagnosis-modal .intervention-brief-card.score-green {
+    border-color: rgba(4, 150, 111, 0.16);
+    background: color-mix(in srgb, var(--wa-success-soft) 28%, #f7f9fb);
+  }
+
+  .health-diagnosis-modal .intervention-brief-head {
+    align-items: center;
+  }
+
+  .health-diagnosis-modal .intervention-brief-head > div:first-child {
+    min-width: 0;
+  }
+
+  .health-diagnosis-modal .intervention-brief-head > div:first-child > span {
+    color: var(--wa-text-muted);
+    font-size: 10px;
+    font-weight: 760;
+    letter-spacing: 0.03em;
+  }
+
+  .health-diagnosis-modal .intervention-brief-card.score-red .intervention-brief-head > div:first-child > span {
+    color: #a8453c;
+  }
+
+  .health-diagnosis-modal .intervention-brief-head h4 {
+    margin-top: 4px;
+    color: var(--wa-text-strong);
+    font-size: 14px;
+    line-height: 1.45;
+    font-weight: 720;
+    text-wrap: pretty;
+  }
+
+  .health-diagnosis-modal .intervention-brief-score {
+    display: grid;
+    justify-items: end;
+    gap: 2px;
+    flex: none;
+  }
+
+  .health-diagnosis-modal .intervention-brief-score span {
+    color: var(--wa-text-subtle);
+    font-size: 9px;
+    font-weight: 720;
+    letter-spacing: 0;
+  }
+
+  .health-diagnosis-modal .intervention-brief-score strong {
+    color: var(--wa-text-main);
+    font-size: 24px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .health-diagnosis-modal .intervention-brief-grid {
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.76);
+  }
+
+  .health-diagnosis-modal .intervention-brief-grid div {
+    min-height: 58px;
+    padding: 9px 11px;
+    border: 0;
+    border-left: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .health-diagnosis-modal .intervention-brief-grid div:first-child {
+    border-left: 0;
+  }
+
+  .health-diagnosis-modal .intervention-brief-grid span {
+    margin-bottom: 4px;
+    color: var(--wa-text-subtle);
+    font-size: 10px;
+    font-weight: 720;
+  }
+
+  .health-diagnosis-modal .intervention-brief-grid strong {
+    display: block;
+    color: var(--wa-text-main);
+    font-size: 11px;
+    line-height: 1.45;
+    font-weight: 650;
+  }
+
+  .health-diagnosis-modal .dashboard-columns {
+    grid-template-columns: minmax(0, 1.07fr) minmax(0, 0.93fr);
+    gap: 18px;
+  }
+
+  .health-diagnosis-modal .column-left,
+  .health-diagnosis-modal .column-right {
+    gap: 18px;
+  }
+
+  .health-diagnosis-modal .detail-section {
+    min-width: 0;
+  }
+
+  .health-diagnosis-modal .detail-section h4 {
+    margin: 0 0 9px;
+    padding: 0 0 7px;
+    border-bottom: 1px solid var(--wa-border-soft);
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    line-height: 1.3;
+    font-weight: 760;
+    letter-spacing: 0.01em;
+  }
+
+  .health-diagnosis-modal .diagnostic-panel-modal {
+    padding: 12px 13px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 10px;
+    background: #f8fafc;
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-sans);
+    font-size: 11px;
+    line-height: 1.65;
+  }
+
+  .health-diagnosis-modal .diagnostic-copy {
+    margin: 0;
+    white-space: pre-wrap;
+    line-height: 1.65;
+  }
+
+  .health-diagnosis-modal .diagnostic-panel-modal.score-red {
+    border-color: rgba(221, 75, 62, 0.16);
+    background: color-mix(in srgb, var(--wa-danger-soft) 24%, #fafcfd);
+    color: var(--wa-text-main);
+  }
+
+  .health-diagnosis-modal .diagnostic-panel-modal.score-yellow {
+    border-color: rgba(216, 135, 0, 0.16);
+    background: color-mix(in srgb, var(--wa-warning-soft) 22%, #fafcfd);
+    color: var(--wa-text-main);
+  }
+
+  .health-diagnosis-modal .diagnostic-panel-modal.score-green {
+    border-color: rgba(4, 150, 111, 0.14);
+    border-left-color: rgba(4, 126, 94, 0.62);
+    background: color-mix(in srgb, var(--wa-success-soft) 20%, #fafcfd);
+    color: var(--wa-text-main);
+  }
+
+  .health-diagnosis-modal .diag-header-row {
+    margin-bottom: 8px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--wa-border-soft);
+    color: var(--wa-text-muted);
+    font-family: var(--wa-font-mono);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+
+  .health-diagnosis-modal .pulse-diagnostic-dot {
+    width: 5px;
+    height: 5px;
+    animation: none;
+    box-shadow: none;
+  }
+
+  .health-diagnosis-modal .phdi-display {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 11px;
+    background: var(--wa-surface-inset);
+  }
+
+  .health-diagnosis-modal .phdi-score-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+
+  .health-diagnosis-modal .big-score {
+    color: var(--wa-text-main);
+    font-size: 32px;
+    line-height: 1;
+    font-weight: 780;
+    text-shadow: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .health-diagnosis-modal .big-score.score-red {
+    color: #b9473c;
+    text-shadow: none;
+  }
+
+  .health-diagnosis-modal .big-score.score-yellow {
+    color: #a56b12;
+    text-shadow: none;
+  }
+
+  .health-diagnosis-modal .big-score.score-green {
+    color: #087b5d;
+    text-shadow: none;
+  }
+
+  .health-diagnosis-modal .big-score .unit {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+  }
+
+  .health-diagnosis-modal .health-badge {
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 720;
+    box-shadow: none;
+  }
+
+  .health-diagnosis-modal .health-badge.score-red {
+    border-color: rgba(221, 75, 62, 0.18);
+    background: var(--wa-danger-soft);
+    color: #a8453c;
+  }
+
+  .health-diagnosis-modal .health-badge.score-yellow {
+    border-color: rgba(216, 135, 0, 0.18);
+    background: var(--wa-warning-soft);
+    color: #99620d;
+  }
+
+  .health-diagnosis-modal .health-badge.score-green {
+    border-color: rgba(4, 150, 111, 0.16);
+    background: var(--wa-success-soft);
+    color: #087558;
+  }
+
+  .health-diagnosis-modal .formula-breakdown {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .health-diagnosis-modal .formula-breakdown h5 {
+    margin: 0 0 8px;
+    color: var(--wa-text-muted);
+    font-size: 10px;
+    font-weight: 720;
+  }
+
+  .health-diagnosis-modal .formula-schematic {
+    gap: 8px;
+    padding: 9px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--wa-text-main);
+    font-size: 10px;
+  }
+
+  .health-diagnosis-modal .schematic-node {
+    min-height: 44px;
+    justify-content: center;
+    padding: 5px 7px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 7px;
+    background: #fff;
+  }
+
+  .health-diagnosis-modal .schematic-node .node-label {
+    margin-bottom: 3px;
+    color: var(--wa-text-subtle);
+    font-size: 9px;
+    text-transform: none;
+  }
+
+  .health-diagnosis-modal .schematic-node .node-value {
+    color: var(--wa-text-main);
+    font-size: 10px;
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node {
+    border-style: solid;
+    box-shadow: none;
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-red {
+    border-color: rgba(221, 75, 62, 0.18);
+    background: var(--wa-danger-soft);
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-red .node-value {
+    color: #a8453c;
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-yellow {
+    border-color: rgba(216, 135, 0, 0.18);
+    background: var(--wa-warning-soft);
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-yellow .node-value {
+    color: #99620d;
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-green {
+    border-color: rgba(4, 150, 111, 0.16);
+    background: var(--wa-success-soft);
+  }
+
+  .health-diagnosis-modal .schematic-node.result-node.score-green .node-value {
+    color: #087558;
+  }
+
+  .health-diagnosis-modal .schematic-connector {
+    color: var(--wa-text-subtle);
+    font-size: 12px;
+  }
+
+  .health-diagnosis-modal .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .health-diagnosis-modal .detail-item {
+    min-width: 0;
+    min-height: 36px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 9px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 8px;
+    background: var(--wa-surface-inset);
+    font-size: 10px;
+  }
+
+  .health-diagnosis-modal .detail-item .label {
+    color: var(--wa-text-muted);
+  }
+
+  .health-diagnosis-modal .detail-item .value {
+    overflow: hidden;
+    color: var(--wa-text-strong);
+    font-weight: 720;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .health-diagnosis-modal .detail-item .value.highlight {
+    color: var(--wa-accent-strong);
+    text-shadow: none;
+  }
+
+  .health-diagnosis-modal .detail-item .value.badge {
+    padding: 2px 6px;
+    border: 1px solid rgba(0, 143, 150, 0.14);
+    border-radius: 5px;
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+  }
+
+  .health-diagnosis-modal .metrics-grid-vertical {
+    gap: 7px;
+  }
+
+  .health-diagnosis-modal .metric-row-card {
+    gap: 7px;
+    padding: 9px 11px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 9px;
+    background: var(--wa-surface-inset);
+  }
+
+  .health-diagnosis-modal .metric-row-card .row-header,
+  .health-diagnosis-modal .row-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .health-diagnosis-modal .metric-row-card .row-title {
+    color: var(--wa-text-muted);
+    font-size: 10px;
+    font-weight: 680;
+  }
+
+  .health-diagnosis-modal .metric-row-card .row-score {
+    color: var(--wa-text-main);
+    font-size: 11px;
+    font-weight: 760;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .health-diagnosis-modal .row-status-tag {
+    padding: 2px 5px;
+    border-radius: 5px;
+    font-size: 9px;
+    font-weight: 700;
+  }
+
+  .health-diagnosis-modal .row-status-tag.text-emerald {
+    border-color: rgba(4, 150, 111, 0.14);
+    background: var(--wa-success-soft);
+    color: #087558;
+  }
+
+  .health-diagnosis-modal .row-status-tag.text-amber {
+    border-color: rgba(216, 135, 0, 0.16);
+    background: var(--wa-warning-soft);
+    color: #99620d;
+  }
+
+  .health-diagnosis-modal .row-status-tag.text-rose {
+    border-color: rgba(221, 75, 62, 0.16);
+    background: var(--wa-danger-soft);
+    color: #a8453c;
+  }
+
+  .health-diagnosis-modal .metric-row-card .row-progress {
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(102, 119, 137, 0.12);
+  }
+
+  .health-diagnosis-modal .metric-row-card .row-progress span,
+  .health-diagnosis-modal .metric-row-card .row-progress span.bg-blue,
+  .health-diagnosis-modal .metric-row-card .row-progress span.bg-emerald,
+  .health-diagnosis-modal .metric-row-card .row-progress span.bg-amber,
+  .health-diagnosis-modal .metric-row-card .row-progress span.bg-rose {
+    border-radius: 999px;
+    background: rgba(0, 143, 150, 0.64);
+    box-shadow: none;
+  }
+
+  .health-diagnosis-modal .metric-row-card.metric-tone-warn .row-progress span {
+    background: rgba(184, 117, 14, 0.66);
+  }
+
+  .health-diagnosis-modal .metric-row-card.metric-tone-danger .row-progress span {
+    background: rgba(185, 71, 60, 0.66);
+  }
+
+  .health-diagnosis-modal .action-recommendations {
+    gap: 7px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .health-diagnosis-modal .recommendation-item {
+    gap: 9px;
+    padding: 9px 10px 9px 8px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 9px;
+    background: var(--wa-surface-inset);
+    font-size: 10px;
+    line-height: 1.55;
+  }
+
+  .health-diagnosis-modal .recommendation-item.tone-danger {
+    border-color: rgba(221, 75, 62, 0.14);
+    background: var(--wa-surface-inset);
+  }
+
+  .health-diagnosis-modal .recommendation-item.tone-warn {
+    border-color: rgba(216, 135, 0, 0.14);
+    background: var(--wa-surface-inset);
+  }
+
+  .health-diagnosis-modal .recommendation-item.tone-safe {
+    border-color: rgba(4, 150, 111, 0.12);
+    background: var(--wa-surface-inset);
+  }
+
+  .health-diagnosis-modal .recommendation-item p {
+    color: var(--wa-text-main);
+  }
+
+  .health-diagnosis-modal .recommendation-item b {
+    color: var(--wa-text-strong);
+    font-weight: 720;
+  }
+
+  .health-diagnosis-modal .rec-bullet {
+    min-width: 28px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--wa-neutral-soft);
+    color: var(--wa-text-muted);
+    font-size: 9px;
+  }
+
+  .health-diagnosis-modal .recommendation-route {
+    align-items: center;
+    padding: 9px 10px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 9px;
+    background: rgba(0, 143, 150, 0.055);
+    color: var(--wa-text-muted);
+    font-size: 10px;
+  }
+
+  .health-diagnosis-modal .recommendation-route strong {
+    max-width: 72%;
+    color: var(--wa-accent-strong);
+    font-weight: 700;
+  }
+
+  @media (max-width: 860px) {
+    .health-diagnosis-modal {
+      width: min(720px, calc(100vw - 24px));
+      max-height: calc(100dvh - 24px);
+    }
+
+    .health-diagnosis-modal .dashboard-columns {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .health-diagnosis-modal .modal-header {
+      min-height: 62px;
+      padding: 12px 12px 11px 14px;
+    }
+
+    .health-diagnosis-modal .modal-body {
+      padding: 12px 10px 16px 12px;
+    }
+
+    .health-diagnosis-modal .intervention-brief-head,
+    .health-diagnosis-modal .recommendation-route {
+      align-items: flex-start;
+    }
+
+    .health-diagnosis-modal .intervention-brief-score {
+      justify-items: start;
+    }
+
+    .health-diagnosis-modal .intervention-brief-grid,
+    .health-diagnosis-modal .detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .health-diagnosis-modal .intervention-brief-grid div {
+      min-height: 0;
+      border-top: 1px solid var(--wa-border-soft);
+      border-left: 0;
+    }
+
+    .health-diagnosis-modal .intervention-brief-grid div:first-child {
+      border-top: 0;
+    }
+
+    .health-diagnosis-modal .formula-schematic {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .health-diagnosis-modal .schematic-connector {
+      align-self: center;
+    }
+
+    .health-diagnosis-modal .recommendation-route strong {
+      max-width: none;
+      text-align: left;
+    }
+  }
+
   @media (max-width: 1180px) {
     .project-health-main-grid {
       grid-template-columns: 1fr;
@@ -3025,6 +3657,101 @@
     }
   }
 
+  /* Viewport-bounded health workbench: data rows scroll inside the table shell. */
+  @media (min-width: 1181px) {
+    .project-health-workbench {
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: auto auto auto;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      margin-bottom: 0;
+    }
+
+    .project-health-main-grid,
+    .project-health-table-stack,
+    .project-health-table-card {
+      height: 100%;
+      min-height: 0;
+    }
+
+    .project-health-table-stack,
+    .project-health-table-card {
+      overflow: hidden;
+    }
+
+    .project-health-main-grid {
+      height: auto;
+      min-height: 450px;
+      overflow: visible;
+    }
+
+    .project-health-table-card {
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .project-health-table-card > .wa-admin-table-shell {
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+
+    .project-health-inspector {
+      height: auto;
+      min-height: 0;
+      max-height: none;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: none;
+    }
+
+    .project-health-inspector::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  }
+
+  @media (min-width: 861px) and (max-width: 1180px) {
+    .project-health-workbench {
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      margin-bottom: 0;
+    }
+
+    .project-health-table-card {
+      height: clamp(420px, 58dvh, 560px);
+      min-height: 0;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .project-health-table-card > .wa-admin-table-shell {
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .project-health-table-card {
+      height: min(560px, 62dvh);
+      min-height: 0;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .project-health-table-card > .wa-admin-table-shell {
+      min-height: 0;
+      height: 100%;
+      overflow: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
   /* Keyframe Animations */
   @keyframes slideDown {
     from { opacity: 0; transform: translateY(-6px); }
@@ -3039,5 +3766,223 @@
   @keyframes statusPulse {
     0%, 100% { opacity: 0.6; transform: scale(1); }
     50% { opacity: 1; transform: scale(1.2); }
+  }
+
+  /* Project health keeps the data table as the only desktop scroll owner. */
+  .project-health-header,
+  .health-decision-strip,
+  .project-health-table-card,
+  .project-health-inspector {
+    border-color: var(--wa-glass-outline, rgba(72, 98, 118, 0.18));
+    border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
+    border-radius: var(--wa-radius-lg, 14px);
+    background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
+    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
+  }
+
+  .telemetry-search-input,
+  .project-health-actions .wa-admin-action {
+    border-radius: var(--wa-radius-pill, 999px);
+  }
+
+  .project-health-table-card > .wa-admin-table-shell {
+    border: 0;
+    border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .health-decision-strip {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) auto;
+    align-items: center;
+    gap: var(--wa-space-4);
+    padding: 10px 12px;
+  }
+
+  .health-decision-copy {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .health-decision-copy strong {
+    color: var(--wa-text-strong);
+    font-size: 14px;
+    line-height: 1.35;
+  }
+
+  .health-decision-copy small {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .health-filter-group {
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid var(--wa-border-divider);
+    border-radius: var(--wa-radius-md);
+    background: rgba(255, 255, 255, 0.58);
+  }
+
+  .health-filter-group button {
+    min-width: 88px;
+    min-height: 44px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    border-left: 1px solid var(--wa-border-divider);
+    padding: 7px 10px;
+    background: transparent;
+    color: var(--wa-text-muted);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .health-filter-group button:first-child {
+    border-left: 0;
+  }
+
+  .health-filter-group button strong {
+    color: var(--wa-text-strong);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .health-filter-group button:hover,
+  .health-filter-group button:focus-visible {
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-main);
+    outline: none;
+  }
+
+  .health-filter-group button.active {
+    background: var(--wa-row-active);
+    box-shadow: inset 0 -2px 0 var(--wa-accent);
+    color: var(--wa-text-strong);
+  }
+
+  .health-filter-group button.tone-danger strong {
+    color: var(--wa-danger);
+  }
+
+  .health-filter-group button.tone-warning strong {
+    color: var(--wa-warning);
+  }
+
+  .health-filter-group button.tone-success strong {
+    color: var(--wa-success);
+  }
+
+  .project-health-empty-row {
+    height: 160px;
+    color: var(--wa-text-muted);
+    text-align: center;
+  }
+
+  .project-health-table .metric-micro-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-health-table .metric-micro-item {
+    min-height: 34px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .project-health-table .metric-micro-item span {
+    overflow: hidden;
+    font-weight: 720;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-health-facts {
+    gap: 0 var(--wa-space-3);
+  }
+
+  .project-health-facts div {
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: 0;
+    background: transparent;
+    padding: 8px 0;
+  }
+
+  @media (min-width: 1181px) {
+    .project-health-workbench {
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      margin-bottom: 0;
+    }
+
+    .project-health-main-grid,
+    .project-health-table-stack,
+    .project-health-table-card {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .project-health-table-card > .wa-admin-table-shell {
+      height: 100%;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .project-health-inspector {
+      height: 100%;
+      min-height: 0;
+      max-height: none;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .project-health-inspector-section p {
+      display: -webkit-box;
+      overflow: hidden;
+      line-clamp: 3;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+
+    .project-health-inspector-section li:nth-child(n + 3) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .health-decision-strip {
+      grid-template-columns: 1fr;
+    }
+
+    .health-filter-group {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .health-filter-group button {
+      flex: 1 0 92px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status-pulse,
+    .health-diagnosis-modal,
+    .project-health-state {
+      animation: none !important;
+    }
   }
 </style>

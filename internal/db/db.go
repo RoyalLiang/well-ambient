@@ -22,6 +22,12 @@ type WebhookLog struct {
 // TaskTelemetry tracks the parsed git state for tasks
 type TaskTelemetry struct {
 	TaskID            string     `gorm:"primaryKey;column:task_id" json:"task_id"`
+	ProjectKey        string     `gorm:"index;index:idx_task_jira_project_type,priority:2;size:64;column:project_key" json:"project_key"`
+	Source            string     `gorm:"index;index:idx_task_jira_project_type,priority:1;size:32" json:"source"`
+	ExternalKey       string     `gorm:"index;size:160;column:external_key" json:"external_key"`
+	ParentWorkItemID  string     `gorm:"index;size:160;column:parent_work_item_id" json:"parent_work_item_id"`
+	Revision          uint       `gorm:"not null;default:0" json:"revision"`
+	PlanningState     string     `gorm:"index;size:32;not null;default:draft;column:planning_state" json:"planning_state"`
 	Title             string     `json:"title"`
 	Description       string     `json:"description"` // 详细描述
 	Repo              string     `json:"repo"`
@@ -31,7 +37,7 @@ type TaskTelemetry struct {
 	Branch            string     `gorm:"index" json:"branch"`
 	LastCommit        string     `json:"last_commit"`
 	Status            string     `gorm:"index" json:"status"` // backlog, progress, review, done
-	IssueType         string     `gorm:"index" json:"issue_type"`
+	IssueType         string     `gorm:"index;index:idx_task_jira_project_type,priority:3" json:"issue_type"`
 	TaskCreatedAt     time.Time  `json:"task_created_at"`
 	LastUpdate        time.Time  `gorm:"index" json:"last_update"`
 	CompletedAt       *time.Time `json:"completed_at"`                              // 完成时间
@@ -66,25 +72,51 @@ type DeconstructArchive struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
+// DemandAttachment stores a compressed original uploaded as evidence for demand deconstruction.
+type DemandAttachment struct {
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	DemandID             string    `gorm:"index;column:demand_id;size:160" json:"demand_id"`
+	TaskGroupID          string    `gorm:"index;column:task_group_id;size:160" json:"task_group_id"`
+	ContextPackID        uint      `gorm:"index;column:context_pack_id" json:"context_pack_id"`
+	DeconstructArchiveID uint      `gorm:"index;column:deconstruct_archive_id" json:"deconstruct_archive_id"`
+	UploadedBy           string    `gorm:"index;column:uploaded_by;size:160" json:"uploaded_by"`
+	OriginalName         string    `gorm:"size:512" json:"original_name"`
+	MimeType             string    `gorm:"size:160" json:"mime_type"`
+	Extension            string    `gorm:"size:16" json:"extension"`
+	StoragePath          string    `gorm:"uniqueIndex;size:512" json:"storage_path"`
+	SHA256               string    `gorm:"index;size:64" json:"sha256"`
+	OriginalSize         int64     `json:"original_size"`
+	CompressedSize       int64     `json:"compressed_size"`
+	Status               string    `gorm:"index;size:32" json:"status"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
 // ContextDocument stores source-level knowledge records for AI context.
 type ContextDocument struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Title       string    `json:"title"`
-	Type        string    `gorm:"index;size:64" json:"type"`
-	Scope       string    `gorm:"index;size:64" json:"scope"`
-	ScopeID     string    `gorm:"index;size:160" json:"scope_id"`
-	Source      string    `gorm:"index;size:64" json:"source"`
-	Owner       string    `json:"owner"`
-	Status      string    `gorm:"index;size:32" json:"status"`
-	Version     int       `json:"version"`
-	ContentHash string    `gorm:"index;size:64" json:"content_hash"`
-	Summary     string    `gorm:"type:text" json:"summary"`
-	Content     string    `gorm:"type:text" json:"content"`
-	TokenCount  int       `json:"token_count"`
-	Freshness   float64   `json:"freshness"`
-	Confidence  float64   `json:"confidence"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	ParentDocumentID uint      `gorm:"index" json:"parent_document_id"`
+	Title            string    `json:"title"`
+	OriginalName     string    `gorm:"size:255" json:"original_name"`
+	MimeType         string    `gorm:"size:128" json:"mime_type"`
+	Type             string    `gorm:"index;size:64" json:"type"`
+	Scope            string    `gorm:"index;size:64" json:"scope"`
+	ScopeID          string    `gorm:"index;size:160" json:"scope_id"`
+	Source           string    `gorm:"index;size:64" json:"source"`
+	Owner            string    `json:"owner"`
+	ImportedBy       string    `gorm:"size:160" json:"imported_by"`
+	Status           string    `gorm:"index;size:32" json:"status"`
+	IngestionStatus  string    `gorm:"index;size:32" json:"ingestion_status"`
+	IngestionError   string    `gorm:"type:text" json:"ingestion_error"`
+	Version          int       `json:"version"`
+	ContentHash      string    `gorm:"index;size:64" json:"content_hash"`
+	Summary          string    `gorm:"type:text" json:"summary"`
+	Content          string    `gorm:"type:text" json:"content"`
+	TokenCount       int       `json:"token_count"`
+	Freshness        float64   `json:"freshness"`
+	Confidence       float64   `json:"confidence"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // ContextFact stores normalized, prompt-ready fact cards.
@@ -263,6 +295,20 @@ type DecisionEvent struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// DailyJiraDecision stores the operational follow-up state for a morning Jira decision.
+// DecisionEvent remains the immutable audit ledger; this record adds the reminder policy
+// needed to revisit an unresolved Jira after the meeting.
+type DailyJiraDecision struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	TaskID     string    `gorm:"index:idx_daily_jira_task_created" json:"task_id"`
+	Status     string    `gorm:"index" json:"status"` // follow_up, escalate, reassign
+	Assignee   string    `json:"assignee"`
+	Actor      string    `json:"actor"`
+	Note       string    `gorm:"type:text" json:"note"`
+	ReminderAt time.Time `gorm:"index" json:"reminder_at"`
+	CreatedAt  time.Time `gorm:"index:idx_daily_jira_task_created" json:"created_at"`
+}
+
 // InitDB initializes the SQLite connection and runs auto-migrations
 func InitDB(dbPath string) error {
 	var err error
@@ -276,6 +322,7 @@ func InitDB(dbPath string) error {
 		&WebhookLog{},
 		&TaskTelemetry{},
 		&DeconstructArchive{},
+		&DemandAttachment{},
 		&ContextDocument{},
 		&ContextFact{},
 		&ContextChunk{},
@@ -286,6 +333,8 @@ func InitDB(dbPath string) error {
 		&JiraCommentLog{},
 		&Notification{},
 		&UserNotificationState{},
+		&UserProjectPreference{},
+		&UserTablePreference{},
 		&userdb.User{},
 		&userdb.UserGroup{},
 		&userdb.UserGroupMembership{},
@@ -296,7 +345,13 @@ func InitDB(dbPath string) error {
 		&userdb.AuditLog{},
 		&ProjectConfig{},
 		&ProjectScore{},
+		&ReleaseVersion{},
+		&ReleaseJiraLink{},
+		&WorkItemReleaseLink{},
+		&WorkItemEvent{},
+		&WorkItemSyncOperation{},
 		&DecisionEvent{},
+		&DailyJiraDecision{},
 		&DemandSpecVersion{},
 		&ReviewContract{},
 		&ExecutionRun{},
@@ -305,6 +360,22 @@ func InitDB(dbPath string) error {
 	)
 	if err != nil {
 		return err
+	}
+	// Task-tracking read models filter by normalized issue type before status,
+	// project and owner. Expression/composite indexes keep those dashboard reads
+	// index-backed without changing legacy mixed-case telemetry rows.
+	taskTrackingIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_task_tracking_kind_status_project_owner
+			ON task_telemetries (LOWER(TRIM(issue_type)), status, project_key, assignee)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_tracking_parent_group
+			ON task_telemetries (parent_work_item_id, task_group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_git_evidence_task_created
+			ON git_commit_logs (task_id, created_at DESC)`,
+	}
+	for _, statement := range taskTrackingIndexes {
+		if err := DB.Exec(statement).Error; err != nil {
+			return err
+		}
 	}
 
 	// Seed data for RBAC

@@ -850,8 +850,8 @@
   .evidence-stack p {
     margin: 0;
     padding: 10px 12px;
-    border-left: 2px solid var(--wa-accent);
-    border-radius: 0 var(--wa-radius-md) var(--wa-radius-md) 0;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
     background: rgba(244, 251, 255, 0.045);
     color: var(--wa-text-main);
     font-size: 0.8rem;
@@ -972,7 +972,6 @@
     min-height: 74px;
     padding: 12px 14px;
     border: 1px solid var(--wa-border-soft);
-    border-top: 3px solid var(--wa-accent);
     border-radius: var(--wa-radius-xl);
     background: rgba(255, 255, 255, 0.82);
     box-shadow: none;

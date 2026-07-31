@@ -54,3 +54,15 @@ validation_language:
   ran: "Validated with <command/check>."
   not_ran: "I did not run <check>; reason: <reason>."
   partial: "Partially validated with <check>; remaining gap: <gap>."
+
+ui_change_acceptance:
+  mandatory: true
+  requirements:
+    - "Every delivery that changes UI must use browser simulation against the actual affected route or workflow."
+    - "Capture screenshots of the changed state and inspect visual hierarchy, color consistency, spacing, alignment, overflow, responsive sizing, and interaction state before acceptance."
+    - "Build, lint, type checks, DOM inspection, or unauthenticated preview pages do not replace screenshot-based visual verification."
+    - "Do not mark a UI change complete when the affected authenticated state was not opened and visually reviewed."
+    - "When authentication or permissions block the affected UI, stop at the authentication step and wait for the user to provide the required login data or access; do not bypass authentication or claim visual acceptance."
+  final_response:
+    - "State which route, viewport, interaction state, and screenshot were reviewed."
+    - "If blocked by authentication, report the blocker and request the required user input instead of delivering completion."

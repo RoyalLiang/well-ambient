@@ -51,6 +51,12 @@ func TestKPIPerformanceIncludesProcessRiskFields(t *testing.T) {
 	if bob.AvgCycleDays != 3.5 {
 		t.Fatalf("Bob AvgCycleDays = %.1f, want 3.5", bob.AvgCycleDays)
 	}
+	if bob.TaskCount != 2 || bob.BugCount != 0 || bob.DelayRatio != 50 {
+		t.Fatalf("Bob workload profile mismatch: tasks=%d bugs=%d delay=%.1f", bob.TaskCount, bob.BugCount, bob.DelayRatio)
+	}
+	if bob.RequirementBaseScore != 60 || bob.ScoredItemCount != 0 {
+		t.Fatalf("Bob base score fallback mismatch: score=%.1f count=%d", bob.RequirementBaseScore, bob.ScoredItemCount)
+	}
 	if len(bob.RiskNotes) < 3 {
 		t.Fatalf("Bob RiskNotes should include overdue and review notes: %+v", bob.RiskNotes)
 	}
@@ -258,6 +264,18 @@ func findUserKPI(t *testing.T, users []UserKPIDTO, name string) UserKPIDTO {
 	}
 	t.Fatalf("User %q not found in KPI response: %+v", name, users)
 	return UserKPIDTO{}
+}
+
+func TestRequirementBaseScoreUsesAIDifficultyAndManualEstimate(t *testing.T) {
+	aiScore, ok := requirementBaseScore(db.TaskTelemetry{Difficulty: "High", EstimateSource: "ai_deconstruct"})
+	if !ok || aiScore != 90 {
+		t.Fatalf("AI high-difficulty score = %v, %v; want 90, true", aiScore, ok)
+	}
+
+	manualScore, ok := requirementBaseScore(db.TaskTelemetry{EstimateDays: 3.5, EstimateSource: "manual_adjusted"})
+	if !ok || manualScore != 76 {
+		t.Fatalf("manual estimate score = %v, %v; want 76, true", manualScore, ok)
+	}
 }
 
 func containsAll(items []string, values ...string) bool {

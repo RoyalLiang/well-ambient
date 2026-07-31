@@ -871,9 +871,9 @@
 
   .info-block {
     background: rgba(30, 41, 59, 0.4);
-    border-left: 4px solid #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.34);
     padding: 12px 16px;
-    border-radius: 0 8px 8px 0;
+    border-radius: 8px;
     margin-bottom: 24px;
   }
 
@@ -2315,6 +2315,16 @@
 
     .gen-btn {
       margin: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast,
+    .summary-modal,
+    .checkmark,
+    .checkmark-circle,
+    .checkmark-check {
+      animation: none !important;
     }
   }
 </style>

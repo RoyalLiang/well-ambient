@@ -36,6 +36,65 @@ const contextFacts = [
   }
 ]
 
+const corpusSourceDocuments = {
+  41: {
+    id: 41,
+    title: 'FMS 模块说明',
+    original_name: 'fms-module-guide.md',
+    version: 1,
+    content_hash: 'preview-fms-v1',
+    ingestion_status: 'completed',
+    content: '# FMS 模块说明\n\n## Task Executor\n\n负责接收内部模块任务指令并驱动流程引擎。\n\n## Vehicle Manager\n\n负责无人车目标点、路径和状态交互。\n\n## TOS Interface\n\n负责与外部 TOS 系统交换任务和设备信息。'
+  },
+  42: {
+    id: 42,
+    title: '配置中心治理规范',
+    original_name: 'settings-governance.md',
+    version: 3,
+    content_hash: 'preview-settings-v3',
+    ingestion_status: 'completed',
+    content: '# 配置中心治理规范\n\n普通语料审核后直接发布。高敏感或全局架构规则需要完成影响确认。'
+  }
+}
+
+const candidateFixture = (
+  id: number,
+  documentID: 41 | 42,
+  title: string,
+  candidateType: string,
+  sourceAnchor: string,
+  options: { status?: string; sensitivity?: string; scope?: string; evidenceKind?: string } = {}
+) => ({
+  id,
+  context_document_id: documentID,
+  candidate_type: candidateType,
+  scope: options.scope || 'global',
+  scope_id: '',
+  title,
+  summary: `汇总资料中与“${title}”有关的可复用设计约束。`,
+  content: `# ${title}\n\n- 保留原始资料中的明确职责与边界。\n- 以原子语料形式参与后续上下文选择。`,
+  source_anchor: sourceAnchor,
+  evidence_kind: options.evidenceKind || 'source_fact',
+  ai_model: 'preview-reasoning-model',
+  confidence: 0.9,
+  sensitivity: options.sensitivity || 'normal',
+  review_mode: options.status === 'impact_review' ? 'impact_required' : 'standard',
+  status: options.status || 'pending',
+  created_at: '2026-07-14T14:38:00+08:00',
+  source_document: corpusSourceDocuments[documentID]
+})
+
+const corpusCandidates = [
+  candidateFixture(101, 41, 'Task Executor 模块职责与流程引擎集成', 'workflow', '# Task Executor'),
+  candidateFixture(102, 41, 'Vehicle Manager 的路径处理流程', 'workflow', '# Vehicle Manager'),
+  candidateFixture(103, 41, 'Vehicle Manager 模块职责与交互边界', 'feature_boundary', '# Vehicle Manager'),
+  candidateFixture(104, 41, 'TOS Interface 的通信方式', 'architecture', '# TOS Interface'),
+  candidateFixture(105, 41, 'TOS Interface 的任务决策依据与处理动作', 'workflow', '# TOS Interface'),
+  candidateFixture(106, 41, 'FMS 全局模块边界规则', 'architecture', '# 模块边界', { status: 'impact_review', sensitivity: 'high' }),
+  candidateFixture(201, 42, '普通语料审核后直接发布', 'workflow', '# 审核流程'),
+  candidateFixture(202, 42, '高敏感规则需要影响确认', 'risk_rule', '# 发布门禁', { sensitivity: 'high' })
+]
+
 const projects = [
   { id: 1, project_name: '智能驾驶平台', project_key: 'IDP', base_priority: 'P1', project_phase: '交付', base_score: 82, base_score_weight: 0.2, git_repos_json: '[]' },
   { id: 2, project_name: '远程运营中心', project_key: 'ROC', base_priority: 'P2', project_phase: '运营', base_score: 76, base_score_weight: 0.15, git_repos_json: '[]' },
@@ -126,6 +185,7 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 })
 
 const nativeFetch = window.fetch.bind(window)
+const corpusPreviewState = new URLSearchParams(window.location.search).get('corpus')
 
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -171,6 +231,43 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       cache_key: 'settings-preview-v48',
       items: contextFacts.map((fact, index) => ({ ...fact, score: 0.92 - index * 0.08, reason: '与配置中心工作流直接相关' }))
     })
+  }
+  if (url.startsWith('/api/context/documents')) {
+    return json({ items: Object.values(corpusSourceDocuments) })
+  }
+  if (url.startsWith('/api/corpus-candidates?')) {
+    if (corpusPreviewState === 'error') return json({ error: '预览环境候选队列加载失败' }, 503)
+    if (corpusPreviewState === 'empty') return json({ items: [] })
+    return json({ items: corpusCandidates })
+  }
+  const corpusCandidateRoute = url.match(/^\/api\/corpus-candidates\/(\d+)\/(impact|review|publish)$/)
+  if (corpusCandidateRoute) {
+    const candidate = corpusCandidates.find((item) => item.id === Number(corpusCandidateRoute[1]))
+    if (!candidate) return json({ error: 'preview candidate not found' }, 404)
+    if (corpusCandidateRoute[2] === 'impact') {
+      const sourceDocument = corpusSourceDocuments[candidate.context_document_id]
+      return json({
+        impact: {
+          candidate,
+          source_document: sourceDocument,
+          current_facts: contextFacts.filter((fact) => fact.status === 'active'),
+          before_markdown: '# 当前生效上下文\n\n## 管理台结构\n\n配置页使用统一轻量工作台结构。',
+          after_markdown: `# ${candidate.title}\n\n${candidate.summary}\n\n${candidate.content}`,
+          source_markdown: sourceDocument.content,
+          requires_impact_review: candidate.status === 'impact_review' || candidate.sensitivity === 'high',
+          reason: candidate.sensitivity === 'high'
+            ? '该内容被标记为高敏感语料，需要确认对现有上下文和权限边界的影响。'
+            : '该候选属于普通语料，人工审核通过后可直接发布。'
+        }
+      })
+    }
+    if (corpusCandidateRoute[2] === 'review') {
+      return json({
+        candidate: { ...candidate, status: candidate.sensitivity === 'high' ? 'impact_review' : 'accepted' },
+        requires_impact_review: candidate.sensitivity === 'high'
+      })
+    }
+    return json({ candidate: { ...candidate, status: 'accepted' }, context_fact: contextFacts[0] })
   }
   if (url.startsWith('/api/gitlab/projects')) {
     return json([

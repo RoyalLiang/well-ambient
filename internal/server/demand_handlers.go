@@ -12,6 +12,7 @@ import (
 	"time"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/deliveryplanning"
 	"well-ambient/internal/kanban"
 )
 
@@ -48,33 +49,13 @@ func (s *Server) handleGetDemandOptions(w http.ResponseWriter, r *http.Request) 
 
 	assignees := make(map[string]string)
 	projects := make(map[string]string)
-	visibility, users, err := s.loadCoreMemberVisibility()
+	directory, err := s.loadDeliveryDirectory()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query users for demand options: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to query delivery directory for demand options: %v", err), http.StatusInternalServerError)
 		return
 	}
-
-	if name := r.Header.Get("x-authenticated-user-name"); visibility.includesAssignee(name) {
-		addDemandOption(assignees, name)
-	}
-	if username := r.Header.Get("x-authenticated-user-id"); visibility.includesAssignee(username) {
-		addDemandOption(assignees, username)
-	}
-
-	for _, u := range users {
-		assignee := firstNonBlank(u.Name, u.Username, u.Email)
-		if visibility.includesAssignee(assignee) {
-			addDemandOption(assignees, assignee)
-		}
-	}
-
-	var tasks []db.TaskTelemetry
-	if err := db.DB.Select("assignee", "repo").Find(&tasks).Error; err == nil {
-		for _, task := range tasks {
-			if visibility.includesAssignee(task.Assignee) {
-				addDemandOption(assignees, task.Assignee)
-			}
-		}
+	for _, option := range directory.Assignees {
+		addDemandOption(assignees, option.Value)
 	}
 
 	var projectConfigs []db.ProjectConfig
@@ -89,11 +70,9 @@ func (s *Server) handleGetDemandOptions(w http.ResponseWriter, r *http.Request) 
 		for _, project := range s.config.Jira.SyncProjects {
 			addDemandOption(projects, project)
 		}
-		for _, user := range s.config.Jira.SyncUsers {
-			addDemandOption(assignees, user)
-		}
-		for _, user := range extractJIRAAssignees(s.config.Jira.CustomJQL) {
-			addDemandOption(assignees, user)
+		for _, source := range s.config.Jira.VersionSources {
+			addDemandOption(projects, source.ProjectKey)
+			addDemandOption(projects, source.ProjectName)
 		}
 		for _, project := range extractJIRAProjects(s.config.Jira.CustomJQL) {
 			addDemandOption(projects, project)
@@ -601,14 +580,59 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var parsedDueDate *time.Time
 	// Resolve DueDate if provided
 	if req.DueDate != "" {
 		parsed, err := time.Parse("2006-01-02", req.DueDate)
 		if err == nil {
-			telemetry.DueDate = &parsed
+			parsedDueDate = &parsed
 		} else {
 			http.Error(w, fmt.Sprintf("Invalid due_date format: %v", err), http.StatusBadRequest)
 			return
+		}
+	}
+
+	assigneeChanged := false
+	var assignee *string
+	if strings.TrimSpace(req.Assignee) != "" {
+		value := strings.TrimSpace(req.Assignee)
+		assignee = &value
+		assigneeChanged = telemetry.Assignee != value
+	}
+	var dueDate **time.Time
+	if parsedDueDate != nil && (telemetry.DueDate == nil || !telemetry.DueDate.Equal(*parsedDueDate)) {
+		dueDate = &parsedDueDate
+	}
+	if !assigneeChanged {
+		assignee = nil
+	}
+	if dueDate != nil || assignee != nil {
+		if _, err := deliveryplanning.NewService(db.DB).ApplyPlanningChange(r.Context(), deliveryplanning.PlanningCommand{
+			WorkItemID:       telemetry.TaskID,
+			ExpectedRevision: telemetry.Revision,
+			DueDate:          dueDate,
+			Assignee:         assignee,
+			Reason:           "兼容排期接口调整负责人或截止日",
+			Actor:            actorUsername,
+			Source:           "compat_schedule_v1",
+		}); err != nil {
+			writeDomainError(w, err)
+			return
+		}
+		if err := db.DB.Where("task_id = ?", req.TaskID).First(&telemetry).Error; err != nil {
+			http.Error(w, "Task not found after planning update", http.StatusInternalServerError)
+			return
+		}
+		if assigneeChanged {
+			if assignee != nil {
+				decisionLog := fmt.Sprintf("[%s] %s 调整任务负责人至 [%s]（统一规划入口）。",
+					time.Now().Format("2006-01-02 15:04:05"), actorName, *assignee)
+				if telemetry.DecisionLogs != "" {
+					telemetry.DecisionLogs += "\n" + decisionLog
+				} else {
+					telemetry.DecisionLogs = decisionLog
+				}
+			}
 		}
 	}
 
@@ -662,27 +686,6 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 		telemetry.EstimateSource = estimateSource
 	}
 
-	// Update Assignee if provided
-	if req.Assignee != "" {
-		req.Assignee = strings.TrimSpace(req.Assignee)
-		oldAssignee := telemetry.Assignee
-		if oldAssignee != req.Assignee {
-			telemetry.Assignee = req.Assignee
-			decisionLog := fmt.Sprintf("[%s] %s 调整任务负责人：从 [%s] 转派给 [%s]。",
-				time.Now().Format("2006-01-02 15:04:05"), actorName, oldAssignee, telemetry.Assignee)
-			if telemetry.DecisionLogs != "" {
-				telemetry.DecisionLogs += "\n" + decisionLog
-			} else {
-				telemetry.DecisionLogs = decisionLog
-			}
-
-			// 反向同步到 Jira
-			if s.config.Jira.Enabled && !strings.HasPrefix(telemetry.TaskID, "TASK-") {
-				go s.syncAssigneeToJira(telemetry.TaskID, telemetry.Assignee)
-			}
-		}
-	}
-
 	telemetry.LastUpdate = time.Now()
 
 	if err := db.DB.Save(&telemetry).Error; err != nil {
@@ -721,6 +724,16 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 	// Sync to markdown
 	if err := kanban.SyncTaskToKanban(&telemetry); err != nil {
 		log.Printf("Failed to sync scheduled task to kanban file: %v", err)
+	}
+
+	// Only mutate Jira after the local database write has succeeded.
+	if s.config.Jira.Enabled && !strings.HasPrefix(telemetry.TaskID, "TASK-") {
+		if assigneeChanged {
+			go s.jiraAssigneeSync(telemetry.TaskID, telemetry.Assignee)
+		}
+		if req.DueDate != "" {
+			go s.jiraDueDateSync(telemetry.TaskID, req.DueDate)
+		}
 	}
 
 	// Record audit log

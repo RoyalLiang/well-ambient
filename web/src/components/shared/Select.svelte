@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
+  import { focusLeftSelect, registerSelectLifecycle, type SelectCloseReason } from './selectLifecycle';
 
   interface SelectOption {
     value: string;
@@ -24,12 +25,22 @@
   export let searchable = true;
   export let clearable = false;
   export let compact = false;
+  export let ariaLabel = '';
 
   let isOpen = false;
   let searchText = '';
   let controlText = '';
   let selectContainer: HTMLDivElement;
+  let selectWrapper: HTMLDivElement;
+  let dropdownEl: HTMLDivElement;
   let searchInput: HTMLInputElement;
+  let dropdownPlacement: 'up' | 'down' = 'down';
+  let dropdownMaxHeight = 268;
+  let dropdownTop = -9999;
+  let dropdownLeft = 12;
+  let dropdownWidth = 280;
+  let dropdownPositioned = false;
+  let unregisterSelectLifecycle: (() => void) | undefined;
   let generatedListboxId = `select-listbox-${Math.random().toString(36).slice(2)}`;
   $: listboxId = id ? `${id}-listbox` : generatedListboxId;
 
@@ -54,13 +65,49 @@
       searchText = '';
       controlText = '';
     }
+    dropdownPositioned = false;
     await tick();
+    updateDropdownPlacement();
     if (searchable) searchInput?.focus();
+  }
+
+  function updateDropdownPlacement() {
+    if (!isOpen || !selectWrapper || !dropdownEl || typeof window === 'undefined') return;
+    const viewportPadding = 12;
+    const triggerRect = selectWrapper.getBoundingClientRect();
+    const maximumWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+    dropdownWidth = Math.min(Math.max(triggerRect.width, 280), Math.min(520, maximumWidth));
+    dropdownLeft = Math.min(
+      Math.max(viewportPadding, triggerRect.left),
+      Math.max(viewportPadding, window.innerWidth - viewportPadding - dropdownWidth)
+    );
+    const spaceBelow = window.innerHeight - triggerRect.bottom - viewportPadding;
+    const spaceAbove = triggerRect.top - viewportPadding;
+    const desiredHeight = Math.min(284, dropdownEl.scrollHeight);
+    dropdownPlacement = spaceBelow < desiredHeight && spaceAbove > spaceBelow ? 'up' : 'down';
+    const availableSpace = dropdownPlacement === 'up' ? spaceAbove : spaceBelow;
+    dropdownMaxHeight = Math.max(96, Math.min(268, availableSpace - 18));
+    const renderedHeight = Math.min(dropdownEl.scrollHeight, dropdownMaxHeight + 18);
+    dropdownTop =
+      dropdownPlacement === 'up'
+        ? Math.max(viewportPadding, triggerRect.top - renderedHeight - 8)
+        : triggerRect.bottom + 8;
+    dropdownPositioned = true;
+  }
+
+  function portalDropdown(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
   }
 
   function closeDropdown() {
     isOpen = false;
     searchText = '';
+    dropdownPositioned = false;
   }
 
   function toggleDropdown() {
@@ -102,18 +149,13 @@
     if (firstEnabled) selectOption(firstEnabled);
   }
 
-  function handleClickOutside(event: MouseEvent) {
-    if (selectContainer && !selectContainer.contains(event.target as Node)) {
-      closeDropdown();
-    }
+  function handleFocusOut(event: FocusEvent) {
+    if (isOpen && selectContainer && focusLeftSelect(selectContainer, event, [dropdownEl])) closeDropdown();
   }
 
-  function handleWindowKeydown(event: KeyboardEvent) {
-    if (!isOpen) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeDropdown();
-    }
+  function handleLifecycleClose(reason: SelectCloseReason) {
+    closeDropdown();
+    if (reason === 'escape') searchInput?.blur();
   }
 
   function handleDropdownKeydown(event: KeyboardEvent) {
@@ -143,15 +185,21 @@
 
   onMount(() => {
     if (typeof window !== 'undefined') {
-      window.addEventListener('click', handleClickOutside);
-      window.addEventListener('keydown', handleWindowKeydown);
+      unregisterSelectLifecycle = registerSelectLifecycle(selectContainer, {
+        isOpen: () => isOpen,
+        close: handleLifecycleClose,
+        ownsTarget: (target) => !!dropdownEl?.contains(target)
+      });
+      window.addEventListener('resize', updateDropdownPlacement);
+      window.addEventListener('scroll', updateDropdownPlacement, true);
     }
   });
 
   onDestroy(() => {
     if (typeof window !== 'undefined') {
-      window.removeEventListener('click', handleClickOutside);
-      window.removeEventListener('keydown', handleWindowKeydown);
+      unregisterSelectLifecycle?.();
+      window.removeEventListener('resize', updateDropdownPlacement);
+      window.removeEventListener('scroll', updateDropdownPlacement, true);
     }
   });
 </script>
@@ -162,6 +210,7 @@
   class:disabled
   class:compact
   bind:this={selectContainer}
+  on:focusout={handleFocusOut}
 >
   {#if label}
     <label class="select-label" for={id}>
@@ -172,7 +221,7 @@
     </label>
   {/if}
 
-  <div class="select-wrapper">
+  <div class="select-wrapper" bind:this={selectWrapper}>
     {#if searchable}
       <div
         class="select-trigger select-input-shell"
@@ -191,20 +240,29 @@
           autocomplete="off"
           {disabled}
           role="combobox"
+          aria-label={ariaLabel || label || placeholder}
           aria-autocomplete="list"
           aria-controls={listboxId}
           aria-expanded={isOpen}
           aria-haspopup="listbox"
-          on:focus={openDropdown}
           on:click|stopPropagation={openDropdown}
           on:input={handleSearchInput}
           on:keydown={handleInputKeydown}
         />
-        <span class="select-chevron" class:rotated={isOpen} aria-hidden="true">
+        <button
+          type="button"
+          class="select-chevron select-toggle"
+          class:rotated={isOpen}
+          disabled={disabled}
+          aria-label={isOpen ? '关闭选项' : '展开选项'}
+          aria-controls={listboxId}
+          aria-expanded={isOpen}
+          on:click|stopPropagation={toggleDropdown}
+        >
           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
-        </span>
+        </button>
       </div>
     {:else}
       <button
@@ -216,6 +274,7 @@
         {disabled}
         on:click|stopPropagation={toggleDropdown}
         aria-haspopup="listbox"
+        aria-label={ariaLabel || label || placeholder}
         aria-expanded={isOpen}
         aria-controls={listboxId}
       >
@@ -228,7 +287,7 @@
       </button>
     {/if}
 
-    {#if clearable && selectedOption && !disabled}
+    {#if clearable && selectedOption && value !== '' && !disabled}
       <button type="button" class="select-clear" aria-label="清除选择" on:click={clearSelection}>×</button>
     {/if}
 
@@ -236,6 +295,11 @@
       <div
         id={listboxId}
         class="select-dropdown"
+        class:drop-up={dropdownPlacement === 'up'}
+        class:is-positioned={dropdownPositioned}
+        bind:this={dropdownEl}
+        use:portalDropdown
+        style={`--select-options-max-height: ${dropdownMaxHeight}px; top: ${dropdownTop}px; left: ${dropdownLeft}px; width: ${dropdownWidth}px;`}
         role="listbox"
         tabindex="-1"
         on:click|stopPropagation
@@ -467,10 +531,26 @@
 
   .select-input-shell .select-chevron {
     position: absolute;
-    right: 11px;
+    right: 5px;
     top: 50%;
     transform: translateY(-50%);
-    pointer-events: none;
+  }
+
+  .select-toggle {
+    width: 26px;
+    height: 26px;
+    border: 0;
+    border-radius: 6px;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .select-toggle:hover,
+  .select-toggle:focus-visible {
+    outline: none;
+    background: rgba(102, 119, 137, .1);
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .select-chevron.rotated {
@@ -482,14 +562,10 @@
   }
 
   .select-dropdown {
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 0;
-    right: auto;
-    z-index: 1800;
-    width: max(100%, 280px);
-    min-width: 100%;
-    max-width: min(340px, calc(100vw - 32px));
+    position: fixed;
+    z-index: 1050;
+    min-width: 0;
+    max-width: calc(100vw - 24px);
     padding: 8px;
     border: 1px solid rgba(123, 143, 160, 0.18);
     border-radius: 8px;
@@ -501,6 +577,11 @@
     backdrop-filter: blur(18px) saturate(126%);
     -webkit-backdrop-filter: blur(18px) saturate(126%);
     box-sizing: border-box;
+    visibility: hidden;
+  }
+
+  .select-dropdown.is-positioned {
+    visibility: visible;
   }
 
   .select-options {
@@ -509,8 +590,11 @@
     display: grid;
     gap: 2px;
     padding-right: 2px;
-    scrollbar-gutter: stable;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
+
+  .select-options::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
   .dropdown-item {
     width: 100%;
@@ -557,18 +641,17 @@
 
   .option-label {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
   }
 
   .option-copy small {
     color: var(--wa-text-muted, #667789);
     font-size: 11px;
     line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .check-icon {

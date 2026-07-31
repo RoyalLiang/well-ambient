@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 )
 
@@ -22,12 +23,21 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 	var syncProjects []string
 	if err := db.DB.Order("version desc").First(&latestConfig).Error; err == nil {
 		var cfg struct {
-			Jira struct {
-				SyncProjects []string `json:"sync_projects"`
-			} `json:"jira"`
+			Jira config.JiraConfig `json:"jira"`
 		}
 		if errDec := json.Unmarshal([]byte(latestConfig.ConfigJSON), &cfg); errDec == nil {
-			syncProjects = cfg.Jira.SyncProjects
+			syncProjects = config.JiraProjectKeys(&cfg.Jira)
+		}
+	}
+	var projectConfigs []db.ProjectConfig
+	if err := db.DB.Find(&projectConfigs).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch project configs for scoring: %v", err)
+	}
+	projectConfigByKey := make(map[string]db.ProjectConfig, len(projectConfigs))
+	for _, projectConfig := range projectConfigs {
+		key := strings.ToUpper(strings.TrimSpace(projectConfig.ProjectKey))
+		if key != "" {
+			projectConfigByKey[key] = projectConfig
 		}
 	}
 
@@ -55,7 +65,8 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 			return false
 		}
 		if len(syncProjects) == 0 {
-			return true // Fallback: if empty, let all valid keys pass
+			_, configured := projectConfigByKey[strings.ToUpper(strings.TrimSpace(k))]
+			return configured
 		}
 		for _, p := range syncProjects {
 			if strings.EqualFold(strings.TrimSpace(p), k) {
@@ -88,10 +99,11 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		}
 	}
 
-	// 1. Group tasks by project key (prefix before "-")
+	// 1. Group tasks by persisted project fact. Task-ID prefixes are only a
+	// measured compatibility fallback and must still match an authoritative project.
 	projectTasks := make(map[string][]db.TaskTelemetry)
 	for _, task := range tasks {
-		key := getProjectKey(task.TaskID)
+		key := db.ResolveTaskProjectKey(task)
 		if key == "" || !isSyncProject(key) {
 			continue
 		}
@@ -131,32 +143,25 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 			}
 		}
 
-		// 2. Fetch or create project config
-		var config db.ProjectConfig
-		err := db.DB.Where("project_key = ?", projKey).First(&config).Error
-		if err != nil {
-			defaultName := projKey + "项目"
+		// 2. Project configuration is authoritative input. Scoring is read-model
+		// computation and must never create project facts from telemetry prefixes.
+		projectConfig, hasProjectConfig := projectConfigByKey[projKeyUpper]
+		if !hasProjectConfig {
+			defaultName := projKey
 			if extractedName != "" {
 				defaultName = extractedName
-				// Avoid UNIQUE name collision: check if name already exists for other key
-				var existingWithSameName db.ProjectConfig
-				if errCheck := db.DB.Where("project_name = ? AND project_key != ?", defaultName, projKey).First(&existingWithSameName).Error; errCheck == nil {
-					defaultName = fmt.Sprintf("%s (%s)", extractedName, projKey)
-				}
 			}
-			// Auto create a default project config
-			config = db.ProjectConfig{
+			projectConfig = db.ProjectConfig{
 				ProjectKey:      projKey,
 				ProjectName:     defaultName,
-				BasePriority:    "P1", // Default priority
+				BasePriority:    "P1",
 				GitReposJSON:    "[]",
 				BaseScore:       60.0,
 				BaseScoreWeight: 0.10,
 			}
-			db.DB.Create(&config)
 		} else {
 			// Auto correct legacy default name (like "CHQ项目") to full clean name if available
-			if extractedName != "" && (config.ProjectName == "" || config.ProjectName == projKey+"项目" || strings.HasSuffix(config.ProjectName, "项目")) {
+			if extractedName != "" && (projectConfig.ProjectName == "" || projectConfig.ProjectName == projKey+"项目" || strings.HasSuffix(projectConfig.ProjectName, "项目")) {
 				targetName := extractedName
 				// Avoid UNIQUE name collision: check if name already exists for other key
 				var existingWithSameName db.ProjectConfig
@@ -164,8 +169,9 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 					targetName = fmt.Sprintf("%s (%s)", extractedName, projKey)
 				}
 
-				config.ProjectName = targetName
-				db.DB.Save(&config)
+				projectConfig.ProjectName = targetName
+				db.DB.Save(&projectConfig)
+				projectConfigByKey[projKeyUpper] = projectConfig
 
 				// ALSO update all past ProjectScore records for this project key to prevent legacy names showing in history
 				db.DB.Model(&db.ProjectScore{}).Where("project_key = ?", projKey).Update("project_name", targetName)
@@ -179,23 +185,23 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		si := computeStabilityIndex(tList)
 
 		// Compound Health Score (PHDI) with Base Score Integration
-		baseWeight := config.BaseScoreWeight
+		baseWeight := projectConfig.BaseScoreWeight
 		if baseWeight < 0 {
 			baseWeight = 0
 		} else if baseWeight > 1 {
 			baseWeight = 1
 		}
-		baseScore := config.BaseScore
+		baseScore := projectConfig.BaseScore
 
 		metricsScore := 0.30*sh + 0.25*eq + 0.25*ce + 0.20*si
 		phdi := baseWeight*baseScore + (1.0-baseWeight)*metricsScore
 
 		// Generate smart diagnostic text based on details
-		diagnostic := generateDiagnostic(projKey, config.BasePriority, sh, eq, ce, si, tList)
+		diagnostic := generateDiagnostic(projKey, projectConfig.BasePriority, sh, eq, ce, si, tList)
 
 		score := db.ProjectScore{
 			ProjectKey:          projKey,
-			ProjectName:         config.ProjectName,
+			ProjectName:         projectConfig.ProjectName,
 			ScheduleHealthScore: math.Round(sh*100) / 100,
 			EngineeringQuality:  math.Round(eq*100) / 100,
 			CollaborationEffic:  math.Round(ce*100) / 100,
@@ -209,7 +215,7 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 		// Save score snapshot to database
 		// Overwrite if snapshot for this date already exists, otherwise create new
 		var existing db.ProjectScore
-		err = db.DB.Where("project_key = ? AND snapshot_date = ?", projKey, snapshotDate).First(&existing).Error
+		err := db.DB.Where("project_key = ? AND snapshot_date = ?", projKey, snapshotDate).First(&existing).Error
 		if err == nil {
 			score.ID = existing.ID
 			db.DB.Save(&score)

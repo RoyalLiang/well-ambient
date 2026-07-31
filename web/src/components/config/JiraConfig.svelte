@@ -8,6 +8,23 @@
 
   const dispatch = createEventDispatcher();
 
+  interface JiraVersionSource {
+    project_key: string;
+    project_name: string;
+    version_url: string;
+  }
+
+  interface JiraVersionSourceForm extends JiraVersionSource {
+    local_id: string;
+  }
+
+  interface JiraVersionParseState {
+    projectKey: string;
+    versionID: string;
+    canonicalURL: string;
+    error: string;
+  }
+
   export let config: {
     enabled: boolean;
     base_url: string;
@@ -17,6 +34,7 @@
     sync_users?: string[];
     sync_statuses?: string[];
     custom_jql?: string;
+    version_sources?: JiraVersionSource[];
   } = {
     enabled: false,
     base_url: '',
@@ -25,7 +43,8 @@
     sync_projects: [],
     sync_users: [],
     sync_statuses: [],
-    custom_jql: ''
+    custom_jql: '',
+    version_sources: []
   };
 
   export let saving = false;
@@ -47,13 +66,16 @@
   let syncUsers = (config.sync_users || []).join(', ');
   let syncStatuses = (config.sync_statuses || []).join(', ');
   let customJQL = config.custom_jql || '';
+  let versionSourceSequence = 0;
+  let versionSources = createVersionSourceForms(config.version_sources || []);
+  let versionSourceValidationMessage = '';
 
   // Test states
   let testing = false;
   let testError = '';
   let testSuccess = '';
   let testDetails = '';
-  $: isConfigured = enabled || !!(baseURL || username || apiToken || syncProjects || syncUsers || syncStatuses || customJQL);
+  $: isConfigured = enabled || !!(baseURL || username || apiToken || syncProjects || syncUsers || syncStatuses || customJQL || versionSources.length);
   let configurationIssues: string[] = [];
   let healthTone = 'unchecked';
   let healthLabel = '未检测';
@@ -119,7 +141,139 @@
     syncUsers = (config.sync_users || []).join(', ');
     syncStatuses = (config.sync_statuses || []).join(', ');
     customJQL = config.custom_jql || '';
+    versionSources = createVersionSourceForms(config.version_sources || []);
+    versionSourceValidationMessage = '';
     showTokenEditor = !config.api_token;
+  }
+
+  function createVersionSourceForms(sources: JiraVersionSource[]): JiraVersionSourceForm[] {
+    return sources.map(source => ({
+      project_key: source.project_key || '',
+      project_name: source.project_name || '',
+      version_url: source.version_url || '',
+      local_id: `jira-version-source-${++versionSourceSequence}`
+    }));
+  }
+
+  function parseVersionURL(rawURL: string): JiraVersionParseState {
+    const empty = { projectKey: '', versionID: '', canonicalURL: '', error: '' };
+    const site = baseURL.trim();
+    const raw = rawURL.trim();
+    if (!raw) return { ...empty, error: '请输入 Jira 版本链接' };
+    if (!site) return { ...empty, error: '请先填写 Jira 基础 URL' };
+
+    try {
+      const base = new URL(site);
+      if (!['http:', 'https:'].includes(base.protocol)) {
+        return { ...empty, error: 'Jira 基础 URL 仅支持 HTTP 或 HTTPS' };
+      }
+      const resolveBase = new URL(base.toString());
+      if (!resolveBase.pathname.endsWith('/')) resolveBase.pathname += '/';
+      const candidate = new URL(raw, resolveBase);
+      if (candidate.origin !== base.origin) {
+        return { ...empty, error: '版本链接必须属于已配置的 Jira 站点' };
+      }
+
+      const basePath = base.pathname.replace(/\/$/, '');
+      let relativePath = candidate.pathname;
+      if (basePath) {
+        if (!relativePath.startsWith(`${basePath}/`)) {
+          return { ...empty, error: '版本链接不在 Jira 基础 URL 的路径下' };
+        }
+        relativePath = relativePath.slice(basePath.length);
+      }
+      const segments = relativePath.split('/').filter(Boolean);
+      if (segments.length !== 4 || segments[0] !== 'projects' || segments[2] !== 'versions') {
+        return { ...empty, error: '链接格式应为 /projects/{项目号}/versions/{版本ID}' };
+      }
+      const projectKey = decodeURIComponent(segments[1]).toUpperCase();
+      const versionID = decodeURIComponent(segments[3]);
+      if (!/^[A-Z][A-Z0-9_]*$/.test(projectKey)) {
+        return { ...empty, error: '链接中的 Jira 项目号无效' };
+      }
+      if (!/^[0-9]+$/.test(versionID) || Number(versionID) <= 0) {
+        return { ...empty, error: '链接中的 Jira 版本 ID 无效' };
+      }
+      return {
+        projectKey,
+        versionID,
+        canonicalURL: `${candidate.origin}${candidate.pathname}`,
+        error: ''
+      };
+    } catch {
+      return { ...empty, error: 'Jira 版本链接无效' };
+    }
+  }
+
+  function getVersionSourceState(source: JiraVersionSourceForm): JiraVersionParseState {
+    const hasAnyValue = !!(source.project_key.trim() || source.project_name.trim() || source.version_url.trim());
+    if (!hasAnyValue) return { projectKey: '', versionID: '', canonicalURL: '', error: '' };
+    const parsed = parseVersionURL(source.version_url);
+    if (parsed.error) return parsed;
+    if (!source.project_name.trim()) {
+      return { ...parsed, error: '请输入项目名称' };
+    }
+    if (source.project_key.trim() && source.project_key.trim().toUpperCase() !== parsed.projectKey) {
+      return { ...parsed, error: `项目号应为 ${parsed.projectKey}` };
+    }
+    if (!source.project_key.trim()) {
+      return { ...parsed, error: '请输入项目号，或使用链接中识别出的项目号' };
+    }
+    return parsed;
+  }
+
+  function addVersionSource() {
+    versionSources = [
+      ...versionSources,
+      {
+        project_key: '',
+        project_name: '',
+        version_url: '',
+        local_id: `jira-version-source-${++versionSourceSequence}`
+      }
+    ];
+    versionSourceValidationMessage = '';
+  }
+
+  function removeVersionSource(index: number) {
+    versionSources = versionSources.filter((_, sourceIndex) => sourceIndex !== index);
+    versionSourceValidationMessage = '';
+  }
+
+  function useParsedProjectKey(index: number) {
+    const source = versionSources[index];
+    if (!source) return;
+    const parsed = parseVersionURL(source.version_url);
+    if (parsed.error || !parsed.projectKey) return;
+    versionSources[index].project_key = parsed.projectKey;
+    versionSources = [...versionSources];
+  }
+
+  function validateVersionSources() {
+    for (let index = 0; index < versionSources.length; index += 1) {
+      const source = versionSources[index];
+      if (!source.project_key.trim() && !source.project_name.trim() && !source.version_url.trim()) {
+        versionSourceValidationMessage = `第 ${index + 1} 个版本来源：请填写项目号、项目名称与 Jira 版本链接`;
+        return false;
+      }
+      const state = getVersionSourceState(versionSources[index]);
+      if (state.error) {
+        versionSourceValidationMessage = `第 ${index + 1} 个版本来源：${state.error}`;
+        return false;
+      }
+    }
+    const identities = new Set<string>();
+    for (let index = 0; index < versionSources.length; index += 1) {
+      const state = getVersionSourceState(versionSources[index]);
+      const identity = `${state.projectKey}:${state.versionID}`;
+      if (identities.has(identity)) {
+        versionSourceValidationMessage = `第 ${index + 1} 个版本来源与前面的配置重复`;
+        return false;
+      }
+      identities.add(identity);
+    }
+    versionSourceValidationMessage = '';
+    return true;
   }
 
   function formatUpdated(value: string) {
@@ -188,6 +342,7 @@
   }
 
   async function saveConfig(isToggle = false) {
+    if (!validateVersionSources()) return;
     saving = true;
     saveError = '';
 
@@ -199,7 +354,12 @@
       sync_projects: syncProjects.split(',').map(s => s.trim()).filter(Boolean),
       sync_users: syncUsers.split(',').map(s => s.trim()).filter(Boolean),
       sync_statuses: syncStatuses.split(',').map(s => s.trim()).filter(Boolean),
-      custom_jql: customJQL
+      custom_jql: customJQL,
+      version_sources: versionSources.map(source => ({
+        project_key: source.project_key.trim().toUpperCase(),
+        project_name: source.project_name.trim(),
+        version_url: parseVersionURL(source.version_url).canonicalURL || source.version_url.trim()
+      }))
     };
 
     dispatch('save', {
@@ -215,6 +375,7 @@
         testError = '启用 Jira 同步时，必须填写连接地址及 API 令牌/PAT';
         return;
       }
+      if (!validateVersionSources()) return;
       currentStep = 2;
     }
   }
@@ -284,12 +445,36 @@
         </div>
       </div>
 
+      {#if versionSources.length > 0}
+        <section class="jira-version-overview" aria-labelledby="jira-version-overview-title">
+          <div class="scw-section-head">
+            <div class="scw-section-copy">
+              <h5 id="jira-version-overview-title">版本链接来源</h5>
+              <p>这些版本中的 Jira 会作为额外来源加入同步范围。</p>
+            </div>
+            <strong class="jira-version-count">{versionSources.length} 个版本</strong>
+          </div>
+          <dl class="jira-version-read-list">
+            {#each versionSources as source}
+              {@const sourceState = getVersionSourceState(source)}
+              <div>
+                <dt><span class="font-mono">{source.project_key}</span> {source.project_name}</dt>
+                <dd>
+                  <a href={source.version_url} target="_blank" rel="noopener noreferrer">版本 {sourceState.versionID || '-'}</a>
+                  <span class="font-mono">{source.version_url}</span>
+                </dd>
+              </div>
+            {/each}
+          </dl>
+        </section>
+      {/if}
+
       {#if customJQL}
         <section class="scw-code-section">
           <div class="scw-section-head">
             <div class="scw-section-copy">
               <h5>自定义 JQL</h5>
-              <p>该查询会覆盖上方项目、成员和状态筛选。</p>
+              <p>该查询会覆盖普通项目、成员和状态筛选；版本链接来源仍会追加。</p>
             </div>
           </div>
           <code class="scw-code scw-mono">{customJQL}</code>
@@ -388,6 +573,84 @@
             <span class="scw-helper">需要同步的 Jira 项目键（Key），多个项目用逗号分隔。例如: PROJ, DEVS</span>
           </div>
 
+          <section class="jira-version-editor" aria-labelledby="jira-version-editor-title">
+            <div class="jira-version-editor-head">
+              <div>
+                <h5 id="jira-version-editor-title">Jira 版本链接来源</h5>
+                <p>配置项目版本页后，该版本中的全部 Jira 会额外加入同步。链接只解析为 JQL，不抓取页面内容。</p>
+              </div>
+              <Button variant="secondary" size="small" on:click={addVersionSource}>添加项目版本</Button>
+            </div>
+
+            {#if versionSources.length === 0}
+              <p class="jira-version-empty">尚未配置版本链接。普通项目、成员、状态和自定义 JQL 的行为保持不变。</p>
+            {:else}
+              <div class="jira-version-source-list">
+                {#each versionSources as source, index (source.local_id)}
+                  {@const sourceState = getVersionSourceState(source)}
+                  <fieldset class="jira-version-source">
+                    <legend>版本来源 {index + 1}</legend>
+                    <div class="jira-version-field">
+                      <label for={`${source.local_id}-key`}>项目号</label>
+                      <input
+                        id={`${source.local_id}-key`}
+                        class="jira-version-input font-mono"
+                        class:invalid={!!sourceState.error && sourceState.projectKey !== source.project_key.trim().toUpperCase()}
+                        placeholder="PRJ25024"
+                        bind:value={source.project_key}
+                        aria-invalid={sourceState.error ? 'true' : undefined}
+                        aria-describedby={`${source.local_id}-status`}
+                      />
+                      {#if sourceState.projectKey && !source.project_key.trim()}
+                        <button class="jira-use-parsed" type="button" on:click={() => useParsedProjectKey(index)}>使用 {sourceState.projectKey}</button>
+                      {/if}
+                    </div>
+                    <div class="jira-version-field">
+                      <label for={`${source.local_id}-name`}>项目名称</label>
+                      <input
+                        id={`${source.local_id}-name`}
+                        class="jira-version-input"
+                        placeholder="ReeWell 版本发布"
+                        bind:value={source.project_name}
+                        aria-invalid={sourceState.error ? 'true' : undefined}
+                        aria-describedby={`${source.local_id}-status`}
+                      />
+                    </div>
+                    <div class="jira-version-field jira-version-url-field">
+                      <label for={`${source.local_id}-url`}>Jira 版本链接</label>
+                      <input
+                        id={`${source.local_id}-url`}
+                        class="jira-version-input font-mono"
+                        class:invalid={!!sourceState.error && !!source.version_url.trim()}
+                        type="url"
+                        placeholder="https://jira.example.com/projects/PRJ25024/versions/13622"
+                        bind:value={source.version_url}
+                        aria-invalid={sourceState.error ? 'true' : undefined}
+                        aria-describedby={`${source.local_id}-status`}
+                      />
+                    </div>
+                    <button class="jira-version-remove" type="button" on:click={() => removeVersionSource(index)} aria-label={`移除版本来源 ${index + 1}`}>
+                      移除
+                    </button>
+                    <p id={`${source.local_id}-status`} class:error={!!sourceState.error} class="jira-version-status">
+                      {#if sourceState.error}
+                        {sourceState.error}
+                      {:else if sourceState.versionID}
+                        已识别 {sourceState.projectKey}，版本 ID {sourceState.versionID}
+                      {:else}
+                        填写项目号、项目名称和 Jira 版本链接。
+                      {/if}
+                    </p>
+                  </fieldset>
+                {/each}
+              </div>
+            {/if}
+
+            {#if versionSourceValidationMessage}
+              <Alert type="error" title="版本来源配置无效" message={versionSourceValidationMessage} />
+            {/if}
+          </section>
+
           <TextInput
             id="jira-sync-users"
             label="分配的用户邮箱/用户名列表"
@@ -406,7 +669,7 @@
 
           <div class="scw-native-field">
             <label class="scw-native-label" for="jira-custom-jql">
-              自定义 JQL 筛选器 (覆盖上方所有过滤条件 - 高级)
+              自定义 JQL 筛选器 (覆盖普通过滤条件 - 高级)
             </label>
             <textarea
               id="jira-custom-jql"
@@ -416,7 +679,7 @@
               spellcheck="false"
               bind:value={customJQL}
             ></textarea>
-            <span class="scw-helper">自定义 Jira 检索语句 (JQL)。填写后会直接用于同步拉取，并覆盖上方的项目、用户和状态筛选。</span>
+            <span class="scw-helper">自定义 Jira 检索语句 (JQL)。填写后会覆盖普通项目、用户和状态筛选；上方版本链接来源仍会作为额外范围追加。</span>
           </div>
 
           {#if testSuccess}
@@ -480,6 +743,16 @@
             <span class="summary-label">同步项目:</span>
             <span class="summary-value font-mono">{syncProjects || '所有项目'}</span>
           </div>
+          <div class="scw-summary-row wide">
+            <span class="summary-label">版本链接来源:</span>
+            <span class="summary-value">
+              {#if versionSources.length === 0}
+                未配置
+              {:else}
+                {versionSources.map(source => `${source.project_key} ${source.project_name}`).join('；')}
+              {/if}
+            </span>
+          </div>
           <div class="scw-summary-row">
             <span class="summary-label">指派用户:</span>
             <span class="summary-value font-mono">{syncUsers || '所有用户'}</span>
@@ -529,5 +802,280 @@
 
   .font-mono {
     font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  }
+
+  .jira-version-editor,
+  .jira-version-overview {
+    min-width: 0;
+    display: grid;
+    gap: 12px;
+    padding: 16px 0;
+    border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.18));
+    border-bottom: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.18));
+  }
+
+  .jira-version-editor-head {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .jira-version-editor-head > div {
+    min-width: 0;
+  }
+
+  .jira-version-editor h5,
+  .jira-version-overview h5 {
+    margin: 0;
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 14px;
+    line-height: 1.4;
+    text-wrap: balance;
+  }
+
+  .jira-version-editor-head p,
+  .jira-version-empty {
+    max-width: 76ch;
+    margin: 4px 0 0;
+    color: var(--wa-text-muted, #667789);
+    font-size: 12px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  .jira-version-empty {
+    margin: 0;
+    padding: 12px 0;
+  }
+
+  .jira-version-source-list,
+  .jira-version-read-list {
+    min-width: 0;
+    display: grid;
+    margin: 0;
+  }
+
+  .jira-version-source {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(132px, 0.72fr) minmax(168px, 1fr) minmax(280px, 1.8fr) auto;
+    gap: 8px 12px;
+    align-items: end;
+    margin: 0;
+    padding: 16px 0;
+    border: 0;
+  }
+
+  .jira-version-source + .jira-version-source {
+    border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.18));
+  }
+
+  .jira-version-source legend {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 0;
+    color: var(--wa-text-main, #293847);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .jira-version-field {
+    position: relative;
+    min-width: 0;
+    display: grid;
+    gap: 7px;
+  }
+
+  .jira-version-field label {
+    color: var(--wa-text-main, #293847);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .jira-version-input {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--wa-control-h, 36px);
+    padding: 0 11px;
+    border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.18));
+    border-radius: var(--wa-radius-md, 7px);
+    outline: none;
+    background: rgba(255, 255, 255, 0.84);
+    color: var(--wa-text-main, #293847);
+    font: inherit;
+    font-size: 12px;
+    box-sizing: border-box;
+    transition: border-color var(--wa-duration-fast, 140ms) var(--wa-ease, ease), box-shadow var(--wa-duration-fast, 140ms) var(--wa-ease, ease), background var(--wa-duration-fast, 140ms) var(--wa-ease, ease);
+  }
+
+  .jira-version-input::placeholder {
+    color: var(--wa-text-muted, #667789);
+    opacity: 1;
+  }
+
+  .jira-version-input:hover {
+    border-color: var(--wa-border-strong, rgba(85, 106, 128, 0.32));
+  }
+
+  .jira-version-input:focus {
+    border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .jira-version-input.invalid {
+    border-color: rgba(200, 22, 29, 0.46);
+  }
+
+  .jira-use-parsed {
+    position: absolute;
+    right: 6px;
+    bottom: 5px;
+    min-height: 26px;
+    padding: 0 7px;
+    border: 0;
+    border-radius: var(--wa-radius-sm, 6px);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+    color: var(--wa-accent-strong, #006f76);
+    font-size: 10px;
+    font-weight: 760;
+    cursor: pointer;
+  }
+
+  .jira-use-parsed:focus-visible,
+  .jira-version-remove:focus-visible {
+    outline: 2px solid rgba(0, 143, 150, 0.28);
+    outline-offset: 2px;
+  }
+
+  .jira-version-remove {
+    min-height: var(--wa-control-h, 36px);
+    padding: 0 10px;
+    border: 1px solid rgba(200, 22, 29, 0.2);
+    border-radius: var(--wa-radius-md, 7px);
+    background: rgba(200, 22, 29, 0.06);
+    color: var(--wa-danger, #c8161d);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 760;
+    cursor: pointer;
+  }
+
+  .jira-version-remove:hover {
+    border-color: rgba(200, 22, 29, 0.34);
+    background: rgba(200, 22, 29, 0.1);
+  }
+
+  .jira-version-status {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--wa-success, #04966f);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .jira-version-status.error {
+    color: var(--wa-danger, #c8161d);
+  }
+
+  .jira-version-count {
+    flex: none;
+    color: var(--wa-accent-strong, #006f76);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .jira-version-read-list > div {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.5fr);
+    gap: 16px;
+    padding: 10px 0;
+  }
+
+  .jira-version-read-list > div + div {
+    border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.18));
+  }
+
+  .jira-version-read-list dt,
+  .jira-version-read-list dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .jira-version-read-list dt {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .jira-version-read-list dd {
+    display: grid;
+    gap: 3px;
+    color: var(--wa-text-muted, #667789);
+    font-size: 11px;
+  }
+
+  .jira-version-read-list a {
+    width: fit-content;
+    color: var(--wa-accent-strong, #006f76);
+    font-weight: 760;
+    text-underline-offset: 3px;
+  }
+
+  .jira-version-read-list dd span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 960px) {
+    .jira-version-source {
+      grid-template-columns: minmax(132px, 0.72fr) minmax(168px, 1fr) auto;
+    }
+
+    .jira-version-url-field {
+      grid-column: 1 / 3;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .jira-version-editor-head {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .jira-version-source {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .jira-version-source legend,
+    .jira-version-url-field,
+    .jira-version-status {
+      grid-column: 1;
+    }
+
+    .jira-version-input,
+    .jira-version-remove {
+      min-height: 44px;
+    }
+
+    .jira-use-parsed {
+      min-height: 32px;
+      bottom: 6px;
+    }
+
+    .jira-version-read-list > div {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 5px;
+    }
+
+    .jira-version-read-list dd span {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
   }
 </style>

@@ -30,36 +30,38 @@ type ScheduleSummaryDTO struct {
 }
 
 type ScheduleItemDTO struct {
-	DemandID        string  `json:"demand_id"`
-	Title           string  `json:"title"`
-	Description     string  `json:"description"`
-	Assignee        string  `json:"assignee"`
-	Department      string  `json:"department"`
-	Repo            string  `json:"repo"`
-	Branch          string  `json:"branch"`
-	Status          string  `json:"status"`
-	TaskGroupID     string  `json:"task_group_id"`
-	Scheduled       bool    `json:"scheduled"`
-	DueDate         string  `json:"due_date"`
-	CreatedAt       string  `json:"created_at"`
-	LastUpdate      string  `json:"last_update"`
-	CompletedAt     string  `json:"completed_at,omitempty"`
-	MRURL           string  `json:"mr_url,omitempty"`
-	EstimateDays    float64 `json:"estimate_days"`
-	EstimateHours   float64 `json:"estimate_hours"`
-	Difficulty      string  `json:"difficulty"`
-	RiskLevel       string  `json:"risk_level"`
-	RiskLabel       string  `json:"risk_label"`
-	RiskReason      string  `json:"risk_reason"`
-	RiskRank        int     `json:"risk_rank"`
-	DaysRemaining   int     `json:"days_remaining"`
-	SubtaskTotal    int     `json:"subtask_total"`
-	SubtaskDone     int     `json:"subtask_done"`
-	SubtaskActive   int     `json:"subtask_active"`
-	SubtaskReview   int     `json:"subtask_review"`
-	IssueType       string  `json:"issue_type"`
-	ProjectKey      string  `json:"project_key"`
-	ProjectPriority string  `json:"project_priority"`
+	DemandID          string  `json:"demand_id"`
+	Title             string  `json:"title"`
+	Description       string  `json:"description"`
+	Assignee          string  `json:"assignee"`
+	Department        string  `json:"department"`
+	Repo              string  `json:"repo"`
+	Branch            string  `json:"branch"`
+	Status            string  `json:"status"`
+	TaskGroupID       string  `json:"task_group_id"`
+	Scheduled         bool    `json:"scheduled"`
+	DueDate           string  `json:"due_date"`
+	CreatedAt         string  `json:"created_at"`
+	LastUpdate        string  `json:"last_update"`
+	CompletedAt       string  `json:"completed_at,omitempty"`
+	MRURL             string  `json:"mr_url,omitempty"`
+	EstimateDays      float64 `json:"estimate_days"`
+	EstimateHours     float64 `json:"estimate_hours"`
+	Difficulty        string  `json:"difficulty"`
+	RiskLevel         string  `json:"risk_level"`
+	RiskLabel         string  `json:"risk_label"`
+	RiskReason        string  `json:"risk_reason"`
+	RiskRank          int     `json:"risk_rank"`
+	DaysRemaining     int     `json:"days_remaining"`
+	SubtaskTotal      int     `json:"subtask_total"`
+	SubtaskDone       int     `json:"subtask_done"`
+	SubtaskActive     int     `json:"subtask_active"`
+	SubtaskReview     int     `json:"subtask_review"`
+	IssueType         string  `json:"issue_type"`
+	ProjectKey        string  `json:"project_key"`
+	ProjectPriority   string  `json:"project_priority"`
+	TargetReleaseID   uint    `json:"target_release_id,omitempty"`
+	TargetReleaseName string  `json:"target_release_name,omitempty"`
 }
 
 type scheduleSubtaskStats struct {
@@ -97,10 +99,15 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	// 1. 查询过滤后的 demands (主卡片)
 	tx := db.DB.Model(&db.TaskTelemetry{}).Where("status != ?", "archived")
-	tx = tx.Where("issue_type IN ?", []string{"demand", "bug", "缺陷", "故障", "defect"})
+	tx = tx.Where("LOWER(TRIM(issue_type)) IN ?", []string{"demand", "requirement", "story", "bug", "缺陷", "故障", "defect"})
+	tx, err = applyRequestProjectScope(tx, r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	if projectFilter != "" && projectFilter != "all" {
-		tx = tx.Where("task_id LIKE ?", projectFilter+"-%")
+		tx = db.ApplyTaskProjectScope(tx, []string{projectFilter})
 	}
 
 	if assigneeFilter != "" && assigneeFilter != "all" {
@@ -119,9 +126,9 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if typeFilter == "demand" {
-		tx = tx.Where("issue_type IN ?", []string{"demand"})
+		tx = tx.Where("LOWER(TRIM(issue_type)) IN ?", []string{"demand", "requirement", "story"})
 	} else if typeFilter == "bug" {
-		tx = tx.Where("issue_type IN ?", []string{"bug", "缺陷", "故障", "defect"})
+		tx = tx.Where("LOWER(TRIM(issue_type)) IN ?", []string{"bug", "缺陷", "故障", "defect"})
 	}
 
 	var demands []db.TaskTelemetry
@@ -143,8 +150,8 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	// 3. 只查询与这些 groupIDs 相关的子任务，避免全表扫描！
 	var subtasks []db.TaskTelemetry
 	if len(groupIDs) > 0 {
-		if err := db.DB.Where("task_group_id IN ? AND status != ? AND issue_type NOT IN ?",
-			groupIDs, "archived", []string{"demand", "bug", "缺陷", "故障", "defect"}).Find(&subtasks).Error; err != nil {
+		if err := db.DB.Where("task_group_id IN ? AND status != ? AND LOWER(issue_type) NOT IN ?",
+			groupIDs, "archived", []string{"demand", "requirement", "story", "bug", "缺陷", "故障", "defect"}).Find(&subtasks).Error; err != nil {
 			http.Error(w, fmt.Sprintf("Failed to query subtasks: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -155,6 +162,10 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	allTasks := append(demands, subtasks...)
 
 	response := buildScheduleResponse(allTasks, users, time.Now())
+	if err := attachScheduleReleaseFacts(r, &response); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query schedule release facts: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// 5. 风险层级过滤
 	if riskFilter == "attention" {
@@ -179,6 +190,56 @@ func (s *Server) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func attachScheduleReleaseFacts(r *http.Request, response *ScheduleResponseDTO) error {
+	if response == nil || len(response.Items) == 0 {
+		return nil
+	}
+	workItemIDs := make([]string, 0, len(response.Items))
+	for _, item := range response.Items {
+		if workItemID := strings.TrimSpace(item.DemandID); workItemID != "" {
+			workItemIDs = append(workItemIDs, workItemID)
+		}
+	}
+	if len(workItemIDs) == 0 {
+		return nil
+	}
+	type releaseFact struct {
+		WorkItemID       string
+		ReleaseVersionID uint
+		ReleaseName      string
+	}
+	var facts []releaseFact
+	if err := db.DB.WithContext(r.Context()).
+		Table("work_item_release_links AS links").
+		Select(`
+			links.work_item_id,
+			links.release_version_id,
+			releases.name AS release_name
+		`).
+		Joins("JOIN release_versions AS releases ON releases.id = links.release_version_id").
+		Where(
+			"links.work_item_id IN ? AND links.active = ? AND links.relation = ? AND links.is_primary = ?",
+			workItemIDs,
+			true,
+			"target_fix",
+			true,
+		).
+		Scan(&facts).Error; err != nil {
+		return err
+	}
+	factByWorkItemID := make(map[string]releaseFact, len(facts))
+	for _, fact := range facts {
+		factByWorkItemID[fact.WorkItemID] = fact
+	}
+	for index := range response.Items {
+		if fact, ok := factByWorkItemID[response.Items[index].DemandID]; ok {
+			response.Items[index].TargetReleaseID = fact.ReleaseVersionID
+			response.Items[index].TargetReleaseName = fact.ReleaseName
+		}
+	}
+	return nil
+}
+
 func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now time.Time) ScheduleResponseDTO {
 	directory := newKPIUserDirectory(users)
 	subtasksByGroup := make(map[string]scheduleSubtaskStats)
@@ -189,7 +250,8 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			continue
 		}
 		issueType := normalizeIssueType(task.IssueType)
-		if issueType == "demand" || issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect" {
+		if issueType == "demand" || issueType == "requirement" || issueType == "story" ||
+			issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect" {
 			demands = append(demands, task)
 			continue
 		}
@@ -238,11 +300,7 @@ func buildScheduleResponse(tasks []db.TaskTelemetry, users []userdb.User, now ti
 			issueTypeNormalized = "bug"
 		}
 
-		projKey := ""
-		idx := strings.Index(demand.TaskID, "-")
-		if idx > 0 {
-			projKey = strings.ToUpper(demand.TaskID[:idx])
-		}
+		projKey := db.ResolveTaskProjectKey(demand)
 		projPriority := "P1" // default
 		if p, ok := projPriorityMap[projKey]; ok {
 			projPriority = p
@@ -391,21 +449,21 @@ func resolveScheduleRisk(demand db.TaskTelemetry, stats scheduleSubtaskStats, no
 		}
 	}
 
-	if !hasScheduleBranch(demand.Branch) {
+	if demand.DueDate == nil || demand.DueDate.IsZero() {
 		return scheduleRisk{
 			Level:  "unscheduled",
 			Label:  "待排期",
-			Reason: "尚未绑定开发分支，无法进入交付追踪",
+			Reason: "尚未明确计划截止日期",
 			Rank:   70,
 		}
 	}
 
-	if demand.DueDate == nil || demand.DueDate.IsZero() {
+	if !hasScheduleBranch(demand.Branch) {
 		return scheduleRisk{
-			Level:  "unscheduled",
-			Label:  "缺截止日",
-			Reason: "已有开发分支，但缺少可追踪的截止日期",
-			Rank:   62,
+			Level:  "planning",
+			Label:  "待建分支",
+			Reason: "计划日已锁定，开发分支将在执行阶段建立",
+			Rank:   36,
 		}
 	}
 
@@ -474,6 +532,11 @@ func scheduleActivityTime(task db.TaskTelemetry) time.Time {
 }
 
 func isDemandScheduled(demand db.TaskTelemetry) bool {
+	// 排期事实属于交付计划，不应依赖实现阶段才会出现的代码分支。
+	// 一旦明确了计划日，需求就已经完成排期；分支仍作为后续执行证据展示。
+	if demand.DueDate != nil && !demand.DueDate.IsZero() {
+		return true
+	}
 	issueType := strings.ToLower(strings.TrimSpace(demand.IssueType))
 	isBug := issueType == "bug" || issueType == "缺陷" || issueType == "故障" || issueType == "defect"
 	if isBug {
@@ -482,7 +545,7 @@ func isDemandScheduled(demand db.TaskTelemetry) bool {
 		hasAssignee := assignee != "" && assignee != "-" && assignee != "未指派" && strings.ToLower(assignee) != "unassigned"
 		return hasAssignee && status != "done" && status != "archived"
 	}
-	return hasScheduleBranch(demand.Branch) && demand.DueDate != nil && !demand.DueDate.IsZero()
+	return false
 }
 
 func hasScheduleBranch(branch string) bool {

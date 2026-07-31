@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount } from 'svelte';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
 
   const dispatch = createEventDispatcher<{ change: string }>();
 
@@ -29,6 +29,10 @@
 
   let isOpen = false;
   let containerEl: HTMLDivElement;
+  let wrapperEl: HTMLDivElement;
+  let panelEl: HTMLDivElement;
+  let panelPlacement: 'up' | 'down' = 'down';
+  let panelMaxHeight = 380;
   let cursorDate = parseDate(value) || new Date();
 
   $: selectedDate = parseDate(value);
@@ -118,10 +122,24 @@
     };
   }
 
-  function openPicker() {
+  async function openPicker() {
     if (disabled) return;
     cursorDate = selectedDate || new Date();
     isOpen = true;
+    await tick();
+    updatePanelPlacement();
+  }
+
+  function updatePanelPlacement() {
+    if (!isOpen || !wrapperEl || !panelEl || typeof window === 'undefined') return;
+    const viewportPadding = 12;
+    const triggerRect = wrapperEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - triggerRect.bottom - viewportPadding;
+    const spaceAbove = triggerRect.top - viewportPadding;
+    const desiredHeight = Math.min(380, panelEl.scrollHeight);
+    panelPlacement = spaceBelow < desiredHeight && spaceAbove > spaceBelow ? 'up' : 'down';
+    const availableSpace = panelPlacement === 'up' ? spaceAbove : spaceBelow;
+    panelMaxHeight = Math.max(96, Math.min(380, availableSpace - 8));
   }
 
   function closePicker() {
@@ -188,6 +206,8 @@
     if (typeof window !== 'undefined') {
       window.addEventListener('click', handleClickOutside);
       window.addEventListener('keydown', handleWindowKeydown);
+      window.addEventListener('resize', updatePanelPlacement);
+      window.addEventListener('scroll', updatePanelPlacement, true);
     }
   });
 
@@ -195,6 +215,8 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('click', handleClickOutside);
       window.removeEventListener('keydown', handleWindowKeydown);
+      window.removeEventListener('resize', updatePanelPlacement);
+      window.removeEventListener('scroll', updatePanelPlacement, true);
     }
   });
 </script>
@@ -209,7 +231,7 @@
     </label>
   {/if}
 
-  <div class="date-wrapper">
+  <div class="date-wrapper" bind:this={wrapperEl}>
     <button
       {id}
       type="button"
@@ -232,6 +254,9 @@
     {#if isOpen && !disabled}
       <div
         class="date-picker-panel"
+        class:drop-up={panelPlacement === 'up'}
+        bind:this={panelEl}
+        style={`--date-panel-max-height: ${panelMaxHeight}px;`}
         role="dialog"
         aria-label="选择日期"
         tabindex="-1"
@@ -426,6 +451,12 @@
       0 24px 58px rgba(26, 41, 58, 0.17);
     backdrop-filter: blur(18px) saturate(126%);
     -webkit-backdrop-filter: blur(18px) saturate(126%);
+    box-sizing: border-box;
+  }
+
+  .date-picker-panel.drop-up {
+    top: auto;
+    bottom: calc(100% + 8px);
   }
 
   .date-picker-head {

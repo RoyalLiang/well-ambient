@@ -4,8 +4,10 @@
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
+  import MarkdownWorkbench from '../shared/MarkdownWorkbench.svelte';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
   import CorpusCandidateReview from './CorpusCandidateReview.svelte';
+  import CorpusSourceLibrary from './CorpusSourceLibrary.svelte';
 
   const dispatch = createEventDispatcher();
 
@@ -25,7 +27,7 @@
     enabled: false,
     provider: 'openai',
     base_url: '',
-    endpoint_type: 'completions',
+    endpoint_type: 'responses',
     api_token: '',
     model: '',
     project_architecture: '',
@@ -133,6 +135,7 @@
 
   let currentStep = 1;
   const steps = ['连接与凭证', '确认应用'];
+  const normalizeEndpointType = (value?: string) => value === 'messages' ? 'messages' : 'responses';
   let editing = false;
   let showTokenEditor = !config.api_token;
 
@@ -140,7 +143,7 @@
   let enabled = config.enabled ?? false;
   let provider = config.provider || 'openai';
   let baseURL = config.base_url || '';
-  let endpointType = config.endpoint_type || 'completions';
+  let endpointType = normalizeEndpointType(config.endpoint_type);
   let apiToken = config.api_token || '';
   let modelName = config.model || '';
   let projectArchitecture = config.project_architecture || '';
@@ -167,9 +170,12 @@
   let contextPreviewLoading = false;
   let contextPreviewError = '';
   let contextPackPreview: ContextPackPreview | null = null;
+  type ContextWorkspaceTab = 'library' | 'candidates' | 'preview';
+  let contextWorkspaceTab: ContextWorkspaceTab = 'library';
 
   $: showEnginePanel = view !== 'context';
   $: showContextPanel = view !== 'engine';
+  $: canReadCorpusCandidates = currentUserPermissions.includes('corpus_candidate:read');
   $: isConfigured = enabled || !!(baseURL || apiToken || modelName);
   $: activeContextFactCount = contextFacts.filter(fact => fact.status === 'active').length;
   $: totalContextFactTokens = contextFacts.reduce((sum, fact) => sum + (Number(fact.token_count) || 0), 0);
@@ -233,7 +239,7 @@
     enabled = config.enabled ?? false;
     provider = config.provider || 'openai';
     baseURL = config.base_url || '';
-    endpointType = config.endpoint_type || 'completions';
+    endpointType = normalizeEndpointType(config.endpoint_type);
     apiToken = config.api_token || '';
     modelName = config.model || '';
     projectArchitecture = config.project_architecture || '';
@@ -261,6 +267,11 @@
     testError = '';
     testSuccess = '';
     testDetails = '';
+    resetSettingsWorkspaceScroll();
+  }
+
+  function setContextWorkspaceTab(tab: ContextWorkspaceTab) {
+    contextWorkspaceTab = tab;
     resetSettingsWorkspaceScroll();
   }
 
@@ -663,7 +674,7 @@
         </div>
         <div class="scw-read-item">
           <span>接口端点类型 (Endpoint Type)</span>
-          <strong class="font-mono">{endpointType || 'completions'}</strong>
+          <strong class="font-mono">{endpointType === 'messages' ? 'Claude Messages' : 'Responses API'}</strong>
         </div>
         <div class="scw-read-item">
           <span>API 凭证 (Token)</span>
@@ -715,7 +726,7 @@
       <div class="scw-step-body">
         <div class="scw-info">
           <h4>大模型服务与凭证配置</h4>
-          <p>well-ambient 的需求自解构引擎（Deconstructor）支持对接 OpenAI 兼容的大模型 API。当您配置并启用后，引擎会自动将复杂的需求文本拆解，并映射至 GitLab 的多仓项目中。</p>
+          <p>well-ambient 默认通过 OpenAI Responses API 对接 OpenAI、Sub2API 与兼容网关；直连 Anthropic 时可切换为 Claude Messages。启用后，引擎会以流式响应解构需求并映射至 GitLab 多仓项目。</p>
         </div>
 
         <div class="scw-form-stack">
@@ -734,7 +745,7 @@
               label="大模型提供商 (Provider)"
               placeholder="openai"
               bind:value={provider}
-              helperText="当前主要支持兼容 OpenAI API 协议的厂商（如 OpenAI、DeepSeek、硅基流动、阿里千问等）。"
+              helperText="OpenAI、Sub2API 与兼容网关请选择 Responses；直连 api.anthropic.com 时选择 Claude Messages。"
             />
 
             <div class="scw-choice-field">
@@ -742,30 +753,30 @@
               <div class="scw-choice-grid two">
                 <button 
                   type="button" 
-                  class:active={endpointType === 'completions'}
-                  on:click={() => endpointType = 'completions'}
-                >
-                  Completions (标准)
-                </button>
-                <button 
-                  type="button" 
                   class:active={endpointType === 'responses'}
                   on:click={() => endpointType = 'responses'}
                 >
-                  Responses (新版)
+                  Responses API（推荐）
+                </button>
+                <button 
+                  type="button" 
+                  class:active={endpointType === 'messages'}
+                  on:click={() => endpointType = 'messages'}
+                >
+                  Claude Messages（直连）
                 </button>
               </div>
               <span class="scw-helper">
-                Completions: 标准 Chat 接口（格式为 messages 数组）；Responses: 新版 Agent 接口（格式为 input 数组）。
+                历史 Chat Completions 配置会自动迁移到 Responses；Claude Messages 仅用于 Anthropic 原生端点。
               </span>
             </div>
 
             <TextInput
               id="ai-base-url"
               label="API 请求地址 (API URL)"
-              placeholder={endpointType === 'responses' ? 'https://api.pixelapi.com/v1/responses' : 'https://api.openai.com/v1/chat/completions'}
+              placeholder={endpointType === 'messages' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/responses'}
               bind:value={baseURL}
-              helperText="请填写真实请求的 API 端点。若填入具体接口，我们将原样直接请求，不做强制拼接（例如：https://api.pixelapi.com/v1/chat/completions）。若只填域名，将根据端点类型自动拼接。"
+              helperText="可填写服务域名、/v1 根路径或完整端点；系统会按所选协议规范化为 /v1/responses 或 /v1/messages。"
             />
 
             {#if showTokenEditor}
@@ -877,7 +888,7 @@
             </div>
             <div class="scw-summary-row">
               <span class="summary-label">协议/端点类型:</span>
-              <span class="summary-value font-mono">{endpointType === 'responses' ? 'Responses (新版)' : 'Completions (标准)'}</span>
+              <span class="summary-value font-mono">{endpointType === 'messages' ? 'Claude Messages（直连）' : 'Responses API（推荐）'}</span>
             </div>
             <div class="scw-summary-row">
               <span class="summary-label">API 请求地址:</span>
@@ -916,18 +927,72 @@
 
   {#if showContextPanel && !saveSuccess && (!editing || currentStep === 1)}
     <section class="scw-overview" aria-label="系统设计语料库">
-      <header class="scw-header">
-        <div class="scw-header-copy">
-          <span class="scw-kicker">系统设计语料</span>
-          <h4>系统设计语料库</h4>
-          <p>在这里维护系统架构设计、功能设计、流程设计和估算口径；后台会将资料压缩成可缓存的上下文包，供需求解构自动引用。</p>
-        </div>
+      <header class="scw-context-toolbar">
+        <span class="scw-kicker">语料工作台</span>
         <div class="scw-section-actions">
           <span class="scw-badge success">{activeContextFactCount} 条生效</span>
           <span class="scw-badge">{totalContextFactTokens || 0} tokens</span>
         </div>
       </header>
 
+      <div class="scw-task-tabs" role="tablist" aria-label="系统设计语料任务">
+        <button
+          id="context-tab-library"
+          type="button"
+          role="tab"
+          aria-selected={contextWorkspaceTab === 'library'}
+          aria-controls="context-panel-library"
+          class:active={contextWorkspaceTab === 'library'}
+          on:click={() => setContextWorkspaceTab('library')}
+        >
+          <span>资料库</span><small>{activeContextFactCount}</small>
+        </button>
+        {#if canReadCorpusCandidates}
+          <button
+            id="context-tab-candidates"
+            type="button"
+            role="tab"
+            aria-selected={contextWorkspaceTab === 'candidates'}
+            aria-controls="context-panel-candidates"
+            class:active={contextWorkspaceTab === 'candidates'}
+            on:click={() => setContextWorkspaceTab('candidates')}
+          >
+            <span>统一审核</span>
+          </button>
+        {/if}
+        <button
+          id="context-tab-preview"
+          type="button"
+          role="tab"
+          aria-selected={contextWorkspaceTab === 'preview'}
+          aria-controls="context-panel-preview"
+          class:active={contextWorkspaceTab === 'preview'}
+          on:click={() => setContextWorkspaceTab('preview')}
+        >
+          <span>上下文预览</span>
+        </button>
+      </div>
+
+      {#if contextWorkspaceTab === 'library'}
+      <div
+        id="context-panel-library"
+        class="scw-tab-panel"
+        role="tabpanel"
+        aria-labelledby="context-tab-library"
+        tabindex="0"
+      >
+      <CorpusSourceLibrary
+        {currentUserPermissions}
+        aiReady={enabled && !!baseURL && !!apiToken}
+        on:openreview={() => setContextWorkspaceTab('candidates')}
+      />
+
+      <details class="manual-context-tools">
+        <summary>
+          <span>高级工具：手工维护 Context Fact</span>
+          <small>用于小范围修正、停用或紧急补录，不经过 LLM 候选生成</small>
+        </summary>
+        <div class="manual-context-body">
       {#if contextFactsError}
         <div class="scw-inline-error">
           <span>{contextFactsError}</span>
@@ -1077,14 +1142,16 @@
             </div>
 
             <div class="scw-native-field wide">
-              <label class="scw-native-label" for="context-fact-content">设计内容</label>
-              <textarea
-                id="context-fact-content"
-                class="scw-native-textarea"
-                rows="5"
-                placeholder="写入架构设计、功能边界、关键流程、依赖约束或估算规则。后台会自动计算 token、版本与上下文包命中。"
-                bind:value={contextFactForm.content}
-              ></textarea>
+              <span class="scw-native-label">设计内容</span>
+              <MarkdownWorkbench
+                value={contextFactForm.content}
+                mode="edit"
+                label="手工 Context Fact"
+                description="高级直录入口，保存后按所选状态进入上下文事实库"
+                placeholder="写入架构设计、功能边界、关键流程、依赖约束或估算规则…"
+                minHeight={420}
+                on:change={(event) => setContextFactField('content', event.detail)}
+              />
             </div>
 
             <div class="scw-score-grid wide">
@@ -1107,10 +1174,27 @@
           </div>
         </div>
       </div>
-
-      <CorpusCandidateReview {currentUserPermissions} on:promoted={fetchContextFacts} />
-
-      <section class="scw-section">
+        </div>
+      </details>
+      </div>
+      {:else if contextWorkspaceTab === 'candidates' && canReadCorpusCandidates}
+      <div
+        id="context-panel-candidates"
+        class="scw-tab-panel"
+        role="tabpanel"
+        aria-labelledby="context-tab-candidates"
+        tabindex="0"
+      >
+        <CorpusCandidateReview {currentUserPermissions} on:promoted={fetchContextFacts} />
+      </div>
+      {:else}
+      <div
+        id="context-panel-preview"
+        class="scw-section scw-tab-panel"
+        role="tabpanel"
+        aria-labelledby="context-tab-preview"
+        tabindex="0"
+      >
         <div class="scw-section-head">
           <div class="scw-section-copy">
             <span class="scw-kicker">上下文预览</span>
@@ -1179,7 +1263,8 @@
             <p>预览结果会展示 pack 摘要、token 占用和被选中的设计资料。</p>
           </div>
         {/if}
-      </section>
+      </div>
+      {/if}
     </section>
   {/if}
 </div>
@@ -1199,5 +1284,46 @@
 
   .font-sans {
     font-family: var(--wa-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  }
+
+  .manual-context-tools {
+    min-width: 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--scw-line, rgba(92, 116, 137, 0.16));
+  }
+
+  .manual-context-tools summary {
+    width: fit-content;
+    display: grid;
+    gap: 3px;
+    color: var(--scw-accent-strong, #006f76);
+    cursor: pointer;
+  }
+
+  .manual-context-tools summary span {
+    font-size: 12px;
+    font-weight: 780;
+  }
+
+  .manual-context-tools summary small {
+    color: var(--scw-muted, #667789);
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .manual-context-tools[open] summary {
+    margin-bottom: 16px;
+  }
+
+  .manual-context-body {
+    min-width: 0;
+    display: grid;
+    gap: 16px;
+  }
+
+  @media (max-width: 760px) {
+    .manual-context-tools summary {
+      width: 100%;
+    }
   }
 </style>

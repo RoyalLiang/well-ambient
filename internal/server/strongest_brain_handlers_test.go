@@ -585,6 +585,7 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 		t.Fatalf("generate token: %v", err)
 	}
 	now := time.Now()
+	oldDueDate := time.Date(2026, time.June, 25, 0, 0, 0, 0, time.Local)
 	task := db.TaskTelemetry{
 		TaskID:     "DEMAND-3",
 		Title:      "待转派需求",
@@ -592,6 +593,7 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 		Status:     "progress",
 		Assignee:   "Brain User",
 		LastUpdate: now,
+		DueDate:    &oldDueDate,
 	}
 	if err := db.DB.Create(&task).Error; err != nil {
 		t.Fatalf("seed task: %v", err)
@@ -632,6 +634,70 @@ func TestStrongestBrainInterventionUpdatesTaskAndLogsEvent(t *testing.T) {
 	}
 	if event.Action != "override_reassign" || event.Actor != "Brain User" || event.NewValue != "朱家聪" || event.Reason != "需要朱家聪协助攻坚" {
 		t.Fatalf("unexpected event log: %+v", event)
+	}
+
+	// Rescheduling must update the same due date projected by /api/schedule.
+	rescheduleBody := bytes.NewBufferString(`{
+		"task_id": "DEMAND-3",
+		"action": "reschedule",
+		"value": "2026-07-13",
+		"reason": "会议确认调整到 13 日"
+	}`)
+	rescheduleReq := httptest.NewRequest(http.MethodPost, "/api/strongest-brain/intervention", rescheduleBody)
+	rescheduleReq.Header.Set("Authorization", "Bearer "+token)
+	rescheduleReq.Header.Set("Content-Type", "application/json")
+	rescheduleRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rescheduleRR, rescheduleReq)
+	if rescheduleRR.Code != http.StatusOK {
+		t.Fatalf("reschedule status = %d, body = %s", rescheduleRR.Code, rescheduleRR.Body.String())
+	}
+
+	var rescheduleResponse struct {
+		DueDate string `json:"due_date"`
+	}
+	if err := json.Unmarshal(rescheduleRR.Body.Bytes(), &rescheduleResponse); err != nil {
+		t.Fatalf("decode reschedule response: %v", err)
+	}
+	if rescheduleResponse.DueDate != "2026-07-13" {
+		t.Fatalf("response due_date = %q, want 2026-07-13", rescheduleResponse.DueDate)
+	}
+
+	if err := db.DB.Where("task_id = ?", "DEMAND-3").First(&updatedTask).Error; err != nil {
+		t.Fatalf("query rescheduled task: %v", err)
+	}
+	if updatedTask.DueDate == nil || updatedTask.DueDate.Format("2006-01-02") != "2026-07-13" {
+		t.Fatalf("task due date = %v, want 2026-07-13", updatedTask.DueDate)
+	}
+
+	schedule := buildScheduleResponse([]db.TaskTelemetry{updatedTask}, nil, time.Now())
+	if len(schedule.Items) != 1 || schedule.Items[0].DueDate != "2026-07-13" {
+		t.Fatalf("schedule projection did not receive rescheduled due date: %+v", schedule.Items)
+	}
+
+	// Submitting the unchanged date must not create another misleading success event.
+	noOpBody := bytes.NewBufferString(`{
+		"task_id": "DEMAND-3",
+		"action": "reschedule",
+		"value": "2026-07-13",
+		"reason": "重复提交"
+	}`)
+	noOpReq := httptest.NewRequest(http.MethodPost, "/api/strongest-brain/intervention", noOpBody)
+	noOpReq.Header.Set("Authorization", "Bearer "+token)
+	noOpReq.Header.Set("Content-Type", "application/json")
+	noOpRR := httptest.NewRecorder()
+	srv.mux.ServeHTTP(noOpRR, noOpReq)
+	if noOpRR.Code != http.StatusConflict {
+		t.Fatalf("no-op status = %d, want %d, body = %s", noOpRR.Code, http.StatusConflict, noOpRR.Body.String())
+	}
+
+	var rescheduleEventCount int64
+	if err := db.DB.Model(&db.DecisionEvent{}).
+		Where("task_id = ? AND action = ?", "DEMAND-3", "override_reschedule").
+		Count(&rescheduleEventCount).Error; err != nil {
+		t.Fatalf("count reschedule events: %v", err)
+	}
+	if rescheduleEventCount != 1 {
+		t.Fatalf("reschedule event count = %d, want 1", rescheduleEventCount)
 	}
 }
 

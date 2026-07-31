@@ -14,6 +14,17 @@
     kind?: 'primary' | 'secondary';
   }
 
+  interface WorkspaceDecisionEventSummary {
+    kind: 'automatic' | 'manual';
+    kindLabel: string;
+    taskId: string;
+    title: string;
+    message: string;
+    dateLabel: string;
+    timeLabel: string;
+    dateTime: string;
+  }
+
   export let kicker = '';
   export let title = '';
   export let summary = '';
@@ -26,17 +37,34 @@
   export let breadcrumbs: string[] = [];
   export let contextStatus = '';
   export let contextMeta = '';
+  export let latestEvent: WorkspaceDecisionEventSummary | null = null;
+  export let onLatestEventClick: () => void = () => {};
   export let onNavigate: (route: string) => void = () => {};
 </script>
 
 <section class="functional-workspace tone-{tone}" aria-label={title || '工作区'}>
   {#if showBreadcrumbBar && breadcrumbs.length > 0}
-    <nav class="workspace-breadcrumb-bar" aria-label="面包屑导航">
+    <nav class="workspace-breadcrumb-bar" class:has-latest-event={latestEvent !== null} aria-label="面包屑导航">
       <ol>
         {#each breadcrumbs as crumb, index}
           <li class:current={index === breadcrumbs.length - 1}><span>{crumb}</span></li>
         {/each}
       </ol>
+      {#if latestEvent}
+        <button
+          type="button"
+          class="workspace-latest-event event-{latestEvent.kind}"
+          aria-label={`查看最新事件详情：${latestEvent.taskId} ${latestEvent.message || latestEvent.title}`}
+          on:click={onLatestEventClick}
+        >
+          <i class="latest-event-dot" aria-hidden="true"></i>
+          <span class="latest-event-kind">{latestEvent.kindLabel}</span>
+          <strong>{latestEvent.taskId}</strong>
+          <span class="latest-event-title">{latestEvent.message || latestEvent.title}</span>
+          <time datetime={latestEvent.dateTime}>{latestEvent.dateLabel} {latestEvent.timeLabel}</time>
+          <span class="latest-event-action">详情 <i aria-hidden="true">→</i></span>
+        </button>
+      {/if}
       <div class="workspace-breadcrumb-meta">
         {#if contextStatus}<span class="context-status">{contextStatus}</span>{/if}
         {#if contextMeta}<span>{contextMeta}</span>{/if}
@@ -367,11 +395,38 @@
     margin: 0 auto;
   }
 
-  :global(.workspace-frame.flow-frame .functional-workspace),
-  :global(.workspace-frame.flow-frame .workspace-content),
-  :global(.workspace-frame.flow-frame .workspace-content > .demand-dashboard) {
-    height: 100%;
+  :global(.workspace-frame.flow-frame .functional-workspace) {
+    display: block;
+    height: auto;
     min-height: 0;
+  }
+
+  :global(.workspace-frame.flow-frame .workspace-content) {
+    position: static;
+    display: block;
+    flex: none;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  :global(.workspace-frame.flow-frame .workspace-content > .demand-dashboard) {
+    position: static;
+    inset: auto;
+    flex: none;
+    height: auto;
+    min-height: 0;
+  }
+
+  @media (max-width: 860px) {
+    :global(.workspace-frame.flow-frame .workspace-content) {
+      overflow: visible;
+    }
+
+    :global(.workspace-frame.flow-frame .workspace-content > .demand-dashboard) {
+      position: static;
+      inset: auto;
+    }
   }
 
   .functional-workspace.tone-cyan,
@@ -444,14 +499,14 @@
   .workspace-actions button:hover {
     transform: none;
     border-color: var(--wa-border-strong, rgba(85, 106, 128, 0.38));
-    background: #ffffff;
+    background: var(--wa-surface-flat, #fbfdff);
     box-shadow: 0 8px 20px rgba(26, 41, 58, 0.08);
   }
 
   .workspace-actions button.primary {
     border-color: var(--wa-accent, #008f96);
     background: var(--wa-accent, #008f96);
-    color: var(--wa-accent-ink, #ffffff);
+    color: var(--wa-accent-ink, #f6fbff);
   }
 
   .signal-strip {
@@ -527,7 +582,7 @@
   .functional-workspace {
     width: 100%;
     min-width: 0;
-    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
+    min-height: 0;
     padding: 0 !important;
     background: transparent !important;
     color: var(--wa-text-main, #293847);
@@ -539,7 +594,7 @@
     width: 100%;
     max-width: var(--wa-content-max, 1720px);
     min-width: 0;
-    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
+    min-height: 0;
     margin: 0 auto !important;
   }
 
@@ -553,13 +608,27 @@
     gap: 14px;
     margin: 0 auto 12px;
     padding: 0 14px;
-    border: 1px solid rgba(116, 139, 156, 0.18);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid var(--wa-glass-outline, rgba(72, 98, 118, 0.18));
+    border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
+    border-radius: var(--wa-radius-lg, 14px);
+    background: var(--wa-glass-panel-strong, rgba(252, 254, 255, 0.88));
     color: var(--wa-text-muted, #667789);
-    box-shadow: 0 10px 28px rgba(41, 62, 78, 0.045);
-    backdrop-filter: blur(18px) saturate(122%);
-    -webkit-backdrop-filter: blur(18px) saturate(122%);
+    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    -webkit-backdrop-filter: blur(18px) saturate(128%);
+    backdrop-filter: blur(18px) saturate(128%);
+  }
+
+  .workspace-breadcrumb-bar.has-latest-event {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(420px, 720px) minmax(180px, 1fr);
+  }
+
+  .workspace-breadcrumb-bar.has-latest-event > ol {
+    justify-self: start;
+  }
+
+  .workspace-breadcrumb-bar.has-latest-event > .workspace-breadcrumb-meta {
+    justify-self: end;
   }
 
   .workspace-breadcrumb-bar ol,
@@ -600,6 +669,113 @@
     font-weight: 680;
   }
 
+  .workspace-latest-event {
+    min-width: 0;
+    min-height: 34px;
+    display: grid;
+    grid-template-columns: auto auto auto minmax(72px, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px;
+    border: 0;
+    background: transparent;
+    color: var(--wa-text-main, #293847);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .workspace-latest-event:hover {
+    background: transparent;
+  }
+
+  .workspace-latest-event:focus-visible {
+    outline: none;
+  }
+
+  .workspace-latest-event:focus-visible .latest-event-title,
+  .workspace-latest-event:focus-visible .latest-event-action {
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .workspace-latest-event:focus-visible .latest-event-action {
+    text-decoration: underline 2px;
+    text-underline-offset: 4px;
+  }
+
+  .latest-event-kind,
+  .latest-event-action {
+    white-space: nowrap;
+    font-size: 10px;
+    font-weight: 760;
+  }
+
+  .latest-event-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--wa-info, #256bd8);
+  }
+
+  .event-manual .latest-event-dot {
+    background: var(--wa-accent, #008f96);
+  }
+
+  .latest-event-kind {
+    color: var(--wa-info, #256bd8);
+  }
+
+  .event-manual .latest-event-kind {
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .workspace-latest-event strong {
+    color: var(--wa-text-strong, #0d1722);
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .latest-event-title {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--wa-text-main, #293847);
+    font-size: 11px;
+    font-weight: 680;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-latest-event time {
+    color: var(--wa-text-muted, #667789);
+    font-family: var(--wa-font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .latest-event-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .latest-event-action i {
+    display: inline-block;
+    font-style: normal;
+  }
+
+  .workspace-latest-event:hover .latest-event-title,
+  .workspace-latest-event:hover .latest-event-action {
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .workspace-latest-event:hover .latest-event-action i {
+    transform: translateX(2px);
+  }
+
   .context-status {
     min-height: 24px;
     display: inline-flex;
@@ -612,17 +788,28 @@
   }
 
   :global(.workspace-content > .decision-admin),
+  :global(.workspace-content > .daily-jira),
   :global(.workspace-content > .demand-dashboard),
   :global(.workspace-content > .kanban-section),
   :global(.workspace-content > .kpi-dashboard),
+  :global(.workspace-content > .metrics-workspace),
   :global(.workspace-content > .settings-container),
   :global(.workspace-content > .telemetry-panel),
-  :global(.workspace-content > .deconstructor-section) {
+  :global(.workspace-content > .deconstructor-section),
+  :global(.workspace-content > .console-functional-stack) {
     width: 100%;
     min-width: 0;
     max-width: none;
     margin: 0 !important;
     background: transparent;
+  }
+
+  :global(.workspace-content > .settings-container) {
+    padding-bottom: 0 !important;
+  }
+
+  :global(.workspace-content > .console-functional-stack > :last-child) {
+    margin-bottom: 0 !important;
   }
 
   @media (max-width: 700px) {
@@ -643,8 +830,110 @@
     }
   }
 
+  @media (max-width: 1180px) {
+    .workspace-breadcrumb-bar.has-latest-event {
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding-block: 8px;
+    }
+
+    .workspace-breadcrumb-bar.has-latest-event .workspace-latest-event {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      width: min(100%, 720px);
+      justify-self: center;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .workspace-breadcrumb-bar.has-latest-event {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .workspace-breadcrumb-bar.has-latest-event > ol,
+    .workspace-breadcrumb-bar.has-latest-event > .workspace-breadcrumb-meta,
+    .workspace-breadcrumb-bar.has-latest-event .workspace-latest-event {
+      width: 100%;
+      justify-self: stretch;
+    }
+
+    .workspace-breadcrumb-bar.has-latest-event > ol {
+      grid-row: 1;
+    }
+
+    .workspace-breadcrumb-bar.has-latest-event .workspace-latest-event {
+      grid-row: 2;
+      min-height: 44px;
+    }
+
+    .workspace-breadcrumb-bar.has-latest-event > .workspace-breadcrumb-meta {
+      grid-row: 3;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .workspace-latest-event {
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+    }
+
+    .latest-event-kind,
+    .workspace-latest-event time {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .latest-event-action i {
+      transform: none !important;
+    }
+  }
+
   :global(.workspace-content > .decision-admin),
+  :global(.workspace-content > .daily-jira),
   :global(.workspace-content > .demand-dashboard) {
-    min-height: var(--wa-workspace-min-h, calc(100dvh - 112px));
+    min-height: 0;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame .functional-workspace) {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame .workspace-content) {
+    height: 100%;
+    min-height: 0;
+    align-content: stretch;
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame .workspace-content > .decision-admin),
+  :global(.workspace-frame.viewport-fit-frame .workspace-content > .daily-jira),
+  :global(.workspace-frame.viewport-fit-frame .workspace-content > .kanban-section),
+  :global(.workspace-frame.viewport-fit-frame .workspace-content > .console-functional-stack) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame .workspace-content > .console-functional-stack > :last-child) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  @media (max-width: 860px) {
+    :global(.workspace-frame.viewport-fit-frame .functional-workspace),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content > .decision-admin),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content > .daily-jira),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content > .kanban-section),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content > .console-functional-stack),
+    :global(.workspace-frame.viewport-fit-frame .workspace-content > .console-functional-stack > :last-child) {
+      height: auto;
+      overflow: visible;
+    }
   }
 </style>

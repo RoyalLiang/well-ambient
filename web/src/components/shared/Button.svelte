@@ -71,15 +71,16 @@
 
   /* Variants */
   .btn-primary {
-    border-color: var(--wa-accent, #008f96);
-    background: var(--wa-accent, #008f96);
-    color: var(--wa-accent-ink, #ffffff);
+    border-color: var(--wa-accent-fill, #006f76);
+    background: var(--wa-accent-fill, #006f76);
+    color: var(--wa-accent-fill-ink, #f6fbff);
     box-shadow: 0 10px 24px rgba(0, 143, 150, 0.16);
   }
 
   .btn-primary:hover:not(:disabled) {
-    border-color: var(--wa-accent-strong, #006f76);
-    background: var(--wa-accent-strong, #006f76);
+    border-color: var(--wa-accent-fill-hover, #00545a);
+    background: var(--wa-accent-fill-hover, #00545a);
+    color: var(--wa-accent-fill-ink, #f6fbff);
     box-shadow: 0 12px 26px rgba(0, 143, 150, 0.18);
   }
 
@@ -139,5 +140,11 @@
   @keyframes rotation {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
   }
 </style>

@@ -1,25 +1,32 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"well-ambient/internal/agenda"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	"well-ambient/internal/deliveryplanning"
 	"well-ambient/internal/server/authz"
 	"well-ambient/internal/telemetry"
 )
 
 // Server encapsulates the HTTP server logic
 type Server struct {
-	config     *config.Config
-	configPath string
-	mux        *http.ServeMux
+	config           *config.Config
+	configPath       string
+	mux              *http.ServeMux
+	jiraAssigneeSync func(issueKey, assignee string)
+	jiraDueDateSync  func(issueKey, dueDate string)
+	jiraCommentSync  func(issueKey, comment string)
+	jiraReleaseList  func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error)
 }
 
 // NewServer creates a new server instance
@@ -29,10 +36,17 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 		configPath: configPath,
 		mux:        http.NewServeMux(),
 	}
+	s.jiraAssigneeSync = s.syncAssigneeToJira
+	s.jiraDueDateSync = s.syncDueDateToJira
+	s.jiraCommentSync = s.syncDecisionCommentToJira
+	s.jiraReleaseList = func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error) {
+		return telemetry.NewJiraClient(&s.config.Jira).ListProjectReleases(ctx, projectKey)
+	}
 	s.routes()
 
 	// Bind the telemetry notification broadcast callback to avoid import cycles
 	telemetry.OnNotificationBroadcast = BroadcastNotifications
+	telemetry.OnTelemetryBroadcast = BroadcastTelemetryUpdated
 
 	return s
 }
@@ -51,9 +65,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/webhook/gitlab", s.handleGitLabWebhook)
 
 	// Protected Task and Log Queries
-	s.mux.HandleFunc("GET /api/tasks", s.withAuth(s.handleGetTasks))
+	s.mux.HandleFunc("GET /api/tasks", s.withAuth(s.withLegacyDeliveryAPI(legacyTasksReadEndpoint, s.handleGetTasks)))
 	s.mux.HandleFunc("GET /api/tasks/commits", s.withAuth(s.handleGetTaskCommits))
 	s.mux.HandleFunc("GET /api/execution/tasks", s.withPermission("dashboard:read", s.handleGetExecutionTasks))
+	s.mux.HandleFunc("GET /api/delivery/directory", s.withAuth(s.handleGetDeliveryDirectory))
+	s.mux.HandleFunc("GET /api/task-tracking/assignees", s.withPermission("delivery:read", s.handleGetTaskTrackingAssignees))
 	s.mux.HandleFunc("GET /api/strongest-brain/evidence-chain", s.withPermission("dashboard:read", s.handleGetStrongestBrainEvidenceChain))
 	s.mux.HandleFunc("GET /api/strongest-brain/delivery-cockpit", s.withPermission("decision:read", s.handleGetStrongestBrainDeliveryCockpit))
 	s.mux.HandleFunc("GET /api/strongest-brain/decision-queue", s.withPermission("decision:read", s.handleGetStrongestBrainDecisionQueue))
@@ -63,6 +79,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/strongest-brain/override-audit", s.withPermission("decision:read", s.handleGetStrongestBrainOverrideAudit))
 	s.mux.HandleFunc("GET /api/strongest-brain/ai-traces", s.withPermission("ai_context:read", s.handleGetStrongestBrainAITraces))
 	s.mux.HandleFunc("POST /api/strongest-brain/intervention", s.withPermission("demands:write", s.handleStrongestBrainIntervention))
+	s.mux.HandleFunc("GET /api/decision/daily-jira", s.withPermission("decision:read", s.handleGetDailyJiraAudit))
+	s.mux.HandleFunc("POST /api/decision/daily-jira/review", s.withPermission("decision:read", s.withPermission("demands:write", s.handlePostDailyJiraReview)))
 	s.mux.HandleFunc("GET /api/logs", s.withAuth(s.handleGetLogs))
 
 	// Protected Config APIs
@@ -78,6 +96,10 @@ func (s *Server) routes() {
 
 	// Protected User, Groups, and RBAC APIs
 	s.mux.HandleFunc("GET /api/me", s.withAuth(s.handleGetCurrentUser))
+	s.mux.HandleFunc("GET /api/me/project-preferences", s.withAuth(s.handleGetProjectPreferences))
+	s.mux.HandleFunc("PUT /api/me/project-preferences", s.withAuth(s.handleUpdateProjectPreferences))
+	s.mux.HandleFunc("GET /api/me/decision-table-columns", s.withAuth(s.handleGetDecisionTableColumns))
+	s.mux.HandleFunc("PUT /api/me/decision-table-columns", s.withAuth(s.handleUpdateDecisionTableColumns))
 	s.mux.HandleFunc("GET /api/users", s.withPermission("users:read", s.handleGetUsers))
 	s.mux.HandleFunc("POST /api/users/groups", s.withPermission("users:write", s.handleUpdateUserGroups))
 	s.mux.HandleFunc("POST /api/users/transfer-admin", s.withPermission("users:transfer_super_admin", s.handleTransferAdmin))
@@ -101,11 +123,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/demands", s.withAuth(s.handleDeleteDemand))
 	s.mux.HandleFunc("POST /api/demands/archive", s.withAuth(s.handleArchiveDemand))
 	s.mux.HandleFunc("POST /api/demands/reassign", s.withAuth(s.handleReassignDemand))
-	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.handleGetSchedule))
+	s.mux.HandleFunc("GET /api/schedule", s.withPermission("demands:read", s.withLegacyDeliveryAPI(legacyScheduleReadEndpoint, s.handleGetSchedule)))
 	s.mux.HandleFunc("GET /api/schedule/risk-calendar", s.withPermission("demands:read", s.handleGetScheduleRiskCalendar))
-	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.handleScheduleTask))
+	s.mux.HandleFunc("POST /api/tasks/schedule", s.withAuth(s.withLegacyDeliveryAPI(legacyScheduleWriteEndpoint, s.handleScheduleTask)))
 	s.mux.HandleFunc("GET /api/demand-specs", s.withPermission("demand_spec:read", s.handleListDemandSpecs))
 	s.mux.HandleFunc("POST /api/demand-specs", s.withPermission("demand_spec:write", s.handleSaveDemandSpec))
+	s.mux.HandleFunc("POST /api/demand-specs/ai-stream", s.withPermission("demand_spec:write", s.handleStreamAIDemandSpec))
+	s.mux.HandleFunc("DELETE /api/demand-specs/{id}", s.withPermission("demand_spec:write", s.handleDeleteDemandSpecDraft))
 	s.mux.HandleFunc("POST /api/demand-specs/{id}/freeze", s.withPermission("demand_spec:freeze", s.handleFreezeDemandSpec))
 	s.mux.HandleFunc("GET /api/review-contracts", s.withPermission("demand_spec:read", s.handleGetReviewContract))
 	s.mux.HandleFunc("POST /api/review-contracts", s.withPermission("review_contract:manage", s.handleSaveReviewContract))
@@ -120,12 +144,34 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/execution/runs/{id}/verify", s.withPermission("execution:accept", s.handleVerifyExecutionRun))
 	s.mux.HandleFunc("GET /api/corpus-candidates", s.withPermission("corpus_candidate:read", s.handleListCorpusCandidates))
 	s.mux.HandleFunc("POST /api/corpus-candidates/{id}/review", s.withPermission("corpus_candidate:review", s.handleReviewCorpusCandidate))
+	s.mux.HandleFunc("GET /api/corpus-candidates/{id}/impact", s.withPermission("corpus_candidate:read", s.withPermission("ai_context:preview", s.handlePreviewCorpusCandidateImpact)))
+	s.mux.HandleFunc("POST /api/corpus-candidates/{id}/publish", s.withPermission("corpus_candidate:review", s.withPermission("ai_context:preview", s.handlePublishCorpusCandidate)))
 
 	// Protected Project Configs & Brain Scores
 	s.mux.HandleFunc("GET /api/projects/config", s.withAuth(s.handleGetProjectConfigs))
 	s.mux.HandleFunc("POST /api/projects/config", s.withPermission("config:write", s.handleSaveProjectConfig))
 	s.mux.HandleFunc("GET /api/projects/scores", s.withAuth(s.handleGetProjectScores))
 	s.mux.HandleFunc("POST /api/projects/scores/calculate", s.withPermission("config:write", s.handleCalculateProjectScores))
+	s.mux.HandleFunc("GET /api/projects/{project_key}/releases", s.withPermission("delivery:read", s.handleListProjectReleases))
+	s.mux.HandleFunc("POST /api/projects/{project_key}/releases/sync", s.withPermission("release:manage", s.handleSyncProjectReleases))
+	s.mux.HandleFunc("POST /api/projects/{project_key}/releases", s.withPermission("release:manage", s.handleCreateProjectRelease))
+	s.mux.HandleFunc("GET /api/releases", s.withPermission("delivery:read", s.handleListReleases))
+	s.mux.HandleFunc("POST /api/releases", s.withPermission("release:manage", s.handleCreateRelease))
+	s.mux.HandleFunc("GET /api/releases/jira-search", s.withPermission("release:manage", s.handleSearchJiraReleases))
+	s.mux.HandleFunc("GET /api/releases/{id}", s.withPermission("delivery:read", s.handleGetRelease))
+	s.mux.HandleFunc("PATCH /api/releases/{id}", s.withPermission("release:manage", s.handlePatchRelease))
+	s.mux.HandleFunc("GET /api/releases/{id}/jira-issues", s.withPermission("delivery:read", s.handleListReleaseJiraIssues))
+	s.mux.HandleFunc("POST /api/releases/{id}/jira-issues/bulk", s.withPermission("release:manage", s.handleBulkAddReleaseJiraIssues))
+	s.mux.HandleFunc("DELETE /api/releases/{id}/jira-issues/{work_item_id}", s.withPermission("release:manage", s.handleDeleteReleaseJiraIssue))
+	s.mux.HandleFunc("PUT /api/releases/{id}/jira-link", s.withPermission("release:manage", s.handlePutReleaseJiraLink))
+	s.mux.HandleFunc("DELETE /api/releases/{id}/jira-link", s.withPermission("release:manage", s.handleDeleteReleaseJiraLink))
+	s.mux.HandleFunc("GET /api/releases/{id}/snapshot", s.withPermission("delivery:read", s.handleGetReleaseSnapshot))
+	s.mux.HandleFunc("GET /api/work-items", s.withPermission("delivery:read", s.handleListWorkItems))
+	s.mux.HandleFunc("GET /api/work-items/{id}", s.withPermission("delivery:read", s.handleGetWorkItem))
+	s.mux.HandleFunc("PATCH /api/work-items/{id}/planning", s.withPermission("delivery:plan", s.handlePatchWorkItemPlanning))
+	s.mux.HandleFunc("POST /api/work-items/bulk-planning", s.withPermission("delivery:plan", s.handleBulkWorkItemPlanning))
+	s.mux.HandleFunc("GET /api/delivery/exceptions", s.withPermission("decision:read", s.handleGetDeliveryExceptions))
+	s.mux.HandleFunc("GET /api/delivery/quality", s.withPermission("decision:read", s.handleGetDeliveryQuality))
 
 	// Protected AI Deconstructor API
 	s.mux.HandleFunc("POST /api/deconstruct", s.withAuth(s.handleDeconstruct))
@@ -142,6 +188,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/context/facts", s.withPermission("ai_context:read", s.handleListContextFacts))
 	s.mux.HandleFunc("POST /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
 	s.mux.HandleFunc("PUT /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
+	s.mux.HandleFunc("GET /api/context/documents", s.withPermission("ai_context:read", s.handleListContextDocuments))
+	s.mux.HandleFunc("GET /api/context/documents/{id}", s.withPermission("ai_context:read", s.handleGetContextDocument))
+	s.mux.HandleFunc("POST /api/context/documents/import", s.withPermission("ai_context:write", s.handleImportContextDocument))
+	s.mux.HandleFunc("POST /api/context/documents/{id}/archive", s.withPermission("ai_context:write", s.handleArchiveContextDocument))
 	s.mux.HandleFunc("POST /api/context/pack/preview", s.withPermission("ai_context:preview", s.handlePreviewContextPack))
 
 	// Protected Policy Authorization APIs
@@ -296,8 +346,8 @@ func (s *Server) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 
 // handleGetTasks returns task telemetries as JSON with query filters
 func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
-	projectFilter := r.URL.Query().Get("project")
-	assigneeFilter := r.URL.Query().Get("assignee")
+	projectFilters := queryFilterValues(r, "project")
+	assigneeFilters := queryFilterValues(r, "assignee")
 	visibility, _, err := s.loadCoreMemberVisibility()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to query users for core member visibility: %v", err), http.StatusInternalServerError)
@@ -305,24 +355,10 @@ func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tx := db.DB.Where("status != ?", "archived")
-
-	if projectFilter != "" && projectFilter != "all" {
-		tx = tx.Where("task_id LIKE ?", projectFilter+"-%")
-	}
-
-	if assigneeFilter != "" && assigneeFilter != "all" {
-		if assigneeFilter == "外部协同" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode([]db.TaskTelemetry{})
-			return
-		}
-		if visibility.includesAssignee(assigneeFilter) {
-			tx = tx.Where("assignee = ?", assigneeFilter)
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode([]db.TaskTelemetry{})
-			return
-		}
+	tx, err = applyRequestProjectScope(tx, r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	var tasks []db.TaskTelemetry
@@ -331,6 +367,7 @@ func (s *Server) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tasks = visibility.filterTasks(tasks)
+	tasks = filterTaskTelemetriesByQuery(tasks, projectFilters, assigneeFilters)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(tasks); err != nil {
@@ -372,18 +409,34 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request: missing task_id query parameter", http.StatusBadRequest)
 		return
 	}
+	allowed, err := requestCanAccessTask(r, taskID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		http.Error(w, fmt.Sprintf("Task %s not found", taskID), http.StatusNotFound)
+		return
+	}
+
+	taskIDVariants := []string{taskID}
+	for _, variant := range []string{strings.ToUpper(taskID), strings.ToLower(taskID)} {
+		if !slices.Contains(taskIDVariants, variant) {
+			taskIDVariants = append(taskIDVariants, variant)
+		}
+	}
 
 	var gitLogs []db.GitCommitLog
-	_ = db.DB.Where("task_id = ?", taskID).Find(&gitLogs)
+	_ = db.DB.Where("task_id IN ?", taskIDVariants).Find(&gitLogs)
 
 	var jiraComments []db.JiraCommentLog
-	_ = db.DB.Where("task_id = ?", taskID).Find(&jiraComments)
+	_ = db.DB.Where("task_id IN ?", taskIDVariants).Find(&jiraComments)
 
 	// 合并为 TelemetryActivityDTO
 	activities := []TelemetryActivityDTO{}
 	for _, gl := range gitLogs {
 		activities = append(activities, TelemetryActivityDTO{
-			TaskID:    gl.TaskID,
+			TaskID:    taskID,
 			Repo:      gl.Repo,
 			Branch:    gl.Branch,
 			CommitID:  gl.CommitID,
@@ -397,7 +450,7 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, jc := range jiraComments {
 		activities = append(activities, TelemetryActivityDTO{
-			TaskID:    jc.TaskID,
+			TaskID:    taskID,
 			Repo:      "Jira",
 			Branch:    "-",
 			Message:   jc.Body,

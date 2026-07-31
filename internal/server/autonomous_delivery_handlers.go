@@ -24,6 +24,7 @@ type demandSpecPayload struct {
 	IntentConfidence   float64      `json:"intent_confidence"`
 	Summary            string       `json:"summary"`
 	UserGoal           string       `json:"user_goal"`
+	MarkdownContent    string       `json:"markdown_content"`
 	Facts              []string     `json:"facts"`
 	Inferences         []string     `json:"inferences"`
 	MissingContext     []string     `json:"missing_context"`
@@ -57,6 +58,7 @@ type demandSpecDTO struct {
 	IntentConfidence   float64      `json:"intent_confidence"`
 	Summary            string       `json:"summary"`
 	UserGoal           string       `json:"user_goal"`
+	MarkdownContent    string       `json:"markdown_content"`
 	Facts              []string     `json:"facts"`
 	Inferences         []string     `json:"inferences"`
 	MissingContext     []string     `json:"missing_context"`
@@ -101,6 +103,14 @@ type reviewContractPayload struct {
 	SegregationRules    []string            `json:"segregation_rules"`
 	ReviewSLAHours      int                 `json:"review_sla_hours"`
 	EscalationOwner     string              `json:"escalation_owner"`
+}
+
+type reviewParticipantDTO struct {
+	ID         uint   `json:"id"`
+	Username   string `json:"username"`
+	Email      string `json:"email"`
+	Name       string `json:"name"`
+	Department string `json:"department"`
 }
 
 type reviewContractDTO struct {
@@ -158,23 +168,29 @@ func (s *Server) handleSaveDemandSpec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createDemandSpec(w http.ResponseWriter, payload demandSpecPayload, actor string) {
+	spec, contract, status, err := s.createDemandSpecRecord(payload, actor)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"spec": demandSpecFromModel(spec), "review_contract": reviewContractFromModel(contract)})
+}
+
+func (s *Server) createDemandSpecRecord(payload demandSpecPayload, actor string) (db.DemandSpecVersion, db.ReviewContract, int, error) {
 	demandID := strings.TrimSpace(payload.DemandID)
 	if demandID == "" {
-		http.Error(w, "demand_id is required", http.StatusBadRequest)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusBadRequest, fmt.Errorf("demand_id is required")
 	}
 
 	tx := db.DB.Begin()
 	var demand db.TaskTelemetry
 	if err := tx.Where("task_id = ? AND issue_type = ?", demandID, "demand").First(&demand).Error; err != nil {
 		tx.Rollback()
-		http.Error(w, "demand not found", http.StatusNotFound)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusNotFound, fmt.Errorf("demand not found")
 	}
 	if err := hydrateSpecPayloadFromArchive(tx, &payload); err != nil {
 		tx.Rollback()
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusBadRequest, err
 	}
 	if strings.TrimSpace(payload.OriginalText) == "" {
 		payload.OriginalText = firstNonBlank(demand.Description, demand.Title)
@@ -194,21 +210,18 @@ func (s *Server) createDemandSpec(w http.ResponseWriter, payload demandSpecPaylo
 	var maxVersion int
 	if err := tx.Model(&db.DemandSpecVersion{}).Where("demand_id = ?", demandID).Select("COALESCE(MAX(version), 0)").Scan(&maxVersion).Error; err != nil {
 		tx.Rollback()
-		http.Error(w, "failed to allocate spec version", http.StatusInternalServerError)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusInternalServerError, fmt.Errorf("failed to allocate spec version")
 	}
 	now := time.Now()
 	spec := demandSpecModel(payload, demandID, maxVersion+1, actor, now)
 	if err := tx.Create(&spec).Error; err != nil {
 		tx.Rollback()
-		http.Error(w, "failed to create demand spec", http.StatusInternalServerError)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusInternalServerError, fmt.Errorf("failed to create demand spec")
 	}
-	contract := defaultReviewContract(spec, demand, payload, s.config.Jira.SyncUsers, now)
+	contract := defaultReviewContract(spec, demand, payload, now)
 	if err := tx.Create(&contract).Error; err != nil {
 		tx.Rollback()
-		http.Error(w, "failed to create review contract", http.StatusInternalServerError)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusInternalServerError, fmt.Errorf("failed to create review contract")
 	}
 
 	completedAt := now
@@ -216,14 +229,12 @@ func (s *Server) createDemandSpec(w http.ResponseWriter, payload demandSpecPaylo
 		Where("demand_id = ? AND demand_spec_version_id != ? AND status IN ?", demandID, spec.ID, []string{delivery.RunPending, delivery.RunPreflightBlocked, delivery.RunPreflightReady}).
 		Updates(map[string]interface{}{"status": delivery.RunCancelled, "block_reason": fmt.Sprintf("superseded by demand spec v%d", spec.Version), "completed_at": &completedAt}).Error; err != nil {
 		tx.Rollback()
-		http.Error(w, "failed to invalidate stale execution runs", http.StatusInternalServerError)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusInternalServerError, fmt.Errorf("failed to invalidate stale execution runs")
 	}
 	if err := tx.Commit().Error; err != nil {
-		http.Error(w, "failed to commit demand spec", http.StatusInternalServerError)
-		return
+		return db.DemandSpecVersion{}, db.ReviewContract{}, http.StatusInternalServerError, fmt.Errorf("failed to commit demand spec")
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"spec": demandSpecFromModel(spec), "review_contract": reviewContractFromModel(contract)})
+	return spec, contract, http.StatusCreated, nil
 }
 
 func (s *Server) updateDemandSpec(w http.ResponseWriter, payload demandSpecPayload, actor string) {
@@ -248,6 +259,48 @@ func (s *Server) updateDemandSpec(w http.ResponseWriter, payload demandSpecPaylo
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"spec": demandSpecFromModel(updated)})
+}
+
+func (s *Server) handleDeleteDemandSpecDraft(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUint(r, "id")
+	if err != nil {
+		http.Error(w, "invalid demand spec id", http.StatusBadRequest)
+		return
+	}
+
+	tx := db.DB.Begin()
+	var spec db.DemandSpecVersion
+	if err := tx.First(&spec, id).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "demand spec not found", http.StatusNotFound)
+		return
+	}
+	if spec.Status != delivery.SpecDraft {
+		tx.Rollback()
+		http.Error(w, "only an unfrozen demand spec draft can be withdrawn", http.StatusConflict)
+		return
+	}
+
+	if err := tx.Where("demand_spec_version_id = ?", spec.ID).Delete(&db.ReviewContract{}).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "failed to remove draft review contract", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Delete(&spec).Error; err != nil {
+		tx.Rollback()
+		http.Error(w, "failed to withdraw demand spec draft", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		http.Error(w, "failed to commit demand spec withdrawal", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":    "withdrawn",
+		"demand_id": spec.DemandID,
+		"version":   spec.Version,
+	})
 }
 
 func (s *Server) handleFreezeDemandSpec(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +360,25 @@ func (s *Server) handleGetReviewContract(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "review contract not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"review_contract": reviewContractFromModel(contract)})
+	visibility, users, err := s.loadCoreMemberVisibility()
+	if err != nil {
+		http.Error(w, "failed to load review participants", http.StatusInternalServerError)
+		return
+	}
+	participants := make([]reviewParticipantDTO, 0, len(users))
+	for _, user := range users {
+		identity := firstNonBlank(user.Name, user.Username, user.Email)
+		if strings.TrimSpace(user.Name) == "" || !visibility.includesAssignee(identity) {
+			continue
+		}
+		participants = append(participants, reviewParticipantDTO{
+			ID: user.ID, Username: user.Username, Email: user.Email, Name: user.Name, Department: user.Department,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"review_contract": reviewContractFromModel(contract),
+		"participants":    participants,
+	})
 }
 
 func (s *Server) handleSaveReviewContract(w http.ResponseWriter, r *http.Request) {
@@ -423,6 +494,7 @@ func demandSpecModel(payload demandSpecPayload, demandID string, version int, au
 		IntentConfidence:       payload.IntentConfidence,
 		Summary:                strings.TrimSpace(payload.Summary),
 		UserGoal:               strings.TrimSpace(payload.UserGoal),
+		MarkdownContent:        strings.TrimSpace(payload.MarkdownContent),
 		FactsJSON:              encodeJSON(payload.Facts),
 		InferencesJSON:         encodeJSON(payload.Inferences),
 		MissingContextJSON:     encodeJSON(payload.MissingContext),
@@ -448,10 +520,12 @@ func demandSpecModel(payload demandSpecPayload, demandID string, version int, au
 	}
 }
 
-func defaultReviewContract(spec db.DemandSpecVersion, demand db.TaskTelemetry, payload demandSpecPayload, configuredUsers []string, now time.Time) db.ReviewContract {
-	candidates := append([]string{}, configuredUsers...)
+func defaultReviewContract(spec db.DemandSpecVersion, demand db.TaskTelemetry, payload demandSpecPayload, now time.Time) db.ReviewContract {
+	candidates := make([]string, 0, len(payload.Tasks))
 	for _, task := range payload.Tasks {
-		candidates = appendUniqueStrings(candidates, strings.TrimSpace(task.Assignee))
+		if !strings.EqualFold(strings.TrimSpace(task.Assignee), strings.TrimSpace(spec.AuthoredBy)) {
+			candidates = appendUniqueStrings(candidates, strings.TrimSpace(task.Assignee))
+		}
 	}
 	candidates = normalizeDeliveryStrings(candidates)
 	acceptanceOwner := firstNonBlank(demand.Assignee, demand.Creator)
@@ -520,7 +594,7 @@ func demandSpecFromModel(spec db.DemandSpecVersion) demandSpecDTO {
 		ID: spec.ID, DemandID: spec.DemandID, Version: spec.Version, Status: spec.Status,
 		SourceArchiveID: spec.SourceArchiveID, ContextPackID: spec.ContextPackID,
 		OriginalText: spec.OriginalText, Intent: spec.Intent, IntentConfidence: spec.IntentConfidence,
-		Summary: spec.Summary, UserGoal: spec.UserGoal, Facts: decodeStringList(spec.FactsJSON),
+		Summary: spec.Summary, UserGoal: spec.UserGoal, MarkdownContent: spec.MarkdownContent, Facts: decodeStringList(spec.FactsJSON),
 		Inferences: decodeStringList(spec.InferencesJSON), MissingContext: decodeStringList(spec.MissingContextJSON),
 		BusinessRules: decodeStringList(spec.BusinessRulesJSON), MainFlows: decodeStringList(spec.MainFlowsJSON),
 		ExceptionFlows: decodeStringList(spec.ExceptionFlowsJSON), PermissionRules: decodeStringList(spec.PermissionRulesJSON),

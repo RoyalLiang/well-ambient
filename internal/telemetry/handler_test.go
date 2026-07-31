@@ -113,6 +113,9 @@ func TestProcessWebhookEvent(t *testing.T) {
 	if !strings.Contains(tele104.LastCommit, "feat(#task-104): optimize log memory usage") {
 		t.Errorf("Expected last commit to match push message, got %q", tele104.LastCommit)
 	}
+	if tele104.Source != "git" {
+		t.Errorf("Expected a new webhook-only telemetry row to be marked as git evidence, got %q", tele104.Source)
+	}
 	var pushNotif db.Notification
 	if err := db.DB.Where("task_id = ? AND type = ?", "task-104", "git_push").First(&pushNotif).Error; err != nil {
 		t.Fatalf("Failed to find git push notification: %v", err)
@@ -248,6 +251,11 @@ func TestProcessWebhookEventPreservesTaskGroupLink(t *testing.T) {
 	dueDate := now.AddDate(0, 0, 7)
 	existing := db.TaskTelemetry{
 		TaskID:        "task-777",
+		ProjectKey:    "HIT",
+		Source:        "jira",
+		ExternalKey:   "HIT-777",
+		PlanningState: "ready",
+		Revision:      4,
 		Title:         "Linked shadow task",
 		Repo:          "backend-core",
 		Assignee:      "Eddie",
@@ -296,5 +304,8 @@ func TestProcessWebhookEventPreservesTaskGroupLink(t *testing.T) {
 	}
 	if updated.DueDate == nil || !updated.DueDate.Equal(dueDate) {
 		t.Fatalf("DueDate was not preserved: %+v", updated.DueDate)
+	}
+	if updated.Source != "jira" || updated.ProjectKey != "HIT" || updated.ExternalKey != "HIT-777" || updated.PlanningState != "ready" || updated.Revision != 4 {
+		t.Fatalf("delivery-planning identity was not preserved: %+v", updated)
 	}
 }

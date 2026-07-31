@@ -45,6 +45,12 @@ func (v coreMemberVisibility) filterExecutionItems(items []ExecutionTaskItemDTO)
 	}
 	filtered := make([]ExecutionTaskItemDTO, 0, len(items))
 	for _, item := range items {
+		// 本地执行任务属于已登录用户的任务跟踪事实，不应被 Jira 同步名单误删。
+		// 只有 Jira 投影继续沿用核心成员可见性约束；空 source 是历史本地数据。
+		if item.Source != "jira" {
+			filtered = append(filtered, item)
+			continue
+		}
 		if !v.includesAssignee(item.Assignee) {
 			continue
 		}

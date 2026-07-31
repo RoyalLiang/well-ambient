@@ -37,14 +37,3 @@ func TestParseGeneratedChangeSetRejectsDeleteAndUnsuppliedUpdate(t *testing.T) {
 		t.Fatalf("expected deletion and source-boundary errors, got %v", err)
 	}
 }
-
-func TestExtractLLMTextSupportsConfiguredProtocols(t *testing.T) {
-	chat, err := extractLLMText([]byte(`{"choices":[{"message":{"content":"chat result"}}]}`), "completions")
-	if err != nil || chat != "chat result" {
-		t.Fatalf("chat extraction = %q, %v", chat, err)
-	}
-	responses, err := extractLLMText([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"response result"}]}]}`), "responses")
-	if err != nil || responses != "response result" {
-		t.Fatalf("responses extraction = %q, %v", responses, err)
-	}
-}

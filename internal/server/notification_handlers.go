@@ -52,9 +52,10 @@ func (e *EmailNotificationSender) SendDelayAlert(alert NotificationAlert) error 
 
 // Active SSE client channels
 var (
-	clientsMu     sync.Mutex
-	clients       = make(map[chan struct{}]bool)
-	configClients = make(map[chan ConfigVersionDTO]bool)
+	clientsMu        sync.Mutex
+	clients          = make(map[chan struct{}]bool)
+	configClients    = make(map[chan ConfigVersionDTO]bool)
+	telemetryClients = make(map[chan string]bool)
 )
 
 // BroadcastNotifications triggers an immediate refresh on all connected SSE clients
@@ -64,6 +65,22 @@ func BroadcastNotifications() {
 	for ch := range clients {
 		select {
 		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// BroadcastTelemetryUpdated tells connected clients which task received new Git evidence.
+func BroadcastTelemetryUpdated(taskID string) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+	for ch := range telemetryClients {
+		select {
+		case ch <- taskID:
 		default:
 		}
 	}
@@ -106,19 +123,26 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 	// Buffer size of 1 is sufficient as a notification is just a trigger signal.
 	notifier := make(chan struct{}, 1)
 	configNotifier := make(chan ConfigVersionDTO, 1)
+	// Keep short cross-repository bursts distinct. Unlike the generic notification
+	// trigger, telemetry carries the task identity and must not collapse a second
+	// task while the first event is being flushed to the client.
+	telemetryNotifier := make(chan string, 32)
 
 	clientsMu.Lock()
 	clients[notifier] = true
 	configClients[configNotifier] = true
+	telemetryClients[telemetryNotifier] = true
 	clientsMu.Unlock()
 
 	defer func() {
 		clientsMu.Lock()
 		delete(clients, notifier)
 		delete(configClients, configNotifier)
+		delete(telemetryClients, telemetryNotifier)
 		clientsMu.Unlock()
 		close(notifier)
 		close(configNotifier)
+		close(telemetryNotifier)
 	}()
 
 	// Send initial payload immediately
@@ -141,6 +165,10 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 			}
 		case version := <-configNotifier:
 			if !s.sendConfigUpdatedEvent(w, r, flusher, version) {
+				return
+			}
+		case taskID := <-telemetryNotifier:
+			if !sendTelemetryUpdatedEvent(w, r, flusher, taskID) {
 				return
 			}
 		case <-ticker.C:
@@ -196,6 +224,23 @@ func (s *Server) sendConfigUpdatedEvent(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
+func sendTelemetryUpdatedEvent(w http.ResponseWriter, r *http.Request, flusher http.Flusher, taskID string) bool {
+	if r.Context().Err() != nil {
+		return false
+	}
+	dataBytes, err := json.Marshal(map[string]string{"task_id": taskID})
+	if err != nil {
+		log.Printf("SSE: failed to serialize telemetry-updated event: %v", err)
+		return true
+	}
+	if _, err := fmt.Fprintf(w, "event: telemetry-updated\ndata: %s\n\n", string(dataBytes)); err != nil {
+		log.Printf("SSE: client disconnected during telemetry-updated event: %v", err)
+		return false
+	}
+	flusher.Flush()
+	return true
+}
+
 func (s *Server) getMergedNotifications(userID string) []NotificationAlert {
 	var merged []NotificationAlert
 
@@ -220,7 +265,16 @@ func (s *Server) getMergedNotifications(userID string) []NotificationAlert {
 		}
 	}
 
-	// 2. Database persistent notifications (Git, AI review, Semantic link events)
+	// 2. Daily Jira decisions whose status-specific review window has elapsed.
+	dailyJiraReminders := s.computeDailyJiraDecisionAlerts()
+	for _, reminder := range dailyJiraReminders {
+		key := fmt.Sprintf("%s_%d", reminder.Type, reminder.ID)
+		if !dismissedKeys[key] {
+			merged = append(merged, reminder)
+		}
+	}
+
+	// 3. Database persistent notifications (Git, AI review, Semantic link events)
 	if db.DB != nil {
 		var dbNotifs []db.Notification
 		if err := db.DB.Order("created_at desc").Limit(50).Find(&dbNotifs).Error; err == nil {
@@ -259,12 +313,96 @@ func (s *Server) getMergedNotifications(userID string) []NotificationAlert {
 		}
 	}
 
+	projectKeys, err := db.LoadUserProjectPreferenceKeys(db.DB, userID)
+	if err != nil {
+		log.Printf("SSE: failed to apply project preferences for %s: %v", userID, err)
+	} else if len(projectKeys) > 0 {
+		filtered := make([]NotificationAlert, 0, len(merged))
+		for _, alert := range merged {
+			if db.TaskMatchesProjectScope(alert.TaskID, projectKeys) {
+				filtered = append(filtered, alert)
+			}
+		}
+		merged = filtered
+	}
+
 	// 3. Sort by CreatedAt descending (Newest first)
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].CreatedAt.After(merged[j].CreatedAt)
 	})
 
 	return merged
+}
+
+func (s *Server) computeDailyJiraDecisionAlerts() []NotificationAlert {
+	if db.DB == nil {
+		return nil
+	}
+
+	var decisions []db.DailyJiraDecision
+	if err := db.DB.Order("created_at desc").Find(&decisions).Error; err != nil {
+		log.Printf("SSE: failed to query daily Jira decisions: %v", err)
+		return nil
+	}
+
+	latestByTask := make(map[string]db.DailyJiraDecision)
+	taskIDs := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		if _, exists := latestByTask[decision.TaskID]; exists {
+			continue
+		}
+		latestByTask[decision.TaskID] = decision
+		taskIDs = append(taskIDs, decision.TaskID)
+	}
+	if len(taskIDs) == 0 {
+		return nil
+	}
+
+	var tasks []db.TaskTelemetry
+	if err := db.DB.Where("task_id IN ?", taskIDs).Find(&tasks).Error; err != nil {
+		log.Printf("SSE: failed to query Jira tasks for decision reminders: %v", err)
+		return nil
+	}
+	tasksByID := make(map[string]db.TaskTelemetry, len(tasks))
+	for _, task := range tasks {
+		tasksByID[task.TaskID] = task
+	}
+
+	now := time.Now()
+	alerts := make([]NotificationAlert, 0, len(latestByTask))
+	for taskID, decision := range latestByTask {
+		task, exists := tasksByID[taskID]
+		if !exists || isResolvedDailyJiraStatus(task.Status) || decision.ReminderAt.IsZero() || decision.ReminderAt.After(now) {
+			continue
+		}
+
+		label := "继续跟进"
+		severity := "warning"
+		switch decision.Status {
+		case "escalate":
+			label = "升级协同"
+			severity = "critical"
+		case "reassign":
+			label = "快速转派"
+		}
+		message := fmt.Sprintf("%s 的复核时间已到，请确认 Jira 是否已有进展或重新决策。", label)
+		if strings.TrimSpace(decision.Note) != "" {
+			message = fmt.Sprintf("%s 上次结论：%s", message, decision.Note)
+		}
+
+		alerts = append(alerts, NotificationAlert{
+			ID:        decision.ID,
+			Type:      "daily_jira_reminder",
+			TaskID:    task.TaskID,
+			Title:     task.Title,
+			Assignee:  task.Assignee,
+			Severity:  severity,
+			Status:    decision.Status,
+			Message:   message,
+			CreatedAt: decision.ReminderAt,
+		})
+	}
+	return alerts
 }
 
 func (s *Server) computeDelayAlerts() []NotificationAlert {
@@ -1074,6 +1212,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if req.Username == "" || req.Password == "" {
 		http.Error(w, "Username and password are required", http.StatusBadRequest)
+		return
+	}
+	if isDevAuthEnabled() && isLoopbackRequest(r) {
+		s.handleDevLogin(w, r, req.Username, fmt.Errorf("loopback development authentication requested"))
 		return
 	}
 

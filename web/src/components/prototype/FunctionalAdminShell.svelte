@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { SETTINGS_SECTION_DEFINITIONS } from '../../lib/settings-sections';
+  import ProjectPreferences from '../ProjectPreferences.svelte';
+  import ToastHost from '../shared/ToastHost.svelte';
 
   interface ConsoleAlert {
     id: number;
@@ -32,39 +35,58 @@
     permissions: string[];
   }
 
-  type ScheduleView = 'board' | 'schedule';
+  interface GlobalSearchResult {
+    id: string;
+    title: string;
+    owner: string;
+    status: string;
+    type: string;
+    route: 'schedule' | 'tasks';
+  }
+
+  type ScheduleView = 'board' | 'schedule' | 'releases' | 'projects';
+  type TaskView = 'status' | 'execution';
+  type DecisionView = 'agenda' | 'daily_jira';
+
+  const decisionSubnav: NavSubItem[] = [
+    { section: 'agenda', group: '决策看板', label: '决策事项', subtitle: '议程与调停', permissions: ['decision:read'] },
+    { section: 'daily_jira', group: '决策看板', label: '每日 Jira', subtitle: '早会审计', permissions: ['decision:read'] }
+  ];
 
   const scheduleSubnav: NavSubItem[] = [
     { section: 'schedule', group: '排期治理', label: '排期看板', subtitle: '治理总表', permissions: ['demands:read'] },
-    { section: 'board', group: '排期治理', label: '流转看板', subtitle: '需求流转', permissions: ['demands:read'] }
+    { section: 'releases', group: '排期治理', label: '版本计划', subtitle: '范围与承诺', permissions: ['demands:read'] },
+    { section: 'board', group: '排期治理', label: '流转看板', subtitle: '需求流转', permissions: ['demands:read'] },
+    { section: 'projects', group: '排期治理', label: '项目看板', subtitle: '项目进展', permissions: ['demands:read'] }
   ];
 
-  const settingsSubnav: NavSubItem[] = [
-    { section: 'gitlab', group: '集成设置', label: 'GitLab 仓库', subtitle: '仓库同步', permissions: ['config:read'] },
-    { section: 'feishu', group: '集成设置', label: '飞书消息同步', subtitle: '消息同步', permissions: ['config:read'] },
-    { section: 'jira', group: '集成设置', label: 'Jira 服务关联', subtitle: '任务源集成', permissions: ['config:read'] },
-    { section: 'projects', group: '集成设置', label: '项目优先级', subtitle: '项目映射', permissions: ['config:read'] },
-    { section: 'ai', group: 'AI 工作台', label: 'AI 引擎配置', subtitle: '模型引擎', permissions: ['config:read'] },
-    { section: 'ai_context', group: 'AI 工作台', label: '系统设计语料库', subtitle: '设计语料', permissions: ['ai_context:read', 'config:read'] },
-    { section: 'kpi', group: '运营洞察', label: 'KPI 绩效大盘', subtitle: '绩效洞察', permissions: ['kpi:read'] },
-    { section: 'users', group: '安全与授权', label: '成员角色管理', subtitle: '身份管理', permissions: ['users:read'] },
-    { section: 'matrix', group: '安全与授权', label: '权限树配置', subtitle: '权限矩阵', permissions: ['users:read'] },
-    { section: 'policies', group: '安全与授权', label: '策略化授权', subtitle: '授权策略', permissions: ['users:read'] },
-    { section: 'audit', group: '安全与授权', label: '审计安全日志', subtitle: '安全审计', permissions: ['users:read'] }
+  const taskSubnav: NavSubItem[] = [
+    { section: 'status', group: '任务跟踪', label: '任务表', subtitle: '责任与状态', permissions: ['dashboard:read'] },
+    { section: 'execution', group: '任务跟踪', label: '执行追踪', subtitle: '代码与 MR', permissions: ['dashboard:read'] }
   ];
+
+  const settingsSubnav: NavSubItem[] = SETTINGS_SECTION_DEFINITIONS.map((section) => ({
+    section: section.id,
+    group: section.group,
+    label: section.label,
+    subtitle: section.domain,
+    permissions: section.permissions
+  }));
 
   const navItems: NavItem[] = [
-    { route: 'decision', label: '决策看板', subtitle: '会议与阻塞', icon: 'grid', tone: 'blue' },
+    { route: 'decision', label: '决策看板', subtitle: '会议与阻塞', icon: 'grid', tone: 'blue', children: decisionSubnav },
     { route: 'schedule', label: '排期治理', subtitle: '需求与风险', icon: 'calendar', tone: 'green', children: scheduleSubnav },
     { route: 'evidence', label: '证据链', subtitle: '健康与解构', icon: 'network', tone: 'amber' },
-    { route: 'tasks', label: '任务跟踪', subtitle: '执行闭环', icon: 'checklist', tone: 'rose' },
+    { route: 'tasks', label: '任务跟踪', subtitle: '执行闭环', icon: 'checklist', tone: 'rose', children: taskSubnav },
     { route: 'kpi', label: '度量洞察', subtitle: '绩效事实', icon: 'analytics', tone: 'violet' },
     { route: 'settings', label: '配置中心', subtitle: '规则与用户', icon: 'settings', tone: 'slate', children: settingsSubnav }
   ];
 
   export let activeRoute = 'decision';
+  export let activeDecisionView: DecisionView = 'agenda';
   export let activeSettingsSection = 'gitlab';
   export let activeScheduleView: ScheduleView = 'schedule';
+  export let activeTaskView: TaskView = 'status';
   export let availableRoutes: string[] = [];
   export let currentUserName = '';
   export let currentUserEmail = '';
@@ -77,23 +99,36 @@
   export let authDegraded = false;
   export let authDegradedMessage = '';
   export let onNavigate: (route: string) => void = () => {};
+  export let onDecisionNavigate: (view: DecisionView) => void = () => {};
   export let onSettingsNavigate: (section: string) => void = () => {};
   export let onScheduleNavigate: (view: ScheduleView) => void = () => {};
+  export let onTaskNavigate: (view: TaskView) => void = () => {};
   export let onLogout: () => void = () => {};
   export let onClearAlerts: () => void | Promise<void> = () => {};
   export let onDismissAlert: (alert: ConsoleAlert) => void | Promise<void> = () => {};
   export let onRefreshProfile: () => void | Promise<void> = () => {};
+  export let onProjectPreferencesChange: (preference: { mode: string; project_keys: string[] }) => void = () => {};
 
   let showAlerts = false;
   let showProfile = false;
   let railCollapsed = false;
   let mobileRailOpen = false;
+  let notificationWrapEl: HTMLDivElement;
+  let globalSearchEl: HTMLFormElement;
   let workspaceFrameEl: HTMLElement | null = null;
+  let mainContentTop = 68;
   let lastWorkspaceKey = '';
+  let globalSearchQuery = '';
+  let globalSearchResults: GlobalSearchResult[] = [];
+  let globalSearchLoading = false;
+  let globalSearchError = '';
+  let showGlobalSearchResults = false;
+  let globalSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  let globalSearchRequestId = 0;
 
   $: visibleNav = navItems.filter((item) => availableRoutes.includes(item.route));
   $: activeItem = navItems.find((item) => item.route === activeRoute) || visibleNav[0] || navItems[0];
-  $: workspaceKey = `${activeRoute}:${activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'settings' ? activeSettingsSection : ''}`;
+  $: workspaceKey = `${activeRoute}:${activeRoute === 'decision' ? activeDecisionView : activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'tasks' ? activeTaskView : activeRoute === 'settings' ? activeSettingsSection : ''}`;
   $: displayName = currentUserName || currentUserEmail || 'well user';
   $: avatarMark = displayName.slice(0, 1).toUpperCase();
   $: roleLabel = currentUserRole === 'super_admin'
@@ -128,6 +163,28 @@
     railCollapsed = !railCollapsed;
   }
 
+  function trackMainContentTop(node: HTMLElement) {
+    const update = () => {
+      mainContentTop = Math.max(0, node.getBoundingClientRect().top);
+    };
+    const observer = new ResizeObserver(update);
+    const shellColumn = node.parentElement;
+
+    observer.observe(node);
+    if (shellColumn) {
+      observer.observe(shellColumn);
+    }
+    window.addEventListener('resize', update);
+    update();
+
+    return {
+      destroy() {
+        observer.disconnect();
+        window.removeEventListener('resize', update);
+      }
+    };
+  }
+
   function canAccessSubItem(item: NavSubItem) {
     return item.permissions.some((permission) => currentUserPermissions.includes(permission));
   }
@@ -144,16 +201,28 @@
   }
 
   function isSubnavActive(route: string, section: string) {
+    if (route === 'decision') return activeDecisionView === section;
     if (route === 'settings') return activeSettingsSection === section;
     if (route === 'schedule') return activeScheduleView === section;
+    if (route === 'tasks') return activeTaskView === section;
     return false;
   }
 
   function navigateSubItem(route: string, section: string) {
-    if (route === 'settings') {
+    if (route === 'decision' && (section === 'agenda' || section === 'daily_jira')) {
+      onDecisionNavigate(section);
+      showAlerts = false;
+      showProfile = false;
+      mobileRailOpen = false;
+    } else if (route === 'settings') {
       navigateSettingsSection(section);
-    } else if (route === 'schedule' && (section === 'board' || section === 'schedule')) {
+    } else if (route === 'schedule' && (section === 'board' || section === 'schedule' || section === 'releases' || section === 'projects')) {
       onScheduleNavigate(section);
+      showAlerts = false;
+      showProfile = false;
+      mobileRailOpen = false;
+    } else if (route === 'tasks' && (section === 'status' || section === 'execution')) {
+      onTaskNavigate(section);
       showAlerts = false;
       showProfile = false;
       mobileRailOpen = false;
@@ -207,13 +276,145 @@
   function clearAlerts() {
     onClearAlerts();
   }
+
+  function normalizeSearchValue(value: unknown): string {
+    return String(value || '').trim().toLocaleLowerCase('zh-CN');
+  }
+
+  async function runGlobalSearch(): Promise<GlobalSearchResult[]> {
+    const query = globalSearchQuery.trim();
+    if (globalSearchTimer) {
+      clearTimeout(globalSearchTimer);
+      globalSearchTimer = null;
+    }
+    if (query.length < 2) {
+      globalSearchResults = [];
+      globalSearchError = query ? '至少输入 2 个字符' : '';
+      showGlobalSearchResults = Boolean(query);
+      return [];
+    }
+
+    const requestId = ++globalSearchRequestId;
+    globalSearchLoading = true;
+    globalSearchError = '';
+    showGlobalSearchResults = true;
+
+    try {
+      const response = await fetch(`/api/work-items?search=${encodeURIComponent(query)}&limit=8`, {
+        cache: 'no-store'
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload: {
+        items?: Array<{ work_item?: Record<string, unknown> }>;
+      } = await response.json();
+      const tasks = (payload.items || [])
+        .map((snapshot) => snapshot.work_item || {})
+        .filter((task) => Boolean(task.task_id));
+      const normalizedQuery = normalizeSearchValue(query);
+
+      const nextResults = tasks
+        .sort((a, b) => {
+          const aExact = normalizeSearchValue(a.task_id) === normalizedQuery ? 0 : 1;
+          const bExact = normalizeSearchValue(b.task_id) === normalizedQuery ? 0 : 1;
+          if (aExact !== bExact) return aExact - bExact;
+          const aTitleExact = normalizeSearchValue(a.title) === normalizedQuery ? 0 : 1;
+          const bTitleExact = normalizeSearchValue(b.title) === normalizedQuery ? 0 : 1;
+          return aTitleExact - bTitleExact;
+        })
+        .slice(0, 8)
+        .map((task) => {
+          const type = String(task.issue_type || 'requirement');
+          return {
+            id: String(task.task_id || ''),
+            title: String(task.title || task.task_id || '未命名事项'),
+            owner: String(task.assignee || '未指派'),
+            status: String(task.status || '未知状态'),
+            type,
+            route: 'tasks'
+          } satisfies GlobalSearchResult;
+        });
+
+      if (requestId !== globalSearchRequestId) return [];
+      globalSearchResults = nextResults;
+      if (nextResults.length === 0) {
+        globalSearchError = '没有匹配的需求或 Bug';
+      }
+      return nextResults;
+    } catch (error) {
+      if (requestId !== globalSearchRequestId) return [];
+      console.error('Global search failed:', error);
+      globalSearchResults = [];
+      globalSearchError = '搜索暂时不可用，请稍后重试';
+      return [];
+    } finally {
+      if (requestId === globalSearchRequestId) globalSearchLoading = false;
+    }
+  }
+
+  async function submitGlobalSearch() {
+    const submittedQuery = globalSearchQuery.trim();
+    const results = await runGlobalSearch();
+    if (!submittedQuery || submittedQuery !== globalSearchQuery.trim() || results.length === 0) return;
+    const normalizedQuery = normalizeSearchValue(submittedQuery);
+    const result = results.find((candidate) => normalizeSearchValue(candidate.id) === normalizedQuery)
+      || results.find((candidate) => normalizeSearchValue(candidate.title) === normalizedQuery)
+      || results[0];
+    await selectGlobalSearchResult(result);
+  }
+
+  function queueGlobalSearch() {
+    if (globalSearchTimer) clearTimeout(globalSearchTimer);
+    if (!globalSearchQuery.trim()) {
+      globalSearchResults = [];
+      globalSearchError = '';
+      showGlobalSearchResults = false;
+      return;
+    }
+    globalSearchTimer = setTimeout(runGlobalSearch, 220);
+  }
+
+  async function selectGlobalSearchResult(result: GlobalSearchResult) {
+    globalSearchQuery = result.id;
+    showGlobalSearchResults = false;
+    if (result.route === 'schedule') {
+      onScheduleNavigate('schedule');
+    } else {
+      onTaskNavigate('status');
+    }
+    await tick();
+    window.dispatchEvent(new CustomEvent('well-ambient:global-search-select', {
+      detail: { id: result.id, route: result.route }
+    }));
+  }
+
+  function handleWindowClick(event: MouseEvent) {
+    if (showAlerts && notificationWrapEl && !notificationWrapEl.contains(event.target as Node)) {
+      showAlerts = false;
+    }
+    if (showGlobalSearchResults && globalSearchEl && !globalSearchEl.contains(event.target as Node)) {
+      showGlobalSearchResults = false;
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('click', handleWindowClick);
+  });
+
+  onDestroy(() => {
+    if (globalSearchTimer) clearTimeout(globalSearchTimer);
+    window.removeEventListener('click', handleWindowClick);
+  });
 </script>
 
 <svelte:head>
   <title>well-ambient</title>
 </svelte:head>
 
-<main class="functional-console" class:rail-collapsed={railCollapsed}>
+<main
+  class="functional-console"
+  class:rail-collapsed={railCollapsed}
+  style="--wa-main-content-top: {mainContentTop}px;"
+>
   <aside class="console-rail" class:mobile-open={mobileRailOpen} aria-label="well-ambient 管理台导航">
     <div class="brand-block">
       <div class="brand-mark" aria-hidden="true">wa</div>
@@ -286,13 +487,59 @@
         </div>
       </div>
 
-      <label class="global-search" aria-label="全局搜索">
+      <form class="global-search" aria-label="全局搜索" bind:this={globalSearchEl} on:submit|preventDefault={submitGlobalSearch}>
         <span class="wa-icon icon-search" aria-hidden="true"></span>
-        <input type="search" placeholder="搜索需求、任务、负责人" />
-      </label>
+        <label class="search-label" for="global-search-input">全局搜索</label>
+        <input
+          id="global-search-input"
+          type="search"
+          role="combobox"
+          placeholder="搜索需求、Bug、负责人"
+          bind:value={globalSearchQuery}
+          aria-controls="global-search-results"
+          aria-expanded={showGlobalSearchResults}
+          aria-autocomplete="list"
+          autocomplete="off"
+          on:input={queueGlobalSearch}
+          on:keydown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            void submitGlobalSearch();
+          }}
+          on:focus={() => { if (globalSearchQuery.trim()) showGlobalSearchResults = true; }}
+        />
+        <button type="submit" class="global-search-submit" aria-label="提交搜索" aria-busy={globalSearchLoading}>
+          {globalSearchLoading ? '···' : '搜索'}
+        </button>
+
+        {#if showGlobalSearchResults}
+          <div id="global-search-results" class="global-search-results" role="listbox" aria-label="全局搜索结果">
+            <div class="global-search-results-head">
+              <span>{globalSearchLoading ? '正在搜索' : '搜索结果'}</span>
+              {#if !globalSearchLoading && globalSearchResults.length > 0}
+                <strong>{globalSearchResults.length} 条</strong>
+              {/if}
+            </div>
+            {#if globalSearchError}
+              <div class="global-search-empty">{globalSearchError}</div>
+            {:else}
+              {#each globalSearchResults as result}
+                <button type="button" class="global-search-result" role="option" aria-selected="false" on:click={() => selectGlobalSearchResult(result)}>
+                  <span class="search-result-type">{result.type.toLowerCase() === 'bug' ? 'Bug' : '需求'}</span>
+                  <span class="search-result-copy">
+                    <strong>{result.title}</strong>
+                    <small>{result.id} · {result.owner} · {result.status}</small>
+                  </span>
+                  <span class="search-result-route">任务表</span>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+      </form>
 
       <div class="topbar-actions">
-        <div class="notification-wrap">
+        <div class="notification-wrap" bind:this={notificationWrapEl}>
           <button
             type="button"
             class="icon-button"
@@ -387,6 +634,7 @@
                   <dd>{authDegraded ? '临时会话' : '已登录'}</dd>
                 </div>
               </dl>
+              <ProjectPreferences on:saved={(event) => onProjectPreferencesChange(event.detail)} />
               <button type="button" class="logout-button" on:click={onLogout}>退出登录</button>
             </div>
           {/if}
@@ -401,12 +649,16 @@
       </div>
     {/if}
 
-    <div
-      class="workspace-frame"
-      class:flow-frame={activeRoute === 'schedule' && activeScheduleView === 'board'}
-      bind:this={workspaceFrameEl}
-    >
-      <slot />
+    <div class="workspace-stage" use:trackMainContentTop>
+      <div
+        class="workspace-frame"
+        class:flow-frame={activeRoute === 'schedule' && (activeScheduleView === 'board' || activeScheduleView === 'projects')}
+        class:viewport-fit-frame={['decision', 'schedule', 'evidence', 'tasks'].includes(activeRoute)}
+        bind:this={workspaceFrameEl}
+      >
+        <slot />
+      </div>
+      <ToastHost />
     </div>
   </section>
 </main>
@@ -763,6 +1015,8 @@
   }
 
   .global-search {
+    position: relative;
+    z-index: 30;
     width: min(360px, 28vw);
     min-width: 220px;
     height: 46px;
@@ -788,6 +1042,159 @@
 
   .global-search input::placeholder {
     color: var(--wa-text-subtle, #5f7582);
+  }
+
+  .search-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .global-search-submit {
+    flex: 0 0 auto;
+    min-width: 50px;
+    height: 30px;
+    border: 0;
+    border-radius: 999px;
+    padding: 0 11px;
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.1));
+    color: var(--wa-accent-strong, #006f76);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 780;
+    cursor: pointer;
+    transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+  }
+
+  .global-search-submit:hover:not(:disabled),
+  .global-search-submit:focus-visible {
+    background: var(--wa-accent, #008f96);
+    color: var(--wa-accent-ink, #ffffff);
+    outline: none;
+  }
+
+  .global-search-submit:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  .global-search-submit:disabled {
+    opacity: 0.58;
+    cursor: wait;
+  }
+
+  .global-search:focus-within {
+    border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.46));
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1), 0 12px 28px rgba(26, 41, 58, 0.08);
+  }
+
+  .global-search-results {
+    position: absolute;
+    top: calc(100% + 9px);
+    left: 0;
+    width: 100%;
+    min-width: min(520px, calc(100vw - 24px));
+    max-height: min(440px, calc(100dvh - 92px));
+    overflow-y: auto;
+    border: 1px solid rgba(121, 139, 159, 0.2);
+    border-radius: 14px;
+    padding: 7px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 24px 54px rgba(26, 41, 58, 0.16);
+    color: var(--wa-text-main, #293847);
+  }
+
+  .global-search-results-head {
+    min-height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    color: var(--wa-text-muted, #667789);
+    font-size: 11px;
+    font-weight: 760;
+  }
+
+  .global-search-results-head strong {
+    color: var(--wa-text-strong, #0d1722);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .global-search-result {
+    width: 100%;
+    min-height: 52px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    border: 0;
+    border-radius: 10px;
+    padding: 7px 9px;
+    background: transparent;
+    color: var(--wa-text-main, #293847);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .global-search-result:hover,
+  .global-search-result:focus-visible {
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.1));
+    outline: none;
+  }
+
+  .search-result-type,
+  .search-result-route {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    border-radius: 999px;
+    padding: 0 8px;
+    background: var(--wa-surface-inset, #f2f6f9);
+    color: var(--wa-text-muted, #667789);
+    font-size: 10px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .search-result-route {
+    color: var(--wa-accent-strong, #006f76);
+    background: var(--wa-accent-soft, rgba(0, 143, 150, 0.1));
+  }
+
+  .search-result-copy {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .search-result-copy strong,
+  .search-result-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .search-result-copy strong {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 13px;
+  }
+
+  .search-result-copy small,
+  .global-search-empty {
+    color: var(--wa-text-muted, #667789);
+    font-size: 11px;
+  }
+
+  .global-search-empty {
+    padding: 18px 10px;
+    text-align: center;
   }
 
   .notification-wrap,
@@ -1013,6 +1420,14 @@
   .profile-popover {
     padding: 14px;
     border: 0;
+    max-height: min(720px, calc(100dvh - 92px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  .profile-popover::-webkit-scrollbar {
+    display: none;
   }
 
   .profile-card-head {
@@ -1073,6 +1488,7 @@
   .logout-button {
     width: 100%;
     min-height: 42px;
+    margin-top: 14px;
     border: 0;
     border-radius: 14px;
     background: var(--wa-danger, #ff6177);
@@ -1390,8 +1806,8 @@
     border-radius: 0;
     background: rgba(255, 255, 255, 0.88);
     box-shadow: 0 8px 22px rgba(26, 41, 58, 0.065);
-    backdrop-filter: blur(18px) saturate(132%);
     -webkit-backdrop-filter: blur(18px) saturate(132%);
+    backdrop-filter: blur(18px) saturate(132%);
   }
 
   .title-cluster h1 {
@@ -1407,7 +1823,7 @@
   .icon-button,
   .topbar-menu {
     border-color: rgba(121, 139, 159, 0.18);
-    border-radius: var(--wa-radius-lg, 10px);
+    border-radius: var(--wa-radius-pill, 999px);
     background: rgba(255, 255, 255, 0.82);
     color: var(--wa-text-main, #293847);
     box-shadow: 0 8px 22px rgba(26, 41, 58, 0.06);
@@ -1672,12 +2088,14 @@
   /* Strongest-brain shell contract: one parent owns page gutter, surface and scroll. */
   .functional-console {
     --wa-shell-gutter: clamp(14px, 1.25vw, 22px);
+    --wa-shell-bottom-gap: max(var(--wa-shell-gutter), env(safe-area-inset-bottom, 0px));
     --wa-content-max: 1720px;
     --wa-workspace-topbar-h: 68px;
     --wa-workspace-min-h: calc(100dvh - var(--wa-workspace-topbar-h) - (var(--wa-shell-gutter) * 2));
+    --wa-workspace-inline-start: var(--wa-rail-w, 270px);
     min-width: 0;
     overflow: hidden;
-    background: var(--wa-bg-page, #eef4f7);
+    background: var(--wa-bg-ambient), var(--wa-bg-page, #e8f0f4);
   }
 
   .console-main {
@@ -1685,30 +2103,43 @@
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
-    background: var(--wa-bg-page, #eef4f7);
+    background: var(--wa-bg-ambient), var(--wa-bg-page, #e8f0f4);
   }
 
   .console-topbar {
     flex: 0 0 var(--wa-workspace-topbar-h);
   }
 
-  .workspace-frame {
+  .workspace-stage {
+    position: relative;
+    isolation: isolate;
     flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace-frame {
+    height: 100%;
     min-width: 0;
     min-height: 0;
     width: 100%;
     overflow-x: hidden;
-    overflow-y: scroll;
-    scrollbar-gutter: stable;
+    overflow-y: auto;
+    scrollbar-gutter: auto;
     overflow-anchor: none;
     padding: var(--wa-shell-gutter);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 260px),
-      var(--wa-bg-page, #eef4f7);
+    padding-bottom: var(--wa-shell-bottom-gap);
+    background: var(--wa-bg-ambient), var(--wa-bg-page, #e8f0f4);
   }
 
   .workspace-frame.flow-frame {
     overflow-y: hidden;
+  }
+
+  .workspace-frame.viewport-fit-frame {
+    overflow-y: hidden;
+    scrollbar-gutter: auto;
   }
 
   :global(.workspace-frame > *) {
@@ -1745,6 +2176,7 @@
   }
 
   .functional-console.rail-collapsed {
+    --wa-workspace-inline-start: 94px;
     grid-template-columns: 94px minmax(0, 1fr);
   }
 
@@ -1775,6 +2207,7 @@
   @media (max-width: 860px) {
     .functional-console,
     .functional-console.rail-collapsed {
+      --wa-workspace-inline-start: 0px;
       grid-template-columns: minmax(0, 1fr);
       height: 100dvh;
       min-height: 100dvh;
@@ -1886,7 +2319,48 @@
       min-height: 0;
       overflow-x: hidden;
       overflow-y: auto;
-      padding: 10px;
+      padding: var(--wa-shell-gutter);
+      padding-bottom: var(--wa-shell-bottom-gap);
+    }
+
+    .workspace-frame.viewport-fit-frame {
+      overflow-y: visible;
+      scrollbar-gutter: auto;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .profile-popover {
+      position: fixed;
+      top: 64px;
+      right: 12px;
+      left: 12px;
+      width: auto;
+      max-height: calc(100dvh - 76px);
+    }
+  }
+
+  @media (max-width: 860px) {
+    .functional-console,
+    .functional-console.rail-collapsed {
+      height: auto !important;
+      min-height: 100dvh;
+      overflow: visible !important;
+    }
+
+    .console-main {
+      height: auto !important;
+      min-height: 100dvh !important;
+      overflow: visible !important;
+    }
+
+    .workspace-stage,
+    .workspace-frame,
+    .workspace-frame.flow-frame,
+    .workspace-frame.viewport-fit-frame {
+      height: auto;
+      min-height: 0;
+      overflow: visible;
     }
   }
 </style>

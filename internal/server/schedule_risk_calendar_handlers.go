@@ -75,7 +75,12 @@ func (s *Server) handleGetScheduleRiskCalendar(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	schedule, err := buildStrongestBrainScheduleSnapshot(time.Now())
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	schedule, err := buildStrongestBrainScheduleSnapshot(time.Now(), projectKeys)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to build schedule risk calendar: %v", err), http.StatusInternalServerError)
 		return

@@ -1,0 +1,15 @@
+{
+  "generated_at": "<generated-at>",
+  "summary": {
+    "total": 0,
+    "scheduled": 0,
+    "unscheduled": 0,
+    "in_progress": 0,
+    "review": 0,
+    "done": 0,
+    "overdue": 0,
+    "due_soon": 0,
+    "stale": 0
+  },
+  "items": []
+}

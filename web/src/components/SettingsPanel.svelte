@@ -1,6 +1,6 @@
 <script lang="ts">
   import '../styles/settings-config-workbench.css';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import Button from './shared/Button.svelte';
   import Alert from './shared/Alert.svelte';
   import GitLabConfig from './config/GitLabConfig.svelte';
@@ -8,9 +8,15 @@
   import JiraConfig from './config/JiraConfig.svelte';
   import ProjectConfig from './config/ProjectConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
-  import KPIKanban from './KPIKanban.svelte';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import { resetSettingsWorkspaceScroll } from '../lib/settings-ui';
+  import {
+    SETTINGS_SECTION_DEFINITIONS as SETTINGS_NAV_ITEMS,
+    canAccessSettingsSection as hasSettingsSectionAccess,
+    firstAccessibleSettingsSection as selectFirstAccessibleSettingsSection,
+    isSettingsSection,
+    type SettingsSection
+  } from '../lib/settings-sections';
   import {
     ADMIN_TONE_CLASS,
     toneForStatus,
@@ -53,30 +59,12 @@
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'warning';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'warning';
 
-  type SettingsSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit';
-  type SettingsNavItem = {
-    id: SettingsSection;
-    group: string;
-    label: string;
-    summary: string;
-    domain: string;
-  };
-
-  const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
-    { id: 'gitlab', group: '集成设置', label: 'GitLab 仓库', summary: '仓库源、Webhook 与令牌配置。', domain: '仓库同步' },
-    { id: 'feishu', group: '集成设置', label: '飞书消息同步', summary: '机器人、群聊与多维表格同步。', domain: '消息同步' },
-    { id: 'jira', group: '集成设置', label: 'Jira 服务关联', summary: '任务源、同步项目、核心成员与自定义 JQL。', domain: '任务源集成' },
-    { id: 'projects', group: '集成设置', label: '项目优先级与集成', summary: '基于 Jira 同步项目维护交付优先级。', domain: '项目映射' },
-    { id: 'ai', group: 'AI 工作台', label: 'AI 引擎配置', summary: '模型供应商、端点与估算口径。', domain: '模型引擎' },
-    { id: 'ai_context', group: 'AI 工作台', label: '系统设计语料库', summary: '需求解构上下文、架构资料和交付语料。', domain: '设计语料' },
-    { id: 'kpi', group: '运营洞察', label: 'KPI 绩效大盘', summary: '团队绩效指标与任务完成统计。', domain: '绩效洞察' },
-    { id: 'users', group: '安全与授权', label: '成员角色管理', summary: '成员、用户组与作用域分配。', domain: '身份管理' },
-    { id: 'matrix', group: '安全与授权', label: '权限树配置', summary: '原子权限和用户组覆盖矩阵。', domain: '权限矩阵' },
-    { id: 'policies', group: '安全与授权', label: '策略化授权', summary: 'allow/deny 策略与授权解释器。', domain: '授权策略' },
-    { id: 'audit', group: '安全与授权', label: '审计安全日志', summary: '配置、登录与权限变更审计。', domain: '安全审计' }
-  ];
-
   let activeSection: SettingsSection = 'gitlab';
+  let settingsTitleEl: HTMLHeadingElement;
+
+  function focusSettingsTitle() {
+    void tick().then(() => settingsTitleEl?.focus({ preventScroll: true }));
+  }
 
   $: if (
     isSettingsSection(activeSettingsSection) &&
@@ -87,6 +75,7 @@
     saveSuccess = false;
     saveSuccessKey = null;
     resetSettingsWorkspaceScroll();
+    focusSettingsTitle();
   }
 
   interface GlobalConfig {
@@ -132,6 +121,11 @@
       sync_users?: string[];
       sync_statuses?: string[];
       custom_jql?: string;
+      version_sources?: Array<{
+        project_key: string;
+        project_name: string;
+        version_url: string;
+      }>;
     };
   }
 
@@ -168,7 +162,7 @@
       enabled: false,
       provider: 'openai',
       base_url: '',
-      endpoint_type: 'completions',
+      endpoint_type: 'responses',
       api_token: '',
       model: '',
       project_architecture: '',
@@ -177,7 +171,7 @@
       estimation_guidelines: '',
       default_work_hours_per_day: 8
     },
-    jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '' }
+    jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '', version_sources: [] }
   };
 
   let saving = false;
@@ -196,20 +190,11 @@
   $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
   function canAccessSection(section: SettingsSection) {
-    if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return currentUserPermissions.includes('config:read');
-    if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') || currentUserPermissions.includes('config:read');
-    if (section === 'kpi') return currentUserPermissions.includes('kpi:read');
-    if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read');
-    return false;
+    return hasSettingsSectionAccess(section, currentUserPermissions);
   }
 
   function firstAccessibleSection(): SettingsSection {
-    const sections: SettingsSection[] = ['gitlab', 'ai_context', 'kpi', 'users'];
-    return sections.find(canAccessSection) || 'gitlab';
-  }
-
-  function isSettingsSection(section: unknown): section is SettingsSection {
-    return typeof section === 'string' && SETTINGS_NAV_ITEMS.some(item => item.id === section);
+    return selectFirstAccessibleSettingsSection(currentUserPermissions);
   }
 
   function switchSection(section: SettingsSection) {
@@ -220,6 +205,7 @@
     saveSuccess = false;
     saveSuccessKey = null;
     resetSettingsWorkspaceScroll();
+    focusSettingsTitle();
   }
 
   // RBAC lists
@@ -321,6 +307,8 @@
   let authorizationPolicySaving = false;
   let authorizationDecision: AuthorizationDecision | null = null;
   let authorizationExplainError = '';
+  type PolicyWorkspaceTab = 'list' | 'create' | 'explain' | 'audit';
+  let policyWorkspaceTab: PolicyWorkspaceTab = 'list';
 
   const fallbackPermissionMeta: PermissionMeta[] = [
     { code: 'ai_context:preview', name: '预览 AI 上下文包', desc: '按需求范围预览 AI 解构将使用的上下文包内容' },
@@ -652,7 +640,6 @@
     if (section === 'jira') return jiraStatus;
     if (section === 'ai') return aiStatus;
     if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning';
-    if (section === 'kpi') return currentUserPermissions.includes('kpi:read') ? 'online' : 'warning';
     if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read') ? 'online' : 'warning';
     return serverStatus;
   }
@@ -674,7 +661,6 @@
     if (section === 'projects') return `${globalConfig.jira?.sync_projects?.length || 0} 个映射`;
     if (section === 'ai') return globalConfig.ai?.model || '模型待配置';
     if (section === 'ai_context') return globalConfig.ai?.project_architecture ? '语料已就绪' : '语料待配置';
-    if (section === 'kpi') return '报表预览';
     if (section === 'users') return `${users.length} 位成员`;
     if (section === 'matrix') return `${permissionMeta.length} 个权限`;
     if (section === 'policies') return `${authorizationPolicies.length} 条策略`;
@@ -690,7 +676,6 @@
   function requiredPermissionLabel(section: SettingsSection) {
     if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return '配置只读';
     if (section === 'ai_context') return '语料只读';
-    if (section === 'kpi') return '绩效只读';
     return '成员只读';
   }
 
@@ -706,7 +691,6 @@
     if (['gitlab', 'feishu', 'jira', 'projects', 'ai', 'ai_context'].includes(section)) {
       return ['/api/config', '/api/config/versions'];
     }
-    if (section === 'kpi') return ['/api/kpi/performance', '/api/kpi/report-preview'];
     if (section === 'users') return ['/api/users', '/api/groups'];
     if (section === 'matrix') return ['/api/groups', '/api/permissions'];
     if (section === 'policies') return ['/api/authz/policies', '/api/authz/explain', '/api/authz/audit-logs'];
@@ -941,8 +925,12 @@
 
   function groupMemberCount(group: Group) {
     return users.reduce((count, user) => {
-      return count + user.memberships.filter(membership => membership.group_name === group.name).length;
+      return count + membershipsForUser(user).filter(membership => membership.group_name === group.name).length;
     }, 0);
+  }
+
+  function membershipsForUser(user: User) {
+    return Array.isArray(user.memberships) ? user.memberships : [];
   }
 
   function applyPolicyQuickStart(template: typeof policyQuickStarts[number]) {
@@ -959,6 +947,11 @@
       enabled: template.enabled,
       reason: template.reason
     };
+  }
+
+  function setPolicyWorkspaceTab(tab: PolicyWorkspaceTab) {
+    policyWorkspaceTab = tab;
+    resetSettingsWorkspaceScroll();
   }
 
   function setPolicyField<K extends keyof typeof policyForm>(field: K, value: (typeof policyForm)[K]) {
@@ -1306,36 +1299,40 @@
   });
 </script>
 
-<div class="settings-container phase41-settings phase46-settings phase49-settings">
+<div id="settings-unified-root" class="settings-container settings-unified phase41-settings phase46-settings phase49-settings">
   <main class="settings-main">
-    <nav class="settings-breadcrumb-bar" aria-label="面包屑导航">
-      <ol>
-        {#each settingsBreadcrumbs as crumb, index}
-          <li class:current={index === settingsBreadcrumbs.length - 1}>
-            <span>{crumb}</span>
-          </li>
-        {/each}
-      </ol>
-      <div class="breadcrumb-meta">
-        <span class="wa-admin-pill {ADMIN_TONE_CLASS[settingsInspector.tone || 'neutral']}">{settingsInspector.status}</span>
-        <span class="font-mono">{settingsContextDetail}</span>
-      </div>
-    </nav>
-
     <section class="settings-content-shell" aria-labelledby="settings-content-title">
-      <header class="settings-content-header">
-        <div>
-          <span class="settings-kicker">{activeSectionMeta.domain}</span>
-          <h1 id="settings-content-title">{activeSectionMeta.label}</h1>
-          <p>{activeSectionMeta.summary}</p>
+      <header class="settings-context-panel">
+        <div class="settings-context-topline">
+          <nav class="settings-breadcrumb-bar" aria-label="面包屑导航">
+            <ol>
+              {#each settingsBreadcrumbs as crumb, index}
+                <li class:current={index === settingsBreadcrumbs.length - 1}>
+                  <span aria-current={index === settingsBreadcrumbs.length - 1 ? 'page' : undefined}>{crumb}</span>
+                </li>
+              {/each}
+            </ol>
+          </nav>
+          <div class="breadcrumb-meta" aria-label="页面状态">
+            <span class="wa-admin-pill {ADMIN_TONE_CLASS[settingsInspector.tone || 'neutral']}">{settingsInspector.status}</span>
+            <span class="font-mono">{settingsContextDetail}</span>
+          </div>
         </div>
-        <div class="settings-content-facts">
-          {#each settingsInspector.facts.slice(1) as fact}
-            <div>
-              <span>{fact.label}</span>
-              <strong>{fact.value}</strong>
-            </div>
-          {/each}
+
+        <div class="settings-content-header">
+          <div class="settings-title-copy">
+            <span class="settings-kicker">{activeSectionMeta.domain}</span>
+            <h1 id="settings-content-title" bind:this={settingsTitleEl} tabindex="-1">{activeSectionMeta.label}</h1>
+            <p>{activeSectionMeta.summary}</p>
+          </div>
+          <dl class="settings-content-facts">
+            {#each settingsInspector.facts.slice(1) as fact}
+              <div>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            {/each}
+          </dl>
         </div>
       </header>
 
@@ -1354,10 +1351,6 @@
             <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} {currentUserPermissions} />
     {:else if activeSection === 'ai_context'}
             <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} {currentUserPermissions} />
-    {:else if activeSection === 'kpi'}
-            <div class="kpi-settings-panel">
-              <KPIKanban />
-            </div>
     {:else if activeSection === 'users'}
             <div class="section-card">
         <div class="card-header">
@@ -1365,7 +1358,8 @@
           <p>查看并管理注册成员所属的权限组，在此可配置细粒度的 GitLab 仓库作用域隔离（Scope）。</p>
         </div>
 
-        <div class="table-responsive">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded member directory needs keyboard scrolling) -->
+        <div class="table-responsive settings-data-scroll users-data-scroll" role="region" aria-label="成员角色目录，可横向或纵向滚动" tabindex="0">
           <table class="rbac-table">
             <thead>
               <tr>
@@ -1393,7 +1387,7 @@
                   <td class="font-mono text-sm">{user.username}</td>
                   <td>
                     <div class="tags-container">
-                      {#each user.memberships as membership}
+                      {#each membershipsForUser(user) as membership}
                         <div class="membership-badge badge-{membership.group_name}">
                           <span class="badge-role">{membership.group_display_name}</span>
                           <span class="badge-scope">
@@ -1490,7 +1484,7 @@
           {/each}
         </div>
 
-        <div class="permission-tree">
+        <div class="permission-tree settings-data-scroll permission-tree-scroll" role="region" aria-label="权限树配置列表">
           {#each permissionTree as branch}
             <section class="permission-branch">
               <div class="branch-stem" aria-hidden="true"></div>
@@ -1538,10 +1532,10 @@
       </div>
     {:else if activeSection === 'policies'}
       <div class="section-card">
-        <div class="card-header flex-header">
-          <div>
-            <h2>策略化授权控制台</h2>
-            <p>在原有用户组权限矩阵之上追加 allow/deny 策略，按主体、动作、资源与作用域解释最终授权结果。</p>
+        <div class="policy-task-toolbar">
+          <div class="policy-workspace-summary">
+            <span class="audit-kicker font-mono">授权工作台</span>
+            <span>{authorizationPolicies.length} 条策略 · {authorizationAuditLogs.length} 条决策审计</span>
           </div>
           <Button variant="ghost" on:click={() => { fetchAuthorizationPolicies(); fetchAuthorizationAuditLogs(); }}>
             刷新策略
@@ -1555,7 +1549,55 @@
           <div class="success-banner">{authorizationPolicySuccess}</div>
         {/if}
 
-        <div class="policy-template-strip">
+        <div class="settings-task-tabs" role="tablist" aria-label="策略化授权任务">
+          <button
+            id="policy-tab-list"
+            type="button"
+            role="tab"
+            aria-selected={policyWorkspaceTab === 'list'}
+            aria-controls="policy-panel-list"
+            class:active={policyWorkspaceTab === 'list'}
+            on:click={() => setPolicyWorkspaceTab('list')}
+          >
+            <span>策略列表</span><small>{authorizationPolicies.length}</small>
+          </button>
+          <button
+            id="policy-tab-create"
+            type="button"
+            role="tab"
+            aria-selected={policyWorkspaceTab === 'create'}
+            aria-controls="policy-panel-create"
+            class:active={policyWorkspaceTab === 'create'}
+            on:click={() => setPolicyWorkspaceTab('create')}
+          >
+            <span>新建策略</span>
+          </button>
+          <button
+            id="policy-tab-explain"
+            type="button"
+            role="tab"
+            aria-selected={policyWorkspaceTab === 'explain'}
+            aria-controls="policy-panel-explain"
+            class:active={policyWorkspaceTab === 'explain'}
+            on:click={() => setPolicyWorkspaceTab('explain')}
+          >
+            <span>授权解释</span>
+          </button>
+          <button
+            id="policy-tab-audit"
+            type="button"
+            role="tab"
+            aria-selected={policyWorkspaceTab === 'audit'}
+            aria-controls="policy-panel-audit"
+            class:active={policyWorkspaceTab === 'audit'}
+            on:click={() => setPolicyWorkspaceTab('audit')}
+          >
+            <span>授权审计</span><small>{authorizationAuditLogs.length}</small>
+          </button>
+        </div>
+
+        {#if policyWorkspaceTab === 'create'}
+        <div class="policy-template-strip" aria-label="策略快速模板">
           {#each policyQuickStarts as template}
             <button type="button" on:click={() => applyPolicyQuickStart(template)}>
               <span>{template.label}</span>
@@ -1565,7 +1607,13 @@
         </div>
 
         <div class="policy-workbench refined">
-          <section class="policy-panel policy-builder">
+          <div
+            id="policy-panel-create"
+            class="policy-panel policy-builder"
+            role="tabpanel"
+            aria-labelledby="policy-tab-create"
+            tabindex="0"
+          >
             <div class="policy-panel-header">
               <span class="audit-kicker font-mono">策略编辑</span>
               <h3>新增授权策略</h3>
@@ -1580,6 +1628,7 @@
                       type="button"
                       class:active={policyForm.effect === option.value}
                       class={`choice-card effect-${option.value}`}
+                      aria-pressed={policyForm.effect === option.value}
                       on:click={() => setPolicyField('effect', option.value)}
                     >
                       <strong>{option.label}</strong>
@@ -1596,6 +1645,7 @@
                     <button
                       type="button"
                       class:active={policyForm.subject_type === option.value}
+                      aria-pressed={policyForm.subject_type === option.value}
                       on:click={() => setPolicyField('subject_type', option.value)}
                     >
                       {option.label}
@@ -1613,6 +1663,7 @@
                         <button
                           type="button"
                           class:active={policyForm.subject_id === group.name}
+                          aria-pressed={policyForm.subject_id === group.name}
                           on:click={() => setPolicyField('subject_id', group.name)}
                         >
                           {group.displayName}
@@ -1625,6 +1676,7 @@
                         <button
                           type="button"
                           class:active={policyForm.subject_id === user.username}
+                          aria-pressed={policyForm.subject_id === user.username}
                           on:click={() => setPolicyField('subject_id', user.username)}
                         >
                           {user.name || user.username}
@@ -1638,11 +1690,12 @@
 
               <div class="policy-choice-block policy-wide">
                 <label for="policy-action">动作权限</label>
-                <div class="action-chip-grid">
+                <div class="action-chip-grid" aria-label="可选动作权限">
                   {#each policyActionOptions as option}
                     <button
                       type="button"
                       class:active={policyForm.action === option.code}
+                      aria-pressed={policyForm.action === option.code}
                       on:click={() => selectPolicyAction(option.code)}
                     >
                       <span>{option.name}</span>
@@ -1660,6 +1713,7 @@
                     <button
                       type="button"
                       class:active={policyForm.resource_type === option.value}
+                      aria-pressed={policyForm.resource_type === option.value}
                       on:click={() => setPolicyField('resource_type', option.value)}
                     >
                       {option.label}
@@ -1680,6 +1734,7 @@
                     <button
                       type="button"
                       class:active={policyForm.scope === option.value}
+                      aria-pressed={policyForm.scope === option.value}
                       on:click={() => setPolicyField('scope', option.value)}
                     >
                       {option.label}
@@ -1708,6 +1763,8 @@
                   type="button"
                   class="toggle-pill"
                   class:on={policyForm.enabled}
+                  role="switch"
+                  aria-checked={policyForm.enabled}
                   on:click={() => setPolicyField('enabled', !policyForm.enabled)}
                 >
                   <span>{policyForm.enabled ? '已启用' : '已停用'}</span>
@@ -1726,9 +1783,17 @@
                 保存策略
               </Button>
             </div>
-          </section>
-
-          <section class="policy-panel">
+          </div>
+        </div>
+        {:else if policyWorkspaceTab === 'explain'}
+        <div class="policy-workbench refined">
+          <div
+            id="policy-panel-explain"
+            class="policy-panel"
+            role="tabpanel"
+            aria-labelledby="policy-tab-explain"
+            tabindex="0"
+          >
             <div class="policy-panel-header">
               <span class="audit-kicker font-mono">授权解释</span>
               <h3>授权解释器</h3>
@@ -1743,11 +1808,12 @@
               </div>
               <div class="field-item policy-wide">
                 <label for="explain-action">Action</label>
-                <div class="action-chip-grid compact">
+                <div class="action-chip-grid compact" aria-label="授权解释动作权限">
                   {#each policyActionOptions as option}
                     <button
                       type="button"
                       class:active={explainForm.action === option.code}
+                      aria-pressed={explainForm.action === option.code}
                       on:click={() => selectExplainAction(option.code)}
                     >
                       <span>{option.name}</span>
@@ -1772,6 +1838,7 @@
                     <button
                       type="button"
                       class:active={explainForm.scope === option.value}
+                      aria-pressed={explainForm.scope === option.value}
                       on:click={() => setExplainField('scope', option.value)}
                     >
                       {option.label}
@@ -1803,16 +1870,23 @@
                 {/if}
               </div>
             {/if}
-          </section>
+          </div>
         </div>
-
+        {:else if policyWorkspaceTab === 'list'}
         <div class="policy-grid">
-          <section class="policy-panel">
+          <div
+            id="policy-panel-list"
+            class="policy-panel"
+            role="tabpanel"
+            aria-labelledby="policy-tab-list"
+            tabindex="0"
+          >
             <div class="policy-panel-header">
               <span class="audit-kicker font-mono">策略清单</span>
               <h3>策略列表</h3>
             </div>
-            <div class="table-responsive policy-table-wrap">
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded table needs keyboard scrolling) -->
+            <div class="table-responsive policy-table-wrap" role="region" aria-label="授权策略列表，可横向或纵向滚动" tabindex="0">
               <table class="policy-table font-mono">
                 <thead>
                   <tr>
@@ -1844,14 +1918,23 @@
                 </tbody>
               </table>
             </div>
-          </section>
-
-          <section class="policy-panel">
+          </div>
+        </div>
+        {:else}
+        <div class="policy-grid">
+          <div
+            id="policy-panel-audit"
+            class="policy-panel"
+            role="tabpanel"
+            aria-labelledby="policy-tab-audit"
+            tabindex="0"
+          >
             <div class="policy-panel-header">
               <span class="audit-kicker font-mono">授权审计</span>
               <h3>授权决策审计</h3>
             </div>
-            <div class="decision-log-list">
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded audit list needs keyboard scrolling) -->
+            <div class="decision-log-list" role="region" aria-label="授权决策审计记录" tabindex="0">
               {#each authorizationAuditLogs as log}
                 <div class="decision-log-item {log.allowed ? 'allowed' : 'denied'}">
                   <div>
@@ -1864,8 +1947,9 @@
                 <div class="empty-version-state">暂无授权审计记录。拒绝或高风险授权会自动进入这里。</div>
               {/each}
             </div>
-          </section>
+          </div>
         </div>
+        {/if}
       </div>
     {:else if activeSection === 'audit'}
       <div class="section-card">
@@ -1874,7 +1958,8 @@
           <p>系统自动记录所有敏感配置修改、鉴权登录及用户权限矩阵分配的操作行迹，以便溯源审计。</p>
         </div>
 
-        <div class="table-responsive">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded audit table needs keyboard scrolling) -->
+        <div class="table-responsive settings-data-scroll audit-data-scroll" role="region" aria-label="安全审计日志，可横向或纵向滚动" tabindex="0">
           <table class="audit-table font-mono">
             <thead>
               <tr>
@@ -2307,15 +2392,6 @@
     border-radius: 12px;
     padding: 24px;
     box-shadow: 0 18px 48px -34px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  }
-
-  .kpi-settings-panel {
-    flex: 0 0 auto;
-    min-width: 0;
-    height: auto;
-    overflow: visible;
-    box-sizing: border-box;
-    padding: 4px 12px 24px 0;
   }
 
   .config-audit-panel {
@@ -3966,10 +4042,6 @@
     color: #13243a;
   }
 
-  .phase41-settings .kpi-settings-panel {
-    padding: 0;
-  }
-
   .phase41-settings .card-header {
     border-bottom-color: rgba(139, 159, 181, 0.24);
   }
@@ -5393,7 +5465,7 @@
   }
 
   .phase41-settings :global(.info-block) {
-    border-left: 4px solid var(--config-accent) !important;
+    border: 1px solid rgba(0, 143, 150, 0.22) !important;
   }
 
   .phase41-settings :global(.form-sub-section),
@@ -7140,6 +7212,1173 @@
     .phase41-settings.phase46-settings.phase49-settings .settings-audit-pane .version-layout {
       display: grid !important;
       grid-template-rows: 190px minmax(0, 1fr) !important;
+    }
+  }
+
+  /* Unified Settings workbench: the final rendered contract for every Settings route. */
+  .settings-unified {
+    --settings-line: rgba(83, 108, 130, 0.16);
+    --settings-line-strong: rgba(59, 87, 111, 0.28);
+    --settings-glass: rgba(248, 252, 253, 0.78);
+    --settings-glass-strong: rgba(251, 253, 254, 0.9);
+    --settings-flat: #f8fbfc;
+    --settings-inset: #eef5f7;
+    --settings-ink: var(--wa-text-strong, #0d1722);
+    --settings-text: var(--wa-text-main, #293847);
+    --settings-muted: var(--wa-text-muted, #667789);
+    --settings-subtle: #738497;
+    --settings-accent: var(--wa-accent, #008f96);
+    --settings-accent-strong: var(--wa-accent-strong, #006f76);
+    --settings-accent-soft: rgba(0, 143, 150, 0.09);
+    width: 100%;
+    min-width: 0;
+    padding: 0 0 28px;
+    color: var(--settings-text);
+  }
+
+  .settings-unified .settings-main,
+  .settings-unified .settings-content-shell,
+  .settings-unified .settings-module-panel {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .settings-unified .settings-content-shell {
+    display: grid;
+    gap: 16px;
+  }
+
+  .settings-unified .settings-context-panel {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.78);
+    border-radius: 14px;
+    background: var(--settings-glass);
+    background-clip: padding-box;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.86),
+      0 10px 26px rgba(29, 54, 72, 0.07);
+    -webkit-backdrop-filter: blur(20px) saturate(128%);
+    backdrop-filter: blur(20px) saturate(128%);
+  }
+
+  .settings-unified .settings-context-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 1px solid var(--settings-line);
+    border-radius: inherit;
+  }
+
+  .settings-unified .settings-context-topline {
+    position: relative;
+    z-index: 1;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--settings-line);
+    background: rgba(242, 248, 249, 0.46);
+  }
+
+  .settings-unified .settings-breadcrumb-bar {
+    min-width: 0;
+    min-height: 0;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .settings-unified .settings-breadcrumb-bar ol {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow: hidden;
+  }
+
+  .settings-unified .settings-breadcrumb-bar li {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--settings-muted);
+    font-size: 11px;
+    font-weight: 680;
+    white-space: nowrap;
+  }
+
+  .settings-unified .settings-breadcrumb-bar li + li::before {
+    content: "/";
+    color: rgba(102, 119, 137, 0.5);
+    font-weight: 500;
+  }
+
+  .settings-unified .settings-breadcrumb-bar li.current span {
+    overflow: hidden;
+    color: var(--settings-ink);
+    font-weight: 780;
+    text-overflow: ellipsis;
+  }
+
+  .settings-unified .breadcrumb-meta {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--settings-muted);
+    font-size: 11px;
+  }
+
+  .settings-unified .settings-content-header {
+    position: relative;
+    z-index: 1;
+    min-height: 96px;
+    display: grid;
+    grid-template-columns: minmax(240px, 0.82fr) minmax(420px, 1.18fr);
+    align-items: center;
+    gap: 26px;
+    padding: 16px 18px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .settings-unified .settings-title-copy {
+    min-width: 0;
+  }
+
+  .settings-unified .settings-kicker,
+  .settings-unified .audit-kicker {
+    display: block;
+    margin: 0;
+    color: var(--settings-accent-strong);
+    font-size: 11px;
+    font-weight: 780;
+    letter-spacing: 0;
+  }
+
+  .settings-unified .settings-content-header h1 {
+    margin: 3px 0 0;
+    color: var(--settings-ink);
+    font-size: 22px;
+    font-weight: 780;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  .settings-unified .settings-content-header h1:focus-visible {
+    outline: 2px solid rgba(0, 143, 150, 0.28);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+
+  .settings-unified .settings-content-header p {
+    max-width: 58ch;
+    margin: 5px 0 0;
+    color: var(--settings-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    text-wrap: pretty;
+  }
+
+  .settings-unified .settings-content-facts {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    margin: 0;
+  }
+
+  .settings-unified .settings-content-facts div {
+    min-width: 0;
+    min-height: 54px;
+    display: grid;
+    align-content: center;
+    gap: 5px;
+    padding: 0 16px;
+    border: 0 !important;
+    border-left: 1px solid var(--settings-line) !important;
+  }
+
+  .settings-unified .settings-content-facts dt,
+  .settings-unified .settings-content-facts dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .settings-unified .settings-content-facts dt {
+    color: var(--settings-muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .settings-unified .settings-content-facts dd {
+    overflow: hidden;
+    color: var(--settings-ink);
+    font-size: 13px;
+    font-weight: 760;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-unified .settings-module-panel {
+    container-type: inline-size;
+  }
+
+  .settings-unified .settings-workbench-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 392px) !important;
+    align-items: start !important;
+    gap: 16px !important;
+  }
+
+  .settings-unified .settings-workbench-grid.without-audit {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .settings-unified .settings-primary-pane,
+  .settings-unified .settings-audit-pane {
+    min-width: 0;
+    border: 1px solid rgba(255, 255, 255, 0.78);
+    border-radius: 14px;
+    background: var(--settings-glass-strong);
+    background-clip: padding-box;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 14px 30px rgba(29, 54, 72, 0.065);
+    -webkit-backdrop-filter: blur(18px) saturate(124%);
+    backdrop-filter: blur(18px) saturate(124%);
+  }
+
+  .settings-unified .settings-primary-pane {
+    padding: 20px !important;
+    overflow: visible;
+  }
+
+  .settings-unified .settings-audit-pane {
+    position: sticky !important;
+    inset: auto !important;
+    top: 12px;
+    align-self: start !important;
+    width: auto;
+    height: auto !important;
+    min-height: 0;
+    max-height: calc(100dvh - 112px) !important;
+    overflow: hidden !important;
+  }
+
+  /* Phase 64: one authoritative owner for panel geometry above legacy visual skins. */
+  #settings-unified-root.settings-unified .settings-workbench-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 392px) !important;
+    align-items: start !important;
+    gap: 16px !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.without-audit {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-primary-pane {
+    position: relative !important;
+    inset: auto !important;
+    align-self: start !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-audit-pane {
+    position: sticky !important;
+    inset: auto !important;
+    top: 12px !important;
+    align-self: start !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: calc(100dvh - 112px) !important;
+    overflow: hidden !important;
+  }
+
+  #settings-unified-root.settings-unified .config-audit-panel {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: inherit !important;
+  }
+
+  .settings-unified .section-card,
+  .settings-unified .config-audit-panel,
+  .settings-unified :global(.scw-workbench),
+  .settings-unified :global(.gitlab-workbench) {
+    min-width: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .settings-unified .section-card {
+    display: grid;
+    gap: 18px;
+  }
+
+  .settings-unified .card-header,
+  .settings-unified .config-audit-header,
+  .settings-unified :global(.scw-header),
+  .settings-unified :global(.overview-header) {
+    min-height: 66px;
+    margin: 0 !important;
+    padding: 0 0 16px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+    background: transparent !important;
+  }
+
+  .settings-unified .card-header h2,
+  .settings-unified .config-audit-header h3,
+  .settings-unified :global(.scw-header h3),
+  .settings-unified :global(.scw-header h4),
+  .settings-unified :global(.overview-header h4) {
+    margin: 3px 0 0 !important;
+    color: var(--settings-ink) !important;
+    font-size: 16px !important;
+    font-weight: 760 !important;
+    line-height: 1.35 !important;
+    letter-spacing: -0.01em !important;
+  }
+
+  .settings-unified .card-header p,
+  .settings-unified :global(.scw-header p),
+  .settings-unified :global(.overview-header p) {
+    margin: 5px 0 0 !important;
+    color: var(--settings-muted) !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+  }
+
+  .settings-unified .config-audit-panel {
+    position: relative !important;
+    inset: auto !important;
+    width: 100%;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: inherit !important;
+    display: flex;
+    flex-direction: column;
+    padding: 18px !important;
+    overflow: hidden !important;
+  }
+
+  .settings-unified .config-audit-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .settings-unified .audit-scope {
+    display: block;
+    margin-top: 3px;
+    color: var(--settings-muted);
+    font-size: 11px;
+    font-weight: 640;
+  }
+
+  .settings-unified .version-layout,
+  .settings-unified .settings-audit-pane .version-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(96px, 184px) minmax(0, 1fr) !important;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  .settings-unified .version-list {
+    min-height: 0;
+    max-height: 184px;
+    overflow: auto;
+    padding: 6px 0 8px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+  }
+
+  .settings-unified .version-item {
+    width: 100%;
+    min-height: 52px;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) !important;
+    align-items: center;
+    gap: 3px 10px;
+    padding: 8px 10px !important;
+    border: 0 !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: var(--settings-text) !important;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .settings-unified .version-item:hover,
+  .settings-unified .version-item.active {
+    background: var(--settings-accent-soft) !important;
+  }
+
+  .settings-unified .version-item.active {
+    box-shadow: inset 0 0 0 1px rgba(0, 143, 150, 0.16) !important;
+  }
+
+  .settings-unified .version-title {
+    color: var(--settings-ink);
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .settings-unified .version-meta,
+  .settings-unified .version-sections {
+    color: var(--settings-muted);
+    font-size: 10px;
+  }
+
+  .settings-unified .version-detail {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    padding: 14px 0 0 !important;
+    overflow: hidden !important;
+  }
+
+  .settings-unified .version-detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .settings-unified .version-detail-header :global(.btn) {
+    width: fit-content;
+  }
+
+  .settings-unified .diff-table {
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .settings-unified .diff-row {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px !important;
+    padding: 12px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+  }
+
+  .settings-unified .diff-arrow {
+    display: none;
+  }
+
+  .settings-unified .diff-value {
+    min-width: 0;
+    max-height: none;
+    display: grid;
+    gap: 5px;
+    padding: 9px !important;
+    border: 1px solid var(--settings-line) !important;
+    border-radius: 8px !important;
+    background: rgba(239, 246, 248, 0.62) !important;
+  }
+
+  .settings-unified .empty-version-state,
+  .settings-unified .diff-empty,
+  .settings-unified .config-version-error,
+  .settings-unified .error-banner,
+  .settings-unified .success-banner {
+    min-height: 72px;
+    display: grid;
+    place-items: center;
+    margin: 12px 0 0;
+    padding: 16px;
+    border: 1px dashed var(--settings-line-strong);
+    border-radius: 10px;
+    background: rgba(239, 246, 248, 0.58);
+    color: var(--settings-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: center;
+  }
+
+  .settings-unified .config-version-error,
+  .settings-unified .error-banner {
+    border-style: solid;
+    border-color: rgba(200, 66, 54, 0.26);
+    background: rgba(200, 66, 54, 0.075);
+    color: #9c352d;
+  }
+
+  .settings-unified .success-banner {
+    border-style: solid;
+    border-color: rgba(4, 150, 111, 0.24);
+    background: rgba(4, 150, 111, 0.07);
+    color: #047a5d;
+  }
+
+  .settings-unified .table-responsive,
+  .settings-unified :global(.table-container),
+  .settings-unified :global(.scw-table-wrap) {
+    width: 100%;
+    max-width: 100%;
+    overflow: auto;
+    border: 1px solid var(--settings-line) !important;
+    border-radius: 10px !important;
+    background: rgba(248, 251, 252, 0.72) !important;
+    box-shadow: none !important;
+  }
+
+  .settings-unified table,
+  .settings-unified :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--settings-text);
+  }
+
+  .settings-unified th,
+  .settings-unified :global(th) {
+    background: rgba(235, 243, 246, 0.82) !important;
+    color: var(--settings-muted) !important;
+    font-size: 11px !important;
+    font-weight: 780 !important;
+  }
+
+  .settings-unified td,
+  .settings-unified th,
+  .settings-unified :global(td),
+  .settings-unified :global(th) {
+    padding: 11px 12px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+    vertical-align: middle;
+  }
+
+  .settings-unified tbody tr:last-child td,
+  .settings-unified :global(tbody tr:last-child td) {
+    border-bottom: 0 !important;
+  }
+
+  .settings-unified tbody tr:hover td,
+  .settings-unified :global(tbody tr:hover td) {
+    background: rgba(0, 143, 150, 0.035) !important;
+  }
+
+  .settings-unified .policy-workbench,
+  .settings-unified .policy-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    margin: 0;
+  }
+
+  .settings-unified .policy-workbench.refined {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-unified .policy-task-toolbar {
+    min-width: 0;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--settings-line);
+  }
+
+  .settings-unified .policy-workspace-summary {
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    color: var(--settings-muted);
+    font-size: 11px;
+  }
+
+  .settings-unified .policy-workspace-summary .audit-kicker {
+    color: var(--settings-accent-strong);
+  }
+
+  .settings-unified .policy-template-strip {
+    margin: 0;
+  }
+
+  .settings-unified .policy-table-wrap,
+  .settings-unified .decision-log-list {
+    max-height: min(58vh, 560px);
+    overflow: auto;
+    scrollbar-gutter: stable;
+  }
+
+  #settings-unified-root.settings-unified .settings-data-scroll {
+    max-height: min(68dvh, 720px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  #settings-unified-root.settings-unified .permission-tree-scroll {
+    padding: 0 14px;
+    border: 1px solid var(--settings-line);
+    border-radius: 10px;
+    background: rgba(248, 251, 252, 0.54);
+  }
+
+  #settings-unified-root.settings-unified .settings-data-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+
+  .settings-unified .action-chip-grid {
+    max-height: 220px;
+    overflow: auto;
+    padding: 4px;
+    border: 1px solid var(--settings-line);
+    border-radius: 10px;
+    background: rgba(239, 246, 248, 0.44);
+    scrollbar-gutter: stable;
+  }
+
+  .settings-unified .action-chip-grid.compact {
+    max-height: 180px;
+  }
+
+  #settings-unified-root.settings-unified .policy-panel,
+  .settings-unified .permission-branch,
+  .settings-unified .group-coverage-card {
+    min-width: 0;
+    margin: 0 !important;
+    padding: 16px 0 !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--settings-line) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  #settings-unified-root.settings-unified .policy-panel {
+    padding-top: 4px !important;
+    border-bottom: 0 !important;
+  }
+
+  #settings-unified-root.settings-unified .decision-card,
+  #settings-unified-root.settings-unified .decision-log-item {
+    min-width: 0;
+    margin: 0 !important;
+    padding: 13px 14px !important;
+    border: 1px solid var(--settings-line) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+  }
+
+  #settings-unified-root.settings-unified .decision-card.allowed,
+  #settings-unified-root.settings-unified .decision-log-item.allowed {
+    border-color: rgba(4, 150, 111, 0.24) !important;
+    background: rgba(4, 150, 111, 0.07) !important;
+  }
+
+  #settings-unified-root.settings-unified .decision-card.denied,
+  #settings-unified-root.settings-unified .decision-log-item.denied {
+    border-color: rgba(200, 66, 54, 0.24) !important;
+    background: rgba(200, 66, 54, 0.07) !important;
+  }
+
+  .settings-unified .policy-builder-grid,
+  .settings-unified .policy-form-grid {
+    gap: 14px;
+  }
+
+  #settings-unified-root.settings-unified .choice-card,
+  #settings-unified-root.settings-unified .segmented-pills button,
+  #settings-unified-root.settings-unified .suggestion-pills button,
+  #settings-unified-root.settings-unified .action-chip-grid button,
+  .settings-unified .permission-group-toggles button,
+  #settings-unified-root.settings-unified .policy-template-strip button,
+  #settings-unified-root.settings-unified .toggle-pill,
+  #settings-unified-root.settings-unified .priority-stepper button,
+  #settings-unified-root.settings-unified .priority-stepper strong {
+    border: 1px solid var(--settings-line) !important;
+    border-radius: 8px !important;
+    background: rgba(248, 251, 252, 0.68) !important;
+    color: var(--settings-text) !important;
+    box-shadow: none !important;
+  }
+
+  #settings-unified-root.settings-unified .choice-card:hover,
+  #settings-unified-root.settings-unified .segmented-pills button:hover,
+  #settings-unified-root.settings-unified .suggestion-pills button:hover,
+  #settings-unified-root.settings-unified .action-chip-grid button:hover,
+  .settings-unified .permission-group-toggles button:hover,
+  #settings-unified-root.settings-unified .policy-template-strip button:hover {
+    border-color: rgba(0, 143, 150, 0.26) !important;
+    background: var(--settings-accent-soft) !important;
+    transform: none !important;
+  }
+
+  #settings-unified-root.settings-unified .choice-card.active,
+  #settings-unified-root.settings-unified .segmented-pills button.active,
+  #settings-unified-root.settings-unified .suggestion-pills button.active,
+  #settings-unified-root.settings-unified .action-chip-grid button.active {
+    border-color: rgba(0, 143, 150, 0.3) !important;
+    background: var(--settings-accent-soft) !important;
+    color: var(--settings-accent-strong) !important;
+  }
+
+  #settings-unified-root.settings-unified .choice-card.effect-allow.active {
+    border-color: rgba(4, 150, 111, 0.34) !important;
+    background: rgba(4, 150, 111, 0.09) !important;
+    color: #047a5d !important;
+  }
+
+  #settings-unified-root.settings-unified .choice-card.effect-deny.active {
+    border-color: rgba(200, 66, 54, 0.32) !important;
+    background: rgba(200, 66, 54, 0.085) !important;
+    color: #9c352d !important;
+  }
+
+  .settings-unified input,
+  .settings-unified .custom-input,
+  .settings-unified .custom-textarea,
+  .settings-unified .dropdown-trigger-btn,
+  .settings-unified :global(input),
+  .settings-unified :global(textarea),
+  .settings-unified :global(select) {
+    min-height: 38px;
+    border: 1px solid var(--settings-line-strong) !important;
+    border-radius: 8px !important;
+    background: rgba(250, 253, 254, 0.84) !important;
+    color: var(--settings-ink) !important;
+    box-shadow: none !important;
+  }
+
+  .settings-unified input::placeholder,
+  .settings-unified :global(input::placeholder),
+  .settings-unified :global(textarea::placeholder) {
+    color: #65778a !important;
+    opacity: 1 !important;
+  }
+
+  .settings-unified input:focus,
+  .settings-unified .custom-input:focus,
+  .settings-unified .custom-textarea:focus,
+  .settings-unified :global(input:focus),
+  .settings-unified :global(textarea:focus),
+  .settings-unified :global(select:focus) {
+    outline: none !important;
+    border-color: rgba(0, 143, 150, 0.66) !important;
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.11) !important;
+  }
+
+  .settings-unified button:focus-visible,
+  .settings-unified :global(button:focus-visible),
+  .settings-unified [tabindex]:focus-visible {
+    outline: 2px solid rgba(0, 143, 150, 0.28) !important;
+    outline-offset: 2px;
+  }
+
+  .settings-unified .user-avatar {
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--settings-line);
+    background: var(--settings-inset);
+  }
+
+  .settings-unified .membership-badge,
+  .settings-unified .action-badge,
+  .settings-unified .actor-tag,
+  .settings-unified .group-title-label {
+    border-radius: 999px !important;
+    box-shadow: none !important;
+  }
+
+  .settings-unified :global(.gitlab-workbench) {
+    display: grid;
+    gap: 20px;
+    color: var(--settings-text) !important;
+  }
+
+  .settings-unified :global(.gitlab-workbench .state-banner) {
+    border: 1px solid var(--settings-line) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+  }
+
+  .settings-unified :global(.gitlab-workbench .overview-grid),
+  .settings-unified :global(.scw-read-grid) {
+    align-items: stretch;
+  }
+
+  .settings-unified :global(.gitlab-workbench .overview-row),
+  .settings-unified :global(.scw-read-item) {
+    min-height: 66px;
+    align-content: center;
+  }
+
+  .modal-overlay {
+    background: rgba(18, 31, 43, 0.28) !important;
+    backdrop-filter: blur(10px) saturate(112%) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(112%) !important;
+  }
+
+  .modal-card {
+    border: 1px solid rgba(255, 255, 255, 0.78) !important;
+    border-radius: 14px !important;
+    background: rgba(249, 252, 253, 0.94) !important;
+    color: var(--wa-text-main, #293847) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 24px 58px rgba(20, 38, 51, 0.18) !important;
+    backdrop-filter: blur(22px) saturate(124%);
+    -webkit-backdrop-filter: blur(22px) saturate(124%);
+  }
+
+  .modal-header,
+  .modal-footer {
+    background: rgba(242, 248, 249, 0.58) !important;
+    border-color: rgba(83, 108, 130, 0.16) !important;
+  }
+
+  @container (max-width: 1120px) {
+    #settings-unified-root.settings-unified .settings-workbench-grid {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    #settings-unified-root.settings-unified .settings-audit-pane {
+      position: relative !important;
+      top: auto !important;
+      height: min(680px, calc(100dvh - 96px)) !important;
+      max-height: 680px !important;
+      overflow: hidden !important;
+    }
+
+    #settings-unified-root.settings-unified .config-audit-panel {
+      height: 100% !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
+    .settings-unified .version-layout,
+    .settings-unified .settings-audit-pane .version-layout {
+      grid-template-columns: minmax(220px, 0.68fr) minmax(0, 1.32fr) !important;
+      grid-template-rows: minmax(0, 1fr) !important;
+      height: 100% !important;
+    }
+
+    .settings-unified .version-list {
+      max-height: 420px;
+      border-right: 1px solid var(--settings-line) !important;
+      border-bottom: 0 !important;
+      padding: 6px 10px 6px 0 !important;
+    }
+
+    .settings-unified .version-detail {
+      padding: 10px 0 0 16px !important;
+    }
+
+    .settings-unified .diff-table {
+      max-height: 420px;
+    }
+  }
+
+  @media (max-width: 1120px) {
+    .settings-unified .settings-content-header {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+    }
+
+    .settings-unified .settings-content-facts div:first-child {
+      border-left: 0 !important;
+    }
+  }
+
+  @media (max-width: 860px) {
+    #settings-unified-root.settings-unified .settings-workbench-grid {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    #settings-unified-root.settings-unified .settings-audit-pane {
+      position: relative !important;
+      top: auto !important;
+      height: min(700px, calc(100dvh - 80px)) !important;
+      max-height: 700px !important;
+      overflow: hidden !important;
+    }
+
+    #settings-unified-root.settings-unified .config-audit-panel {
+      height: 100% !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
+    .settings-unified .policy-workbench,
+    .settings-unified .policy-workbench.refined,
+    .settings-unified .policy-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .settings-unified {
+      padding-bottom: 18px;
+    }
+
+    .settings-unified .settings-content-shell {
+      gap: 12px;
+    }
+
+    .settings-unified .settings-context-panel,
+    .settings-unified .settings-primary-pane,
+    .settings-unified .settings-audit-pane {
+      border-radius: 12px;
+    }
+
+    .settings-unified .settings-context-topline {
+      min-height: 44px;
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 6px;
+      padding: 9px 14px;
+    }
+
+    .settings-unified .settings-breadcrumb-bar {
+      width: 100%;
+    }
+
+    .settings-unified .breadcrumb-meta {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .settings-unified .settings-content-header {
+      min-height: 0;
+      padding: 14px !important;
+    }
+
+    .settings-unified .settings-content-header h1 {
+      font-size: 20px;
+    }
+
+    .settings-unified .settings-content-facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-unified .settings-content-facts div,
+    .settings-unified .settings-content-facts div:first-child {
+      min-height: 48px;
+      padding: 9px 0;
+      border-left: 0 !important;
+      border-top: 1px solid var(--settings-line) !important;
+    }
+
+    .settings-unified .settings-primary-pane,
+    .settings-unified .config-audit-panel {
+      padding: 14px !important;
+    }
+
+    .settings-unified .version-layout,
+    .settings-unified .settings-audit-pane .version-layout {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      grid-template-rows: auto auto !important;
+      overflow: visible;
+    }
+
+    .settings-unified .version-list {
+      max-height: 220px;
+      border-right: 0 !important;
+      border-bottom: 1px solid var(--settings-line) !important;
+      padding: 6px 0 8px !important;
+    }
+
+    .settings-unified .version-detail {
+      padding: 14px 0 0 !important;
+      overflow: visible !important;
+    }
+
+    .settings-unified .diff-table {
+      max-height: 420px;
+    }
+
+    .settings-unified .card-header,
+    .settings-unified .config-audit-header,
+    .settings-unified :global(.scw-header),
+    .settings-unified :global(.overview-header) {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      gap: 10px;
+    }
+
+    .settings-unified .policy-builder-grid,
+    .settings-unified .policy-form-grid,
+    .settings-unified .policy-template-strip,
+    .settings-unified .choice-row {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .settings-unified .policy-task-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .settings-unified .priority-stepper strong {
+      min-height: 44px;
+      display: inline-grid;
+      place-items: center;
+    }
+
+    #settings-unified-root.settings-unified .settings-task-tabs button {
+      min-height: 44px !important;
+    }
+
+    .settings-unified button:not([role='switch']),
+    .settings-unified input,
+    .settings-unified .custom-input,
+    .settings-unified .dropdown-trigger-btn,
+    .settings-unified :global(button:not([role='switch'])),
+    .settings-unified :global(input),
+    .settings-unified :global(select) {
+      min-height: 44px;
+    }
+
+    .settings-unified :global(button[role='switch']) {
+      min-height: 24px;
+    }
+
+    .settings-unified .policy-actions,
+    .settings-unified .actions-cell,
+    .settings-unified :global(.scw-actions),
+    .settings-unified :global(.scw-section-actions) {
+      width: 100%;
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .settings-unified .policy-actions :global(.btn),
+    .settings-unified :global(.scw-actions .btn),
+    .settings-unified :global(.scw-section-actions .btn) {
+      width: 100%;
+    }
+  }
+
+  /* The page may scroll for long forms; audit data stays bounded inside the aligned card. */
+  @media (min-width: 1281px) {
+    #settings-unified-root.settings-unified .settings-workbench-grid {
+      align-items: stretch !important;
+    }
+
+    #settings-unified-root.settings-unified .settings-primary-pane {
+      align-self: stretch !important;
+      height: auto !important;
+    }
+
+    #settings-unified-root.settings-unified .settings-audit-pane {
+      position: relative !important;
+      top: auto !important;
+      align-self: stretch !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
+    #settings-unified-root.settings-unified .config-audit-panel {
+      height: 100% !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
+    .settings-unified .version-layout,
+    .settings-unified .settings-audit-pane .version-layout {
+      height: 100% !important;
+      min-height: 0;
+      grid-template-rows: minmax(96px, 184px) minmax(0, 1fr) !important;
+      overflow: hidden !important;
+    }
+
+    .settings-unified .version-list {
+      min-height: 0;
+      max-height: 184px !important;
+      overflow: auto !important;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+
+    .settings-unified .version-detail {
+      min-height: 0;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
+    .settings-unified .diff-table {
+      min-height: 0;
+      max-height: none !important;
+      overflow: auto !important;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .settings-unified .settings-context-panel,
+    .settings-unified .settings-primary-pane,
+    .settings-unified .settings-audit-pane,
+    .modal-card {
+      background: #f8fbfc !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-unified *,
+    .settings-unified *::before,
+    .settings-unified *::after,
+    .modal-overlay *,
+    .modal-overlay *::before,
+    .modal-overlay *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
     }
   }
 </style>

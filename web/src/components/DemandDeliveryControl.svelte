@@ -1,10 +1,26 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import MarkdownWorkbench, { type MarkdownMode } from './shared/MarkdownWorkbench.svelte';
+  import MultiSelect from './shared/MultiSelect.svelte';
+  import Select from './shared/Select.svelte';
 
   export let demand: any;
   export let currentUserPermissions: string[] = [];
   export let currentUserName = '';
   export let currentUserEmail = '';
+  export let userDirectory: UserDirectoryEntry[] = [];
+  export let coreMemberNames: string[] = [];
+  export let coreMemberDirectoryReady = false;
+
+  type UserDirectoryEntry = {
+    id: number;
+    username: string;
+    email?: string;
+    name: string;
+    department?: string;
+  };
+
+  type SelectOption = { value: string; label: string; meta?: string };
 
   type Spec = {
     id: number;
@@ -18,6 +34,7 @@
     intent_confidence: number;
     summary: string;
     user_goal: string;
+    markdown_content: string;
     facts: string[];
     inferences: string[];
     missing_context: string[];
@@ -87,6 +104,14 @@
   let generated: GeneratedChangeSet | null = null;
   let sourcePathsText = '';
   let generationInstructions = '';
+  let streamedMarkdown = '';
+  let generationPhase = '';
+  let generationMessage = '';
+  let streamScrollOwner: HTMLElement | null = null;
+  let streamFollowEnabled = true;
+  let streamFollowFrame = 0;
+  let markdownText = '';
+  let markdownMode: MarkdownMode = 'preview';
 
   let summaryText = '';
   let goalText = '';
@@ -95,11 +120,54 @@
   let reposText = '';
   let missingContextText = '';
   let riskText = '';
-  let reviewerCandidatesText = '';
-  let requiredRolesText = '';
+  let businessRulesText = '';
+  let mainFlowsText = '';
+  let exceptionFlowsText = '';
+  let permissionRulesText = '';
+  let dataImpactText = '';
+  let apiImpactText = '';
+  let uiImpactText = '';
+  let dependenciesText = '';
+  let confirmWithdrawDraft = false;
+  let reviewerCandidates: string[] = [];
+  let requiredRoles: string[] = [];
   let acceptanceOwnerText = '';
   let minimumApprovals = 1;
   let escalationOwnerText = '';
+  let normalizedDirectoryKey = '';
+  let contractParticipants: UserDirectoryEntry[] = [];
+
+  const roleOptions: SelectOption[] = [
+    { value: 'code_owner', label: '代码负责人', meta: 'Code owner' },
+    { value: 'qa', label: '测试与质量', meta: 'QA' },
+    { value: 'product_owner', label: '产品负责人', meta: 'Product owner' },
+    { value: 'architecture', label: '架构负责人', meta: 'Architecture' },
+    { value: 'security', label: '安全负责人', meta: 'Security' },
+    { value: 'dba', label: '数据库负责人', meta: 'DBA' },
+    { value: 'ops', label: '运维负责人', meta: 'Operations' }
+  ];
+
+  $: personOptions = buildPersonOptions(reviewDirectoryEntries(userDirectory, contractParticipants, coreMemberNames, coreMemberDirectoryReady));
+  $: roleSelectOptions = [
+    ...roleOptions,
+    ...requiredRoles
+      .filter((role) => !roleOptions.some((option) => option.value === role))
+      .map((role) => ({ value: role, label: role, meta: '自定义角色' }))
+  ];
+  $: if (minimumApprovals < 1) minimumApprovals = 1;
+  $: if (minimumApprovals > Math.max(1, reviewerCandidates.length)) {
+    minimumApprovals = Math.max(1, reviewerCandidates.length);
+  }
+  $: directoryNormalizationKey = contract && personOptions.length
+    ? `${contract.id}:${personOptions.map((option) => option.value.toLowerCase()).join('\u001f')}`
+    : '';
+  $: if (contract && directoryNormalizationKey && normalizedDirectoryKey !== directoryNormalizationKey) {
+    normalizedDirectoryKey = directoryNormalizationKey;
+    fillContractForm(contract);
+  }
+  $: if (actionLoading === 'ai-draft' && streamedMarkdown) {
+    queueStreamFollow();
+  }
 
   $: latestRun = runs[0] || null;
   $: canRead = hasPermission('demand_spec:read');
@@ -120,12 +188,120 @@
     }
   });
 
+  onDestroy(() => {
+    if (streamFollowFrame) cancelAnimationFrame(streamFollowFrame);
+  });
+
+  function findVerticalScrollOwner(node: HTMLElement) {
+    let parent = node.parentElement;
+    while (parent) {
+      const overflowY = getComputedStyle(parent).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return parent;
+      parent = parent.parentElement;
+    }
+    return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+  }
+
+  function isNearStreamBottom(owner: HTMLElement) {
+    return owner.scrollHeight - owner.scrollTop - owner.clientHeight <= 96;
+  }
+
+  function queueStreamFollow() {
+    if (!streamFollowEnabled || !streamScrollOwner) return;
+    void tick().then(() => {
+      if (!streamFollowEnabled || !streamScrollOwner) return;
+      if (streamFollowFrame) cancelAnimationFrame(streamFollowFrame);
+      streamFollowFrame = requestAnimationFrame(() => {
+        streamFollowFrame = 0;
+        if (!streamFollowEnabled || !streamScrollOwner) return;
+        streamScrollOwner.scrollTop = streamScrollOwner.scrollHeight;
+      });
+    });
+  }
+
+  function autoFollowStream(node: HTMLElement) {
+    const owner = findVerticalScrollOwner(node);
+    const updateFollowState = () => {
+      streamFollowEnabled = isNearStreamBottom(owner);
+    };
+
+    streamScrollOwner = owner;
+    streamFollowEnabled = true;
+    owner.addEventListener('scroll', updateFollowState, { passive: true });
+    queueStreamFollow();
+
+    return {
+      destroy() {
+        owner.removeEventListener('scroll', updateFollowState);
+        if (streamScrollOwner === owner) streamScrollOwner = null;
+        if (streamFollowFrame) {
+          cancelAnimationFrame(streamFollowFrame);
+          streamFollowFrame = 0;
+        }
+      }
+    };
+  }
+
   function hasPermission(permission: string) {
     return currentUserPermissions.includes(permission);
   }
 
   function lines(value: string) {
     return Array.from(new Set(value.split(/\r?\n|,/).map(item => item.trim()).filter(Boolean)));
+  }
+
+  function buildPersonOptions(entries: UserDirectoryEntry[]): SelectOption[] {
+    const seen = new Set<string>();
+    return entries.flatMap((entry) => {
+      const value = entry.name?.trim();
+      if (!value || seen.has(value.toLowerCase())) return [];
+      seen.add(value.toLowerCase());
+      const context = [entry.department?.trim(), entry.email?.trim() || entry.username?.trim()].filter(Boolean).join(' · ');
+      return [{ value, label: value, meta: context }];
+    });
+  }
+
+  function identityVariants(value: string) {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return [];
+    const variants = new Set([normalized]);
+    const emailPrefix = normalized.includes('@') ? normalized.split('@')[0] : '';
+    const firstToken = normalized.split(/\s+/)[0];
+    if (emailPrefix) variants.add(emailPrefix);
+    if (firstToken) variants.add(firstToken);
+    return Array.from(variants);
+  }
+
+  function isCoreMemberEntry(entry: UserDirectoryEntry, allowedNames: string[]) {
+    const allowed = new Set(allowedNames.flatMap(identityVariants));
+    if (!allowed.size) return false;
+    return [entry.name, entry.username, entry.email || '']
+      .flatMap(identityVariants)
+      .some((identity) => allowed.has(identity));
+  }
+
+  function reviewDirectoryEntries(
+    pageDirectory: UserDirectoryEntry[],
+    scopedDirectory: UserDirectoryEntry[],
+    allowedNames: string[],
+    directoryReady: boolean
+  ) {
+    if (!directoryReady) return scopedDirectory;
+    return [...pageDirectory, ...scopedDirectory].filter((entry) => isCoreMemberEntry(entry, allowedNames));
+  }
+
+  function validPerson(value: string) {
+    const normalized = value.trim().toLowerCase();
+    return personOptions.find((option) => option.value.toLowerCase() === normalized)?.value || '';
+  }
+
+  function defaultReviewers(value: ReviewContract) {
+    if (!personOptions.length) return value.reviewer_candidates || [];
+    const saved = (value.reviewer_candidates || []).map(validPerson).filter(Boolean);
+    if (saved.length) return Array.from(new Set(saved));
+    const taskAssignees = (spec?.tasks || []).map((task) => validPerson(task?.assignee || '')).filter(Boolean);
+    const author = (spec?.authored_by || currentUserName).trim().toLowerCase();
+    return Array.from(new Set(taskAssignees.filter((name) => name && name.toLowerCase() !== author)));
   }
 
   function fillSpecForm(value: Spec) {
@@ -136,14 +312,53 @@
     reposText = (value.mapped_repos || []).join('\n');
     missingContextText = (value.missing_context || []).join('\n');
     riskText = (value.risks || []).join('\n');
+    businessRulesText = (value.business_rules || []).join('\n');
+    mainFlowsText = (value.main_flows || []).join('\n');
+    exceptionFlowsText = (value.exception_flows || []).join('\n');
+    permissionRulesText = (value.permission_rules || []).join('\n');
+    dataImpactText = (value.data_impact || []).join('\n');
+    apiImpactText = (value.api_impact || []).join('\n');
+    uiImpactText = (value.ui_impact || []).join('\n');
+    dependenciesText = (value.dependencies || []).join('\n');
+    markdownText = value.markdown_content?.trim() || formMarkdown();
+    markdownMode = 'preview';
+  }
+
+  function markdownList(title: string, values: string[]) {
+    if (!values.length) return `## ${title}\n\n_暂无内容_`;
+    return `## ${title}\n\n${values.map(value => `- ${value}`).join('\n')}`;
+  }
+
+  function formMarkdown() {
+    return [
+      `# ${summaryText.trim() || demand?.title || '需求实现规格'}`,
+      goalText.trim() ? `> ${goalText.trim()}` : '',
+      markdownList('业务规则', lines(businessRulesText)),
+      markdownList('主流程', lines(mainFlowsText).map((value, index) => `${index + 1}. ${value}`)),
+      markdownList('异常与回退', lines(exceptionFlowsText)),
+      markdownList('权限与安全边界', lines(permissionRulesText)),
+      markdownList('数据影响', lines(dataImpactText)),
+      markdownList('API 影响', lines(apiImpactText)),
+      markdownList('界面与交互影响', lines(uiImpactText)),
+      markdownList('依赖项', lines(dependenciesText)),
+      markdownList('风险', lines(riskText)),
+      markdownList('验收标准', lines(acceptanceText)),
+      markdownList('测试计划', lines(testPlanText)),
+      markdownList('目标仓库', lines(reposText)),
+      markdownList('待确认事项', lines(missingContextText))
+    ].filter(Boolean).join('\n\n');
   }
 
   function fillContractForm(value: ReviewContract) {
-    reviewerCandidatesText = (value.reviewer_candidates || []).join('\n');
-    requiredRolesText = (value.required_roles || []).join('\n');
-    acceptanceOwnerText = value.acceptance_owner || '';
+    reviewerCandidates = defaultReviewers(value);
+    requiredRoles = value.required_roles || [];
+    acceptanceOwnerText = personOptions.length
+      ? validPerson(value.acceptance_owner || '') || validPerson(demand?.assignee || '') || validPerson(currentUserName)
+      : value.acceptance_owner || '';
     minimumApprovals = value.minimum_approvals || 1;
-    escalationOwnerText = value.escalation_owner || '';
+    escalationOwnerText = personOptions.length
+      ? validPerson(value.escalation_owner || '') || validPerson(demand?.creator || '') || validPerson(currentUserName)
+      : value.escalation_owner || '';
   }
 
   async function api(path: string, init: RequestInit = {}) {
@@ -174,6 +389,7 @@
       if (spec) {
         fillSpecForm(spec);
         const contractResponse = await api(`/api/review-contracts?demand_spec_version_id=${spec.id}`);
+        contractParticipants = contractResponse.participants || [];
         contract = contractResponse.review_contract || null;
         if (contract) fillContractForm(contract);
       } else {
@@ -191,9 +407,13 @@
     actionLoading = useAI ? 'ai-draft' : 'manual-draft';
     error = '';
     notice = '';
+    streamedMarkdown = '';
+    streamFollowEnabled = true;
+    generationPhase = useAI ? 'preparing' : '';
+    generationMessage = useAI ? '正在建立安全的流式连接…' : '';
     try {
       const demandText = [demand.title, demand.description].filter(Boolean).join('\n');
-      let payload: any = {
+      const payload: any = {
         demand_id: demand.task_id,
         original_text: demandText,
         summary: demand.title,
@@ -204,29 +424,9 @@
         test_plan: []
       };
       if (useAI) {
-        const intent = await api('/api/ai/intent', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: demandText })
-        });
-        const deconstruction = await api('/api/deconstruct', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: demandText })
-        });
-        payload = {
-          ...payload,
-          context_pack_id: deconstruction.context_pack_id || 0,
-          intent: intent.intent,
-          intent_confidence: intent.confidence,
-          summary: intent.summary || demand.title,
-          facts: intent.facts || [],
-          inferences: intent.inferences || [],
-          missing_context: [...(intent.missing_context || []), ...(deconstruction.analysis?.missing_info || [])],
-          risks: deconstruction.analysis?.risks || [],
-          dependencies: deconstruction.analysis?.dependencies || [],
-          acceptance_criteria: deconstruction.analysis?.acceptance_criteria || [],
-          test_plan: deconstruction.analysis?.acceptance_criteria || [],
-          mapped_repos: deconstruction.mappedRepos || payload.mapped_repos,
-          tasks: deconstruction.tasks || [],
-          readiness_score: deconstruction.analysis?.completeness_score || 40
-        };
+        await createAIDraft(demandText);
+        notice = 'AI 草案已生成并保存，请预览后进入编辑或审核。';
+        return;
       }
       const result = await api('/api/demand-specs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -235,13 +435,57 @@
       contract = result.review_contract;
       fillSpecForm(spec!);
       fillContractForm(contract!);
-      notice = useAI ? 'AI 草案已生成，请人工修订后冻结。' : '人工草案已建立。';
+      notice = '人工草案已建立。';
       await loadDeliveryWorkspace();
     } catch (err: any) {
       error = err.message || '创建规格草案失败';
     } finally {
       actionLoading = '';
+      generationPhase = '';
+      generationMessage = '';
     }
+  }
+
+  async function createAIDraft(demandText: string) {
+    const response = await fetch('/api/demand-specs/ai-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+      body: JSON.stringify({ demand_id: demand.task_id, original_text: demandText })
+    });
+    if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+    if (!response.body) throw new Error('当前浏览器不支持流式响应');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let completed = false;
+    const consume = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line);
+      if (event.type === 'markdown_delta') streamedMarkdown += event.delta || '';
+      if (event.phase) generationPhase = event.phase;
+      if (event.message) generationMessage = event.message;
+      if (event.type === 'error') throw new Error(event.message || 'AI 草案生成失败');
+      if (event.type === 'complete') {
+        spec = event.spec;
+        contract = event.review_contract;
+        specs = spec ? [spec, ...specs.filter(item => item.id !== spec?.id)] : specs;
+        if (spec) fillSpecForm(spec);
+        if (contract) fillContractForm(contract);
+        completed = true;
+      }
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const records = buffer.split('\n');
+      buffer = records.pop() || '';
+      for (const record of records) consume(record);
+      if (done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+    if (!completed) throw new Error('流式连接已结束，但草案尚未完成落库');
+    await loadDeliveryWorkspace();
   }
 
   function specPayload() {
@@ -250,12 +494,39 @@
       ...spec,
       summary: summaryText.trim(),
       user_goal: goalText.trim(),
+      markdown_content: markdownText.trim() || formMarkdown(),
       acceptance_criteria: lines(acceptanceText),
       test_plan: lines(testPlanText),
       mapped_repos: lines(reposText),
       missing_context: lines(missingContextText),
-      risks: lines(riskText)
+      risks: lines(riskText),
+      business_rules: lines(businessRulesText),
+      main_flows: lines(mainFlowsText),
+      exception_flows: lines(exceptionFlowsText),
+      permission_rules: lines(permissionRulesText),
+      data_impact: lines(dataImpactText),
+      api_impact: lines(apiImpactText),
+      ui_impact: lines(uiImpactText),
+      dependencies: lines(dependenciesText)
     };
+  }
+
+  async function withdrawDraft() {
+    if (!spec || spec.status !== 'draft' || !canWrite) return;
+    actionLoading = 'withdraw-draft'; error = ''; notice = '';
+    try {
+      await api(`/api/demand-specs/${spec.id}`, { method: 'DELETE' });
+      spec = null;
+      contract = null;
+      generated = null;
+      confirmWithdrawDraft = false;
+      notice = '规格草案已撤销，你可以重新选择 AI 生成或人工建立。';
+      await loadDeliveryWorkspace();
+    } catch (err: any) {
+      error = err.message || '撤销规格草案失败';
+    } finally {
+      actionLoading = '';
+    }
   }
 
   async function saveSpec() {
@@ -276,6 +547,16 @@
     } finally { actionLoading = ''; }
   }
 
+  async function temporarilySaveMarkdown() {
+    if (actionLoading || markdownMode !== 'edit') return;
+    const saved = await saveSpec();
+    if (saved) {
+      notice = 'Markdown 草案已临时保存。';
+    } else {
+      markdownMode = 'edit';
+    }
+  }
+
   async function saveContract() {
     if (!contract || contract.status === 'approved') return false;
     actionLoading = 'save-contract'; error = ''; notice = '';
@@ -285,8 +566,8 @@
         body: JSON.stringify({
           id: contract.id,
           demand_spec_version_id: contract.demand_spec_version_id,
-          required_roles: lines(requiredRolesText),
-          reviewer_candidates: lines(reviewerCandidatesText),
+          required_roles: requiredRoles,
+          reviewer_candidates: reviewerCandidates,
           acceptance_owner: acceptanceOwnerText.trim(),
           minimum_approvals: Number(minimumApprovals) || 1,
           protected_path_rules: contract.protected_path_rules || [],
@@ -448,9 +729,9 @@
   <section class="delivery-control" aria-label="受控自治交付">
     <header class="delivery-control-head">
       <div>
-        <span class="delivery-kicker">CONTROLLED DELIVERY</span>
-        <h4>需求规格与自治执行</h4>
-        <p>AI 生成草案与代码，人负责冻结规格、审核 MR 和最终验收。</p>
+        <span class="delivery-kicker">规格与执行</span>
+        <h4>AI 规格草案</h4>
+        <p>先把需求变成可审核、可测试、可追溯的实现规格，再进入代码生成与交付。</p>
       </div>
       <div class="delivery-state-strip">
         <span class="state-pill {spec ? runTone(spec.status) : 'neutral'}">规格 {spec ? `v${spec.version} · ${displayStatus(spec.status)}` : '未建立'}</span>
@@ -476,55 +757,184 @@
             </div>
           {/if}
         </div>
-      {:else}
-        <div class="delivery-stage">
-          <div class="stage-head"><span>01</span><div><strong>人工审核规格</strong><small>冻结后不可原地修改</small></div></div>
-          <div class="delivery-grid two">
-            <label><span>需求摘要</span><textarea rows="2" bind:value={summaryText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label><span>用户目标</span><textarea rows="2" bind:value={goalText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label><span>验收标准 · 每行一项</span><textarea rows="4" bind:value={acceptanceText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label><span>测试计划 · 每行一项</span><textarea rows="4" bind:value={testPlanText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label><span>目标仓库 · 每行一项</span><textarea rows="3" bind:value={reposText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label><span>仍缺上下文</span><textarea rows="3" bind:value={missingContextText} disabled={spec.status !== 'draft'}></textarea></label>
-            <label class="span-two"><span>已识别风险</span><textarea rows="3" bind:value={riskText} disabled={spec.status !== 'draft'}></textarea></label>
+        {#if actionLoading === 'ai-draft'}
+          <div
+            class="ai-draft-stream"
+            aria-live="polite"
+            aria-busy="true"
+            data-stream-follow={streamFollowEnabled ? 'active' : 'paused'}
+            use:autoFollowStream
+          >
+            <div class="stream-head">
+              <div class="stream-orbit" aria-hidden="true"><span></span></div>
+              <div><strong>{generationMessage || 'AI 正在编写实现规格'}</strong><small>{generationPhase === 'persisting' ? '正在保存草案与审核契约' : '内容将随模型生成实时出现'}</small></div>
+              <span class="live-pill"><i></i> LIVE</span>
+            </div>
+            {#if streamedMarkdown}
+              <MarkdownWorkbench
+                value={streamedMarkdown}
+                mode="preview"
+                readonly={true}
+                label="AI 实时草案"
+                showToolbar={false}
+                streaming={true}
+                minHeight={360}
+                autoHeight={true}
+              />
+            {:else}
+              <div class="stream-skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            {/if}
           </div>
+        {/if}
+      {:else}
+        <div class="delivery-stage specification-stage">
+          <div class="stage-head"><span>规格</span><div><strong>实现规格文档</strong><small>{spec.status === 'draft' && canWrite ? '双击正文进入编辑，点击文档外空白区域临时保存并退出' : '已锁定为只读 Markdown 文档'}</small></div></div>
+
+          <MarkdownWorkbench
+            bind:value={markdownText}
+            bind:mode={markdownMode}
+            readonly={spec.status !== 'draft' || !canWrite}
+            label={`规格 v${spec.version}`}
+            showToolbar={false}
+            inlineEditing={spec.status === 'draft' && canWrite}
+            saving={actionLoading === 'save-spec'}
+            minHeight={360}
+            autoHeight={true}
+            on:save={temporarilySaveMarkdown}
+            on:commit={temporarilySaveMarkdown}
+          />
           <div class="stage-meta">
             <span>意图：{spec.intent || '需求解构'}</span><span>就绪度：{spec.readiness_score}%</span><span>Context Pack：#{spec.context_pack_id || '-'}</span>
           </div>
-          {#if spec.status === 'draft' && canWrite}
-            <div class="delivery-actions"><button disabled={!!actionLoading} on:click={saveSpec}>{actionLoading === 'save-spec' ? '保存中…' : '保存规格'}</button></div>
+          {#if spec.status === 'draft' && canWrite && !contract}
+            <div class="delivery-actions draft-actions">
+              <button class="danger" disabled={!!actionLoading} on:click={() => confirmWithdrawDraft = true}>撤销草案</button>
+            </div>
+            {#if confirmWithdrawDraft}
+              <div class="withdraw-confirm" role="alert">
+                <div><strong>撤销当前草案？</strong><span>仅删除未冻结的规格与审核契约，不影响原需求和影子任务。</span></div>
+                <div class="delivery-actions">
+                  <button disabled={!!actionLoading} on:click={() => confirmWithdrawDraft = false}>继续编辑</button>
+                  <button class="danger" disabled={!!actionLoading} on:click={withdrawDraft}>{actionLoading === 'withdraw-draft' ? '撤销中…' : '确认撤销'}</button>
+                </div>
+              </div>
+            {/if}
           {/if}
         </div>
 
         {#if contract}
-          <div class="delivery-stage">
-            <div class="stage-head"><span>02</span><div><strong>审核契约</strong><small>先确定审核规则，MR 时再按真实 Diff 解析人员</small></div></div>
-            <div class="delivery-grid three">
-              <label><span>候选 Reviewer</span><textarea rows="4" bind:value={reviewerCandidatesText} disabled={contract.status === 'approved'}></textarea></label>
-              <label><span>必须审核角色</span><textarea rows="4" bind:value={requiredRolesText} disabled={contract.status === 'approved'}></textarea></label>
-              <div class="delivery-field-stack">
-                <label><span>业务验收人</span><input bind:value={acceptanceOwnerText} disabled={contract.status === 'approved'} /></label>
-                <label><span>最少批准数</span><input type="number" min="1" bind:value={minimumApprovals} disabled={contract.status === 'approved'} /></label>
-                <label><span>升级负责人</span><input bind:value={escalationOwnerText} disabled={contract.status === 'approved'} /></label>
+          <div class="delivery-stage review-contract-stage">
+            <div class="review-stage-header">
+              <div class="stage-head"><span>审核</span><div><strong>确认审核契约</strong><small>锁定审核人与批准策略后，再按真实 Diff 解析最终 Reviewer</small></div></div>
+              <div class="review-contract-meta" aria-label="审核契约摘要">
+                <span class="status">{displayStatus(contract.status)}</span>
+                <span>至少 {minimumApprovals} 人批准</span>
+                <span>{contract.review_sla_hours || 24}h SLA</span>
+              </div>
+            </div>
+            <div class="review-contract-form">
+              <div class="review-field span-two">
+                <MultiSelect
+                  id="reviewer-candidates"
+                  label="候选 Reviewer"
+                  bind:values={reviewerCandidates}
+                  options={personOptions}
+                  disabled={contract.status === 'approved'}
+                  required={true}
+                  placeholder="选择候选审核人"
+                  searchPlaceholder="搜索姓名、邮箱或部门"
+                  emptyText="用户目录中没有匹配人员"
+                  helperText="仅显示核心成员；可连续选择，完成后点击空白处收起"
+                  compact={true}
+                />
+              </div>
+              <div class="review-field span-two">
+                <MultiSelect
+                  id="required-review-roles"
+                  label="必须审核角色"
+                  bind:values={requiredRoles}
+                  options={roleSelectOptions}
+                  disabled={contract.status === 'approved'}
+                  placeholder="选择职责角色"
+                  searchPlaceholder="搜索审核角色"
+                  compact={true}
+                />
+              </div>
+              <div class="review-field">
+                <Select
+                  id="acceptance-owner"
+                  label="业务验收人"
+                  bind:value={acceptanceOwnerText}
+                  options={personOptions}
+                  disabled={contract.status === 'approved'}
+                  required={true}
+                  placeholder="选择业务验收人"
+                  searchPlaceholder="搜索姓名、邮箱或部门"
+                  emptyText="用户目录中没有匹配人员"
+                  clearable={true}
+                  compact={true}
+                />
+              </div>
+              <div class="review-field">
+                <Select
+                  id="escalation-owner"
+                  label="升级负责人"
+                  bind:value={escalationOwnerText}
+                  options={personOptions}
+                  disabled={contract.status === 'approved'}
+                  placeholder="选择升级负责人"
+                  searchPlaceholder="搜索姓名、邮箱或部门"
+                  emptyText="用户目录中没有匹配人员"
+                  clearable={true}
+                  compact={true}
+                />
+              </div>
+              <label class="review-number-field">
+                <span>最少批准数</span>
+                <input type="number" min="1" max={Math.max(1, reviewerCandidates.length)} bind:value={minimumApprovals} disabled={contract.status === 'approved'} />
+                <small>不超过已选择的候选审核人数</small>
+              </label>
+              <div class="review-policy-note">
+                <span>职责分离</span>
+                <strong>作者不可自审</strong>
+                <small>系统会在真实 Diff 生成后解析最终 Reviewer，并自动排除规格作者。</small>
               </div>
             </div>
             {#if contract.resolved_reviewers?.length}
               <div class="resolved-line">最终 Reviewer：{contract.resolved_reviewers.join('、')} · {contract.resolution_reason}</div>
             {/if}
-            {#if contract.status !== 'approved' && canManageReview}
-              <div class="delivery-actions">
-                <button disabled={!!actionLoading} on:click={saveContract}>保存契约</button>
-                <button class="primary" disabled={!!actionLoading} on:click={approveContract}>{actionLoading === 'approve-contract' ? '批准中…' : '批准审核契约'}</button>
+
+            {#if confirmWithdrawDraft && spec.status === 'draft' && canWrite}
+              <div class="withdraw-confirm" role="alert">
+                <div><strong>撤销当前草案？</strong><span>仅删除未冻结的规格与审核契约，不影响原需求和影子任务。</span></div>
+                <div class="delivery-actions">
+                  <button disabled={!!actionLoading} on:click={() => confirmWithdrawDraft = false}>继续编辑</button>
+                  <button class="danger" disabled={!!actionLoading} on:click={withdrawDraft}>{actionLoading === 'withdraw-draft' ? '撤销中…' : '确认撤销'}</button>
+                </div>
               </div>
-            {:else if contract.status === 'approved' && spec.status === 'draft' && canFreeze}
-              <div class="delivery-actions"><button class="primary" disabled={!!actionLoading} on:click={freezeSpec}>{actionLoading === 'freeze' ? '冻结中…' : '冻结规格并开放执行'}</button></div>
+            {/if}
+
+            {#if (spec.status === 'draft' && canWrite) || (contract.status !== 'approved' && canManageReview) || (contract.status === 'approved' && spec.status === 'draft' && canFreeze)}
+              <div class="delivery-actions review-actions">
+                <div class="review-actions-main">
+                  {#if spec.status === 'draft' && canWrite}
+                    <button class="danger" disabled={!!actionLoading} on:click={() => confirmWithdrawDraft = true}>撤销草案</button>
+                  {/if}
+                  {#if contract.status !== 'approved' && canManageReview}
+                    <button disabled={!!actionLoading} on:click={saveContract}>保存契约</button>
+                    <button class="primary" disabled={!!actionLoading} on:click={approveContract}>{actionLoading === 'approve-contract' ? '批准中…' : '批准审核契约'}</button>
+                  {:else if contract.status === 'approved' && spec.status === 'draft' && canFreeze}
+                    <button class="primary" disabled={!!actionLoading} on:click={freezeSpec}>{actionLoading === 'freeze' ? '冻结中…' : '冻结规格并开放执行'}</button>
+                  {/if}
+                </div>
+              </div>
             {/if}
           </div>
         {/if}
 
         {#if spec.status === 'frozen'}
           <div class="delivery-stage">
-            <div class="stage-head"><span>03</span><div><strong>AI 生成与受控执行</strong><small>只允许结构化文件动作，测试由 GitLab Pipeline 执行</small></div></div>
+            <div class="stage-head"><span>执行</span><div><strong>生成代码并受控交付</strong><small>只允许结构化文件动作，测试由 GitLab Pipeline 执行</small></div></div>
             {#if !latestRun || ['cancelled', 'rejected', 'execution_failed', 'tests_failed'].includes(latestRun.status)}
               <div class="delivery-grid two">
                 <label><span>允许读取/更新的源文件路径</span><textarea rows="4" bind:value={sourcePathsText} placeholder="internal/server/handler.go"></textarea></label>
@@ -570,51 +980,89 @@
 {/if}
 
 <style>
-  .delivery-control { border-top: 1px solid var(--wa-border, #d9e0e7); padding-top: 20px; display: grid; gap: 14px; color: #17212b; }
-  .delivery-control-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
-  .delivery-kicker { display: block; margin-bottom: 5px; color: #21847a; font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
-  h4 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+  .delivery-control { min-width: 0; display: grid; color: var(--wa-text-main, #293847); }
+  .delivery-control-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 16px; }
+  .delivery-kicker { display: block; margin-bottom: 5px; color: var(--wa-accent-strong, #006f76); font-size: 11px; line-height: 1.2; font-weight: 750; letter-spacing: .04em; }
+  h4 { margin: 0; color: var(--wa-text-strong, #17212b); font-size: 16px; letter-spacing: -.02em; }
   .delivery-control-head p { margin: 5px 0 0; color: #687784; font-size: 12px; }
   .delivery-state-strip { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .state-pill { border: 1px solid #dce3e8; border-radius: 999px; padding: 5px 9px; background: #f7f9fa; color: #586773; font-size: 11px; }
-  .state-pill.success { border-color: #a9d9cf; background: #edf8f5; color: #167267; }
-  .state-pill.info { border-color: #b8d7eb; background: #eef7fc; color: #236c94; }
-  .state-pill.danger { border-color: #edc1c1; background: #fff3f2; color: #a94747; }
-  .delivery-stage { border: 1px solid #dce3e8; background: rgba(255,255,255,.82); padding: 16px; display: grid; gap: 13px; }
-  .stage-head { display: flex; gap: 10px; align-items: center; }
-  .stage-head > span { display: grid; place-items: center; width: 28px; height: 28px; background: #e9f5f2; color: #19766c; font: 700 11px/1 ui-monospace, monospace; }
+  .state-pill.success { border-color: rgba(110, 204, 84, .38); background: var(--wa-success-soft, rgba(110, 204, 84, .16)); color: var(--wa-success, #2f742a); }
+  .state-pill.info { border-color: rgba(0, 47, 167, .22); background: var(--wa-info-soft, rgba(0, 47, 167, .1)); color: var(--wa-info-strong, #0d3a69); }
+  .state-pill.danger { border-color: rgba(200, 22, 29, .22); background: var(--wa-danger-soft, rgba(211, 73, 71, .12)); color: var(--wa-danger, #c8161d); }
+  .delivery-stage { min-width: 0; display: grid; gap: 16px; padding: 16px 0; border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); }
+  .specification-stage { gap: 16px; }
+  .stream-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .stage-head { display: flex; gap: 8px; align-items: center; }
+  .stage-head > span { display: grid; place-items: center; min-width: 40px; height: 28px; border-radius: 8px; padding: 0 8px; background: var(--wa-accent-soft, rgba(113, 226, 209, .22)); color: var(--wa-accent-strong, #006f76); font-size: 11px; line-height: 1; font-weight: 750; }
   .stage-head div { display: grid; gap: 2px; }
   .stage-head strong { font-size: 13px; }
   .stage-head small { color: #75828d; font-size: 11px; }
+  .ai-draft-stream { display: grid; gap: 16px; padding: 16px 0; border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); }
+  .stream-head { justify-content: flex-start; }
+  .stream-head > div:nth-child(2) { display: grid; flex: 1; gap: 2px; }
+  .stream-head strong { color: #1e3a40; font-size: 13px; }
+  .stream-head small { color: #71828a; font-size: 11px; }
+  .stream-orbit { position: relative; width: 30px; height: 30px; border: 1px solid rgba(42, 143, 131, .25); border-radius: 50%; background: rgba(255,255,255,.82); }
+  .stream-orbit::before { content: ''; position: absolute; inset: 5px; border: 2px solid #b7ddd8; border-top-color: #21847a; border-radius: 50%; animation: stream-spin .9s linear infinite; }
+  .stream-orbit span { position: absolute; inset: 12px; border-radius: 50%; background: #21847a; }
+  .live-pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #b8ddd7; border-radius: 999px; padding: 5px 8px; background: #eef8f6; color: #22766c; font: 750 10px/1 ui-monospace, monospace; letter-spacing: .04em; }
+  .live-pill i { width: 6px; height: 6px; border-radius: 50%; background: #2a9487; box-shadow: 0 0 0 4px rgba(42, 148, 135, .12); animation: live-pulse 1.4s ease-in-out infinite; }
+  .stream-skeleton { display: grid; gap: 11px; padding: 24px 0; }
+  .stream-skeleton span { height: 9px; border-radius: 999px; background: #e4ecee; animation: skeleton-pulse 1.25s ease-in-out infinite alternate; }
+  .stream-skeleton span:nth-child(1) { width: 42%; height: 18px; }
+  .stream-skeleton span:nth-child(2) { width: 92%; }
+  .stream-skeleton span:nth-child(3) { width: 78%; }
+  .stream-skeleton span:nth-child(4) { width: 58%; }
   .delivery-grid { display: grid; gap: 12px; }
   .delivery-grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .delivery-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .span-two { grid-column: 1 / -1; }
-  label { display: grid; gap: 6px; min-width: 0; }
+  label { display: grid; gap: 8px; min-width: 0; }
   label > span { color: #667580; font-size: 11px; font-weight: 650; }
-  textarea, input { width: 100%; box-sizing: border-box; border: 1px solid #ccd6dd; border-radius: 6px; background: #fff; color: #1f2a33; padding: 9px 10px; font: 12px/1.45 inherit; outline: none; resize: vertical; transition: border-color 150ms ease, box-shadow 150ms ease; }
+  textarea, input { width: 100%; box-sizing: border-box; border: 1px solid #ccd6dd; border-radius: 8px; background: #fff; color: #1f2a33; padding: 8px 12px; font-family: inherit; font-size: 13px; line-height: 1.45; outline: none; resize: vertical; transition: border-color 150ms ease, box-shadow 150ms ease; }
+  textarea { min-height: 68px; max-height: 132px; }
   textarea:focus, input:focus { border-color: #55a99f; box-shadow: 0 0 0 3px rgba(38, 139, 127, .11); }
   textarea:disabled, input:disabled { background: #f4f6f7; color: #53616c; resize: none; }
-  .delivery-field-stack { display: grid; gap: 9px; }
+  .review-contract-stage { gap: 20px; padding-block: 20px; }
+  .review-stage-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+  .review-contract-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+  .review-contract-meta span { min-height: 28px; display: inline-flex; align-items: center; border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); border-radius: 999px; padding: 0 8px; background: #f7fafb; color: #61717d; font-size: 10px; font-weight: 650; }
+  .review-contract-meta .status { border-color: rgba(113, 226, 209, .52); background: var(--wa-accent-soft, rgba(113, 226, 209, .22)); color: var(--wa-accent-strong, #006f76); }
+  .review-contract-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; padding-block: 4px; }
+  .review-field { min-width: 0; }
+  .review-number-field { align-content: start; }
+  .review-number-field input { min-height: var(--wa-control-h, 38px); resize: none; }
+  .review-number-field small { color: #7a8791; font-size: 10px; line-height: 1.4; }
+  .review-policy-note { min-width: 0; display: grid; align-content: center; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; border: 1px solid rgba(169, 214, 207, .64); border-radius: 12px; padding: 10px 12px; background: rgba(238, 248, 246, .56); color: #687681; }
+  .review-policy-note > span { color: #73818c; font-size: 10px; font-weight: 700; letter-spacing: .03em; }
+  .review-policy-note strong { color: #2b4d4a; font-size: 12px; }
+  .review-policy-note small { grid-column: 1 / -1; color: #74828d; font-size: 10px; line-height: 1.45; }
+  .review-actions { justify-content: flex-end; padding-top: 4px; border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); }
+  .review-actions-main { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-left: auto; }
   .stage-meta, .resolved-line, .audit-line { display: flex; flex-wrap: wrap; gap: 12px; color: #687681; font-size: 11px; }
-  .resolved-line { padding: 8px 10px; background: #eff8f6; color: #276f68; }
+  .resolved-line { padding: 8px 10px; background: var(--wa-success-soft, rgba(110, 204, 84, .16)); color: var(--wa-success, #2f742a); }
   .delivery-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-  button, .delivery-link { min-height: 34px; border: 1px solid #cbd5dc; border-radius: 6px; background: #fff; color: #34434e; padding: 0 12px; font: 650 11px/32px inherit; cursor: pointer; text-decoration: none; transition: background 150ms ease, border-color 150ms ease, transform 120ms ease; }
+  button, .delivery-link { min-height: 38px; border: 1px solid #cbd5dc; border-radius: 10px; background: #fff; color: #34434e; padding: 0 14px; font-family: inherit; font-size: 12px; line-height: 36px; font-weight: 700; cursor: pointer; text-decoration: none; transition: background 150ms ease, border-color 150ms ease, transform 120ms ease; }
   button:hover, .delivery-link:hover { border-color: #8fa8b4; background: #f7fafb; }
   button:active, .delivery-link:active { transform: scale(.98); }
-  button:focus-visible, .delivery-link:focus-visible { outline: 3px solid rgba(38,139,127,.18); outline-offset: 1px; }
+  button:focus-visible, .delivery-link:focus-visible { outline: 3px solid rgba(1, 139, 141, .18); outline-offset: 1px; }
   button:disabled { opacity: .56; cursor: wait; }
-  button.primary { border-color: #197c71; background: #197c71; color: #fff; }
-  button.primary:hover { background: #126d63; }
-  button.danger { border-color: #e4b5b5; color: #a44242; background: #fff8f7; }
-  .delivery-empty { border: 1px dashed #cbd6dc; padding: 20px; text-align: center; color: #6d7b86; background: #f9fbfb; }
+  button.primary { border-color: var(--wa-accent-fill, #006f76); background: var(--wa-accent-fill, #006f76); color: var(--wa-accent-fill-ink, #f6fbff); }
+  button.primary:hover { border-color: var(--wa-accent-fill-hover, #00545a); background: var(--wa-accent-fill-hover, #00545a); color: var(--wa-accent-fill-ink, #f6fbff); }
+  button.danger { border-color: rgba(200, 22, 29, .24); color: var(--wa-danger, #c8161d); background: var(--wa-danger-soft, rgba(211, 73, 71, .12)); }
+  .draft-actions { justify-content: flex-end; }
+  .withdraw-confirm { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #efc9c5; border-radius: 12px; background: #fff7f5; padding: 12px; color: #7e3f3b; }
+  .withdraw-confirm > div:first-child { display: grid; gap: 3px; }
+  .withdraw-confirm strong { font-size: 12px; }
+  .withdraw-confirm span { color: #895d58; font-size: 11px; line-height: 1.45; }
+  .delivery-empty { border: 1px dashed #cbd6dc; border-radius: 12px; padding: 18px; text-align: center; color: #6d7b86; background: #f9fbfb; }
   .delivery-empty strong { display: block; color: #2b3943; margin-bottom: 4px; }
   .delivery-empty p { margin: 0 0 12px; font-size: 12px; }
   .delivery-empty .delivery-actions { justify-content: center; }
   .delivery-empty.loading { animation: pulse 1.4s ease-in-out infinite; }
-  .delivery-message { padding: 9px 11px; border-left: 3px solid; font-size: 12px; }
-  .delivery-message.error { border-color: #c95a5a; background: #fff4f3; color: #943e3e; }
-  .delivery-message.success { border-color: #279184; background: #eff9f6; color: #276e66; }
+  .delivery-message { margin-bottom: 12px; padding: 9px 11px; border: 1px solid; font-size: 12px; }
+  .delivery-message.error { border-color: rgba(200, 22, 29, .24); background: var(--wa-danger-soft, rgba(211, 73, 71, .12)); color: var(--wa-danger, #c8161d); }
+  .delivery-message.success { border-color: rgba(110, 204, 84, .38); background: var(--wa-success-soft, rgba(110, 204, 84, .16)); color: var(--wa-success, #2f742a); }
   .change-set-preview { display: grid; gap: 6px; padding: 11px; background: #f5f8f9; border: 1px solid #dde4e8; }
   .change-set-preview > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; }
   .change-set-preview span { color: #1b7f74; font: 700 10px/1 ui-monospace, monospace; text-transform: uppercase; }
@@ -627,10 +1075,25 @@
   .run-ledger strong { font-size: 12px; }
   .run-blocker { padding: 9px 11px; background: #fff4f3; color: #944444; font-size: 11px; }
   @keyframes pulse { 50% { opacity: .6; } }
+  @keyframes stream-spin { to { transform: rotate(360deg); } }
+  @keyframes live-pulse { 50% { opacity: .45; } }
+  @keyframes skeleton-pulse { to { opacity: .48; } }
   @media (max-width: 900px) {
     .delivery-control-head { display: grid; }
     .delivery-state-strip { justify-content: flex-start; }
-    .delivery-grid.two, .delivery-grid.three, .run-ledger { grid-template-columns: 1fr; }
+    .delivery-grid.two, .run-ledger { grid-template-columns: 1fr; }
     .run-ledger > div { border-right: 0; border-bottom: 1px solid #e3e8eb; }
+    .withdraw-confirm { align-items: stretch; flex-direction: column; }
+    .review-stage-header { align-items: stretch; flex-direction: column; gap: 12px; }
+    .review-contract-meta { justify-content: flex-start; }
+    button, .delivery-link { min-height: 44px; line-height: 42px; }
+  }
+  @media (max-width: 560px) {
+    .review-contract-form { grid-template-columns: 1fr; gap: 14px; }
+    .review-contract-form .span-two { grid-column: auto; }
+    .review-policy-note { min-height: 52px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stream-orbit::before, .live-pill i, .stream-skeleton span { animation: none; }
   }
 </style>

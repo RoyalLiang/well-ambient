@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { slide } from 'svelte/transition';
+  import { onMount, onDestroy, tick } from 'svelte';
   import Modal from './shared/Modal.svelte';
+  import Select from './shared/Select.svelte';
+  import MultiSelect from './shared/MultiSelect.svelte';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
+  import { showToast } from '../lib/toast';
+  import {
+    fetchDeliveryDirectory,
+    type DeliveryAssigneeOption,
+    type DeliveryProjectOption
+  } from '../lib/delivery-directory';
   import {
     ADMIN_TONE_CLASS,
     formatAdminDate,
@@ -31,6 +38,17 @@
     mrIid?: number;
     mrUrl?: string;
     taskGroupId?: string;
+    parentWorkItemId?: string;
+    parentWorkItem?: string;
+    projectKey?: string;
+    targetRelease?: string;
+    affectedReleases?: string[];
+    description?: string;
+    source?: string;
+    planningState?: string;
+    dueDate?: string;
+    syncState?: string;
+    revision?: number;
   }
 
   interface TaskResponse {
@@ -49,7 +67,7 @@
     task_group_id?: string;
   }
 
-  type TaskView = 'status' | 'personnel' | 'execution';
+  type TaskView = 'status' | 'execution';
   type ExecutionRiskFilter = 'attention' | 'all' | 'high' | 'medium' | 'safe' | 'done';
 
   interface ExecutionSummary {
@@ -69,6 +87,7 @@
     task_id: string;
     title: string;
     issue_type: string;
+    source?: string;
     assignee: string;
     execution_assignee?: string;
     jira_assignee?: string;
@@ -80,6 +99,12 @@
     task_group_id: string;
     parent_demand_id?: string;
     parent_demand?: string;
+    parent_work_item_id?: string;
+    parent_work_item?: string;
+    parent_issue_type?: string;
+    project_key?: string;
+    target_release_id?: number;
+    target_release?: string;
     created_at: string;
     last_update: string;
     last_evidence_at?: string;
@@ -104,7 +129,49 @@
   interface ExecutionTasksResponse {
     generated_at: string;
     summary: ExecutionSummary;
+    facets?: {
+      projects?: Array<{ project_key: string; project_name: string }>;
+      assignees?: Array<{ value: string; label: string; department?: string }>;
+    };
     items: ExecutionTaskItem[];
+  }
+
+  interface WorkItemRecord {
+    task_id: string;
+    project_key?: string;
+    source?: string;
+    external_key?: string;
+    revision?: number;
+    planning_state?: string;
+    title?: string;
+    description?: string;
+    repo?: string;
+    assignee?: string;
+    branch?: string;
+    last_commit?: string;
+    status?: string;
+    issue_type?: string;
+    task_created_at?: string;
+    last_update?: string;
+    completed_at?: string;
+    due_date?: string;
+    mr_iid?: number;
+    mr_url?: string;
+    task_group_id?: string;
+  }
+
+  interface WorkItemSnapshot {
+    work_item: WorkItemRecord;
+    target_releases?: Array<{ id: number; project_key: string; name: string; status: string }>;
+    affected_releases?: Array<{ id: number; project_key: string; name: string; status: string }>;
+    sync_state?: string;
+  }
+
+  interface WorkItemsResponse {
+    items: WorkItemSnapshot[];
+    total: number;
+    limit: number;
+    offset: number;
   }
 
   const executionRiskFilters: Array<{ value: ExecutionRiskFilter; label: string }> = [
@@ -117,18 +184,19 @@
   ];
 
   const taskTableColumns: AdminTableColumn[] = [
-    { key: 'task', label: '任务编号 / 标题', width: '34%' },
+    { key: 'task', label: '事项编号 / 标题', width: '30%' },
+    { key: 'type', label: '类型', width: '8%' },
+    { key: 'project', label: '项目', width: '12%' },
     { key: 'owner', label: '负责人', width: '12%' },
-    { key: 'status', label: '状态', width: '12%' },
-    { key: 'risk', label: '风险', width: '11%' },
-    { key: 'evidence', label: '代码证据', width: '15%' },
+    { key: 'status', label: '状态', width: '11%' },
+    { key: 'release', label: '目标版本', width: '13%' },
     { key: 'lastUpdate', label: '最后同步', width: '10%' },
-    { key: 'actions', label: '操作', width: '6%', align: 'right' }
+    { key: 'actions', label: '操作', width: '4%', align: 'right' }
   ];
 
   const executionTableColumns: AdminTableColumn[] = [
-    { key: 'task', label: 'Jira Task / 标题', width: '32%' },
-    { key: 'owner', label: 'Owner', width: '12%' },
+    { key: 'task', label: '执行任务 / 标题', width: '32%' },
+    { key: 'owner', label: '负责人', width: '12%' },
     { key: 'result', label: '结果状态', width: '14%' },
     { key: 'evidence', label: '代码证据', width: '16%' },
     { key: 'risk', label: '风险', width: '12%' },
@@ -151,15 +219,26 @@
     };
   }
 
-  let isMounted = false;
-  let allTasks: Task[] = [];
+  let workItemTasks: Task[] = [];
+  $: allTasks = currentView === 'status'
+    ? workItemTasks
+    : executionItems.map(mapExecutionTask);
+  let parentWorkItemsByGroup = new Map<string, { id: string; title: string }>();
+  let selectedProjects: string[] = [];
+  let selectedAssignees: string[] = [];
+  // Retained for the disabled legacy board markup below; active Phase 41 views use the arrays above.
   let selectedProject = 'all';
   let selectedAssignee = 'all';
-  let currentView: TaskView = 'status';
+  export let activeTaskView: TaskView = 'status';
+  export let onTaskViewChange: (view: TaskView) => void = () => {};
+  export let onOpenDeliveryPlan: (workItemID: string) => void = () => {};
+  let currentView: TaskView = normalizeTaskView(activeTaskView);
+  $: if (normalizeTaskView(activeTaskView) !== currentView) setTaskView(activeTaskView);
   let executionItems: ExecutionTaskItem[] = [];
   let executionSummary: ExecutionSummary = emptyExecutionSummary();
   let executionGeneratedAt = '';
   let executionLoading = false;
+  let executionDataLoaded = false;
   let executionErrorMsg = '';
   let executionSearch = '';
   let executionSearchInput = '';
@@ -172,14 +251,21 @@
       executionSearch = inputVal;
     }, 200);
   }
-  let executionRiskFilter: ExecutionRiskFilter = 'attention';
-  let executionAssigneeFilter = 'all';
+  let executionRiskFilter: ExecutionRiskFilter = 'all';
+  let taskAdminMetrics: AdminMetric[] = [];
+  let executionAdminMetrics: AdminMetric[] = [];
 
   let collapsedAssignees: Record<string, boolean> = {};
   let userToggledAssignees: Record<string, boolean> = {};
 
   let intervalId: any;
+  let taskRequestSequence = 0;
+  let executionRequestSequence = 0;
   let loading = true;
+  let taskRefreshing = false;
+  let taskRequestInFlight = false;
+  let taskDataLoaded = false;
+  let taskLastRefreshedAt = '';
   let errorMsg = '';
 
   function toggleAssigneeCollapse(assignee: string) {
@@ -225,17 +311,14 @@
 
   let showProjectDropdown = false;
   let showAssigneeDropdown = false;
-  let showExecutionAssigneeDropdown = false;
   let projectSelectEl: HTMLElement;
   let assigneeSelectEl: HTMLElement;
 
   let projectSearchText = '';
   let assigneeSearchText = '';
-  let execAssigneeSearchText = '';
 
   $: if (!showProjectDropdown) projectSearchText = '';
   $: if (!showAssigneeDropdown) assigneeSearchText = '';
-  $: if (!showExecutionAssigneeDropdown) execAssigneeSearchText = '';
 
   function toggleProjectDropdown() {
     showProjectDropdown = !showProjectDropdown;
@@ -265,9 +348,6 @@
     if (showAssigneeDropdown && assigneeSelectEl && !assigneeSelectEl.contains(target)) {
       showAssigneeDropdown = false;
     }
-    if (!target.closest('.execution-assignee-select')) {
-      showExecutionAssigneeDropdown = false;
-    }
   }
 
   // Modal details state
@@ -275,61 +355,105 @@
   let showDetails = false;
   let selectedTaskId = '';
   let selectedExecutionTaskId = '';
+  let taskTableShellEl: HTMLElement | null = null;
+  let pendingRevealTaskId = '';
+  let revealScheduledTaskId = '';
 
+  function handleGlobalSearchSelection(event: Event) {
+    const detail = (event as CustomEvent<{ id?: string; route?: string }>).detail;
+    if (detail?.route !== 'tasks' || !detail.id) return;
+    selectedProjects = [];
+    selectedAssignees = [];
+    selectedProject = 'all';
+    selectedAssignee = 'all';
+    selectedTaskId = detail.id;
+    pendingRevealTaskId = detail.id;
+  }
+
+  async function revealPendingTaskRow(taskId: string) {
+    revealScheduledTaskId = taskId;
+    await tick();
+
+    if (pendingRevealTaskId !== taskId || !taskTableShellEl) {
+      revealScheduledTaskId = '';
+      return;
+    }
+
+    const row = Array.from(taskTableShellEl.querySelectorAll<HTMLTableRowElement>('tbody tr[data-task-id]'))
+      .find(candidate => candidate.dataset.taskId === taskId);
+
+    if (!row) {
+      revealScheduledTaskId = '';
+      return;
+    }
+
+    const rowRect = row.getBoundingClientRect();
+    const tableHead = taskTableShellEl.querySelector('thead');
+    const tableOwnsVerticalScroll = taskTableShellEl.scrollHeight > taskTableShellEl.clientHeight + 1;
+    const scrollOwner = tableOwnsVerticalScroll
+      ? taskTableShellEl
+      : taskTableShellEl.closest<HTMLElement>('.workspace-frame');
+
+    if (!scrollOwner) {
+      pendingRevealTaskId = '';
+      revealScheduledTaskId = '';
+      return;
+    }
+
+    const ownerRect = scrollOwner.getBoundingClientRect();
+    const stickyHeadHeight = tableOwnsVerticalScroll ? (tableHead?.getBoundingClientRect().height || 0) : 0;
+    const visibleTop = ownerRect.top + stickyHeadHeight;
+    const visibleBottom = ownerRect.bottom;
+
+    if (rowRect.top < visibleTop || rowRect.bottom > visibleBottom) {
+      const visibleHeight = Math.max(0, scrollOwner.clientHeight - stickyHeadHeight);
+      const centeredOffset = Math.max(0, (visibleHeight - rowRect.height) / 2);
+      scrollOwner.scrollTop = Math.max(
+        0,
+        scrollOwner.scrollTop + rowRect.top - visibleTop - centeredOffset
+      );
+    }
+
+    pendingRevealTaskId = '';
+    revealScheduledTaskId = '';
+  }
+
+  let deliveryProjects: DeliveryProjectOption[] = [];
   let allProjects: string[] = [];
+  $: allProjects = deliveryProjects.map(project => project.project_key);
   $: projectOptions = ['all', ...allProjects];
   let projectNamesMap: Record<string, string> = {};
-  let coreMembers = new Set([
-    "梁志远", "朱家聪", "岳颖颖", "Yue Yingying", "姜昊良", "白凌云", "陈伟华", 
-    "李厚奇", "鲁俊", "刘子翔", "张路路", "qiang.deng", "MiddleQ", "zhongkou.chang", 
-    "Eddie", "Antigravity"
-  ]);
-
-  function isCoreMember(name: string): boolean {
-    if (!name || name === '未指派' || name === '-' || name === 'Unassigned') return true;
-    return coreMembers.has(name) || coreMembers.has(name.split(' ')[0]);
-  }
-
-  function updateCoreMembers(config: any) {
-    let users: string[] = [];
-    if (config.jira) {
-      if (config.jira.sync_users && config.jira.sync_users.length > 0) {
-        users = [...config.jira.sync_users];
-      } else if (config.jira.custom_jql) {
-        const match = config.jira.custom_jql.match(/assignee\s+in\s*\(([^)]+)\)/i);
-        if (match && match[1]) {
-          users = match[1].split(',').map((name: string) => name.trim().replace(/['"]/g, ''));
-        }
-      }
-    }
-    
-    if (users.length > 0) {
-      users = users.filter(name => name !== '未指派' && name !== '-');
-      coreMembers = new Set(users);
-    }
-  }
-
-  $: assigneeOptions = [
-    'all', 
-    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b))
-  ];
+  let activeAssigneeFacets: DeliveryAssigneeOption[] = [];
+  $: assigneeOptions = ['all', ...activeAssigneeFacets.map(option => option.value)];
+  $: projectMultiOptions = allProjects.map(project => ({
+    value: project,
+    label: projectNamesMap[project.toUpperCase()] || project,
+    meta: project
+  }));
+  $: ownerMultiOptions = activeAssigneeFacets.map(option => ({
+    value: option.value,
+    label: option.label,
+    meta: option.department || ''
+  }));
+  $: selectedProjectSummary = selectedProjects.length === 0
+    ? '全部项目'
+    : selectedProjects.length === 1
+      ? (projectNamesMap[selectedProjects[0].toUpperCase()] || selectedProjects[0])
+      : `已选 ${selectedProjects.length} 个项目`;
+  $: selectedAssigneeSummary = selectedAssignees.length === 0
+    ? '全部负责人'
+    : selectedAssignees.length === 1
+      ? selectedAssignees[0]
+      : `已选 ${selectedAssignees.length} 位负责人`;
+  const executionRiskOptions = executionRiskFilters.map(filter => ({
+    value: filter.value,
+    label: filter.label
+  }));
 
   // Reactive filtered tasks
   $: filteredTasks = allTasks.filter(t => {
-    if (t.issueType === 'demand') {
-      return false;
-    }
-    const projMatch = selectedProject === 'all' || getProjectName(t.id) === selectedProject;
-    
-    let taskAssignee = t.assignee;
-    const isCore = isCoreMember(taskAssignee);
-    
-    // 移除对非筛选人列表的任务数据
-    if (!isCore) {
-      return false;
-    }
-    
-    const assigneeMatch = selectedAssignee === 'all' || taskAssignee === selectedAssignee;
+    const projMatch = selectedProjects.length === 0 || selectedProjects.includes(t.projectKey || '');
+    const assigneeMatch = selectedAssignees.length === 0 || selectedAssignees.includes(t.assignee);
     return projMatch && assigneeMatch;
   });
 
@@ -343,11 +467,11 @@
     return timeA - timeB; // Earliest created (longest days) comes first
   });
 
-  $: backlog = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'backlog');
-  $: inProgress = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'progress');
-  $: inReview = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'review');
-  $: done = sortedFilteredTasks.filter(t => t.status.toLowerCase() === 'done');
-  $: activeTasks = sortedFilteredTasks.filter(t => t.status.toLowerCase() !== 'done');
+  $: backlog = sortedFilteredTasks.filter(t => getTaskStatusBucket(t) === 'backlog');
+  $: inProgress = sortedFilteredTasks.filter(t => getTaskStatusBucket(t) === 'progress');
+  $: inReview = sortedFilteredTasks.filter(t => getTaskStatusBucket(t) === 'review');
+  $: done = sortedFilteredTasks.filter(t => getTaskStatusBucket(t) === 'done');
+  $: activeTasks = sortedFilteredTasks.filter(t => getTaskStatusBucket(t) !== 'done');
   $: overdueTasks = activeTasks
     .filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3)
     .sort((a, b) => getDelayDays(b.taskCreatedAt, b.status) - getDelayDays(a.taskCreatedAt, a.status));
@@ -356,6 +480,10 @@
   $: focusTaskDelayDays = focusTask ? getDelayDays(focusTask.taskCreatedAt, focusTask.status) : 0;
   $: evidenceLinkedTasks = filteredTasks.filter(t => getEvidenceStatus(t).class === 'badge-has-code').length;
   $: evidenceCoverage = filteredTasks.length > 0 ? Math.round((evidenceLinkedTasks / filteredTasks.length) * 100) : 0;
+  $: requirementCount = filteredTasks.filter(t => t.issueType !== 'bug').length;
+  $: bugCount = filteredTasks.filter(t => t.issueType === 'bug').length;
+  $: plannedWorkItems = filteredTasks.filter(t => Boolean(t.projectKey)).length;
+  $: unplannedWorkItems = filteredTasks.length - plannedWorkItems;
   $: taskFlowStages = [
     { key: 'backlog', label: '待办', value: backlog.length, tone: 'neutral' },
     { key: 'progress', label: '进行中', value: inProgress.length, tone: 'info' },
@@ -365,21 +493,23 @@
     ...stage,
     percent: filteredTasks.length > 0 ? Math.round((stage.value / filteredTasks.length) * 100) : 0
   }));
-  $: executionAssigneeOptions = [
-    'all', 
-    ...Array.from(coreMembers).sort((a, b) => a.localeCompare(b))
-  ];
   $: filteredExecutionItems = executionItems
-    .filter(item => matchesExecutionFilters(item))
+    .filter(item => matchesExecutionFilters(
+      item,
+      selectedProjects,
+      selectedAssignees,
+      executionSearch,
+      executionRiskFilter
+    ))
     .sort((a, b) => compareExecutionItems(a, b));
   $: executionFocusItem = filteredExecutionItems[0] || executionItems[0] || null;
   $: executionEvidenceRate = executionSummary.total > 0
     ? Math.round((executionSummary.with_evidence / executionSummary.total) * 100)
     : 0;
 
-  $: viewAssignees = (selectedAssignee === 'all'
-    ? Array.from(new Set(filteredTasks.filter(t => isCoreMember(t.assignee)).map(t => t.assignee)))
-    : [selectedAssignee]
+  $: viewAssignees = (selectedAssignees.length === 0
+    ? Array.from(new Set(filteredTasks.map(t => t.assignee)))
+    : selectedAssignees
   );
 
   $: assigneeTasksMap = (() => {
@@ -397,26 +527,26 @@
     });
     return map;
   })();
-  $: ownerLoadList = viewAssignees
-    .map(assignee => {
-      const tasks = assigneeTasksMap.get(assignee) || [];
-      const active = tasks.filter(t => t.status.toLowerCase() !== 'done').length;
-      const delayed = tasks.filter(t => getDelayDays(t.taskCreatedAt, t.status) >= 3).length;
-      return { assignee, total: tasks.length, active, delayed };
-    })
-    .filter(item => item.total > 0)
-    .sort((a, b) => {
-      if (b.delayed !== a.delayed) return b.delayed - a.delayed;
-      if (b.active !== a.active) return b.active - a.active;
-      return b.total - a.total;
-    });
-  $: dominantOwner = ownerLoadList[0] || null;
-
   $: taskCompletionRate = filteredTasks.length > 0 ? Math.round((done.length / filteredTasks.length) * 100) : 0;
-  $: taskAdminMetrics = buildTaskAdminMetrics();
-  $: executionAdminMetrics = buildExecutionAdminMetrics();
+  $: {
+    const _taskMetricDependencies = [filteredTasks.length, activeTasks.length, done.length, requirementCount, bugCount, plannedWorkItems, unplannedWorkItems, taskCompletionRate, inReview.length, inProgress.length, selectedProjectSummary];
+    taskAdminMetrics = buildTaskAdminMetrics();
+  }
+  $: {
+    const _executionMetricDependencies = [executionSummary.total, executionSummary.active, executionSummary.done, executionSummary.high_risk, executionSummary.missing_evidence, executionEvidenceRate, filteredExecutionItems.length];
+    executionAdminMetrics = buildExecutionAdminMetrics();
+  }
   $: activeAdminMetrics = currentView === 'execution' ? executionAdminMetrics : taskAdminMetrics;
   $: taskTableRows = sortedFilteredTasks.map(mapTaskAdminRow);
+  $: if (
+    pendingRevealTaskId
+    && currentView === 'status'
+    && taskTableShellEl
+    && taskTableRows.some(row => row.id === pendingRevealTaskId)
+    && revealScheduledTaskId !== pendingRevealTaskId
+  ) {
+    void revealPendingTaskRow(pendingRevealTaskId);
+  }
   $: selectedTaskForInspector = sortedFilteredTasks.find(t => t.id === selectedTaskId) || focusTask;
   $: taskInspector = selectedTaskForInspector ? mapTaskInspector(selectedTaskForInspector) : null;
   $: executionTableRows = filteredExecutionItems.map(mapExecutionAdminRow);
@@ -426,24 +556,24 @@
   function buildTaskAdminMetrics(): AdminMetric[] {
     return [
       {
-        label: '任务队列',
+        label: '交付事项',
         value: filteredTasks.length,
         helper: `活跃 ${activeTasks.length} / 完成 ${done.length}`,
-        delta: selectedProject === 'all' ? '全部项目' : selectedProject,
+        delta: selectedProjectSummary,
         tone: 'info'
       },
       {
-        label: '证据完整率',
-        value: `${evidenceCoverage}%`,
-        helper: `${evidenceLinkedTasks} 条已关联代码证据`,
-        tone: evidenceCoverage >= 80 ? 'success' : evidenceCoverage >= 50 ? 'warning' : 'danger'
+        label: '需求 / Bug',
+        value: requirementCount,
+        helper: `Bug ${bugCount} 条`,
+        tone: bugCount > 0 ? 'warning' : 'info'
       },
       {
-        label: '高风险',
-        value: criticalTasks.length,
-        helper: `延期任务 ${overdueTasks.length} 条`,
-        delta: criticalTasks.length > 0 ? '需跟进' : '稳定',
-        tone: criticalTasks.length > 0 ? 'danger' : 'success'
+        label: '已归项目',
+        value: plannedWorkItems,
+        helper: `未归项目 ${unplannedWorkItems} 条`,
+        delta: unplannedWorkItems > 0 ? '待规划' : '完整',
+        tone: unplannedWorkItems > 0 ? 'warning' : 'success'
       },
       {
         label: '闭环率',
@@ -484,12 +614,54 @@
   }
 
   function getTaskStatusShortLabel(task: Task): string {
-    const status = task.status.toLowerCase();
-    if (status === 'backlog') return '待办';
-    if (status === 'progress') return task.issueType === 'bug' ? '排查中' : '进行中';
-    if (status === 'review') return '评审中';
-    if (status === 'done') return '已完成';
+    const status = task.status.toLowerCase().trim();
+    const bucket = getTaskStatusBucket(task);
+    if (bucket === 'backlog' && ['backlog', 'todo', 'open', 'draft', 'ready'].includes(status)) return '待办';
+    if (bucket === 'progress' && ['progress', 'in_progress', 'active', 'doing'].includes(status)) {
+      return task.issueType === 'bug' ? '排查中' : '进行中';
+    }
+    if (bucket === 'review' && ['review', 'verification', 'testing', 'in_review'].includes(status)) return '评审中';
+    if (bucket === 'done') return '已完成';
     return task.status || '-';
+  }
+
+  function getTaskStatusBucket(task: Task): 'backlog' | 'progress' | 'review' | 'done' {
+    const normalized = `${task.planningState || ''} ${task.status || ''}`.toLowerCase();
+    if (['done', 'closed', 'resolved', 'completed', 'archived', '已完成', '已关闭'].some(value => normalized.includes(value))) return 'done';
+    if (['verification', 'review', 'testing', '验收', '评审', '测试'].some(value => normalized.includes(value))) return 'review';
+    if (['in_progress', 'progress', 'active', 'doing', '进行中', '处理中', '排查'].some(value => normalized.includes(value))) return 'progress';
+    return 'backlog';
+  }
+
+  function getIssueTypeLabel(task: Task): string {
+    return task.issueType === 'bug' ? 'Bug' : '需求';
+  }
+
+  function getPlanningStateLabel(value?: string): string {
+    const labels: Record<string, string> = {
+      draft: '草稿',
+      ready: '就绪',
+      planned: '已规划',
+      committed: '已承诺',
+      in_progress: '进行中',
+      verification: '验收中',
+      done: '已完成',
+      archived: '已归档'
+    };
+    const normalized = String(value || '').toLowerCase();
+    return labels[normalized] || value || '未规划';
+  }
+
+  function getSyncStateLabel(value?: string): string {
+    const labels: Record<string, string> = {
+      synced: '已同步',
+      pending: '待同步',
+      conflict: '冲突',
+      failed: '失败',
+      not_required: '无需同步'
+    };
+    const normalized = String(value || '').toLowerCase();
+    return labels[normalized] || value || '未知';
   }
 
   function getTaskRiskLabel(task: Task): string {
@@ -527,7 +699,6 @@
   }
 
   function mapTaskAdminRow(task: Task): AdminTableRow {
-    const evidence = getEvidenceStatus(task);
     return {
       id: task.id,
       title: task.title,
@@ -535,64 +706,62 @@
       tone: toneForStatus(task.status),
       owner: task.assignee,
       dueDate: formatAdminDate(task.rawLastUpdate || task.taskCreatedAt),
-      risk: getTaskRiskLabel(task),
       cells: {
-        project: getProjectName(task.id),
-        issueType: task.issueType === 'bug' ? 'Bug' : 'Task',
+        project: task.projectKey || '未归项目',
+        projectLabel: task.projectKey
+          ? (projectNamesMap[task.projectKey.toUpperCase()] || task.projectKey)
+          : '未归项目',
+        issueType: getIssueTypeLabel(task),
         owner: task.assignee || '未指派',
-        repo: task.repo || '-',
-        branch: task.branch || '-',
-        lastCommit: task.lastCommit || '-',
-        evidence: evidence.label,
-        evidenceTone: getEvidenceTone(task),
-        evidencePercent: getTaskEvidencePercent(task),
-        activeDays: getActiveDays(task.taskCreatedAt),
+        targetRelease: task.targetRelease || '未归版本',
+        planningState: getPlanningStateLabel(task.planningState),
+        syncState: getSyncStateLabel(task.syncState),
         lastUpdate: formatTimeBrief(task.rawLastUpdate || task.taskCreatedAt),
-        parentDemand: getParentDemandId(task.taskGroupId) || '-'
+        description: task.description || '暂无描述'
       }
     };
   }
 
   function mapTaskInspector(task: Task): AdminInspectorRecord {
-    const parentDemand = getParentDemand(task.taskGroupId);
-    const evidence = getEvidenceStatus(task);
-    const delayDays = getDelayDays(task.taskCreatedAt, task.status);
     return {
       id: task.id,
       title: task.title,
       status: getTaskStatusShortLabel(task),
-      tone: getTaskRiskTone(task),
+      tone: toneForStatus(task.status),
       facts: [
+        { label: '事项类型', value: getIssueTypeLabel(task) },
+        { label: '项目', value: task.projectKey ? (projectNamesMap[task.projectKey.toUpperCase()] || task.projectKey) : '未归项目' },
         { label: '负责人', value: task.assignee || '未指派' },
-        { label: '项目', value: getProjectName(task.id) },
-        { label: '任务类型', value: task.issueType === 'bug' ? 'Bug 缺陷' : 'Task 任务' },
-        { label: '活跃天数', value: `${getActiveDays(task.taskCreatedAt)} 天` },
-        { label: '最后同步', value: formatTimeBrief(task.rawLastUpdate || task.taskCreatedAt) }
+        { label: '计划状态', value: getPlanningStateLabel(task.planningState) },
+        { label: '目标版本', value: task.targetRelease || '未归版本' },
+        { label: '截止日期', value: formatTaskDate(task.dueDate) },
+        { label: '同步状态', value: getSyncStateLabel(task.syncState) },
+        { label: '最后更新', value: formatTimeBrief(task.rawLastUpdate || task.taskCreatedAt) }
       ],
       sections: [
         {
-          title: 'Jira Demand 主线',
-          body: parentDemand ? `${parentDemand.id} ${parentDemand.title}` : '当前任务未关联父级 Demand'
+          title: '事项描述',
+          body: task.description || '当前事项暂无描述。'
         },
         {
-          title: '代码证据',
+          title: '版本归属',
           items: [
-            `证据状态: ${evidence.label}`,
-            `Branch: ${task.branch || '-'}`,
-            `Last Commit: ${task.lastCommit || '-'}`,
-            task.mrUrl && task.mrIid ? `MR: !${task.mrIid}` : 'MR: -'
+            `目标版本：${task.targetRelease || '未归版本'}`,
+            `影响版本：${task.affectedReleases?.length ? task.affectedReleases.join('、') : '未记录'}`
           ]
         },
         {
-          title: '执行风险',
-          body: delayDays >= 3
-            ? `已活跃 ${delayDays} 天，建议检查交付阻塞与证据闭环。`
-            : '当前筛选下未触发延期风险。'
+          title: '计划与同步',
+          items: [
+            `计划状态：${getPlanningStateLabel(task.planningState)}`,
+            `同步状态：${getSyncStateLabel(task.syncState)}`,
+            `数据来源：${task.source || '本地'}`
+          ]
         }
       ],
       actions: [
-        { label: '查看证据链', kind: 'primary' },
-        { label: '代码轨迹', kind: 'secondary' }
+        { label: '打开版本计划', kind: 'primary' },
+        { label: '查看详情', kind: 'secondary' }
       ]
     };
   }
@@ -611,7 +780,7 @@
       dueDate: formatAdminDate(item.last_evidence_at || item.last_update),
       risk: item.risk_label,
       cells: {
-        issueType: item.issue_type === 'bug' ? 'Bug' : 'Task',
+        issueType: item.parent_issue_type === 'bug' ? 'Bug' : 'Task',
         owner: item.assignee || '未指派',
         executionOwner: item.execution_assignee || item.assignee || '未指派',
         jiraOwner: item.jira_assignee || '-',
@@ -662,21 +831,31 @@
         }
       ],
       actions: [
-        { label: '打开代码轨迹', kind: 'primary' }
+        ...(item.parent_work_item_id || item.parent_demand_id
+          ? [{ label: '打开版本计划', kind: 'primary' as const }]
+          : []),
+        { label: '打开代码轨迹', kind: 'secondary' }
       ]
     };
   }
 
   function handleTaskInspectorAction(action: AdminInspectorAction, task: Task) {
-    if (action.label === '查看证据链') {
+    if (action.label === '打开版本计划') {
+      onOpenDeliveryPlan(task.id);
+      return;
+    }
+    if (action.label === '查看详情') {
       openDetails(task);
       return;
     }
-    activeTelemetryTaskId = task.id;
-    isTelemetryDrawerOpen = true;
   }
 
-  function handleExecutionInspectorAction(_action: AdminInspectorAction, item: ExecutionTaskItem) {
+  function handleExecutionInspectorAction(action: AdminInspectorAction, item: ExecutionTaskItem) {
+    if (action.label === '打开版本计划') {
+      const parentID = item.parent_work_item_id || item.parent_demand_id || '';
+      if (parentID) onOpenDeliveryPlan(parentID);
+      return;
+    }
     activeTelemetryTaskId = item.task_id;
     isTelemetryDrawerOpen = true;
   }
@@ -706,11 +885,20 @@
     return list.filter(t => t.status.toLowerCase() === status.toLowerCase());
   }
 
-  function setTaskView(view: TaskView) {
-    currentView = view;
-    if (view === 'execution') {
-      fetchExecutionTasks();
-    }
+  function normalizeTaskView(view: TaskView | string): TaskView {
+    return view === 'execution' ? 'execution' : 'status';
+  }
+
+  function setTaskView(view: TaskView | string) {
+    const nextView = normalizeTaskView(view);
+    if (currentView === nextView) return;
+    selectedProjects = [];
+    selectedAssignees = [];
+    selectedProject = 'all';
+    selectedAssignee = 'all';
+    currentView = nextView;
+    onTaskViewChange(nextView);
+    void refreshCurrentTaskView();
   }
 
   function focusExecutionAttention() {
@@ -718,8 +906,16 @@
     setTaskView('execution');
   }
 
-  function matchesExecutionFilters(item: ExecutionTaskItem): boolean {
-    const query = executionSearch.trim().toLowerCase();
+  function matchesExecutionFilters(
+    item: ExecutionTaskItem,
+    projectFilters: string[],
+    assigneeFilters: string[],
+    search: string,
+    riskFilter: ExecutionRiskFilter
+  ): boolean {
+    if (projectFilters.length > 0 && !projectFilters.includes(item.project_key || '')) return false;
+    if (assigneeFilters.length > 0 && !assigneeFilters.includes(item.assignee)) return false;
+    const query = search.trim().toLowerCase();
     if (query) {
       const match = 
         (item.task_id && item.task_id.toLowerCase().includes(query)) ||
@@ -738,17 +934,11 @@
       if (!match) return false;
     }
 
-    if (executionAssigneeFilter !== 'all') {
-      if (item.assignee !== executionAssigneeFilter) {
-        return false;
-      }
-    }
-
-    if (executionRiskFilter === 'attention') {
+    if (riskFilter === 'attention') {
       return item.risk_level !== 'safe' && item.risk_level !== 'done';
     }
-    if (executionRiskFilter !== 'all') {
-      return item.risk_level === executionRiskFilter;
+    if (riskFilter !== 'all') {
+      return item.risk_level === riskFilter;
     }
     return true;
   }
@@ -763,32 +953,49 @@
     return a.task_id.localeCompare(b.task_id);
   }
 
-  async function fetchExecutionTasks() {
+  async function fetchExecutionTasks(announce = false) {
+    if (executionLoading) return;
+    const requestSequence = ++executionRequestSequence;
     executionLoading = true;
     executionErrorMsg = '';
     try {
-      const params = new URLSearchParams();
-      if (selectedProject && selectedProject !== 'all') {
-        params.append('project', selectedProject);
-      }
-      if (selectedAssignee && selectedAssignee !== 'all') {
-        params.append('assignee', selectedAssignee);
-      }
-      if (executionRiskFilter && executionRiskFilter !== 'all') {
-        params.append('risk', executionRiskFilter);
-      }
-      const queryStr = params.toString() ? '?' + params.toString() : '';
-      const res = await fetch('/api/execution/tasks' + queryStr);
+      const res = await fetch('/api/execution/tasks', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      const data: ExecutionTasksResponse = await res.json();
-      executionItems = data.items || [];
-      executionSummary = data.summary || emptyExecutionSummary();
-      executionGeneratedAt = data.generated_at || '';
+      const response: ExecutionTasksResponse = await res.json();
+      if (requestSequence !== executionRequestSequence) return;
+      const data = response.items || [];
+      executionItems = data;
+      executionDataLoaded = true;
+      executionSummary = response.summary || emptyExecutionSummary();
+      executionGeneratedAt = response.generated_at || '';
+      const nextParents = new Map<string, { id: string; title: string }>();
+      for (const item of data) {
+        const parentID = item.parent_work_item_id || item.parent_demand_id || '';
+        const parentTitle = item.parent_work_item || item.parent_demand || '';
+        if (item.task_group_id && parentID) {
+          nextParents.set(item.task_group_id, { id: parentID, title: parentTitle });
+        }
+      }
+      parentWorkItemsByGroup = nextParents;
+      executionErrorMsg = '';
+      if (announce) {
+        showToast(`执行任务已更新，共 ${data.length} 条。`, {
+          type: 'success',
+          title: '刷新完成'
+        });
+      }
     } catch (e: any) {
+      if (requestSequence !== executionRequestSequence) return;
       console.error('Failed to fetch execution tasks:', e);
-      executionErrorMsg = e.message || '获取执行追踪失败';
+      executionErrorMsg = e.message || '连接执行任务 API 失败';
+      if (announce) {
+        showToast(executionErrorMsg, {
+          type: 'error',
+          title: '刷新失败'
+        });
+      }
     } finally {
-      executionLoading = false;
+      if (requestSequence === executionRequestSequence) executionLoading = false;
     }
   }
 
@@ -826,22 +1033,6 @@
   async function openDetails(task: Task) {
     selectedTask = task;
     showDetails = true;
-    
-    evidenceChainLoading = true;
-    evidenceChainError = '';
-    evidenceChain = null;
-    try {
-      const res = await fetch(`/api/strongest-brain/evidence-chain?task_id=${encodeURIComponent(task.id)}`);
-      if (res.ok) {
-        evidenceChain = await res.json();
-      } else {
-        throw new Error('无法拉取该任务的交付证据链');
-      }
-    } catch (err: any) {
-      evidenceChainError = err.message || '获取交付证据链异常';
-    } finally {
-      evidenceChainLoading = false;
-    }
   }
 
   function getEvidenceStatus(task: any) {
@@ -916,6 +1107,18 @@
     }
   }
 
+  function formatTaskDate(timeStr?: string) {
+    if (!timeStr) return '-';
+    const datePrefix = timeStr.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (datePrefix) return datePrefix[1];
+    const date = new Date(timeStr);
+    if (isNaN(date.getTime())) return timeStr;
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
   function formatUpdate(timeStr: string) {
     if (!timeStr) return '-';
     try {
@@ -954,63 +1157,6 @@
     }
   }
 
-  async function fetchConfig() {
-    try {
-      const res = await fetch('/api/config');
-      if (res.ok) {
-        const data = await res.json();
-        if (data) {
-          if (data.jira && data.jira.base_url) {
-            jiraBaseUrl = data.jira.base_url.replace(/\/+$/, '');
-          }
-          updateCoreMembers(data);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch config:', e);
-    }
-  }
-
-  async function fetchProjectConfigs() {
-    try {
-      const res = await fetch('/api/projects/config');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          const newMap: Record<string, string> = {};
-          data.forEach((p: any) => {
-            if (p.project_key && p.project_name) {
-              newMap[p.project_key.toUpperCase()] = p.project_name;
-            }
-          });
-          projectNamesMap = newMap;
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch project configs:', e);
-    }
-  }
-
-  async function fetchUsersFallback() {
-    const token = localStorage.getItem('jwt_token');
-    try {
-      const res = await fetch('/api/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const names = data.map((u: any) => u.name).filter(Boolean);
-          if (names.length > 0) {
-            coreMembers = new Set([...coreMembers, ...names]);
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch users fallback in TaskKanban:', e);
-    }
-  }
-
   function mapTask(t: TaskResponse): Task {
     const rawType = (t.issue_type || 'task').toLowerCase().trim();
     let issueType = 'task';
@@ -1037,9 +1183,78 @@
     };
   }
 
+  function mapWorkItem(snapshot: WorkItemSnapshot): Task {
+    const item = snapshot.work_item;
+    const rawType = String(item.issue_type || 'requirement').toLowerCase().trim();
+    const issueType = ['bug', 'defect', '缺陷', '故障'].includes(rawType) ? 'bug' : 'requirement';
+    return {
+      id: item.task_id,
+      title: item.title || item.task_id,
+      description: item.description || '',
+      repo: item.repo || '-',
+      assignee: item.assignee || '未指派',
+      branch: item.branch || '-',
+      lastCommit: item.last_commit || '-',
+      lastUpdate: formatUpdate(item.last_update || ''),
+      status: item.status || item.planning_state || 'backlog',
+      rawLastUpdate: item.last_update || '',
+      issueType,
+      taskCreatedAt: item.task_created_at || item.last_update || '',
+      mrIid: item.mr_iid,
+      mrUrl: item.mr_url,
+      taskGroupId: item.task_group_id,
+      projectKey: item.project_key || '',
+      targetRelease: snapshot.target_releases?.[0]?.name || '',
+      affectedReleases: (snapshot.affected_releases || []).map(release => release.name).filter(Boolean),
+      source: item.source || '',
+      planningState: item.planning_state || 'draft',
+      dueDate: item.due_date || '',
+      syncState: snapshot.sync_state || '',
+      revision: item.revision || 0
+    };
+  }
+
+  function mapExecutionTask(t: ExecutionTaskItem): Task {
+    return {
+      id: t.task_id,
+      title: t.title || '-',
+      repo: t.repo || '-',
+      assignee: t.assignee || '未指派',
+      branch: t.branch || '-',
+      lastCommit: t.last_commit || '-',
+      lastUpdate: formatUpdate(t.last_update),
+      status: t.status,
+      rawLastUpdate: t.last_update,
+      issueType: 'task',
+      taskCreatedAt: t.created_at || t.last_update,
+      mrIid: t.mr_iid,
+      mrUrl: t.mr_url,
+      taskGroupId: t.task_group_id,
+      parentWorkItemId: t.parent_work_item_id || t.parent_demand_id || '',
+      parentWorkItem: t.parent_work_item || t.parent_demand || '',
+      projectKey: t.project_key || '',
+      targetRelease: t.target_release || ''
+    };
+  }
+
   function getParentDemand(taskGroupId?: string): Task | undefined {
     if (!taskGroupId || taskGroupId === '-' || taskGroupId === '') return undefined;
-    return allTasks.find(t => t.issueType === 'demand' && t.taskGroupId === taskGroupId);
+    const parent = parentWorkItemsByGroup.get(taskGroupId);
+    if (!parent) return undefined;
+    return {
+      id: parent.id,
+      title: parent.title,
+      repo: '-',
+      assignee: '',
+      branch: '-',
+      lastCommit: '-',
+      lastUpdate: '',
+      status: '',
+      rawLastUpdate: '',
+      issueType: 'demand',
+      taskCreatedAt: '',
+      taskGroupId
+    };
   }
 
   function hasParentDemand(taskGroupId?: string): boolean {
@@ -1054,46 +1269,114 @@
     return getParentDemand(taskGroupId)?.title || '';
   }
 
-  async function fetchTasks() {
+  async function fetchTasks(announce = false) {
+    if (taskRequestInFlight) return;
+    taskRequestInFlight = true;
+    const requestSequence = ++taskRequestSequence;
+    if (announce) taskRefreshing = true;
     try {
-      const params = new URLSearchParams();
-      if (selectedProject && selectedProject !== 'all') {
-        params.append('project', selectedProject);
-      }
-      if (selectedAssignee && selectedAssignee !== 'all') {
-        params.append('assignee', selectedAssignee);
-      }
-      const queryStr = params.toString() ? '?' + params.toString() : '';
-      const res = await fetch('/api/tasks' + queryStr);
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      const data: TaskResponse[] = await res.json();
-      
-      allTasks = data.map(mapTask);
-      if (allProjects.length === 0 && data.length > 0) {
-        allProjects = Array.from(new Set(data.map(t => getProjectName(t.task_id)))).sort((a, b) => a.localeCompare(b));
-      }
+      const snapshots: WorkItemSnapshot[] = [];
+      let offset = 0;
+      let total = 0;
+      do {
+        const res = await fetch(`/api/work-items?limit=500&offset=${offset}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const response: WorkItemsResponse = await res.json();
+        if (requestSequence !== taskRequestSequence) return;
+        const page = response.items || [];
+        snapshots.push(...page);
+        total = response.total || snapshots.length;
+        offset += page.length;
+        if (page.length === 0) break;
+      } while (offset < total);
+      const data = snapshots.map(mapWorkItem);
+      workItemTasks = data;
+      taskDataLoaded = true;
       errorMsg = '';
+      taskLastRefreshedAt = new Intl.DateTimeFormat('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).format(new Date());
+      if (announce) {
+        showToast(`任务表已更新，共 ${data.length} 条需求与 Bug。`, {
+          type: 'success',
+          title: '刷新完成'
+        });
+      }
     } catch (e: any) {
+      if (requestSequence !== taskRequestSequence) return;
       console.error('Failed to fetch tasks:', e);
       errorMsg = e.message || '连接 API 失败';
+      if (announce) {
+        showToast(errorMsg, {
+          type: 'error',
+          title: '刷新失败'
+        });
+      }
     } finally {
-      loading = false;
+      if (requestSequence === taskRequestSequence) {
+        loading = false;
+        taskRefreshing = false;
+        taskRequestInFlight = false;
+      }
     }
   }
 
+  async function fetchSharedDeliveryDirectory() {
+    try {
+      const directory = await fetchDeliveryDirectory();
+      deliveryProjects = directory.projects;
+      activeAssigneeFacets = directory.assignees;
+      projectNamesMap = {
+        ...projectNamesMap,
+        ...Object.fromEntries(
+          directory.projects.map(project => [project.project_key, project.project_name || project.project_key])
+        )
+      };
+      const allowedAssignees = new Set(directory.assignees.map(option => option.value));
+      selectedAssignees = selectedAssignees.filter(value => allowedAssignees.has(value));
+      const allowedProjects = new Set(directory.projects.map(project => project.project_key));
+      selectedProjects = selectedProjects.filter(value => allowedProjects.has(value));
+    } catch (e) {
+      console.error('Failed to fetch shared delivery directory:', e);
+    }
+  }
+
+  async function refreshStatusTasks() {
+    await Promise.all([fetchTasks(true), fetchSharedDeliveryDirectory()]);
+  }
+
+  async function refreshCurrentTaskView(force = false) {
+    if (currentView === 'status') {
+      if (force || !taskDataLoaded) await fetchTasks();
+      return;
+    }
+    if (force || !executionDataLoaded) await fetchExecutionTasks();
+  }
+
+  function handleProjectPreferencesUpdated() {
+    selectedProjects = [];
+    selectedAssignees = [];
+    taskDataLoaded = false;
+    executionDataLoaded = false;
+    selectedProject = 'all';
+    selectedAssignee = 'all';
+    void Promise.all([fetchSharedDeliveryDirectory(), refreshCurrentTaskView(true)]);
+  }
+
   onMount(() => {
-    isMounted = true;
-    fetchTasks();
-    fetchConfig();
-    fetchProjectConfigs();
+    void Promise.all([fetchSharedDeliveryDirectory(), refreshCurrentTaskView()]);
     fetchJiraLinkConfig();
     intervalId = setInterval(() => {
-      fetchTasks();
-      if (currentView === 'execution') {
-        fetchExecutionTasks();
+      if (document.visibilityState === 'visible') {
+        void refreshCurrentTaskView(true);
       }
-    }, 5000);
+    }, 60000);
     document.addEventListener('click', handleDocumentClick);
+    window.addEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
+    window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
   });
 
   onDestroy(() => {
@@ -1101,124 +1384,52 @@
       clearInterval(intervalId);
     }
     document.removeEventListener('click', handleDocumentClick);
+    window.removeEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
+    window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
   });
-
-  $: {
-    // 显式声明依赖项，确保 Svelte 编译器精准捕获每一次过滤条件改变及生命周期挂载
-    const _view = currentView;
-    const _proj = selectedProject;
-    const _ass = selectedAssignee;
-    const _execAss = executionAssigneeFilter;
-    const _execRisk = executionRiskFilter;
-    const _mounted = isMounted;
-
-    if (_mounted) {
-      if (_view === 'execution') {
-        fetchExecutionTasks();
-      } else {
-        fetchTasks();
-      }
-    }
-  }
 </script>
 
-<section class="kanban-section task-console">
-  <div class="phase41-console-header wa-admin-card">
-    <div class="phase41-header-copy">
-      <span class="phase41-kicker">任务跟踪</span>
-      <h2>研发执行任务台</h2>
-      <p>从 Jira Task、负责人、状态、代码证据和 MR 结果构建可核查的执行事实。</p>
+{#snippet taskScopeFilters()}
+  <div class="phase41-toolbar-filters" aria-label="任务筛选">
+    <div class="phase41-filter-multi phase41-project-filter">
+      <MultiSelect
+        id="task-project-filter"
+        bind:values={selectedProjects}
+        options={projectMultiOptions}
+        placeholder="全部项目"
+        searchPlaceholder="搜索项目"
+        emptyText="没有匹配项目"
+        controlLabel="项目"
+        ariaLabel="筛选任务项目，可多选"
+        compact={true}
+        summaryMode={true}
+        overlay={true}
+        showClear={true}
+        clearText="全部项目"
+      />
     </div>
 
-    <div class="phase41-header-actions">
-      <div class="view-toggle task-view-toggle" aria-label="任务视图切换">
-        <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => setTaskView('status')}>
-          任务表
-        </button>
-        <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => setTaskView('personnel')}>
-          人员负载
-        </button>
-        <button class="toggle-btn {currentView === 'execution' ? 'active' : ''}" on:click={() => setTaskView('execution')}>
-          执行追踪
-        </button>
-      </div>
-
-      <div class="phase41-filter-row">
-        <div class="custom-select-container" bind:this={projectSelectEl}>
-          <div class="custom-select-trigger combobox-trigger task-filter-control">
-            <span class="filter-label">项目</span>
-            <input
-              type="text"
-              class="combobox-trigger-input"
-              placeholder={selectedProject === 'all' ? '全部项目' : (projectNamesMap[selectedProject.toUpperCase()] || selectedProject)}
-              bind:value={projectSearchText}
-              on:focus|stopPropagation={() => showProjectDropdown = true}
-              on:click|stopPropagation={() => showProjectDropdown = true}
-            />
-            <button
-              type="button"
-              class="select-arrow"
-              on:click|stopPropagation={() => showProjectDropdown = !showProjectDropdown}
-              aria-label="切换项目筛选"
-            >{showProjectDropdown ? '▲' : '▼'}</button>
-          </div>
-          {#if showProjectDropdown}
-            <div class="custom-select-options">
-              {#each projectOptions.filter(proj => {
-                if (proj === 'all') return true;
-                if (!projectSearchText) return true;
-                const term = projectSearchText.toLowerCase();
-                const keyMatch = proj.toLowerCase().includes(term);
-                const name = projectNamesMap[proj.toUpperCase()] || '';
-                const nameMatch = name.toLowerCase().includes(term);
-                return keyMatch || nameMatch;
-              }) as proj}
-                <button
-                  class="custom-option {selectedProject === proj ? 'active' : ''}"
-                  on:click={() => selectProject(proj)}
-                >
-                  {proj === 'all' ? '全部项目' : (projectNamesMap[proj.toUpperCase()] || proj)}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <div class="custom-select-container" bind:this={assigneeSelectEl}>
-          <div class="custom-select-trigger combobox-trigger task-filter-control">
-            <span class="filter-label">负责人</span>
-            <input
-              type="text"
-              class="combobox-trigger-input"
-              placeholder={selectedAssignee === 'all' ? '全部负责人' : selectedAssignee}
-              bind:value={assigneeSearchText}
-              on:focus|stopPropagation={() => showAssigneeDropdown = true}
-              on:click|stopPropagation={() => showAssigneeDropdown = true}
-            />
-            <button
-              type="button"
-              class="select-arrow"
-              on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
-              aria-label="切换负责人筛选"
-            >{showAssigneeDropdown ? '▲' : '▼'}</button>
-          </div>
-          {#if showAssigneeDropdown}
-            <div class="custom-select-options">
-              {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as ass}
-                <button
-                  class="custom-option {selectedAssignee === ass ? 'active' : ''}"
-                  on:click={() => selectAssignee(ass)}
-                >
-                  {ass === 'all' ? '全部负责人' : ass}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </div>
+    <div class="phase41-filter-multi phase41-owner-filter">
+      <MultiSelect
+        id="task-owner-filter"
+        bind:values={selectedAssignees}
+        options={ownerMultiOptions}
+        placeholder="全部负责人"
+        searchPlaceholder="搜索负责人"
+        emptyText="没有匹配负责人"
+        controlLabel="负责人"
+        ariaLabel="筛选任务负责人，可多选"
+        compact={true}
+        summaryMode={true}
+        overlay={true}
+        showClear={true}
+        clearText="全部负责人"
+      />
     </div>
   </div>
+{/snippet}
 
+<section class="kanban-section task-console" class:view-execution={currentView === 'execution'}>
   <div class="phase41-metric-grid" aria-label="任务指标">
     {#each activeAdminMetrics as metric}
       <article class="wa-admin-card wa-admin-metric phase41-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
@@ -1262,9 +1473,6 @@
         <div class="view-toggle task-view-toggle" aria-label="任务视图切换">
           <button class="toggle-btn {currentView === 'status' ? 'active' : ''}" on:click={() => setTaskView('status')}>
             状态
-          </button>
-          <button class="toggle-btn {currentView === 'personnel' ? 'active' : ''}" on:click={() => setTaskView('personnel')}>
-            人员
           </button>
           <button class="toggle-btn {currentView === 'execution' ? 'active' : ''}" on:click={() => setTaskView('execution')}>
             执行
@@ -1429,26 +1637,6 @@
         <div class="focus-empty font-mono">当前筛选下暂无任务</div>
       {/if}
 
-      <div class="owner-pressure-panel">
-        <span class="summary-kicker font-mono">OWNER LOAD</span>
-        {#if dominantOwner}
-          <div class="owner-pressure-main">
-            <strong>{dominantOwner.assignee}</strong>
-            <span>{dominantOwner.active} 活跃 / {dominantOwner.delayed} 延期</span>
-          </div>
-        {:else}
-          <div class="owner-pressure-main is-empty">暂无负责人负载</div>
-        {/if}
-
-        <div class="owner-mini-list">
-          {#each ownerLoadList.slice(0, 3) as owner}
-            <span>
-              <em>{owner.assignee}</em>
-              <strong>{owner.active}</strong>
-            </span>
-          {/each}
-        </div>
-      </div>
     </aside>
   </div>
   {/if}
@@ -1459,7 +1647,7 @@
         <div class="wa-admin-card wa-admin-toolbar phase41-table-toolbar">
           <div>
             <span class="phase41-kicker">执行追踪</span>
-            <strong>Jira Task 开发结果追踪</strong>
+            <strong>执行任务证据与结果追踪</strong>
             <small>{filteredExecutionItems.length} / {executionItems.length} 条 · {executionGeneratedAt || '未同步'}</small>
           </div>
 
@@ -1468,59 +1656,68 @@
               <span class="execution-search-mark"></span>
               <input
                 type="text"
-                placeholder="搜索 Jira Key、任务、负责人、分支、需求"
+                placeholder="搜索任务编号、标题、负责人、分支或主线"
                 value={executionSearchInput}
                 on:input={handleExecutionSearch}
               />
             </div>
 
-            <div class="execution-risk-strip phase41-risk-strip">
-              {#each executionRiskFilters as filter}
-                <button
-                  class:active={executionRiskFilter === filter.value}
-                  on:click={() => executionRiskFilter = filter.value}
-                >
-                  {filter.label}
-                </button>
-              {/each}
+            <div class="phase41-execution-select phase41-risk-select">
+              <Select
+                id="execution-risk-filter"
+                bind:value={executionRiskFilter}
+                on:change={(event) => executionRiskFilter = event.detail as ExecutionRiskFilter}
+                options={executionRiskOptions}
+                placeholder="风险状态"
+                ariaLabel="筛选执行风险状态"
+                searchable={false}
+                compact={true}
+              />
             </div>
 
-            <div class="custom-select-container execution-assignee-select phase41-assignee-select">
-              <div class="custom-select-trigger combobox-trigger">
-                <input
-                  type="text"
-                  class="combobox-trigger-input"
-                  placeholder={executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}
-                  bind:value={execAssigneeSearchText}
-                  on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
-                  on:click|stopPropagation={() => showExecutionAssigneeDropdown = true}
-                />
-                <button
-                  type="button"
-                  class="select-arrow"
-                  on:click|stopPropagation={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown}
-                  aria-label="切换执行负责人筛选"
-                >{showExecutionAssigneeDropdown ? '▲' : '▼'}</button>
-              </div>
-              {#if showExecutionAssigneeDropdown}
-                <div class="custom-select-options">
-                  {#each executionAssigneeOptions.filter(ass => ass === 'all' || !execAssigneeSearchText || ass.toLowerCase().includes(execAssigneeSearchText.toLowerCase())) as assignee}
-                    <button
-                      class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
-                      on:click={() => {
-                        executionAssigneeFilter = assignee;
-                        showExecutionAssigneeDropdown = false;
-                      }}
-                    >
-                      {assignee === 'all' ? '全部负责人' : assignee}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+            <div class="phase41-execution-select phase41-filter-multi phase41-project-select">
+              <MultiSelect
+                id="execution-project-filter"
+                bind:values={selectedProjects}
+                options={projectMultiOptions}
+                placeholder="全部项目"
+                searchPlaceholder="搜索项目"
+                emptyText="没有匹配项目"
+                controlLabel="项目"
+                ariaLabel="筛选执行项目，可多选"
+                compact={true}
+                summaryMode={true}
+                overlay={true}
+                showClear={true}
+                clearText="全部项目"
+              />
             </div>
 
-            <button class="wa-admin-action secondary" class:is-loading={executionLoading} on:click={fetchExecutionTasks}>
-              刷新
+            <div class="phase41-execution-select phase41-filter-multi phase41-assignee-select">
+              <MultiSelect
+                id="execution-owner-filter"
+                bind:values={selectedAssignees}
+                options={ownerMultiOptions}
+                placeholder="全部负责人"
+                searchPlaceholder="搜索负责人"
+                emptyText="没有匹配负责人"
+                controlLabel="负责人"
+                ariaLabel="筛选执行负责人，可多选"
+                compact={true}
+                summaryMode={true}
+                overlay={true}
+                showClear={true}
+                clearText="全部负责人"
+              />
+            </div>
+
+            <button
+              class="wa-admin-action secondary"
+              class:is-loading={executionLoading}
+              disabled={executionLoading}
+              on:click={() => fetchExecutionTasks(true)}
+            >
+              {executionLoading ? '刷新中' : '刷新'}
             </button>
           </div>
         </div>
@@ -1544,7 +1741,7 @@
               {:else if executionTableRows.length === 0}
                 <tr><td colspan={executionTableColumns.length} class="phase41-empty-cell">当前筛选下暂无执行任务</td></tr>
               {:else}
-                {#each executionTableRows as row}
+                {#each executionTableRows as row (row.id)}
                   <tr
                     class:is-selected={selectedExecutionItem?.task_id === row.id}
                     tabindex="0"
@@ -1559,7 +1756,12 @@
                           {:else}
                             <span class="phase41-id-link as-text">{row.id}</span>
                           {/if}
-                          <span class="wa-admin-pill tone-info">{row.cells.issueType}</span>
+                          <span class="phase41-type-label {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-task'}">
+                            <span class="phase41-type-icon {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-task'}" aria-hidden="true">
+                              {String(row.cells.issueType).toLowerCase() === 'bug' ? 'B' : 'T'}
+                            </span>
+                            {row.cells.issueType}
+                          </span>
                           {#if row.cells.demand !== '-'}
                             <span class="wa-admin-pill tone-neutral">{row.cells.demand}</span>
                           {/if}
@@ -1723,26 +1925,26 @@
             <input 
               type="text" 
               class="combobox-trigger-input"
-              placeholder={executionAssigneeFilter === 'all' ? '全部负责人' : executionAssigneeFilter}
-              bind:value={execAssigneeSearchText}
-              on:focus|stopPropagation={() => showExecutionAssigneeDropdown = true}
-              on:click|stopPropagation={() => showExecutionAssigneeDropdown = true}
+              placeholder={selectedAssignee === 'all' ? '全部负责人' : selectedAssignee}
+              bind:value={assigneeSearchText}
+              on:focus|stopPropagation={() => showAssigneeDropdown = true}
+              on:click|stopPropagation={() => showAssigneeDropdown = true}
             />
             <button
               type="button"
               class="select-arrow" 
-              on:click|stopPropagation={() => showExecutionAssigneeDropdown = !showExecutionAssigneeDropdown}
+              on:click|stopPropagation={() => showAssigneeDropdown = !showAssigneeDropdown}
               aria-label="切换执行负责人筛选"
-            >{showExecutionAssigneeDropdown ? '▲' : '▼'}</button>
+            >{showAssigneeDropdown ? '▲' : '▼'}</button>
           </div>
-          {#if showExecutionAssigneeDropdown}
+          {#if showAssigneeDropdown}
             <div class="custom-select-options">
-              {#each executionAssigneeOptions.filter(ass => ass === 'all' || !execAssigneeSearchText || ass.toLowerCase().includes(execAssigneeSearchText.toLowerCase())) as assignee}
+              {#each assigneeOptions.filter(ass => ass === 'all' || !assigneeSearchText || ass.toLowerCase().includes(assigneeSearchText.toLowerCase())) as assignee}
                 <button
-                  class="custom-option {executionAssigneeFilter === assignee ? 'active' : ''}"
+                  class="custom-option {selectedAssignee === assignee ? 'active' : ''}"
                   on:click={() => {
-                    executionAssigneeFilter = assignee;
-                    showExecutionAssigneeDropdown = false;
+                    selectedAssignee = assignee;
+                    showAssigneeDropdown = false;
                   }}
                 >
                   {assignee === 'all' ? '全部负责人' : assignee}
@@ -1752,7 +1954,7 @@
           {/if}
         </div>
 
-        <button class="execution-refresh-btn font-mono" class:is-loading={executionLoading} on:click={fetchExecutionTasks}>
+        <button class="execution-refresh-btn font-mono" class:is-loading={executionLoading} on:click={() => fetchExecutionTasks(true)}>
           刷新
         </button>
       </div>
@@ -1885,31 +2087,38 @@
       </div>
     </div>
     {/if}
-  {:else if currentView === 'status'}
-    <div class="phase41-workbench">
+  {:else}
+    <div class="phase41-workbench phase41-status-workbench">
       <section class="wa-admin-section phase41-table-panel">
-        <div class="wa-admin-card wa-admin-toolbar phase41-table-toolbar">
+        <div class="wa-admin-card wa-admin-toolbar phase41-table-toolbar phase41-status-toolbar">
           <div>
-            <span class="phase41-kicker">任务列表</span>
-            <strong>Jira Task 执行行</strong>
-            <small>{taskTableRows.length} 条核心成员可见任务 · {selectedAssignee === 'all' ? '全部负责人' : selectedAssignee}</small>
+            <span class="phase41-kicker">交付事项</span>
+            <strong>需求与 Bug 事实表</strong>
+            <small>{taskTableRows.length} 条可见事项 · {selectedAssigneeSummary}{taskLastRefreshedAt ? ` · 更新于 ${taskLastRefreshedAt}` : ''}</small>
           </div>
+          {@render taskScopeFilters()}
           <div class="phase41-toolbar-actions">
             {#if errorMsg}
               <span class="phase41-inline-error">{errorMsg}</span>
             {/if}
-            <button type="button" class="wa-admin-action secondary" on:click={fetchTasks}>
-              刷新
+            <button
+              type="button"
+              class="wa-admin-action secondary"
+              class:is-loading={taskRefreshing}
+              disabled={taskRefreshing}
+              on:click={refreshStatusTasks}
+            >
+              {taskRefreshing ? '刷新中' : '刷新'}
             </button>
             {#if selectedTaskForInspector}
               <button type="button" class="wa-admin-action primary" on:click={() => openDetails(selectedTaskForInspector)}>
-                证据链
+                详情
               </button>
             {/if}
           </div>
         </div>
 
-        <div class="wa-admin-table-shell phase41-table-shell">
+        <div class="wa-admin-table-shell phase41-table-shell" bind:this={taskTableShellEl}>
           <table class="wa-admin-table phase41-table">
             <thead>
               <tr>
@@ -1924,47 +2133,48 @@
                   <tr class="phase41-skeleton-row"><td colspan={taskTableColumns.length}></td></tr>
                 {/each}
               {:else if taskTableRows.length === 0}
-                <tr><td colspan={taskTableColumns.length} class="phase41-empty-cell">当前项目和负责人筛选下暂无任务</td></tr>
+                <tr><td colspan={taskTableColumns.length} class="phase41-empty-cell">当前项目和负责人筛选下暂无需求或 Bug</td></tr>
               {:else}
-                {#each taskTableRows as row}
+                {#each taskTableRows as row (row.id)}
                   <tr
                     class:is-selected={selectedTaskForInspector?.id === row.id}
+                    data-task-id={row.id}
+                    aria-selected={selectedTaskForInspector?.id === row.id}
                     tabindex="0"
                     on:click={() => selectedTaskId = row.id}
                     on:keydown={(event) => { if (event.key === 'Enter') selectedTaskId = row.id; }}
                   >
                     <td>
                       <div class="phase41-title-cell">
-                        <div>
+                        <div class="phase41-title-main">
                           {#if jiraBaseUrl && row.id && !row.id.startsWith('TASK-')}
                             <a href="{jiraBaseUrl}/browse/{row.id}" target="_blank" rel="noopener noreferrer" class="phase41-id-link" on:click|stopPropagation>{row.id}</a>
                           {:else}
                             <span class="phase41-id-link as-text">{row.id}</span>
                           {/if}
-                          <span class="wa-admin-pill tone-info">{row.cells.issueType}</span>
-                          <span class="wa-admin-pill tone-neutral">{row.cells.project}</span>
-                          {#if row.cells.parentDemand !== '-'}
-                            <span class="wa-admin-pill tone-neutral">{row.cells.parentDemand}</span>
-                          {/if}
+                          <strong title={row.title}>{row.title}</strong>
                         </div>
-                        <strong>{row.title}</strong>
-                        <small>{row.cells.repo}</small>
                       </div>
                     </td>
                     <td>
-                      <div class="phase41-owner-cell">
-                        <strong>{row.owner}</strong>
-                        <small>活跃 {row.cells.activeDays} 天</small>
-                      </div>
+                      <span class="phase41-type-label {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-requirement'}">
+                        <span class="phase41-type-icon {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-task'}" aria-hidden="true">
+                          {String(row.cells.issueType).toLowerCase() === 'bug' ? 'B' : 'R'}
+                        </span>
+                        {row.cells.issueType}
+                      </span>
                     </td>
+                    <td>
+                      <span class="phase41-project-cell" title={String(row.cells.projectLabel)}>
+                        <strong>{row.cells.projectLabel}</strong>
+                        {#if row.cells.project && row.cells.project !== row.cells.projectLabel}
+                          <small>{row.cells.project}</small>
+                        {/if}
+                      </span>
+                    </td>
+                    <td><div class="phase41-owner-cell"><strong>{row.owner}</strong></div></td>
                     <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[row.tone || 'neutral']}">{row.status}</span></td>
-                    <td><span class="wa-admin-pill {ADMIN_TONE_CLASS[toneForRisk(String(row.risk || ''))]}">{row.risk || '-'}</span></td>
-                    <td>
-                      <div class="phase41-evidence-cell">
-                        <div class="wa-admin-progress" style="--progress: {Number(row.cells.evidencePercent) || 0}%"></div>
-                        <span class="wa-admin-pill {getToneClass(String(row.cells.evidenceTone))}">{row.cells.evidence}</span>
-                      </div>
-                    </td>
+                    <td><span class="phase41-release-cell">{row.cells.targetRelease}</span></td>
                     <td>{row.cells.lastUpdate}</td>
                     <td class="phase41-action-cell">
                       <button
@@ -1989,7 +2199,7 @@
       <aside class="wa-admin-card wa-admin-inspector phase41-inspector">
         {#if taskInspector && selectedTaskForInspector}
           <div class="phase41-inspector-head">
-            <span class="phase41-kicker">任务详情</span>
+            <span class="phase41-kicker">事项检查器</span>
             <h3>{taskInspector.title}</h3>
             <div>
               <span class="phase41-id-link as-text">{taskInspector.id}</span>
@@ -1997,19 +2207,27 @@
             </div>
           </div>
 
-          <dl class="phase41-fact-grid">
+          <dl class="phase41-fact-grid phase41-fact-pills">
             {#each taskInspector.facts as fact}
-              <div>
+              <div class:is-type-fact={fact.label === '事项类型'}>
                 <dt>{fact.label}</dt>
-                <dd>{fact.value}</dd>
+                <dd>
+                  {#if fact.label === '事项类型'}
+                    <span
+                      class="phase41-type-icon {String(fact.value).toLowerCase().startsWith('bug') ? 'is-bug' : 'is-task'}"
+                      role="img"
+                      aria-label={String(fact.value).toLowerCase().startsWith('bug') ? 'Bug' : '需求'}
+                      title={String(fact.value).toLowerCase().startsWith('bug') ? 'Bug' : '需求'}
+                    >
+                      {String(fact.value).toLowerCase().startsWith('bug') ? 'B' : 'R'}
+                    </span>
+                  {:else}
+                    {fact.value}
+                  {/if}
+                </dd>
               </div>
             {/each}
           </dl>
-
-          <div class="phase41-inspector-progress">
-            <div class="wa-admin-progress" style="--progress: {getTaskEvidencePercent(selectedTaskForInspector)}%"></div>
-            <span>证据完整度 {getTaskEvidencePercent(selectedTaskForInspector)}%</span>
-          </div>
 
           {#each taskInspector.sections as section}
             <section class="phase41-inspector-section">
@@ -2039,7 +2257,7 @@
             {/each}
           </div>
         {:else}
-          <div class="phase41-empty-inspector">当前筛选下暂无可查看任务</div>
+          <div class="phase41-empty-inspector">当前筛选下暂无可查看事项</div>
         {/if}
       </aside>
     </div>
@@ -2244,291 +2462,117 @@
       </div>
     </div>
     {/if}
-  {:else}
-    <!-- Personnel View (Swimlanes) -->
-    <div class="personnel-view">
-      {#if viewAssignees.length === 0}
-        <div class="empty-view">
-          <span>当前项目/经办人筛选下无关联任务</span>
-        </div>
-      {:else}
-        {#each viewAssignees as assignee}
-          <div id="assignee-row-{assignee}" class="swimlane {collapsedAssignees[assignee] !== false ? 'collapsed' : ''}">
-            <div 
-              class="swimlane-header interactive-header" 
-              on:click={() => toggleAssigneeCollapse(assignee)} 
-              role="button" 
-              tabindex="0" 
-              on:keydown={(e) => e.key === 'Enter' && toggleAssigneeCollapse(assignee)}
-              aria-expanded={collapsedAssignees[assignee] === false}
-            >
-              <div class="assignee-info">
-                <span class="collapse-chevron" class:is-collapsed={collapsedAssignees[assignee] !== false}>
-                  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </span>
-                <span class="assignee-avatar font-mono">{assignee.slice(0, 1).toUpperCase()}</span>
-                <span class="assignee-name">{assignee}</span>
-                <span class="assignee-count">
-                  {getAssigneeTaskCount(assignee, filteredTasks)} 任务
-                  {#if getAssigneeBugCount(assignee, filteredTasks) > 0}
-                    · <span class="bug-count text-bug">{getAssigneeBugCount(assignee, filteredTasks)} Bug</span>
-                  {/if}
-                </span>
-                
-                <!-- 状态总览胶囊 -->
-                <button type="button" class="assignee-status-overview" on:click|stopPropagation aria-label="{assignee} 状态概览">
-                  <span class="status-summary-item text-backlog">待办 {getAssigneeStatusCount(assignee, 'backlog', filteredTasks)}</span>
-                  <span class="status-summary-item text-progress">进行中 {getAssigneeStatusCount(assignee, 'progress', filteredTasks)}</span>
-                  <span class="status-summary-item text-review">评审中 {getAssigneeStatusCount(assignee, 'review', filteredTasks)}</span>
-                  <span class="status-summary-item text-done">已完成 {getAssigneeStatusCount(assignee, 'done', filteredTasks)}</span>
-                </button>
-
-                <!-- 瓶颈与负荷预警 -->
-                {#if isAssigneeHighLoad(assignee, filteredTasks)}
-                  <span class="swimlane-badge badge-warning">负载高</span>
-                {/if}
-                {#if isAssigneeDelayed(assignee, filteredTasks)}
-                  <span class="swimlane-badge badge-danger">有延期</span>
-                {/if}
-              </div>
-            </div>
-            
-            {#if collapsedAssignees[assignee] === false}
-              <div class="swimlane-grid" transition:slide={{ duration: 250 }}>
-              <!-- Backlog Swimlane Column -->
-              <div class="swimlane-column">
-                <div class="swimlane-column-header text-backlog">待办 ({getAssigneeTasks(assignee, 'backlog').length})</div>
-                <div class="swimlane-column-body">
-                  {#each getAssigneeTasks(assignee, 'backlog') as task}
-                    <div class="compact-task-card {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
-                      <div class="compact-meta">
-                        <span class="task-id">{task.id}</span>
-                        {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
-                        {/if}
-                        <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
-                      </div>
-                      <h5 class="compact-title">{task.title}</h5>
-                    </div>
-                  {/each}
-                  {#if getAssigneeTasks(assignee, 'backlog').length === 0}
-                    <div class="empty-placeholder">暂无待办</div>
-                  {/if}
-                </div>
-              </div>
-
-              <!-- In Progress Swimlane Column -->
-              <div class="swimlane-column">
-                <div class="swimlane-column-header text-progress">进行中 ({getAssigneeTasks(assignee, 'progress').length})</div>
-                <div class="swimlane-column-body">
-                  {#each getAssigneeTasks(assignee, 'progress') as task}
-                    <div class="compact-task-card card-progress {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
-                      <div class="compact-meta">
-                        <span class="task-id id-progress">{task.id}</span>
-                        {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
-                        {/if}
-                        <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
-                      </div>
-                      <h5 class="compact-title text-focus">{task.title}</h5>
-                    </div>
-                  {/each}
-                  {#if getAssigneeTasks(assignee, 'progress').length === 0}
-                    <div class="empty-placeholder">暂无进行中</div>
-                  {/if}
-                </div>
-              </div>
-
-              <!-- In Review Swimlane Column -->
-              <div class="swimlane-column">
-                <div class="swimlane-column-header text-review">代码评审 ({getAssigneeTasks(assignee, 'review').length})</div>
-                <div class="swimlane-column-body">
-                  {#each getAssigneeTasks(assignee, 'review') as task}
-                    <div class="compact-task-card card-review {getDelayClass(task)}" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
-                      <div class="compact-meta">
-                        <span class="task-id id-review">{task.id}</span>
-                        {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
-                        {/if}
-                        <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
-                      </div>
-                      <h5 class="compact-title text-focus">{task.title}</h5>
-                    </div>
-                  {/each}
-                  {#if getAssigneeTasks(assignee, 'review').length === 0}
-                    <div class="empty-placeholder">暂无评审</div>
-                  {/if}
-                </div>
-              </div>
-
-              <!-- Done Swimlane Column -->
-              <div class="swimlane-column">
-                <div class="swimlane-column-header text-done">已完成 ({getAssigneeTasks(assignee, 'done').length})</div>
-                <div class="swimlane-column-body">
-                  {#each getAssigneeTasks(assignee, 'done') as task}
-                    <div class="compact-task-card card-done" role="button" tabindex="0" on:click={() => openDetails(task)} on:keydown={(e) => e.key === 'Enter' && openDetails(task)}>
-                      <div class="compact-meta">
-                        <span class="task-id id-done">{task.id}</span>
-                        {#if jiraBaseUrl && task.id && !task.id.startsWith('TASK-')}
-                          <a href="{jiraBaseUrl}/browse/{task.id}" target="_blank" rel="noopener noreferrer" class="jira-direct-link" on:click|stopPropagation title="直达 Jira">Jira</a>
-                        {/if}
-                        <span class="issue-type-badge type-{task.issueType.toLowerCase()}">{task.issueType === 'bug' ? 'Bug' : 'Task'}</span>
-                        <span class="compact-days-badge font-mono">活跃 {getActiveDays(task.taskCreatedAt)}d</span>
-                      </div>
-                      <h5 class="compact-title title-done">{task.title}</h5>
-                    </div>
-                  {/each}
-                  {#if getAssigneeTasks(assignee, 'done').length === 0}
-                    <div class="empty-placeholder">暂无已完成</div>
-                  {/if}
-                </div>
-              </div>
-            </div>
-            {/if}
-          </div>
-        {/each}
-      {/if}
-    </div>
   {/if}
 </section>
 
 {#if showDetails && selectedTask}
-  <Modal show={showDetails} title="任务详情: {selectedTask.id}" on:close={() => { showDetails = false; selectedTask = null; }}>
-    <div class="details-container">
-      <div class="details-row">
-        <span class="label">任务 ID:</span>
-        <span class="value font-mono">
-          {selectedTask.id}
-          {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
-            <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="jira-modal-direct-btn">
-              Jira 链接
-            </a>
-          {/if}
-        </span>
-      </div>
-      <div class="details-row">
-        <span class="label">所属项目:</span>
-        <span class="value badge-project">{getProjectName(selectedTask.id)}</span>
-      </div>
-      {#if hasParentDemand(selectedTask.taskGroupId)}
-        <div class="details-row">
-          <span class="label">关联需求:</span>
-          <span class="value parent-demand-detail font-mono">
-            #{getParentDemandId(selectedTask.taskGroupId)} <span class="title-sub">{getParentDemandTitle(selectedTask.taskGroupId)}</span>
-          </span>
-        </div>
-      {/if}
-      <div class="details-row">
-        <span class="label">任务类型:</span>
-        <span class="value">
-          <span class="issue-type-badge type-{selectedTask.issueType.toLowerCase()}">{selectedTask.issueType === 'bug' ? 'Bug 缺陷' : 'Task 任务'}</span>
-        </span>
-      </div>
-      <div class="details-row">
-        <span class="label">任务标题:</span>
-        <span class="value title-val">{selectedTask.title}</span>
-      </div>
-      <div class="details-row">
-        <span class="label">指派人:</span>
-        <span class="value">{selectedTask.assignee}</span>
-      </div>
-      <div class="details-row">
-        <span class="label">当前进度阶段:</span>
-        <span class="value">
-          <span class="status-dot dot-{selectedTask.status.toLowerCase()}"></span>
-          <span class="status-name">{getStatusLabel(selectedTask.status, selectedTask.issueType)}</span>
-        </span>
-      </div>
-      <div class="details-row">
-        <span class="label">实际创建时间:</span>
-        <span class="value">{formatTimeFull(selectedTask.taskCreatedAt)}</span>
-      </div>
-      
-      <div class="divider"></div>
-      <div class="telemetry-decoupled-section">
-        <span class="decoupled-title font-mono">GIT TELEMETRY EVIDENCE</span>
-        <button class="view-telemetry-drawer-btn font-mono" on:click={() => {
-          activeTelemetryTaskId = selectedTask ? selectedTask.id : '';
-          isTelemetryDrawerOpen = true;
-        }}>
-          展开代码提交轨迹与 MR 证据
-        </button>
-      </div>
-      
-      <!-- Evidence Chain 真实交付证据链 -->
-      <div class="divider"></div>
-      <div class="evidence-chain-section">
-        <span class="decoupled-title font-mono">真实交付证据链 (Evidence Chain)</span>
-        
-        {#if evidenceChainLoading}
-          <div class="evidence-chain-loading font-mono">正在检索关联的交付证据链...</div>
-        {:else if evidenceChainError}
-          <div class="evidence-chain-error font-mono">{evidenceChainError}</div>
-        {:else if evidenceChain}
-          {@const summary = evidenceChain.summary || {}}
-          <div class="evidence-chain-summary-panel">
-            <div class="chain-stat">
-              <span class="stat-label">关联任务</span>
-              <strong>{summary.related_tasks || 0}</strong>
-            </div>
-            <div class="chain-stat">
-              <span class="stat-label">提交次数</span>
-              <strong>{summary.commits || 0}</strong>
-            </div>
-            <div class="chain-stat">
-              <span class="stat-label">Merge Request</span>
-              <strong>{summary.merge_requests || 0} (已合并 {summary.merged_mrs || 0})</strong>
-            </div>
-          </div>
-          
-          {#if evidenceChain.evidence && evidenceChain.evidence.length > 0}
-            <div class="evidence-timeline custom-scrollbar">
-              {#each evidenceChain.evidence as log}
-                <div class="timeline-node">
-                  <div class="node-meta">
-                    <span class="node-time font-mono">{log.created_at.slice(5, 16)}</span>
-                    <span class="node-repo font-mono">[{log.repo}]</span>
-                    {#if log.mr_url}
-                      <a href={log.mr_url} target="_blank" rel="noopener noreferrer" class="mr-link-chain">MR</a>
-                    {/if}
-                  </div>
-                  <div class="node-content">
-                    <span class="node-action action-{log.action.toLowerCase()} font-mono">{log.action.replace('mr_', 'MR ')}</span>
-                    {#if log.commit_id}
-                      <span class="node-commit font-mono">commit: {log.commit_id.slice(0, 8)}</span>
-                    {/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div class="evidence-chain-empty font-mono">暂无任何 GitLab 代码提交或 MR 合并记录事实。</div>
-          {/if}
-          
-          {#if summary.signals && summary.signals.length > 0}
-            <div class="evidence-chain-signals">
-              {#each summary.signals as signal}
-                <span class="signal-chip font-mono">{signal}</span>
-              {/each}
-            </div>
-          {/if}
+  <Modal
+    show={showDetails}
+    title={selectedTask.title}
+    size="wide"
+    closeLabel="关闭事项详情"
+    on:close={() => { showDetails = false; selectedTask = null; }}
+  >
+    <div class="task-detail-surface task-detail-modal-body">
+      <div class="task-detail-modal-meta">
+        <span class="phase41-kicker">{getIssueTypeLabel(selectedTask)}详情</span>
+        {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
+          <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="phase41-id-link">
+            {selectedTask.id}
+          </a>
+        {:else}
+          <strong class="phase41-id-link as-text">{selectedTask.id}</strong>
         {/if}
+        <span class="wa-admin-pill {ADMIN_TONE_CLASS[toneForStatus(selectedTask.status)]}">{getTaskStatusShortLabel(selectedTask)}</span>
+        <span class="wa-admin-pill tone-neutral">{getPlanningStateLabel(selectedTask.planningState)}</span>
       </div>
-      
-      <div class="details-row">
-        <span class="label">系统最后同步:</span>
-        <span class="value">{formatTimeFull(selectedTask.rawLastUpdate)}</span>
+
+      <section class="task-detail-overview" aria-labelledby="task-detail-facts-title">
+        <div class="task-detail-section-heading">
+          <h3 id="task-detail-facts-title">事项概览</h3>
+          <span>Work Item 实时数据</span>
+        </div>
+        <dl class="task-detail-fact-grid">
+          <div><dt>事项类型</dt><dd>{getIssueTypeLabel(selectedTask)}</dd></div>
+          <div><dt>所属项目</dt><dd>{selectedTask.projectKey ? (projectNamesMap[selectedTask.projectKey.toUpperCase()] || selectedTask.projectKey) : '未归项目'}</dd></div>
+          <div><dt>负责人</dt><dd>{selectedTask.assignee || '未指派'}</dd></div>
+          <div><dt>当前状态</dt><dd>{getTaskStatusShortLabel(selectedTask)}</dd></div>
+          <div><dt>计划状态</dt><dd>{getPlanningStateLabel(selectedTask.planningState)}</dd></div>
+          <div><dt>目标版本</dt><dd>{selectedTask.targetRelease || '未归版本'}</dd></div>
+          <div><dt>截止日期</dt><dd>{formatTaskDate(selectedTask.dueDate)}</dd></div>
+          <div><dt>同步状态</dt><dd>{getSyncStateLabel(selectedTask.syncState)}</dd></div>
+        </dl>
+      </section>
+
+      <div class="task-detail-section-grid">
+        <section class="task-detail-panel">
+          <h3>事项描述</h3>
+          <p>{selectedTask.description || '当前事项暂无描述。'}</p>
+        </section>
+        <section class="task-detail-panel">
+          <h3>版本归属</h3>
+          <ul>
+            <li>目标版本：{selectedTask.targetRelease || '未归版本'}</li>
+            <li>影响版本：{selectedTask.affectedReleases?.length ? selectedTask.affectedReleases.join('、') : '未记录'}</li>
+          </ul>
+        </section>
+        <section class="task-detail-panel">
+          <h3>来源与同步</h3>
+          <ul>
+            <li>数据来源：{selectedTask.source || '本地'}</li>
+            <li>同步状态：{getSyncStateLabel(selectedTask.syncState)}</li>
+            <li>数据修订：{selectedTask.revision ?? 0}</li>
+          </ul>
+        </section>
+        <section class="task-detail-panel">
+          <h3>{selectedTask.issueType === 'task' ? '执行上下文' : '时间记录'}</h3>
+          {#if selectedTask.issueType === 'task'}
+            <ul>
+              <li>仓库：{selectedTask.repo || '-'}</li>
+              <li>分支：{selectedTask.branch || '-'}</li>
+              <li>最新提交：{selectedTask.lastCommit || '-'}</li>
+            </ul>
+          {:else}
+            <ul>
+              <li>创建时间：{formatTimeFull(selectedTask.taskCreatedAt)}</li>
+              <li>最后更新：{formatTimeFull(selectedTask.rawLastUpdate)}</li>
+              <li>截止日期：{formatTaskDate(selectedTask.dueDate)}</li>
+            </ul>
+          {/if}
+        </section>
       </div>
+    </div>
+
+    <div slot="footer" class="task-detail-modal-actions">
+      {#if selectedTask.issueType !== 'task'}
+        <button class="wa-admin-action secondary" type="button" on:click={() => onOpenDeliveryPlan(selectedTask?.id || '')}>
+          打开版本计划
+        </button>
+      {/if}
+      {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
+        <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="wa-admin-action primary">
+          在 Jira 打开
+        </a>
+      {/if}
     </div>
   </Modal>
 {/if}
 
-<CommitTelemetryPanel taskID={activeTelemetryTaskId} isOpen={isTelemetryDrawerOpen} onClose={() => isTelemetryDrawerOpen = false} />
+<Modal
+  show={isTelemetryDrawerOpen}
+  title="代码提交轨迹"
+  size="wide"
+  closeLabel="关闭代码提交轨迹"
+  on:close={() => isTelemetryDrawerOpen = false}
+>
+  <CommitTelemetryPanel
+    taskID={activeTelemetryTaskId}
+    isOpen={isTelemetryDrawerOpen}
+    presentation="modal"
+    embeddedInModal={true}
+    onClose={() => isTelemetryDrawerOpen = false}
+  />
+</Modal>
 
 <style>
   .active-days-badge {
@@ -2575,7 +2619,6 @@
     min-height: 88px;
     background: rgba(10, 15, 30, 0.66);
     border: 1px solid rgba(51, 65, 85, 0.32);
-    border-top: 3px solid rgba(100, 116, 139, 0.72);
     border-radius: 10px;
     padding: 12px;
     display: flex;
@@ -2583,10 +2626,10 @@
     justify-content: space-between;
   }
 
-  .execution-summary-cell.is-red { border-top-color: #ef4444; }
-  .execution-summary-cell.is-amber { border-top-color: #f59e0b; }
-  .execution-summary-cell.is-blue { border-top-color: #38bdf8; }
-  .execution-summary-cell.is-violet { border-top-color: #a78bfa; }
+  .execution-summary-cell.is-red { border-color: rgba(239, 68, 68, 0.48); }
+  .execution-summary-cell.is-amber { border-color: rgba(245, 158, 11, 0.48); }
+  .execution-summary-cell.is-blue { border-color: rgba(56, 189, 248, 0.48); }
+  .execution-summary-cell.is-violet { border-color: rgba(167, 139, 250, 0.48); }
 
   .summary-kicker {
     color: #64748b;
@@ -2994,9 +3037,8 @@
     left: 0;
     top: 0;
     bottom: 0;
-    background: linear-gradient(90deg, #38bdf8, #818cf8);
+    background: #38bdf8;
     border-radius: 8px;
-    transition: width 0.3s ease;
   }
 
   .evidence-score-text {
@@ -3145,9 +3187,7 @@
   .section-title {
     font-size: 1.5rem;
     font-weight: 700;
-    background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 50%, #e2e8f0 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #e2e8f0;
     margin: 0;
   }
 
@@ -3995,14 +4035,6 @@
     padding-bottom: 0;
   }
 
-  /* Personnel View Swimlanes Styling */
-  .personnel-view {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    margin-bottom: 24px;
-  }
-
   .swimlane {
     background: rgba(15, 23, 42, 0.3);
     border: 1px solid rgba(51, 65, 85, 0.35);
@@ -4198,7 +4230,7 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-    border-left: 2px solid rgba(71, 85, 105, 0.4);
+    border-left: 1px solid rgba(71, 85, 105, 0.4);
   }
 
   .timeline-item {
@@ -4496,7 +4528,7 @@
   .evidence-timeline {
     max-height: 200px;
     overflow-y: auto;
-    border-left: 2px solid rgba(99, 102, 241, 0.3);
+    border-left: 1px solid rgba(99, 102, 241, 0.3);
     padding-left: 12px;
     margin-left: 8px;
     display: flex;
@@ -5224,10 +5256,6 @@
     background: rgba(255, 197, 95, 0.055) !important;
   }
 
-  .task-console .personnel-view {
-    gap: 12px;
-  }
-
   .task-console .swimlane {
     padding: 12px;
   }
@@ -5318,10 +5346,15 @@
   }
 
   .task-console {
+    --task-aligned-panel-height: clamp(480px, calc(100dvh - 420px), 680px);
     color: var(--wa-text-main);
     display: grid;
     gap: var(--wa-space-4);
     margin-bottom: 0;
+  }
+
+  .task-console.view-execution {
+    --task-aligned-panel-height: clamp(564px, calc(100dvh - 336px), 764px);
   }
 
   .task-console > .execution-workbench,
@@ -5402,16 +5435,63 @@
     box-shadow: 0 8px 18px rgba(0, 143, 150, 0.16);
   }
 
-  .phase41-filter-row {
+  .phase41-toolbar-filters {
+    position: relative;
+    z-index: 2;
+    min-width: 0;
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
     gap: var(--wa-space-2);
   }
 
-  .phase41-filter-row .custom-select-container {
+  .phase41-toolbar-filters .custom-select-container {
+    z-index: 1;
     min-width: 0;
     width: 100%;
+  }
+
+  .phase41-toolbar-filters .custom-select-container:focus-within {
+    z-index: 3;
+  }
+
+  .phase41-filter-multi {
+    --multi-select-dropdown-min: 292px;
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+  }
+
+  .phase41-filter-multi:focus-within {
+    z-index: 4;
+  }
+
+  .phase41-filter-multi :global(.multi-select-group) {
+    margin: 0;
+  }
+
+  .phase41-filter-multi :global(.multi-select-trigger) {
+    border-color: var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: none;
+  }
+
+  .phase41-filter-multi :global(.multi-select-trigger:hover),
+  .phase41-filter-multi :global(.multi-select-trigger:focus-within),
+  .phase41-filter-multi :global(.multi-select-trigger.is-active) {
+    border-color: var(--wa-border-focus);
+    background: var(--wa-surface-flat);
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+  }
+
+  .phase41-filter-multi :global(.multi-select-dropdown) {
+    border-color: var(--wa-border-soft);
+    background: rgba(255, 255, 255, 0.99);
+  }
+
+  .phase41-execution-controls .phase41-project-select :global(.multi-select-dropdown) {
+    right: 0;
+    left: auto;
   }
 
   .task-console .custom-select-trigger,
@@ -5463,6 +5543,7 @@
     min-width: 100%;
     border: 1px solid var(--wa-border-soft);
     background: rgba(255, 255, 255, 0.96);
+    z-index: 1000;
     box-shadow: var(--wa-shadow-md);
   }
 
@@ -5548,13 +5629,94 @@
     align-items: start;
   }
 
+  .phase41-execution-workbench {
+    grid-auto-rows: minmax(var(--task-aligned-panel-height), auto);
+    align-items: stretch;
+  }
+
+  .phase41-execution-workbench .phase41-table-panel,
+  .phase41-execution-workbench .phase41-inspector {
+    height: auto;
+    min-height: var(--task-aligned-panel-height);
+    max-height: none;
+    box-sizing: border-box;
+  }
+
+  .phase41-status-workbench {
+    grid-auto-rows: minmax(var(--task-aligned-panel-height), auto);
+    align-items: stretch;
+  }
+
+  .phase41-status-workbench .phase41-table-panel,
+  .phase41-status-workbench .phase41-inspector {
+    height: auto;
+    min-height: var(--task-aligned-panel-height);
+    max-height: none;
+    box-sizing: border-box;
+  }
+
+  .phase41-status-workbench .phase41-table-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .phase41-status-workbench .phase41-table-shell {
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .phase41-status-workbench .phase41-inspector {
+    position: relative;
+    top: auto;
+    overflow: visible;
+    overscroll-behavior: auto;
+  }
+
   .phase41-table-panel {
     min-width: 0;
+  }
+
+  .phase41-execution-workbench .phase41-table-panel {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .phase41-table-toolbar {
     border-radius: var(--wa-radius-md);
     align-items: center;
+  }
+
+  .phase41-status-toolbar {
+    position: relative;
+    z-index: 2;
+    overflow: visible;
+    display: grid;
+    grid-template-columns: minmax(190px, 0.58fr) minmax(360px, 1.22fr) auto;
+    grid-template-areas: "copy filters actions";
+  }
+
+  .phase41-status-toolbar > div:first-child {
+    grid-area: copy;
+  }
+
+  .phase41-status-toolbar .phase41-toolbar-filters {
+    grid-area: filters;
+  }
+
+  .phase41-status-toolbar .phase41-toolbar-actions {
+    grid-area: actions;
+  }
+
+  .phase41-execution-workbench .phase41-table-toolbar {
+    position: relative;
+    z-index: 2;
+    overflow: visible;
   }
 
   .phase41-table-toolbar > div:first-child {
@@ -5591,7 +5753,12 @@
     min-width: 0;
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.1fr) minmax(170px, 0.7fr) auto;
+    grid-template-columns:
+      minmax(260px, 1.25fr)
+      minmax(140px, 0.5fr)
+      minmax(200px, 0.76fr)
+      minmax(210px, 0.8fr)
+      auto;
     gap: var(--wa-space-2);
     align-items: center;
   }
@@ -5639,30 +5806,30 @@
     overflow-x: auto;
   }
 
-  .phase41-risk-strip button {
-    min-height: 28px;
-    border: 0;
-    border-radius: var(--wa-radius-sm);
-    background: transparent;
-    color: var(--wa-text-muted);
-    padding: 0 9px;
-    font-size: 12px;
-    font-weight: 760;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .phase41-risk-strip button.active {
-    color: var(--wa-accent-strong);
-    background: var(--wa-accent-soft);
-  }
-
+  .phase41-execution-select,
+  .phase41-risk-select,
   .phase41-assignee-select {
     min-width: 0;
   }
 
   .phase41-table-shell {
     border-radius: var(--wa-radius-md);
+  }
+
+  .phase41-execution-workbench .phase41-table-shell {
+    position: relative;
+    z-index: 1;
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .phase41-execution-workbench .phase41-inspector {
+    position: relative;
+    top: auto;
+    overflow: visible;
+    overscroll-behavior: auto;
   }
 
   .phase41-table {
@@ -5687,6 +5854,64 @@
     min-width: 0;
     display: grid;
     gap: 6px;
+  }
+
+  .phase41-status-workbench .phase41-title-cell {
+    display: block;
+  }
+
+  .phase41-status-workbench .phase41-title-main {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    flex-wrap: nowrap;
+  }
+
+  .phase41-status-workbench .phase41-title-main strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    line-height: 1.35;
+    font-weight: 760;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase41-type-icon {
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: 999px;
+    background: var(--wa-surface-inset);
+    color: var(--wa-text-muted);
+  }
+
+  .phase41-type-icon svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .phase41-type-icon.is-bug {
+    border-color: rgba(221, 75, 62, 0.2);
+    background: var(--wa-danger-soft);
+    color: var(--wa-danger);
+  }
+
+  .phase41-type-icon.is-task {
+    border-color: rgba(37, 107, 216, 0.18);
+    background: var(--wa-info-soft);
+    color: var(--wa-info);
   }
 
   .phase41-title-cell > div {
@@ -5753,6 +5978,24 @@
     min-width: 0;
   }
 
+  .phase41-evidence-cell.is-compact {
+    display: block;
+  }
+
+  .phase41-status-workbench .phase41-table th,
+  .phase41-status-workbench .phase41-table td {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .phase41-status-workbench .phase41-table tbody tr {
+    height: 46px;
+  }
+
+  .phase41-status-workbench .phase41-table tbody tr.is-selected {
+    background: var(--wa-row-active);
+  }
+
   .phase41-action-cell .compact {
     min-height: 30px;
     padding: 0 10px;
@@ -5813,10 +6056,11 @@
 
   .phase41-fact-grid div {
     min-width: 0;
-    border: 1px solid var(--wa-border-soft);
-    border-radius: var(--wa-radius-md);
-    background: var(--wa-surface-inset);
-    padding: var(--wa-space-2);
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+    padding: var(--wa-space-2) 0 var(--wa-space-3);
   }
 
   .phase41-fact-grid dt {
@@ -5830,6 +6074,48 @@
     font-size: 13px;
     font-weight: 760;
     overflow-wrap: anywhere;
+  }
+
+  .phase41-fact-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .phase41-fact-pills > div {
+    min-width: 0;
+    width: auto;
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 3px 9px;
+    border: 1px solid var(--wa-border-soft);
+    background: transparent;
+  }
+
+  .phase41-fact-pills dt {
+    flex: none;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .phase41-fact-pills dd {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .phase41-fact-pills .is-type-fact {
+    padding-right: 4px;
+  }
+
+  .phase41-fact-pills .phase41-type-icon {
+    width: 22px;
+    height: 22px;
+    margin: 0;
   }
 
   .phase41-inspector-progress {
@@ -5885,10 +6171,6 @@
     outline-offset: 2px;
   }
 
-  .task-console .personnel-view {
-    gap: var(--wa-space-3);
-  }
-
   .task-console .swimlane,
   .task-console .swimlane-column {
     border-color: var(--wa-border-soft);
@@ -5928,6 +6210,30 @@
     to { background-position: -100% 0; }
   }
 
+  @media (max-width: 1600px) {
+    .phase41-status-toolbar {
+      grid-template-columns: minmax(180px, 1fr) auto;
+      grid-template-areas:
+        "copy actions"
+        "filters filters";
+    }
+
+    .phase41-execution-workbench .phase41-table-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .phase41-execution-controls {
+      grid-template-columns: minmax(260px, 1fr) minmax(160px, 0.56fr) minmax(220px, 0.78fr);
+    }
+  }
+
+  @media (max-width: 1400px) {
+    .phase41-execution-controls {
+      grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr);
+    }
+  }
+
   @media (max-width: 1180px) {
     .phase41-console-header,
     .phase41-workbench {
@@ -5947,6 +6253,19 @@
     .phase41-execution-controls {
       grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr);
     }
+
+    .phase41-status-workbench {
+      grid-auto-rows: auto;
+    }
+
+    .phase41-status-workbench .phase41-table-panel,
+    .phase41-status-workbench .phase41-inspector,
+    .phase41-execution-workbench .phase41-table-panel,
+    .phase41-execution-workbench .phase41-inspector {
+      height: auto;
+      min-height: 0;
+      max-height: none;
+    }
   }
 
   @media (max-width: 760px) {
@@ -5955,11 +6274,19 @@
       align-items: stretch;
     }
 
+    .phase41-status-toolbar {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "copy"
+        "filters"
+        "actions";
+    }
+
     .phase41-header-actions {
       justify-items: stretch;
     }
 
-    .phase41-filter-row,
+    .phase41-toolbar-filters,
     .phase41-metric-grid,
     .phase41-stage-strip,
     .phase41-execution-controls,
@@ -5971,6 +6298,826 @@
     .phase41-toolbar-actions {
       flex-direction: column;
       align-items: stretch;
+    }
+
+    .phase41-execution-controls {
+      --wa-control-h: 44px;
+    }
+
+    .phase41-toolbar-filters {
+      --wa-control-h: 44px;
+    }
+
+    .phase41-filter-multi {
+      --multi-select-dropdown-min: 100%;
+    }
+
+    .phase41-execution-controls .phase41-risk-strip,
+    .phase41-execution-controls .wa-admin-action {
+      min-height: 44px;
+    }
+  }
+
+  /* Desktop task views share the remaining workspace height; only data shells scroll. */
+  @media (min-width: 1181px) {
+    .task-console {
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: auto auto auto;
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
+    }
+
+    .task-console.view-execution {
+      grid-template-rows: auto auto;
+    }
+
+    .phase41-workbench {
+      height: auto;
+      min-height: 0;
+      grid-auto-rows: auto;
+      align-items: stretch;
+      overflow: visible;
+    }
+
+    .phase41-execution-workbench .phase41-table-panel,
+    .phase41-execution-workbench .phase41-inspector,
+    .phase41-status-workbench .phase41-table-panel,
+    .phase41-status-workbench .phase41-inspector {
+      height: auto;
+      min-height: 0;
+      max-height: none;
+    }
+
+    .phase41-execution-workbench .phase41-inspector,
+    .phase41-status-workbench .phase41-inspector {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: none;
+    }
+
+    .phase41-execution-workbench .phase41-inspector::-webkit-scrollbar,
+    .phase41-status-workbench .phase41-inspector::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+    }
+  }
+
+  @media (min-width: 861px) and (max-width: 1180px) {
+    .task-console {
+      height: 100%;
+      min-height: 0;
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
+    }
+
+    .phase41-status-workbench .phase41-table-panel,
+    .phase41-execution-workbench .phase41-table-panel {
+      height: clamp(420px, 58dvh, 560px);
+      max-height: clamp(420px, 58dvh, 560px);
+      overflow: hidden;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .phase41-status-workbench .phase41-table-panel,
+    .phase41-execution-workbench .phase41-table-panel {
+      height: min(560px, 62dvh);
+      min-height: 0;
+      max-height: min(560px, 62dvh);
+      overflow: hidden;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .task-console,
+    .task-console *,
+    .task-console *::before,
+    .task-console *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* Task details live inside the shared light Modal, so legacy dark-board colors must not leak in. */
+  .task-detail-surface {
+    --detail-strong: var(--wa-text-strong, #0d1722);
+    --detail-text: var(--wa-text-main, #293847);
+    --detail-muted: var(--wa-text-muted, #667789);
+    --detail-subtle: var(--wa-text-subtle, #8a99aa);
+    color: var(--detail-text);
+    gap: 0;
+  }
+
+  .task-detail-surface .jira-modal-direct-btn {
+    border-color: rgba(43, 116, 214, 0.2);
+    background: rgba(43, 116, 214, 0.08);
+    color: var(--wa-info, #2b74d6);
+  }
+
+  .task-detail-surface .view-telemetry-drawer-btn {
+    min-height: 40px;
+    border-color: rgba(0, 143, 150, 0.2);
+    background: rgba(0, 143, 150, 0.07);
+    color: var(--wa-accent-strong, #006f76);
+    font-weight: 760;
+  }
+
+  .task-detail-surface .view-telemetry-drawer-btn:hover {
+    border-color: rgba(0, 143, 150, 0.34);
+    background: rgba(0, 143, 150, 0.12);
+    color: var(--wa-accent-strong, #006f76);
+  }
+
+  .task-detail-surface .evidence-chain-summary-panel {
+    border-color: rgba(121, 139, 159, 0.16);
+    background: rgba(247, 250, 252, 0.86);
+  }
+
+  .task-detail-surface .node-meta,
+  .task-detail-surface .node-time {
+    color: var(--detail-muted);
+  }
+
+  .task-detail-surface .node-commit {
+    color: var(--detail-strong);
+  }
+
+  .task-detail-surface .evidence-timeline {
+    border-left-color: rgba(0, 143, 150, 0.24);
+  }
+
+  .task-detail-surface .timeline-node::before {
+    background: var(--wa-accent, #008f96);
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.1);
+  }
+
+  .task-detail-surface .evidence-chain-empty {
+    border-color: rgba(221, 75, 62, 0.18);
+    background: rgba(221, 75, 62, 0.055);
+    color: var(--wa-danger, #c83e32);
+  }
+
+  .task-detail-surface .signal-chip {
+    border-color: rgba(121, 139, 159, 0.16);
+    background: rgba(121, 139, 159, 0.09);
+    color: var(--detail-muted);
+  }
+
+  .task-detail-surface {
+    padding: 24px 28px 28px;
+  }
+
+  .task-drawer-hero {
+    display: grid;
+    gap: 18px;
+    padding-bottom: 22px;
+  }
+
+  .task-drawer-title-row,
+  .task-section-heading,
+  .task-detail-footer {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .task-drawer-title-row > div {
+    min-width: 0;
+  }
+
+  .task-drawer-kicker {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--detail-muted);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  .task-detail-surface .jira-modal-direct-btn {
+    flex: none;
+    min-height: 34px;
+    margin: 0;
+    padding: 0 12px;
+    border-radius: var(--wa-radius-pill, 999px);
+    white-space: nowrap;
+  }
+
+  .task-detail-pill-rail {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .task-detail-pill-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .task-detail-pill {
+    flex: 0 0 auto;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-pill, 999px);
+    background: transparent;
+    color: var(--detail-text);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .task-detail-pill em {
+    color: var(--detail-muted);
+    font-style: normal;
+  }
+
+  .task-detail-pill strong {
+    color: var(--detail-strong);
+    font-weight: 760;
+  }
+
+  .task-detail-pill.id-pill {
+    border-color: rgba(37, 107, 216, 0.2);
+    background: var(--wa-info-soft);
+    color: var(--wa-info);
+    font-weight: 800;
+  }
+
+  .task-detail-pill.status-pill {
+    border-color: rgba(4, 150, 111, 0.2);
+    background: var(--wa-success-soft);
+    color: var(--wa-success);
+    font-weight: 780;
+  }
+
+  .task-detail-pill.type-bug {
+    border-color: rgba(221, 75, 62, 0.2);
+    background: var(--wa-danger-soft);
+  }
+
+  .task-evidence-progress {
+    display: grid;
+    gap: 8px;
+  }
+
+  .task-evidence-progress > div {
+    height: 5px;
+    overflow: hidden;
+    border-radius: var(--wa-radius-pill, 999px);
+    background: var(--wa-surface-inset);
+  }
+
+  .task-evidence-progress > div span {
+    width: var(--task-progress);
+    height: 100%;
+    display: block;
+    border-radius: inherit;
+    background: var(--wa-accent);
+  }
+
+  .task-evidence-progress strong {
+    color: var(--detail-text);
+    font-weight: 720;
+  }
+
+  .task-detail-section {
+    display: grid;
+    gap: 10px;
+    padding: 20px 0;
+    border-top: 1px solid var(--wa-border-divider);
+  }
+
+  .task-section-heading {
+    align-items: center;
+  }
+
+  .task-detail-surface .view-telemetry-drawer-btn {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid rgba(0, 143, 150, 0.2);
+    border-radius: var(--wa-radius-pill, 999px);
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .task-code-facts {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 18px;
+  }
+
+  .task-code-facts div {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+
+  .section-state {
+    color: var(--detail-muted);
+    font-size: 12px;
+  }
+
+  .task-detail-surface .evidence-chain-summary-panel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 0;
+    border-top: 1px solid var(--wa-border-soft);
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .task-detail-surface .chain-stat {
+    min-width: 0;
+    padding: 13px 10px;
+  }
+
+  .task-detail-surface .evidence-timeline {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .task-detail-footer {
+    align-items: center;
+    padding-top: 18px;
+    border-top: 1px solid var(--wa-border-divider);
+    color: var(--detail-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 640px) {
+    .task-detail-surface {
+      padding: 20px 16px 24px;
+    }
+
+    .task-drawer-title-row {
+      align-items: flex-start;
+    }
+
+    .task-code-facts {
+      grid-template-columns: 1fr;
+    }
+
+    .task-detail-footer {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .task-detail-surface .evidence-chain-summary-panel {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Task workbenches are viewport-bounded; details remain a concise peer panel. */
+  .phase41-fact-pills dt,
+  .phase41-fact-pills dd {
+    font-size: 12px;
+  }
+
+  /* Tone is a compact status cue, never a full-card paint layer. */
+  .task-console .phase41-metric,
+  .task-console .phase41-stage-card {
+    --task-tone: var(--wa-border-strong);
+    border-color: var(--wa-glass-outline);
+    border-top-color: var(--wa-glass-highlight);
+    border-radius: var(--wa-radius-lg, 14px);
+    background: var(--wa-glass-panel);
+    color: var(--wa-text-main);
+    box-shadow: var(--wa-shadow-glass);
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
+  }
+
+  .task-console .phase41-table-toolbar,
+  .task-console .phase41-inspector {
+    border-color: var(--wa-glass-outline);
+    border-top-color: var(--wa-glass-highlight);
+    border-radius: var(--wa-radius-lg, 14px);
+    background: var(--wa-glass-panel);
+    box-shadow: var(--wa-shadow-glass);
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
+  }
+
+  .task-console .view-toggle,
+  .task-console .task-view-toggle,
+  .task-console .toggle-btn,
+  .task-console .custom-select-trigger,
+  .task-console .task-filter-control,
+  .phase41-filter-multi :global(.multi-select-trigger),
+  .phase41-search-control input,
+  .phase41-risk-strip {
+    border-radius: var(--wa-radius-pill, 999px);
+  }
+
+  .task-console .phase41-metric.tone-info,
+  .task-console .phase41-stage-card.tone-info {
+    --task-tone: var(--wa-info);
+  }
+
+  .task-console .phase41-metric.tone-success,
+  .task-console .phase41-stage-card.tone-success {
+    --task-tone: var(--wa-success);
+  }
+
+  .task-console .phase41-metric.tone-warning,
+  .task-console .phase41-stage-card.tone-warning {
+    --task-tone: var(--wa-warning);
+  }
+
+  .task-console .phase41-metric.tone-danger,
+  .task-console .phase41-stage-card.tone-danger {
+    --task-tone: var(--wa-danger);
+  }
+
+  .task-console .phase41-metric.tone-neutral,
+  .task-console .phase41-stage-card.tone-neutral {
+    --task-tone: var(--wa-text-subtle);
+  }
+
+  @media (min-width: 1181px) {
+    .task-console {
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      overflow: hidden !important;
+    }
+
+    .task-console.view-execution {
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .phase41-workbench {
+      height: 100%;
+      min-height: 0;
+      grid-auto-rows: minmax(0, 1fr);
+      align-items: stretch;
+      overflow: hidden;
+    }
+
+    .phase41-execution-workbench .phase41-table-panel,
+    .phase41-execution-workbench .phase41-inspector,
+    .phase41-status-workbench .phase41-table-panel,
+    .phase41-status-workbench .phase41-inspector {
+      height: 100%;
+      min-height: 0;
+      max-height: none;
+    }
+
+    .phase41-execution-workbench .phase41-table-shell,
+    .phase41-status-workbench .phase41-table-shell {
+      height: 100%;
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .phase41-execution-workbench .phase41-inspector,
+    .phase41-status-workbench .phase41-inspector {
+      gap: 12px;
+      overflow: hidden;
+      overscroll-behavior: auto;
+    }
+
+    .phase41-inspector-section p {
+      display: -webkit-box;
+      overflow: hidden;
+      line-clamp: 3;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+
+    .phase41-inspector-section li:nth-child(n + 3) {
+      display: none;
+    }
+
+    .task-console.view-execution {
+      overflow-y: auto !important;
+      overscroll-behavior: contain;
+    }
+
+    .phase41-execution-workbench {
+      height: auto;
+      grid-auto-rows: auto;
+      align-items: start;
+      overflow: visible;
+    }
+
+    .phase41-execution-workbench .phase41-table-panel {
+      height: clamp(480px, calc(100dvh - 320px), 660px);
+    }
+
+    .phase41-execution-workbench .phase41-inspector {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: auto;
+      min-height: 0;
+      max-height: none;
+      overflow: visible;
+    }
+
+    .phase41-execution-workbench .phase41-inspector-section p {
+      display: block;
+      overflow: visible;
+      line-clamp: unset;
+      -webkit-line-clamp: unset;
+    }
+
+    .phase41-execution-workbench .phase41-inspector-section li:nth-child(n + 3) {
+      display: list-item;
+    }
+  }
+
+  .phase41-fact-pills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .phase41-fact-pills::-webkit-scrollbar {
+    display: none;
+  }
+
+  .phase41-type-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--wa-text-main);
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .phase41-type-label .phase41-type-icon {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+    font-weight: 820;
+  }
+
+  .phase41-project-cell {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .phase41-project-cell strong,
+  .phase41-project-cell small,
+  .phase41-release-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase41-project-cell strong,
+  .phase41-release-cell {
+    color: var(--wa-text-main);
+    font-size: 12.5px;
+  }
+
+  .phase41-project-cell small {
+    color: var(--wa-text-muted);
+    font-size: 10.5px;
+  }
+
+  .task-detail-modal-body {
+    min-width: 0;
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    padding: 16px 22px 18px;
+  }
+
+  .task-detail-modal-meta {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .task-detail-overview {
+    min-width: 0;
+    display: grid;
+    gap: 10px;
+    padding: 0 0 14px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .task-detail-section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .task-detail-section-heading h3,
+  .task-detail-section-heading span {
+    margin: 0;
+  }
+
+  .task-detail-section-heading h3,
+  .task-detail-panel h3 {
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .task-detail-section-heading span {
+    color: var(--wa-text-muted);
+    font-size: 11px;
+    font-weight: 660;
+  }
+
+  .task-detail-fact-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px 20px;
+    margin: 0;
+  }
+
+  .task-detail-fact-grid div {
+    min-width: 0;
+    padding: 2px 0;
+  }
+
+  .task-detail-fact-grid dt {
+    color: var(--wa-text-muted);
+    font-size: 11.5px;
+    line-height: 1.25;
+    font-weight: 740;
+  }
+
+  .task-detail-fact-grid dd {
+    margin: 2px 0 0;
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    line-height: 1.35;
+    font-weight: 760;
+    overflow-wrap: anywhere;
+  }
+
+  .task-detail-section-grid {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+    gap: 0;
+  }
+
+  .task-detail-panel {
+    min-width: 0;
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    padding: 14px 0;
+  }
+
+  .task-detail-panel:nth-child(odd) {
+    padding-right: 20px;
+  }
+
+  .task-detail-panel:nth-child(even) {
+    padding-left: 20px;
+    border-left: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .task-detail-panel:nth-child(-n + 2) {
+    padding-top: 2px;
+    border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+  }
+
+  .task-detail-panel h3,
+  .task-detail-panel p,
+  .task-detail-panel ul {
+    margin: 0;
+  }
+
+  .task-detail-panel p,
+  .task-detail-panel li {
+    color: var(--wa-text-main);
+    font-size: 12.5px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .task-detail-panel ul {
+    display: grid;
+    gap: 5px;
+    padding-left: 16px;
+  }
+
+  .task-detail-modal-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .task-detail-modal-actions a {
+    text-decoration: none;
+  }
+
+  .phase41-status-workbench .phase41-fact-pills {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 16px;
+    overflow: visible;
+  }
+
+  .phase41-status-workbench .phase41-fact-pills > div {
+    width: auto;
+    min-height: 44px;
+    display: grid;
+    align-content: center;
+    gap: 2px;
+    padding: 7px 0;
+    border: 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+    border-radius: 0;
+  }
+
+  .phase41-status-workbench .phase41-fact-pills dt,
+  .phase41-status-workbench .phase41-fact-pills dd {
+    white-space: normal;
+  }
+
+  @media (min-width: 1181px) {
+    .phase41-status-workbench .phase41-inspector {
+      align-content: start;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+
+    .phase41-status-workbench .phase41-inspector-section p {
+      display: block;
+      overflow: visible;
+      line-clamp: unset;
+      -webkit-line-clamp: unset;
+    }
+
+    .phase41-status-workbench .phase41-inspector-section li:nth-child(n + 3) {
+      display: list-item;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .task-detail-modal-body {
+      padding: 14px 16px 18px;
+    }
+
+    .task-detail-fact-grid,
+    .task-detail-section-grid,
+    .phase41-status-workbench .phase41-fact-pills {
+      grid-template-columns: 1fr;
+    }
+
+    .task-detail-panel,
+    .task-detail-panel:nth-child(odd),
+    .task-detail-panel:nth-child(even),
+    .task-detail-panel:nth-child(-n + 2) {
+      padding: 12px 0;
+      border-left: 0;
+      border-bottom: 1px solid rgba(116, 139, 156, 0.18);
+    }
+
+    .task-detail-section-heading {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .task-detail-modal-actions {
+      width: 100%;
+    }
+
+    .task-detail-modal-actions .wa-admin-action {
+      flex: 1 1 0;
+      justify-content: center;
     }
   }
 </style>

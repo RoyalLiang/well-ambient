@@ -1,7 +1,7 @@
 package telemetry
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +15,7 @@ import (
 	"well-ambient/internal/db"
 	"well-ambient/internal/delivery"
 	"well-ambient/internal/kanban"
+	providerllm "well-ambient/internal/llm"
 )
 
 type GitLabUser struct {
@@ -139,6 +140,14 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 		if taskID == "" {
 			taskID = ExtractTaskID(lastCommit)
 		}
+		if taskID == "" {
+			for _, commit := range payload.Commits {
+				if taskID = ExtractTaskID(commit.Message); taskID != "" {
+					break
+				}
+			}
+		}
+		taskID = resolveCanonicalTaskID(taskID)
 
 		// AI Semantic Linker fallback if taskID is not specified
 		if taskID == "" && cfg.AI.Enabled && db.DB != nil {
@@ -163,6 +172,8 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 				cTaskID := ExtractTaskID(cMsg)
 				if cTaskID == "" {
 					cTaskID = taskID
+				} else {
+					cTaskID = resolveCanonicalTaskID(cTaskID)
 				}
 				commitLog := db.GitCommitLog{
 					TaskID:    cTaskID,
@@ -215,6 +226,9 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			if OnNotificationBroadcast != nil {
 				OnNotificationBroadcast()
 			}
+			if OnTelemetryBroadcast != nil {
+				OnTelemetryBroadcast(taskID)
+			}
 		}
 	} else if event == "Merge Request Hook" {
 		var payload MergeRequestHookPayload
@@ -254,6 +268,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 		if taskID == "" {
 			taskID = ExtractTaskID(lastCommit)
 		}
+		taskID = resolveCanonicalTaskID(taskID)
 
 		// AI Semantic Linker fallback if taskID is not specified
 		if taskID == "" && cfg.AI.Enabled && db.DB != nil {
@@ -306,6 +321,9 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			db.DB.Create(&notif)
 			if OnNotificationBroadcast != nil {
 				OnNotificationBroadcast()
+			}
+			if OnTelemetryBroadcast != nil {
+				OnTelemetryBroadcast(taskID)
 			}
 
 			// Launch AI Contextual MR Reviewer in background
@@ -404,6 +422,17 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 		taskCreatedAt = time.Now()
 		issueType = "task" // default for local git telemetry tasks
 	}
+	source := strings.TrimSpace(existing.Source)
+	if source == "" && existing.TaskID == "" {
+		source = "git"
+	}
+	assignee := assigneeName
+	if existing.TaskID != "" && strings.EqualFold(source, "jira") && strings.TrimSpace(existing.Assignee) != "" {
+		// Git authors are evidence actors, not the owner of the canonical Jira work item.
+		// Keep Jira responsibility stable so core-member visibility and owner filters do
+		// not hide an otherwise correctly linked commit.
+		assignee = existing.Assignee
+	}
 
 	var completedAt *time.Time
 	if status == "done" {
@@ -417,10 +446,16 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 
 	telemetry := db.TaskTelemetry{
 		TaskID:            taskID,
+		ProjectKey:        existing.ProjectKey,
+		Source:            source,
+		ExternalKey:       existing.ExternalKey,
+		ParentWorkItemID:  existing.ParentWorkItemID,
+		Revision:          existing.Revision,
+		PlanningState:     existing.PlanningState,
 		Title:             taskTitle,
 		Description:       existing.Description,
 		Repo:              repoName,
-		Assignee:          assigneeName,
+		Assignee:          assignee,
 		Creator:           creator,
 		CreatorDept:       creatorDept,
 		Branch:            branchName,
@@ -457,6 +492,43 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 	SyncStatusToJira(cfg, telemetry.TaskID, telemetry.Status)
 
 	return nil
+}
+
+func resolveCanonicalTaskID(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || db.DB == nil {
+		return taskID
+	}
+
+	variants := []string{taskID}
+	for _, variant := range []string{strings.ToUpper(taskID), strings.ToLower(taskID)} {
+		alreadyIncluded := false
+		for _, existing := range variants {
+			if variant == existing {
+				alreadyIncluded = true
+				break
+			}
+		}
+		if !alreadyIncluded {
+			variants = append(variants, variant)
+		}
+	}
+
+	var candidates []db.TaskTelemetry
+	if err := db.DB.Where("task_id IN ?", variants).Find(&candidates).Error; err != nil {
+		return taskID
+	}
+	for _, candidate := range candidates {
+		if strings.EqualFold(candidate.TaskID, taskID) && (candidate.Source == "jira" || candidate.ExternalKey != "") {
+			return candidate.TaskID
+		}
+	}
+	for _, candidate := range candidates {
+		if strings.EqualFold(candidate.TaskID, taskID) {
+			return candidate.TaskID
+		}
+	}
+	return taskID
 }
 
 func reconcileAutonomousExecutionMR(branchName, mrURL, action, state string) {
@@ -565,6 +637,9 @@ func SyncStatusToJira(cfg *config.Config, taskID string, newStatus string) {
 
 // OnNotificationBroadcast is a callback function configured by the server package to broadcast events via SSE
 var OnNotificationBroadcast func()
+
+// OnTelemetryBroadcast notifies open task evidence views after Git evidence is persisted.
+var OnTelemetryBroadcast func(taskID string)
 
 // trySemanticLink matches an untracked commit/branch to an active Jira task via LLM semantic analysis
 func trySemanticLink(cfg *config.Config, branchName, lastCommit, repoName, assigneeName string) string {
@@ -710,139 +785,17 @@ MR 标题: %s
 	log.Printf("AI MR Review: successfully generated and saved code review report for %s", taskID)
 }
 
-// queryLLM contacts OpenAI compatible endpoint configured in Config
+// queryLLM contacts the configured Responses or Claude Messages endpoint.
 func queryLLM(cfg *config.Config, systemPrompt, userPrompt string) (string, error) {
 	if !cfg.AI.Enabled || cfg.AI.APIToken == "" || cfg.AI.BaseURL == "" {
 		return "", fmt.Errorf("AI configuration not enabled or missing credentials")
 	}
 
-	apiURL := cfg.AI.GetRealAPIURL()
-	endpointType := strings.ToLower(cfg.AI.EndpointType)
-	if endpointType == "" {
-		endpointType = "completions"
-	}
-
-	modelName := cfg.AI.Model
-	if modelName == "" {
-		modelName = "gpt-4o"
-	}
-
-	requestPayload := map[string]interface{}{
-		"model": modelName,
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
-		"temperature": 0.2,
-	}
-
-	reqBytes, err := json.Marshal(requestPayload)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBytes))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.AI.APIToken)
-
-	client := http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("LLM provider returned status code %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(strings.ToLower(contentType), "text/html") {
-		snippetLen := 300
-		if len(bodyBytes) < snippetLen {
-			snippetLen = len(bodyBytes)
-		}
-		return "", fmt.Errorf("LLM provider returned HTML response instead of JSON. Check your API URL: %s", string(bodyBytes[:snippetLen]))
-	}
-
-	var rawContent string
-	if endpointType == "responses" {
-		var responsesResp struct {
-			Output []struct {
-				Type    string `json:"type"`
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal(bodyBytes, &responsesResp); err != nil {
-			// 尝试用 chatCompletion 格式做二次反序列化（防止网关自作聪明在协议之间做隐式映射）
-			var chatCompletion struct {
-				Choices []struct {
-					Message struct {
-						Content string `json:"content"`
-					} `json:"message"`
-				} `json:"choices"`
-			}
-			if err2 := json.Unmarshal(bodyBytes, &chatCompletion); err2 == nil && len(chatCompletion.Choices) > 0 {
-				rawContent = chatCompletion.Choices[0].Message.Content
-			} else {
-				snippetLen := 300
-				if len(bodyBytes) < snippetLen {
-					snippetLen = len(bodyBytes)
-				}
-				snippet := string(bodyBytes[:snippetLen])
-				return "", fmt.Errorf("failed to decode JSON response from Responses API: %v. Raw snippet: %s", err, snippet)
-			}
-		} else {
-			for _, item := range responsesResp.Output {
-				if item.Type == "message" {
-					for _, c := range item.Content {
-						if c.Type == "text" && c.Text != "" {
-							rawContent += c.Text
-						}
-					}
-				}
-			}
-		}
-	} else {
-		var chatCompletion struct {
-			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(bodyBytes, &chatCompletion); err != nil {
-			snippetLen := 300
-			if len(bodyBytes) < snippetLen {
-				snippetLen = len(bodyBytes)
-			}
-			snippet := string(bodyBytes[:snippetLen])
-			if strings.Contains(strings.ToLower(snippet), "<html") || strings.Contains(strings.ToLower(snippet), "<!doctype") {
-				return "", fmt.Errorf("LLM provider returned HTML page. Check API URL. Content: %s", snippet)
-			}
-			return "", fmt.Errorf("failed to decode JSON response: %v. Raw snippet: %s", err, snippet)
-		}
-		if len(chatCompletion.Choices) > 0 {
-			rawContent = chatCompletion.Choices[0].Message.Content
-		}
-	}
-
-	if rawContent == "" {
-		return "", fmt.Errorf("LLM returned empty output")
-	}
-
-	return rawContent, nil
+	client := providerllm.Client{Config: cfg.AI}
+	return client.Generate(context.Background(), providerllm.Request{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+	})
 }
 
 // compressContext shortens input context text to prevent Token overflow

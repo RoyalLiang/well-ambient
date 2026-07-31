@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,7 +11,20 @@ import (
 	"strings"
 	"time"
 	"well-ambient/internal/config"
+	"well-ambient/internal/deliveryplanning"
 )
+
+type JiraVersion struct {
+	Self        string `json:"self"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ProjectID   int64  `json:"projectId"`
+	Archived    bool   `json:"archived"`
+	Released    bool   `json:"released"`
+	StartDate   string `json:"startDate"`
+	ReleaseDate string `json:"releaseDate"`
+}
 
 type JiraIssue struct {
 	Key    string `json:"key"`
@@ -33,6 +47,9 @@ type JiraIssue struct {
 			Key  string `json:"key"`
 			Name string `json:"name"`
 		} `json:"project"`
+		FixVersions []JiraVersion `json:"fixVersions"`
+		Versions    []JiraVersion `json:"versions"`
+		Updated     string        `json:"updated"`
 	} `json:"fields"`
 }
 
@@ -126,6 +143,202 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 	return allIssues, nil
 }
 
+func (jc *JiraClient) ListProjectReleases(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error) {
+	projectKey = deliveryplanning.NormalizeProjectKey(projectKey)
+	if projectKey == "" {
+		return nil, fmt.Errorf("project key is required")
+	}
+	req, err := jc.newRequest(
+		http.MethodGet,
+		fmt.Sprintf("/rest/api/2/project/%s/versions", url.PathEscape(projectKey)),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Jira release list failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var versions []JiraVersion
+	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
+		return nil, fmt.Errorf("decode Jira release list: %w", err)
+	}
+	releases := make([]deliveryplanning.ExternalRelease, 0, len(versions))
+	for _, version := range versions {
+		startDate, err := parseJiraDate(version.StartDate)
+		if err != nil {
+			return nil, fmt.Errorf("parse start date for Jira release %s: %w", version.ID, err)
+		}
+		releaseDate, err := parseJiraDate(version.ReleaseDate)
+		if err != nil {
+			return nil, fmt.Errorf("parse release date for Jira release %s: %w", version.ID, err)
+		}
+		status := deliveryplanning.ReleasePlanned
+		if version.Archived {
+			status = deliveryplanning.ReleaseArchived
+		} else if version.Released {
+			status = deliveryplanning.ReleaseReleased
+		}
+		releases = append(releases, deliveryplanning.ExternalRelease{
+			ProjectKey:  projectKey,
+			ExternalID:  strings.TrimSpace(version.ID),
+			Name:        strings.TrimSpace(version.Name),
+			Description: version.Description,
+			Status:      status,
+			StartDate:   startDate,
+			ReleaseDate: releaseDate,
+			SourceURL:   version.Self,
+		})
+	}
+	return releases, nil
+}
+
+func (jc *JiraClient) LoadIssueVersionState(ctx context.Context, issueKey string) (deliveryplanning.ExternalIssueVersionState, error) {
+	issueKey = strings.TrimSpace(issueKey)
+	if issueKey == "" {
+		return deliveryplanning.ExternalIssueVersionState{}, fmt.Errorf("issue key is required")
+	}
+	path := fmt.Sprintf(
+		"/rest/api/2/issue/%s?fields=project,issuetype,fixVersions,versions,updated",
+		url.PathEscape(issueKey),
+	)
+	req, err := jc.newRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return deliveryplanning.ExternalIssueVersionState{}, err
+	}
+	req = req.WithContext(ctx)
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return deliveryplanning.ExternalIssueVersionState{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return deliveryplanning.ExternalIssueVersionState{}, fmt.Errorf("Jira issue version load failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var issue JiraIssue
+	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
+		return deliveryplanning.ExternalIssueVersionState{}, fmt.Errorf("decode Jira issue version state: %w", err)
+	}
+	return JiraIssueVersionState(issue)
+}
+
+func JiraIssueVersionState(issue JiraIssue) (deliveryplanning.ExternalIssueVersionState, error) {
+	kind, err := deliveryplanning.NormalizeIssueType(issue.Fields.IssueType.Name)
+	if err != nil {
+		return deliveryplanning.ExternalIssueVersionState{}, err
+	}
+	updatedAt, err := parseJiraTimestamp(issue.Fields.Updated)
+	if err != nil {
+		return deliveryplanning.ExternalIssueVersionState{}, err
+	}
+	projectKey := deliveryplanning.NormalizeProjectKey(issue.Fields.Project.Key)
+	return deliveryplanning.ExternalIssueVersionState{
+		IssueKey:         issue.Key,
+		ProjectKey:       projectKey,
+		Kind:             kind,
+		UpdatedAt:        updatedAt,
+		TargetReleases:   jiraVersionsToExternal(projectKey, issue.Fields.FixVersions),
+		AffectedReleases: jiraVersionsToExternal(projectKey, issue.Fields.Versions),
+	}, nil
+}
+
+func (jc *JiraClient) UpdateIssueVersionState(ctx context.Context, command deliveryplanning.IssueVersionUpdate) error {
+	issueKey := strings.TrimSpace(command.IssueKey)
+	if issueKey == "" {
+		return fmt.Errorf("issue key is required")
+	}
+	versionRefs := func(ids []string) []map[string]string {
+		refs := make([]map[string]string, 0, len(ids))
+		for _, id := range ids {
+			if id = strings.TrimSpace(id); id != "" {
+				refs = append(refs, map[string]string{"id": id})
+			}
+		}
+		return refs
+	}
+	payload := map[string]any{"fields": map[string]any{
+		"fixVersions": versionRefs(command.TargetExternalIDs),
+		"versions":    versionRefs(command.AffectedExternalIDs),
+	}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := jc.newRequest(http.MethodPut, "/rest/api/2/issue/"+url.PathEscape(issueKey), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req = req.WithContext(ctx)
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira issue version update failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
+func parseJiraDate(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func parseJiraTimestamp(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.000-0700"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("parse Jira timestamp %q", value)
+}
+
+func jiraVersionsToExternal(projectKey string, versions []JiraVersion) []deliveryplanning.ExternalRelease {
+	releases := make([]deliveryplanning.ExternalRelease, 0, len(versions))
+	for _, version := range versions {
+		status := deliveryplanning.ReleasePlanned
+		if version.Archived {
+			status = deliveryplanning.ReleaseArchived
+		} else if version.Released {
+			status = deliveryplanning.ReleaseReleased
+		}
+		startDate, _ := parseJiraDate(version.StartDate)
+		releaseDate, _ := parseJiraDate(version.ReleaseDate)
+		releases = append(releases, deliveryplanning.ExternalRelease{
+			ProjectKey:  projectKey,
+			ExternalID:  version.ID,
+			Name:        version.Name,
+			Description: version.Description,
+			Status:      status,
+			StartDate:   startDate,
+			ReleaseDate: releaseDate,
+			SourceURL:   version.Self,
+		})
+	}
+	return releases
+}
+
 func (jc *JiraClient) GetTransitions(issueKey string) ([]JiraTransition, error) {
 	path := fmt.Sprintf("/rest/api/2/issue/%s/transitions", issueKey)
 	req, err := jc.newRequest("GET", path, nil)
@@ -217,6 +430,55 @@ func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error
 	return nil
 }
 
+func (jc *JiraClient) UpdateDueDate(issueKey, dueDate string) error {
+	payload := map[string]interface{}{
+		"fields": map[string]string{
+			"duedate": dueDate,
+		},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := jc.newRequest(http.MethodPut, fmt.Sprintf("/rest/api/2/issue/%s", issueKey), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira due date update failed with status %s: %s", resp.Status, string(respBytes))
+	}
+	return nil
+}
+
+func (jc *JiraClient) AddComment(issueKey, body string) error {
+	bodyBytes, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return err
+	}
+	req, err := jc.newRequest(http.MethodPost, fmt.Sprintf("/rest/api/2/issue/%s/comment", issueKey), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira comment creation failed with status %s: %s", resp.Status, string(respBytes))
+	}
+	return nil
+}
+
 type JiraComment struct {
 	ID     string `json:"id"`
 	Author struct {
@@ -255,5 +517,3 @@ func (jc *JiraClient) GetComments(issueKey string) ([]JiraComment, error) {
 
 	return res.Comments, nil
 }
-
-

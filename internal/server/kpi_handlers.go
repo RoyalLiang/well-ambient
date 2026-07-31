@@ -13,20 +13,26 @@ import (
 )
 
 type UserKPIDTO struct {
-	Username         string   `json:"username"`
-	Name             string   `json:"name"`
-	Avatar           string   `json:"avatar"`
-	Department       string   `json:"department"`
-	TasksCompleted   int      `json:"tasks_completed"`
-	BugsCompleted    int      `json:"bugs_completed"`
-	DemandsCompleted int      `json:"demands_completed"`
-	TotalCompleted   int      `json:"total_completed"`
-	OverdueCompleted int      `json:"overdue_completed"`
-	ActiveOverdue    int      `json:"active_overdue"`
-	AvgCycleDays     float64  `json:"avg_cycle_days"`
-	ReviewCount      int      `json:"review_count"`
-	MRCount          int      `json:"mr_count"`
-	RiskNotes        []string `json:"risk_notes"`
+	Username             string   `json:"username"`
+	Name                 string   `json:"name"`
+	Avatar               string   `json:"avatar"`
+	Department           string   `json:"department"`
+	TasksCompleted       int      `json:"tasks_completed"`
+	BugsCompleted        int      `json:"bugs_completed"`
+	DemandsCompleted     int      `json:"demands_completed"`
+	TotalCompleted       int      `json:"total_completed"`
+	OverdueCompleted     int      `json:"overdue_completed"`
+	ActiveOverdue        int      `json:"active_overdue"`
+	AvgCycleDays         float64  `json:"avg_cycle_days"`
+	ReviewCount          int      `json:"review_count"`
+	MRCount              int      `json:"mr_count"`
+	RiskNotes            []string `json:"risk_notes"`
+	TaskCount            int      `json:"task_count"`
+	BugCount             int      `json:"bug_count"`
+	DelayRatio           float64  `json:"delay_ratio"`
+	RequirementBaseScore float64  `json:"requirement_base_score"`
+	ScoredItemCount      int      `json:"scored_item_count"`
+	ManualScoreCount     int      `json:"manual_score_count"`
 }
 
 type DeptKPIDTO struct {
@@ -164,6 +170,12 @@ type kpiAssigneeStats struct {
 	cycleDaysTotal   float64
 	cycleCount       int
 	isLinked         bool
+	taskCount        int
+	bugCount         int
+	baseScoreTotal   float64
+	scoredItemCount  int
+	manualScoreCount int
+	delayedWorkItems int
 }
 
 type kpiEvidenceBundle struct {
@@ -439,6 +451,7 @@ func buildKPIPerformanceResponse(period string, completedTasks, activeTasks []db
 	var totalTasks, totalBugs, totalDemands, totalAll int
 	for _, task := range completedTasks {
 		stat := ensureKPIStats(statsMap, directory.resolve(task.Assignee))
+		accumulateKPIWorkProfile(stat, task, now)
 
 		switch strings.ToLower(strings.TrimSpace(task.IssueType)) {
 		case "bug":
@@ -468,6 +481,7 @@ func buildKPIPerformanceResponse(period string, completedTasks, activeTasks []db
 
 	for _, task := range activeTasks {
 		stat := ensureKPIStats(statsMap, directory.resolve(task.Assignee))
+		accumulateKPIWorkProfile(stat, task, now)
 		if isActiveOverdue(task, now) {
 			stat.activeOverdue++
 		}
@@ -489,21 +503,36 @@ func buildKPIPerformanceResponse(period string, completedTasks, activeTasks []db
 		}
 
 		if stat.total > 0 || stat.activeOverdue > 0 || stat.reviewCount > 0 || stat.mrCount > 0 {
+			delayRatio := 0.0
+			workItemCount := stat.taskCount + stat.bugCount
+			if workItemCount > 0 {
+				delayRatio = roundOneDecimal(float64(stat.delayedWorkItems) * 100 / float64(workItemCount))
+			}
+			baseScore := 60.0
+			if stat.scoredItemCount > 0 {
+				baseScore = roundOneDecimal(stat.baseScoreTotal / float64(stat.scoredItemCount))
+			}
 			userKPIList = append(userKPIList, UserKPIDTO{
-				Username:         stat.username,
-				Name:             stat.name,
-				Avatar:           stat.avatar,
-				Department:       dept,
-				TasksCompleted:   stat.tasks,
-				BugsCompleted:    stat.bugs,
-				DemandsCompleted: stat.demands,
-				TotalCompleted:   stat.total,
-				OverdueCompleted: stat.overdueCompleted,
-				ActiveOverdue:    stat.activeOverdue,
-				AvgCycleDays:     avgCycleDays,
-				ReviewCount:      stat.reviewCount,
-				MRCount:          stat.mrCount,
-				RiskNotes:        buildUserRiskNotes(stat, avgCycleDays),
+				Username:             stat.username,
+				Name:                 stat.name,
+				Avatar:               stat.avatar,
+				Department:           dept,
+				TasksCompleted:       stat.tasks,
+				BugsCompleted:        stat.bugs,
+				DemandsCompleted:     stat.demands,
+				TotalCompleted:       stat.total,
+				OverdueCompleted:     stat.overdueCompleted,
+				ActiveOverdue:        stat.activeOverdue,
+				AvgCycleDays:         avgCycleDays,
+				ReviewCount:          stat.reviewCount,
+				MRCount:              stat.mrCount,
+				RiskNotes:            buildUserRiskNotes(stat, avgCycleDays),
+				TaskCount:            stat.taskCount,
+				BugCount:             stat.bugCount,
+				DelayRatio:           delayRatio,
+				RequirementBaseScore: baseScore,
+				ScoredItemCount:      stat.scoredItemCount,
+				ManualScoreCount:     stat.manualScoreCount,
 			})
 		}
 
@@ -549,6 +578,56 @@ func buildKPIPerformanceResponse(period string, completedTasks, activeTasks []db
 		UserKPI:       userKPIList,
 		DepartmentKPI: deptKPIList,
 	}
+}
+
+func accumulateKPIWorkProfile(stat *kpiAssigneeStats, task db.TaskTelemetry, now time.Time) {
+	if strings.EqualFold(strings.TrimSpace(task.IssueType), "demand") {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(task.IssueType), "bug") {
+		stat.bugCount++
+	} else {
+		stat.taskCount++
+	}
+	if isCompletedAfterDue(task) || isActiveOverdue(task, now) {
+		stat.delayedWorkItems++
+	}
+	if score, ok := requirementBaseScore(task); ok {
+		stat.baseScoreTotal += score
+		stat.scoredItemCount++
+		if strings.EqualFold(strings.TrimSpace(task.EstimateSource), "manual_adjusted") {
+			stat.manualScoreCount++
+		}
+	}
+}
+
+func requirementBaseScore(task db.TaskTelemetry) (float64, bool) {
+	difficulty := strings.ToLower(strings.TrimSpace(task.Difficulty))
+	if difficulty == "" && task.EstimateDays <= 0 && task.EstimateHours <= 0 {
+		return 0, false
+	}
+	score := 60.0
+	switch difficulty {
+	case "high":
+		score = 90
+	case "medium":
+		score = 75
+	case "low":
+		score = 60
+	default:
+		days := task.EstimateDays
+		if days <= 0 && task.EstimateHours > 0 {
+			days = task.EstimateHours / 8
+		}
+		if days >= 5 {
+			score = 88
+		} else if days >= 3 {
+			score = 76
+		} else if days >= 1 {
+			score = 64
+		}
+	}
+	return score, true
 }
 
 func buildKPIReportPreview(window kpiPeriodWindow, reportType, userFilter string, performance KPIPerformanceResponse, completedTasks, activeTasks []db.TaskTelemetry, users []userdb.User, now time.Time) KPIReportPreviewResponse {
@@ -615,11 +694,28 @@ func addUserDirectoryKey(userMap map[string]userdb.User, key string, user userdb
 		return
 	}
 	userMap[key] = user
+	if alias := kpiUserDirectoryAliasKey(key); alias != "" && alias != key {
+		if _, exists := userMap[alias]; !exists {
+			userMap[alias] = user
+		}
+	}
+}
+
+func kpiUserDirectoryAliasKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if idx := strings.Index(value, "@"); idx != -1 {
+		value = value[:idx]
+	}
+	replacer := strings.NewReplacer(".", "", "_", "", "-", "", " ", "")
+	return replacer.Replace(value)
 }
 
 func (d kpiUserDirectory) resolve(assignee string) kpiAssigneeIdentity {
 	assignee = normalizeAssignee(assignee)
 	if u, ok := d.byKey[strings.ToLower(assignee)]; ok {
+		return kpiIdentityFromUser(u)
+	}
+	if u, ok := d.byKey[kpiUserDirectoryAliasKey(assignee)]; ok {
 		return kpiIdentityFromUser(u)
 	}
 	return kpiAssigneeIdentity{

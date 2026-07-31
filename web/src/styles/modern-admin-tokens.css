@@ -3,44 +3,73 @@
   --wa-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --wa-font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
 
-  --wa-bg-base: #eef4f7;
-  --wa-bg-page: #eef4f7;
+  --wa-bg-base: #e4edf2;
+  --wa-bg-page: #e8f0f4;
   --wa-bg-main: #f8fbfd;
+  --wa-bg-ambient:
+    radial-gradient(circle at 18% 8%, rgba(113, 226, 209, 0.16), transparent 30%),
+    radial-gradient(circle at 88% 94%, rgba(0, 47, 167, 0.075), transparent 32%);
   --wa-bg-rail: #020b13;
   --wa-bg-rail-soft: #051625;
   --wa-chrome-0: rgba(255, 255, 255, 0.96);
   --wa-chrome-1: rgba(255, 255, 255, 0.88);
   --wa-chrome-2: rgba(248, 251, 254, 0.8);
   --wa-surface-flat: #ffffff;
+  --wa-surface-panel: #fbfdff;
   --wa-surface-raised: rgba(255, 255, 255, 0.9);
   --wa-surface-inset: #f5f8fb;
   --wa-surface-lift: rgba(255, 255, 255, 0.68);
+  --wa-surface-overlay: #fbfdff;
+  --wa-glass-panel: rgba(250, 253, 255, 0.76);
+  --wa-glass-panel-strong: rgba(252, 254, 255, 0.88);
+  --wa-glass-outline: rgba(72, 98, 118, 0.18);
+  --wa-glass-highlight: rgba(255, 255, 255, 0.82);
   --wa-row-hover: #f2f8fb;
-  --wa-row-active: rgba(0, 143, 150, 0.1);
+  --wa-row-active: rgba(1, 139, 141, 0.1);
   --wa-border-soft: rgba(123, 143, 160, 0.18);
+  --wa-border-divider: rgba(123, 143, 160, 0.18);
+  --wa-border-panel: rgba(85, 106, 128, 0.26);
   --wa-border-strong: rgba(85, 106, 128, 0.32);
-  --wa-border-focus: rgba(0, 143, 150, 0.86);
+  --wa-border-focus: rgba(1, 139, 141, 0.86);
 
   --wa-text-strong: #0d1722;
   --wa-text-main: #293847;
-  --wa-text-muted: #667789;
+  --wa-text-muted: #556a80;
   --wa-text-subtle: #8a99aa;
   --wa-rail-text-strong: #f6fbff;
   --wa-rail-text-main: #d4e5f2;
   --wa-rail-text-muted: #87a0b7;
 
-  --wa-accent: #008f96;
+  --wa-palette-success: #6ecc54;
+  --wa-palette-danger-soft: #d34947;
+  --wa-palette-primary: #018b8d;
+  --wa-palette-info: #002fa7;
+  --wa-palette-plum: #470125;
+  --wa-palette-primary-soft: #71e2d1;
+  --wa-palette-danger: #c8161d;
+  --wa-palette-earth: #492d22;
+  --wa-palette-warning: #eb5c20;
+  --wa-palette-info-deep: #0d3a69;
+
+  --wa-accent: var(--wa-palette-primary);
   --wa-accent-strong: #006f76;
-  --wa-accent-soft: rgba(0, 143, 150, 0.12);
-  --wa-accent-ink: #ffffff;
-  --wa-success: #04966f;
-  --wa-success-soft: rgba(4, 150, 111, 0.12);
-  --wa-warning: #d88700;
-  --wa-warning-soft: rgba(216, 135, 0, 0.14);
-  --wa-danger: #dd4b3e;
-  --wa-danger-soft: rgba(221, 75, 62, 0.12);
-  --wa-info: #256bd8;
-  --wa-info-soft: rgba(37, 107, 216, 0.12);
+  --wa-accent-soft: rgba(113, 226, 209, 0.22);
+  --wa-accent-ink: #031219;
+  --wa-accent-fill: #006f76;
+  --wa-accent-fill-hover: #00545a;
+  --wa-accent-fill-ink: #f6fbff;
+  --wa-success: #2f742a;
+  --wa-success-fill: var(--wa-palette-success);
+  --wa-success-soft: rgba(110, 204, 84, 0.16);
+  --wa-warning: #a84012;
+  --wa-warning-fill: var(--wa-palette-warning);
+  --wa-warning-soft: rgba(235, 92, 32, 0.14);
+  --wa-danger: var(--wa-palette-danger);
+  --wa-danger-muted: var(--wa-palette-danger-soft);
+  --wa-danger-soft: rgba(211, 73, 71, 0.12);
+  --wa-info: var(--wa-palette-info);
+  --wa-info-strong: var(--wa-palette-info-deep);
+  --wa-info-soft: rgba(0, 47, 167, 0.1);
   --wa-neutral-soft: rgba(102, 119, 137, 0.1);
 
   --wa-space-1: 4px;
@@ -58,6 +87,7 @@
   --wa-radius-md: 10px;
   --wa-radius-lg: 14px;
   --wa-radius-xl: 18px;
+  --wa-radius-pill: 999px;
 
   --wa-control-h: 36px;
   --wa-touch-h: 44px;
@@ -66,8 +96,10 @@
 
   --wa-shadow-sm: 0 8px 18px rgba(30, 46, 64, 0.055);
   --wa-shadow-md: 0 14px 34px rgba(30, 46, 64, 0.085);
+  --wa-shadow-peer: 0 8px 24px rgba(30, 46, 64, 0.055);
+  --wa-shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085);
   --wa-shadow-panel: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 16px 42px rgba(30, 46, 64, 0.075);
-  --wa-shadow-glow: 0 0 0 1px rgba(0, 143, 150, 0.08), 0 14px 30px rgba(0, 143, 150, 0.1);
+  --wa-shadow-glow: 0 0 0 1px rgba(1, 139, 141, 0.08), 0 14px 30px rgba(1, 139, 141, 0.1);
 
   --wa-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --wa-duration-fast: 140ms;
@@ -76,19 +108,19 @@
 }
 
 html {
-  background: var(--wa-bg-page);
-  scrollbar-color: rgba(0, 143, 150, 0.4) rgba(121, 139, 159, 0.12);
+  background: var(--wa-bg-ambient), var(--wa-bg-page);
+  scrollbar-color: rgba(1, 139, 141, 0.4) rgba(121, 139, 159, 0.12);
 }
 
 body {
-  background: var(--wa-bg-page);
+  background: var(--wa-bg-ambient), var(--wa-bg-page);
   color: var(--wa-text-main);
   font-family: var(--wa-font-sans);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(0, 143, 150, 0.38) rgba(121, 139, 159, 0.1);
+  scrollbar-color: rgba(1, 139, 141, 0.38) rgba(121, 139, 159, 0.1);
 }
 
 *::-webkit-scrollbar {
@@ -105,11 +137,11 @@ body {
   min-height: 44px;
   border: 2px solid rgba(255, 255, 255, 0.72);
   border-radius: 999px;
-  background: rgba(0, 143, 150, 0.36);
+  background: rgba(1, 139, 141, 0.36);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 143, 150, 0.54);
+  background: rgba(1, 139, 141, 0.54);
 }
 
 .wa-icon {
@@ -176,8 +208,8 @@ body {
   background: var(--wa-chrome-1);
   border: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: var(--wa-shadow-panel);
-  backdrop-filter: blur(18px) saturate(132%);
   -webkit-backdrop-filter: blur(18px) saturate(132%);
+  backdrop-filter: blur(18px) saturate(132%);
 }
 
 .wa-glass::after {
@@ -191,18 +223,21 @@ body {
 
 .wa-panel,
 .wa-admin-card {
-  background: var(--wa-chrome-1);
-  border: 1px solid var(--wa-border-soft);
-  border-radius: var(--wa-radius-xl);
-  box-shadow: var(--wa-shadow-panel);
-  backdrop-filter: blur(16px) saturate(124%);
-  -webkit-backdrop-filter: blur(16px) saturate(124%);
+  background: var(--wa-glass-panel);
+  border: 1px solid var(--wa-glass-outline);
+  border-top-color: var(--wa-glass-highlight);
+  border-radius: var(--wa-radius-lg);
+  background-clip: padding-box;
+  isolation: isolate;
+  box-shadow: var(--wa-shadow-glass);
+  -webkit-backdrop-filter: blur(16px) saturate(128%);
+  backdrop-filter: blur(16px) saturate(128%);
 }
 
 .wa-control {
   min-height: var(--wa-control-h);
   border: 1px solid var(--wa-border-soft);
-  border-radius: var(--wa-radius-md);
+  border-radius: var(--wa-radius-pill);
   background: rgba(255, 255, 255, 0.76);
   color: var(--wa-text-main);
   transition:
@@ -240,7 +275,13 @@ input[type="email"],
 input[type="password"],
 input[type="number"],
 input[type="date"],
-select,
+select {
+  border: 1px solid var(--wa-border-soft);
+  border-radius: var(--wa-radius-pill);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--wa-text-main);
+}
+
 textarea {
   border: 1px solid var(--wa-border-soft);
   border-radius: var(--wa-radius-md);
@@ -294,17 +335,7 @@ input[type="checkbox"] {
 }
 
 .wa-grain::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.34;
-  background:
-    linear-gradient(90deg, rgba(0, 143, 150, 0.04) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(0, 143, 150, 0.035) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.42), transparent 72%);
+  display: none;
 }
 
 .wa-focus-ring:focus-visible {
@@ -327,7 +358,13 @@ input[type="checkbox"] {
   gap: var(--wa-space-3);
   padding: var(--wa-space-3) var(--wa-space-4);
   border-radius: var(--wa-radius-xl);
-  background: var(--wa-surface-raised);
+  background: transparent;
+  background-clip: padding-box;
+  isolation: isolate;
+}
+
+.wa-admin-card.wa-admin-toolbar {
+  background: var(--wa-glass-panel-strong);
 }
 
 .wa-admin-metric {
@@ -359,8 +396,10 @@ input[type="checkbox"] {
   overflow: auto;
   border: 1px solid var(--wa-border-soft);
   border-radius: var(--wa-radius-xl);
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  background: rgba(250, 253, 255, 0.58);
+  background-clip: padding-box;
+  isolation: isolate;
+  box-shadow: none;
   scrollbar-color: rgba(0, 143, 150, 0.4) rgba(121, 139, 159, 0.12);
 }
 
@@ -429,8 +468,8 @@ input[type="checkbox"] {
   min-height: 24px;
   padding: 0 8px;
   border: 1px solid var(--wa-border-soft);
-  border-radius: var(--wa-radius-sm);
-  background: var(--wa-neutral-soft);
+  border-radius: var(--wa-radius-pill);
+  background: rgba(255, 255, 255, 0.66);
   color: var(--wa-text-main);
   font-size: 12px;
   line-height: 1;
@@ -439,35 +478,35 @@ input[type="checkbox"] {
 }
 
 .wa-admin-pill.tone-success,
-.tone-success {
+.tone-success:not(.wa-admin-card):not(.wa-panel) {
   border-color: rgba(4, 150, 111, 0.2);
   background: var(--wa-success-soft);
   color: var(--wa-success);
 }
 
 .wa-admin-pill.tone-warning,
-.tone-warning {
+.tone-warning:not(.wa-admin-card):not(.wa-panel) {
   border-color: rgba(216, 135, 0, 0.22);
   background: var(--wa-warning-soft);
   color: var(--wa-warning);
 }
 
 .wa-admin-pill.tone-danger,
-.tone-danger {
+.tone-danger:not(.wa-admin-card):not(.wa-panel) {
   border-color: rgba(221, 75, 62, 0.22);
   background: var(--wa-danger-soft);
   color: var(--wa-danger);
 }
 
 .wa-admin-pill.tone-info,
-.tone-info {
+.tone-info:not(.wa-admin-card):not(.wa-panel) {
   border-color: rgba(37, 107, 216, 0.22);
   background: var(--wa-info-soft);
   color: var(--wa-info);
 }
 
 .wa-admin-pill.tone-neutral,
-.tone-neutral {
+.tone-neutral:not(.wa-admin-card):not(.wa-panel) {
   border-color: var(--wa-border-soft);
   background: var(--wa-neutral-soft);
   color: var(--wa-text-muted);
@@ -481,7 +520,7 @@ input[type="checkbox"] {
   gap: var(--wa-space-2);
   padding: 0 14px;
   border: 1px solid var(--wa-border-soft);
-  border-radius: var(--wa-radius-md);
+  border-radius: var(--wa-radius-pill);
   background: rgba(255, 255, 255, 0.76);
   color: var(--wa-text-main);
   font: inherit;
@@ -512,15 +551,16 @@ input[type="checkbox"] {
 }
 
 .wa-admin-action.primary {
-  border-color: var(--wa-accent);
-  background: var(--wa-accent);
-  color: var(--wa-accent-ink);
-  box-shadow: 0 10px 24px rgba(0, 143, 150, 0.18);
+  border-color: var(--wa-accent-fill);
+  background: var(--wa-accent-fill);
+  color: var(--wa-accent-fill-ink);
+  box-shadow: 0 10px 24px rgba(1, 139, 141, 0.18);
 }
 
 .wa-admin-action.primary:hover {
-  background: var(--wa-accent-strong);
-  border-color: var(--wa-accent-strong);
+  background: var(--wa-accent-fill-hover);
+  border-color: var(--wa-accent-fill-hover);
+  color: var(--wa-accent-fill-ink);
 }
 
 .wa-admin-action.secondary {
@@ -563,7 +603,7 @@ input[type="checkbox"] {
 .dropdown-trigger-input,
 .select-trigger {
   border-color: var(--wa-border-soft);
-  border-radius: var(--wa-radius-md);
+  border-radius: var(--wa-radius-pill);
   background: rgba(255, 255, 255, 0.84);
   color: var(--wa-text-main);
   box-shadow: none;
@@ -589,8 +629,30 @@ input[type="checkbox"] {
   border-radius: var(--wa-radius-lg);
   background: rgba(255, 255, 255, 0.96);
   box-shadow: 0 20px 48px rgba(26, 41, 58, 0.15);
-  backdrop-filter: blur(18px) saturate(124%);
   -webkit-backdrop-filter: blur(18px) saturate(124%);
+  backdrop-filter: blur(18px) saturate(124%);
+}
+
+/* Listboxes remain scrollable, but their short-lived internal rails stay visually quiet. */
+.dropdown-options-list,
+.custom-select-options,
+.custom-dropdown-options,
+.select-options,
+.multi-select-options,
+[role="listbox"] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.dropdown-options-list::-webkit-scrollbar,
+.custom-select-options::-webkit-scrollbar,
+.custom-dropdown-options::-webkit-scrollbar,
+.select-options::-webkit-scrollbar,
+.multi-select-options::-webkit-scrollbar,
+[role="listbox"]::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .dropdown-option-item,
@@ -709,9 +771,9 @@ input[type="checkbox"] {
 }
 
 .date-cell.selected {
-  border-color: var(--wa-accent);
-  background: var(--wa-accent);
-  color: var(--wa-accent-ink);
+  border-color: var(--wa-accent-fill);
+  background: var(--wa-accent-fill);
+  color: var(--wa-accent-fill-ink);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -722,5 +784,18 @@ input[type="checkbox"] {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .wa-glass,
+  .wa-panel,
+  .wa-admin-card,
+  .dropdown-options-list,
+  .custom-select-options,
+  .select-dropdown {
+    background: var(--wa-surface-overlay);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }

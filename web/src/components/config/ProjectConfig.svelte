@@ -5,6 +5,7 @@
   import Alert from '../shared/Alert.svelte';
   import Select from '../shared/Select.svelte';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
+  import { fetchDeliveryDirectory } from '../../lib/delivery-directory';
 
   const phaseOptions = [
     { value: 'POC', label: 'POC' },
@@ -83,36 +84,13 @@
   });
 
   async function fetchJiraProjectMap() {
-    const token = localStorage.getItem('jwt_token');
     try {
-      const res = await fetch('/api/agenda/summary', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const items = data.agenda_items || [];
-        const newMap: {[key: string]: string} = data.project_map || {};
-        
-        if (Object.keys(newMap).length === 0) {
-          items.forEach((item: any) => {
-            if (item.repo) {
-              const repoStr = item.repo.trim();
-              const lastOpenParen = repoStr.lastIndexOf('(');
-              const lastCloseParen = repoStr.lastIndexOf(')');
-              if (lastOpenParen > 0 && lastCloseParen > lastOpenParen) {
-                const key = repoStr.substring(lastOpenParen + 1, lastCloseParen).trim().toUpperCase();
-                const name = repoStr.substring(0, lastOpenParen).trim();
-                if (key && name) {
-                  newMap[key] = name;
-                }
-              }
-            }
-          });
-        }
-        jiraProjectMap = newMap;
-      }
+      const directory = await fetchDeliveryDirectory();
+      jiraProjectMap = Object.fromEntries(
+        directory.projects.map((project) => [project.project_key, project.project_name || project.project_key])
+      );
     } catch (err) {
-      console.error('Failed to fetch agenda summary for project autocomplete:', err);
+      console.error('Failed to fetch shared project directory for project autocomplete:', err);
     }
   }
 

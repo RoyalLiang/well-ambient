@@ -1,20 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CryptoJS from 'crypto-js';
-  import DecisionDashboard from './components/DecisionDashboard.svelte';
-  import DemandKanban from './components/DemandKanban.svelte';
-  import ProjectHealthTelemetry from './components/ProjectHealthTelemetry.svelte';
-  import Deconstructor from './components/Deconstructor.svelte';
+  import DecisionCenter from './components/DecisionCenter.svelte';
+  import DecisionEventCenter from './components/DecisionEventCenter.svelte';
+  import DeliveryPlan from './components/DeliveryPlan.svelte';
+  import InsightsWorkspace from './components/InsightsWorkspace.svelte';
+  import ProjectBoard from './components/ProjectBoard.svelte';
   import TaskKanban from './components/TaskKanban.svelte';
-  import KPIKanban from './components/KPIKanban.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
   import FunctionalAdminShell from './components/prototype/FunctionalAdminShell.svelte';
   import FunctionalWorkspace from './components/prototype/FunctionalWorkspace.svelte';
+  import {
+    SETTINGS_ROUTE_PERMISSIONS,
+    canAccessSettingsSection as hasSettingsSectionAccess,
+    firstAccessibleSettingsSection as selectFirstAccessibleSettingsSection,
+    isSettingsSection,
+    type SettingsSection
+  } from './lib/settings-sections';
 
   type AppTab = 'decision' | 'schedule' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
-  type SettingsSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context' | 'kpi' | 'users' | 'matrix' | 'policies' | 'audit';
-  type DemandView = 'board' | 'schedule';
+  type DecisionView = 'agenda' | 'daily_jira';
+  type DemandView = 'board' | 'schedule' | 'releases' | 'projects';
+  type TaskView = 'status' | 'execution';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
 
@@ -39,6 +47,17 @@
     tone?: SignalTone;
   }
 
+  interface WorkspaceDecisionEventSummary {
+    kind: 'automatic' | 'manual';
+    kindLabel: string;
+    taskId: string;
+    title: string;
+    message: string;
+    dateLabel: string;
+    timeLabel: string;
+    dateTime: string;
+  }
+
   const consoleTabs: AppTab[] = ['decision', 'schedule', 'evidence', 'tasks', 'kpi', 'settings'];
   const tabPermissions: Record<Exclude<AppTab, 'no_permission'>, string[]> = {
     decision: ['decision:read'],
@@ -46,24 +65,8 @@
     evidence: ['dashboard:read'],
     tasks: ['dashboard:read'],
     kpi: ['kpi:read'],
-    settings: ['config:read', 'users:read', 'kpi:read', 'ai_context:read']
+    settings: SETTINGS_ROUTE_PERMISSIONS
   };
-
-  const settingsSectionPermissions: Record<SettingsSection, string[]> = {
-    gitlab: ['config:read'],
-    feishu: ['config:read'],
-    jira: ['config:read'],
-    projects: ['config:read'],
-    ai: ['config:read'],
-    ai_context: ['ai_context:read', 'config:read'],
-    kpi: ['kpi:read'],
-    users: ['users:read'],
-    matrix: ['users:read'],
-    policies: ['users:read'],
-    audit: ['users:read']
-  };
-
-  const settingsSectionOrder: SettingsSection[] = ['gitlab', 'ai_context', 'kpi', 'users'];
 
   const workspacePresentations: Record<Exclude<AppTab, 'no_permission'>, WorkspacePresentation> = {
     decision: {
@@ -124,7 +127,7 @@
     settings: {
       kicker: 'CONTROL CENTER',
       title: '配置中心',
-      summary: '维护权限、项目、集成、KPI 权重和 AI 策略，所有治理规则从这里进入系统。',
+      summary: '维护权限、项目集成与 AI 策略，所有治理规则从这里进入系统。',
       statusLabel: '权限受控',
       tone: 'slate',
       actions: [
@@ -135,9 +138,13 @@
   };
 
   let activeTab: AppTab = 'decision';
+  let activeDecisionView: DecisionView = 'agenda';
   let activeSettingsSection: SettingsSection = 'gitlab';
   let activeDemandView: DemandView = 'schedule';
+  let activeTaskView: TaskView = 'status';
   let availableRoutes: AppTab[] = [];
+  let latestDecisionEventSummary: WorkspaceDecisionEventSummary | null = null;
+  let decisionTimelineDrawerRequest = 0;
 
   interface Alert {
     id: number;
@@ -250,16 +257,12 @@
     }
   }
 
-  function isSettingsSection(section: string): section is SettingsSection {
-    return section in settingsSectionPermissions;
-  }
-
   function canAccessSettingsSection(section: SettingsSection): boolean {
-    return settingsSectionPermissions[section].some((permission) => hasPermission(permission));
+    return hasSettingsSectionAccess(section, currentUserPermissions);
   }
 
   function firstAccessibleSettingsSection(): SettingsSection {
-    return settingsSectionOrder.find(canAccessSettingsSection) || 'gitlab';
+    return selectFirstAccessibleSettingsSection(currentUserPermissions);
   }
 
   $: availableRoutes = jwtToken && !permissionsHydrated ? consoleTabs : consoleTabs.filter(canAccessTab);
@@ -285,9 +288,13 @@
       tone: 'info'
     }
   ] satisfies WorkspaceSignal[];
-  $: workspaceBreadcrumbs = activeTab === 'schedule'
-    ? ['管理台', '排期治理', activeDemandView === 'board' ? '流转看板' : '排期看板']
-    : ['管理台', activeWorkspace.title];
+  $: workspaceBreadcrumbs = activeTab === 'decision'
+    ? ['管理台', '决策看板', activeDecisionView === 'daily_jira' ? '每日 Jira' : '决策事项']
+    : activeTab === 'schedule'
+      ? ['管理台', '排期治理', activeDemandView === 'board' ? '流转看板' : activeDemandView === 'projects' ? '项目看板' : activeDemandView === 'releases' ? '版本计划' : '排期看板']
+      : activeTab === 'tasks'
+        ? ['管理台', '任务跟踪', activeTaskView === 'status' ? '任务表' : '执行追踪']
+        : ['管理台', activeWorkspace.title];
   $: workspaceContextMeta = `未读遥测 ${activeAlerts.length}`;
 
   // Redirect to first available tab based on permissions
@@ -586,6 +593,35 @@
     activeTab = 'schedule';
   }
 
+  function handleDecisionNavigate(view: DecisionView) {
+    if (!hasPermission('decision:read')) return;
+    activeDecisionView = view;
+    activeTab = 'decision';
+  }
+
+  function handleDecisionTimelineSummary(event: CustomEvent<WorkspaceDecisionEventSummary | null>) {
+    latestDecisionEventSummary = event.detail;
+  }
+
+  function openDecisionTimelineDrawer() {
+    decisionTimelineDrawerRequest += 1;
+  }
+
+  function handleTaskNavigate(view: TaskView | string) {
+    if (!hasPermission('dashboard:read')) return;
+    activeTaskView = view === 'execution' ? 'execution' : 'status';
+    activeTab = 'tasks';
+  }
+
+  function openDeliveryPlan(_workItemID: string) {
+    activeDemandView = 'releases';
+    activeTab = 'schedule';
+  }
+
+  function handleProjectPreferencesChange(preference: { mode: string; project_keys: string[] }) {
+    window.dispatchEvent(new CustomEvent('project-preferences-updated', { detail: preference }));
+  }
+
   function handleSettingsNavigate(section: string) {
     if (!isSettingsSection(section) || !canAccessSettingsSection(section)) return;
     activeSettingsSection = section;
@@ -686,6 +722,19 @@
       }
     });
 
+    eventSource.addEventListener('telemetry-updated', (event) => {
+      try {
+        const detail = JSON.parse((event as MessageEvent).data);
+        if (typeof detail?.task_id === 'string' && detail.task_id.trim()) {
+          window.dispatchEvent(new CustomEvent('well-ambient:telemetry-updated', {
+            detail: { task_id: detail.task_id.trim() }
+          }));
+        }
+      } catch (e) {
+        console.error('SSE telemetry update parse error:', e);
+      }
+    });
+
     eventSource.onerror = (err) => {
       console.warn('SSE connection disrupted, automatic reconnection active.');
     };
@@ -740,6 +789,7 @@
       case 'mr_event': return 'MR 事件';
       case 'ai_review': return 'AI 评审';
       case 'semantic_linker': return 'AI 关联';
+      case 'daily_jira_reminder': return 'Jira 复核';
       default: return '遥测通知';
     }
   }
@@ -812,16 +862,21 @@
     alertCount={activeAlerts.length}
     alerts={activeAlerts}
     activeSettingsSection={activeSettingsSection}
+    activeDecisionView={activeDecisionView}
     activeScheduleView={activeDemandView}
+    activeTaskView={activeTaskView}
     authDegraded={authDegraded}
     authDegradedMessage={authDegradedMessage}
     onNavigate={handleConsoleNavigate}
     onSettingsNavigate={handleSettingsNavigate}
+    onDecisionNavigate={handleDecisionNavigate}
     onScheduleNavigate={handleScheduleNavigate}
+    onTaskNavigate={handleTaskNavigate}
     onLogout={logout}
     onClearAlerts={clearAllAlerts}
     onDismissAlert={dismissAlert}
     onRefreshProfile={refreshCurrentUserProfile}
+    onProjectPreferencesChange={handleProjectPreferencesChange}
   >
     <FunctionalWorkspace
       kicker={activeWorkspace.kicker}
@@ -831,35 +886,46 @@
       tone={activeWorkspace.tone}
       signals={workspaceSignals}
       actions={workspaceActions}
-      showBreadcrumbBar={activeTab !== 'settings'}
+      showBreadcrumbBar={true}
       breadcrumbs={workspaceBreadcrumbs}
       contextStatus={activeWorkspace.statusLabel}
       contextMeta={workspaceContextMeta}
+      latestEvent={latestDecisionEventSummary}
+      onLatestEventClick={openDecisionTimelineDrawer}
       onNavigate={handleConsoleNavigate}
     >
       {#if activeTab === 'decision'}
-        <DecisionDashboard currentUser={currentUserName} />
+        <DecisionCenter
+          activeView={activeDecisionView}
+          currentUser={currentUserName}
+          currentUserPermissions={currentUserPermissions}
+        />
       {:else if activeTab === 'schedule'}
         <div class="console-functional-stack">
-          <DemandKanban
-            currentUserPermissions={currentUserPermissions}
-            currentUserName={currentUserName}
-            currentUserEmail={currentUserEmail}
-            currentUserDepartment={currentUserDepartment}
-            activeDemandView={activeDemandView}
-          />
-          {#if activeDemandView === 'board'}
-            <Deconstructor currentUserPermissions={currentUserPermissions} />
+          {#if activeDemandView === 'projects'}
+            <ProjectBoard />
+          {:else}
+            <DeliveryPlan
+              currentUserPermissions={currentUserPermissions}
+              currentUserName={currentUserName}
+              currentUserEmail={currentUserEmail}
+              currentUserDepartment={currentUserDepartment}
+              activeDemandView={activeDemandView}
+            />
           {/if}
         </div>
       {:else if activeTab === 'evidence'}
         <div class="console-functional-stack">
-          <ProjectHealthTelemetry />
+          <InsightsWorkspace activeLens="health" />
         </div>
       {:else if activeTab === 'tasks'}
-        <TaskKanban />
+        <TaskKanban
+          activeTaskView={activeTaskView}
+          onTaskViewChange={handleTaskNavigate}
+          onOpenDeliveryPlan={openDeliveryPlan}
+        />
       {:else if activeTab === 'kpi'}
-        <KPIKanban />
+        <InsightsWorkspace activeLens="kpi" />
       {:else if activeTab === 'settings'}
         {#key activeSettingsSection}
           <SettingsPanel
@@ -871,6 +937,12 @@
         {/key}
       {/if}
     </FunctionalWorkspace>
+    {#if canAccessTab('decision')}
+      <DecisionEventCenter
+        openRequest={decisionTimelineDrawerRequest}
+        on:summary={handleDecisionTimelineSummary}
+      />
+    {/if}
   </FunctionalAdminShell>
 {:else}
 <main class="app-container settings-mode">
@@ -1095,6 +1167,17 @@
     display: grid;
     gap: 18px;
     min-width: 0;
+    min-height: 0;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame) .console-functional-stack {
+    height: 100%;
+  }
+
+  @media (max-width: 860px) {
+    :global(.workspace-frame.viewport-fit-frame) .console-functional-stack {
+      height: auto;
+    }
   }
 
   .settings-mode .app-content-shell {
@@ -1509,23 +1592,23 @@
   }
 
   .alert-item.alert-delay {
-    border-left: 4px solid #ef4444;
+    border-color: rgba(239, 68, 68, 0.42);
   }
 
   .alert-item.alert-git_push {
-    border-left: 4px solid #10b981;
+    border-color: rgba(16, 185, 129, 0.38);
   }
 
   .alert-item.alert-mr_event {
-    border-left: 4px solid #6366f1;
+    border-color: rgba(99, 102, 241, 0.4);
   }
 
   .alert-item.alert-ai_review {
-    border-left: 4px solid #a855f7;
+    border-color: rgba(168, 85, 247, 0.38);
   }
 
   .alert-item.alert-semantic_linker {
-    border-left: 4px solid #06b6d4;
+    border-color: rgba(6, 182, 212, 0.38);
   }
 
   .alert-title {
@@ -1552,6 +1635,7 @@
   .alert-type-badge.type-mr_event { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
   .alert-type-badge.type-ai_review { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
   .alert-type-badge.type-semantic_linker { background: rgba(6, 182, 212, 0.15); color: #22d3ee; }
+  .alert-type-badge.type-daily_jira_reminder { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
 
   .alert-task-id {
     font-size: 0.7rem;
@@ -1658,9 +1742,7 @@
   .brand-name {
     font-size: 1.25rem;
     font-weight: 800;
-    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #f8fafc;
     margin: 0;
     letter-spacing: -0.025em;
   }
@@ -1782,40 +1864,55 @@
   }
 
   .email-input-wrapper {
+    position: relative;
     display: flex;
     align-items: center;
     border: 1px solid rgba(56, 189, 248, 0.2);
-    background: rgba(15, 23, 42, 0.6);
-    border-radius: 8px;
-    padding-right: 12px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    background: rgba(2, 6, 23, 0.5);
+    border-radius: 10px;
+    padding: 4px;
+    overflow: hidden;
+    isolation: isolate;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
     width: 100%;
   }
   .email-input-wrapper:focus-within {
     border-color: rgba(56, 189, 248, 0.6);
-    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+    background: rgba(2, 6, 23, 0.68);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.13);
   }
   .email-input-wrapper input {
     flex: 1;
     width: 0;
+    min-width: 0;
     border: none !important;
     background: transparent !important;
     outline: none !important;
     box-shadow: none !important;
-    padding: 10px 12px;
+    padding: 7px 10px;
     color: #f1f5f9;
   }
   .email-input-wrapper input:-webkit-autofill,
   .email-input-wrapper input:-webkit-autofill:hover, 
   .email-input-wrapper input:-webkit-autofill:focus, 
   .email-input-wrapper input:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 1000px #0a0f1d inset !important;
-    box-shadow: 0 0 0 1000px #0a0f1d inset !important;
+    -webkit-box-shadow: none !important;
+    box-shadow: none !important;
     -webkit-text-fill-color: #f1f5f9 !important;
+    transition: background-color 600000s 0s;
   }
   .email-suffix {
-    color: #64748b;
-    font-size: 0.9rem;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    border: 1px solid rgba(148, 163, 184, 0.12);
+    border-radius: 999px;
+    padding: 0 10px;
+    background: rgba(148, 163, 184, 0.08);
+    color: #94a3b8;
+    font-size: 0.82rem;
+    font-weight: 600;
     user-select: none;
     white-space: nowrap;
   }
@@ -1996,5 +2093,14 @@
     font-weight: 700;
     cursor: pointer;
     transition: all 0.2s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .notification-bell,
+    .status-dot,
+    .loading-spinner,
+    .notification-dropdown {
+      animation: none !important;
+    }
   }
 </style>

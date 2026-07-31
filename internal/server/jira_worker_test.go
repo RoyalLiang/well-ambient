@@ -49,18 +49,18 @@ func TestMapJiraIssueType(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"Task", "demand"},
-		{"任务", "demand"},
-		{"Story", "demand"},
-		{"需求", "demand"},
-		{"Feature", "demand"},
-		{"Epic", "demand"},
+		{"Task", "requirement"},
+		{"任务", "requirement"},
+		{"Story", "requirement"},
+		{"需求", "requirement"},
+		{"Feature", "requirement"},
+		{"Epic", "requirement"},
 		{"Bug", "bug"},
 		{"缺陷", "bug"},
 		{"故障", "bug"},
 		{"Defect", "bug"},
-		{"unknown", "demand"},
-		{"", "demand"},
+		{"unknown", "requirement"},
+		{"", "requirement"},
 	}
 
 	for _, tc := range tests {
@@ -131,6 +131,56 @@ func TestBuildJQL(t *testing.T) {
 				SyncUsers:    []string{" eddie@company.com "},
 			},
 			expected: `project in ("PROJ") AND assignee in ("eddie@company.com")`,
+		},
+		{
+			name: "only Jira version source",
+			cfg: config.JiraConfig{
+				BaseURL: "https://jira.example.com",
+				VersionSources: []config.JiraVersionSource{{
+					ProjectKey:  "PRJ25024",
+					ProjectName: "Release Train",
+					VersionURL:  "https://jira.example.com/projects/PRJ25024/versions/13622",
+				}},
+			},
+			expected: `(project = "PRJ25024" AND fixVersion = 13622)`,
+		},
+		{
+			name: "ordinary filters and versions are additive",
+			cfg: config.JiraConfig{
+				BaseURL:      "https://jira.example.com",
+				SyncProjects: []string{"OPS"},
+				VersionSources: []config.JiraVersionSource{{
+					ProjectKey:  "PRJ25024",
+					ProjectName: "Release Train",
+					VersionURL:  "https://jira.example.com/projects/PRJ25024/versions/13622",
+				}},
+			},
+			expected: `(project in ("OPS")) OR (project = "PRJ25024" AND fixVersion = 13622)`,
+		},
+		{
+			name: "custom JQL and versions are additive",
+			cfg: config.JiraConfig{
+				BaseURL:   "https://jira.example.com",
+				CustomJQL: "project = OPS AND type = Bug",
+				VersionSources: []config.JiraVersionSource{{
+					ProjectKey:  "PRJ25024",
+					ProjectName: "Release Train",
+					VersionURL:  "https://jira.example.com/projects/PRJ25024/versions/13622",
+				}},
+			},
+			expected: `(project = OPS AND type = Bug) OR (project = "PRJ25024" AND fixVersion = 13622)`,
+		},
+		{
+			name: "invalid version source is ignored",
+			cfg: config.JiraConfig{
+				BaseURL: "https://jira.example.com",
+				VersionSources: []config.JiraVersionSource{{
+					ProjectKey:  "PRJ25024",
+					ProjectName: "Release Train",
+					VersionURL:  "https://jira.example.com/browse/PRJ25024-1",
+				}},
+			},
+			expected: "",
 		},
 	}
 

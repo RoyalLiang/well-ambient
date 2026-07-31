@@ -1,5 +1,466 @@
 # Progress Log
 
+## Session: 2026-07-20 - Task Project/Owner Multi-Select And Surface Rhythm
+
+- **Status:** complete.
+- Completed and recorded the mandatory Impeccable, design-taste-frontend, and finesse-ui review before frontend edits. The shared direction keeps one bounded toolbar row, server-correct multi-selection, the existing table/inspector ownership, and scoped transparent secondary surfaces.
+- Extended `/api/tasks` and `/api/execution/tasks` to accept repeated or comma-separated Project/Owner values. Values are ORed within each dimension and intersected across dimensions after saved personal project scope and existing core-member visibility.
+- Extended the shared `MultiSelect` with an optional compact summary/overlay mode, clear-to-all action, visible Project/Owner ownership labels, keyboard behavior, and touch-safe narrow-screen controls without changing the project-preference default presentation.
+- Replaced status, personnel, and execution Project/Owner filters with local multi-select arrays, repeated query serialization, count summaries, and responsive wrapping. Fixed the 1440px project menu clipping by aligning the overlay inside the execution table panel.
+- Added the execution-only viewport height budget so its two workbench panes land on the shared shell bottom gutter despite omitting the stage strip. Flattened gray nested fills in task facts, personnel facts, and personnel priority rows while retaining semantic status washes.
+- Focused filter tests and the full `internal/db`, `internal/server`, and `internal/agenda` suites pass. Frontend check passes with 0 errors and the existing 72 warnings; production build, diff hygiene, exact-file Impeccable detection, and Finesse P0 detection pass.
+- Authenticated isolated browser validation passed at 2048, 1440, 1024, 760, and 480 widths. HIT + NS2 returned 43 execution rows; adding 梁志远 + 朱家聪 returned the correct 3-row intersection; clearing restored 390 rows. Dropdowns are unclipped, narrow controls are 44px, document overflow is zero, and a fresh logged-in execution tab has no console errors.
+- Used a copied database with external integrations disabled and left the existing 8080/5173 services untouched. No Jira/demand record was created, updated, assigned, synchronized, or reviewed; both isolated validation services were stopped.
+
+## Session: 2026-07-18 - Daily Jira Decision Reminders And Viewport Fit
+
+- **Status:** complete.
+- Completed and recorded the mandatory Impeccable, design-taste-frontend, and finesse-ui review before frontend edits; agreement covers table ownership, whole-row selection, persistent status/reminder ownership, responsive pane behavior, and validation scope.
+- Added the `DailyJiraDecision` migration and transactional creation beside `DecisionEvent`. Escalation schedules a 4-hour review; follow-up/reassignment schedule a 24-hour review.
+- Extended audit responses with the newest decision state and added dynamic notification-center reminders that ignore superseded/future/resolved decisions and honor `daily_jira_reminder_<decision id>` dismissal keys.
+- Moved cohort/search/refresh controls into the table header; made ARIA grid rows clickable from every cell and activatable with Enter/Space; added current decision/due-reminder status to the table and inspector.
+- Refit the route to the exact remaining viewport with a 16px bottom gap. Desktop keeps aligned side-by-side panes; medium/narrow uses two bounded rows. Table and inspector remain internal scroll owners and the document does not scroll.
+- Restarted the confirmed repository backend so AutoMigrate created `daily_jira_decisions`; the app is running with database configuration version 19 and the existing Jira worker schedule.
+- Safe authorized-fixture browser validation of the real component passed pointer/keyboard row selection, header filtering, latest/future/absent decision states, wide/1024/760/480 geometry, 44px narrow controls, zero document overflow, zero unintended table horizontal overflow, and empty console errors. The temporary QA entry was deleted and no decision was submitted.
+- Focused and full `internal/server` tests pass. `pnpm -C web check` passes with 0 errors and 74 unrelated existing warnings; production build, diff hygiene, Impeccable layout detection, and Finesse P0 detection pass.
+- Reused the existing self-improvement entries for the recurring default Go cache and loopback `httptest` sandbox restrictions, updated their recurrence metadata, and completed validation with `/tmp` GOCACHE plus managed loopback permission.
+
+## Session: 2026-07-18 - Daily Jira Visual Unification
+
+- **Status:** complete.
+- Loaded project-local Impeccable plus design-taste-frontend and finesse-ui, including the product, layout, redesign, anti-cheap, and preflight references required by the UI gate.
+- Reused the live authenticated Chrome session and inspected Daily Jira with real data at the default wide viewport plus medium/narrow viewport overrides without submitting any decision.
+- Compared the surface with the adjacent `决策事项` workbench and confirmed the mismatch is material/radius/hierarchy/responsive spacing, not data ownership or workflow semantics.
+- Completed the three-way review and recorded hierarchy, ownership, responsive behavior, validation scope, protection rules, and disagreement resolution before frontend edits.
+- Ran the subjective layout assessment before the Impeccable mechanical pre-scan. The detector returned `[]`; no arbitrary Tailwind spacing/z-index patterns exist in the target.
+- Implemented the scoped `DailyJiraAudit.svelte` unification: compact matte command bar, independent cohort controls, aligned 20px table/inspector workbench, wider desktop inspector, inset table surface, content-aware stacked height, and secondary-column collapse at narrow widths.
+- Svelte/TypeScript checks pass with 0 errors; the 74 existing warnings remain in six unrelated legacy files. Production build, tracked/untracked diff hygiene, Impeccable complete/layout scans, and Finesse P0 scan pass.
+- Authenticated screenshot/geometry review passed at 2133x903, medium 3-row stack, CSS 750px, and CSS 478px. Wide panels align exactly; medium table contracts to 340px; narrow tables have no overflow and expose the inspector immediately below.
+- Search-to-detail synchronization passed on real `ICA-10903`, then the temporary search was cleared. No decision was submitted and no business data was mutated.
+- Final default-width state is left on `每日 Jira / 7 日及以上` with 133 real rows, `ZPU-2769` selected, zero horizontal overflow, and an empty console error list.
+
+## Session: 2026-07-18 - Daily Jira 404 Runtime Recovery
+
+- **Status:** complete.
+- Confirmed the live `/api/decision/daily-jira` returned 404 even though the route exists in `internal/server/server.go`.
+- Identified port 8080 as a stale `go run cmd/server/main.go` process started on 2026-07-15 from this repository.
+- Restarted only that confirmed repository backend using the same command; the database-backed configuration version loaded normally and the Jira worker resumed its existing schedule.
+- Verified the direct 8080 route and the Vite-proxied 5173 route both now return 401 without a token, proving the protected Daily Jira route is loaded instead of falling through to 404.
+- No source-code change was required for the 404; the fix was runtime reload. The user only needs to refresh the Daily Jira page.
+
+## Session: 2026-07-18 - Daily Jira Morning Review
+
+### Phase 1: Discovery and mandatory review preparation
+- **Status:** in_progress
+- Started from the user request for a decision-area `每日 Jira` submenu with today / 3-day / 7-day unresolved audits, morning assignment, and retrospective traceability.
+- Loaded the repository cold-start route, selected the complex coding preset, and loaded project planning/memory rules.
+- Loaded the mandatory Impeccable, design-taste-frontend, finesse-ui, and planning-with-files instructions.
+- Recorded the active task, constraints, review gate, phases, and validation scope before implementation.
+- Ran Impeccable context discovery for `web`; the project has `DESIGN.md` but no `PRODUCT.md`, which is acceptable for this scoped change.
+- Read the product-register guidance and existing Phase 41 design contract, then traced the first decision/Jira route and API touchpoints.
+- Confirmed the shell's reusable submenu contract and the App-level view/breadcrumb patterns.
+- Confirmed local Jira tasks already retain creation age, last activity, due date, current assignee, unresolved status, and decision logs.
+- Logged a discovery-path error for nonexistent `internal/server/task_handlers.go` and switched future inspection to resolved source paths.
+- Completed and recorded the mandatory three-way UI review. The gate now permits frontend implementation.
+- Fixed the age contract at natural-day cohorts 0, 3-6, and 7+; selected dedicated read/review APIs with structured and legacy audit persistence.
+- Implemented `internal/server/daily_jira_handlers.go` and focused tests for cohort boundaries, unresolved/Jira filtering, reassignment persistence, kanban sync, structured history, legacy history, and preservation of stale activity on review-only decisions.
+- Added the decision submenu/view wiring in `App.svelte` and `FunctionalAdminShell.svelte`, plus the new responsive `DailyJiraAudit.svelte` table/inspector workbench.
+- Focused Go tests passed: `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run 'Test(BuildDailyJiraAuditResponse|PostDailyJiraReview)' -count=1`.
+- `pnpm -C web check`, `pnpm -C web build`, app TypeScript, and `git diff --check` passed. Svelte reports 74 existing warnings in six legacy files and no remaining warning in `DailyJiraAudit.svelte`.
+- The first design-detector sweep correctly exposed pre-existing App-level side stripes/gradient motion debt plus four new pure-white fallbacks; the new fallbacks were corrected, while unrelated legacy debt remains outside this feature slice.
+- Both target-only design detectors now pass with no finding in `DailyJiraAudit.svelte`.
+- The already-running app had no authenticated in-app-browser session, and its backend did not enable loopback dev auth. Switched to an isolated static build plus fixture-only API so authenticated validation cannot mutate real Jira or historical local data.
+- Authenticated desktop DOM validation passed submenu state, breadcrumb ownership, default urgent cohort, all three bucket counts, watch/unclassified indicators, populated table selection, detail facts, decision controls, Jira link, and structured decision history.
+- Authenticated 1024 and 760 validation passed responsive stacking, mobile sidebar entry, table scroll ownership, detail form/history placement, and the disabled-to-enabled reassign guard. Browser QA also caught and verified the search/detail selection repair; no decision submission was performed.
+- Added server-side core-scope enforcement while preserving unassigned Jira for dispatch, plus backend note/assignee length validation.
+- Final focused daily-Jira tests and the complete `internal/server` package suite pass; the full suite required managed loopback permission for existing `httptest` webhook cases. TypeScript, production build, `git diff --check`, and both target design detectors pass; browser console has no error entries.
+- Files modified for this task: `internal/server/daily_jira_handlers.go`, `internal/server/daily_jira_handlers_test.go`, `internal/server/server.go`, `web/src/App.svelte`, `web/src/components/prototype/FunctionalAdminShell.svelte`, `web/src/components/DailyJiraAudit.svelte`, plus active plan/findings/progress and error-log records.
+
+
+## Current Task: Surface-Aware Text Contrast
+
+- 2026-07-16: Added the user-specified dark-surface contrast rule and completed the mandatory Impeccable, design-taste-frontend, and finesse-ui review before frontend edits.
+- 2026-07-16: Review resolves in favor of a scoped semantic modal foreground contract plus rendered contrast scanning; the light full-height drawer remains visually unchanged.
+- 2026-07-16: Authenticated computed styles confirmed the issue on the two visible primary controls (`rgb(1,139,141)` background with `rgb(3,18,25)` text); light drawer ink and dark rail ink are already correctly paired.
+- 2026-07-16: Added dedicated filled-accent background/hover/ink tokens and applied them to the target demand/delivery actions plus shared primary-action and selected-date contracts.
+- 2026-07-16: Added the detector-required reduced-motion fallback for the shared Button loading spinner.
+- 2026-07-16: Authenticated wide and 760×800 visual checks confirm both target controls use 5.70:1 cool-white-on-dark-teal contrast, drawer/rail surface pairings remain correct, horizontal overflow is zero, and console errors are empty.
+- 2026-07-16: Final Svelte/TypeScript check, production build, `git diff --check`, and finesse P0 detector gate pass.
+- 2026-07-16: **Status:** complete.
+
+## Current Task: Viewport-Height Demand Drawer
+
+- 2026-07-16: Inspected the new screenshot at original resolution and confirmed the active drawer is bounded by the flow-board workspace instead of the browser viewport.
+- 2026-07-16: Reapplied the mandatory Impeccable, design-taste-frontend, and finesse-ui review. The shared direction is a viewport-fixed, square-corner, full-height right drawer with a global backdrop and unchanged single-body scrolling/focus lifecycle.
+- 2026-07-16: Recorded component ownership, responsive behavior, disagreement resolution, and exact geometry/browser validation criteria before editing frontend code.
+- 2026-07-16: Implemented viewport-fixed `100dvh` geometry and square drawer edges; Svelte check, production build, and diff hygiene pass, with detector output limited to documented legacy findings outside this change.
+- 2026-07-16: Authenticated wide/mobile geometry found the drawer rectangle correct but the shell top bar still above it because `.workspace-stage` is an isolated stacking context. Activated the pre-agreed portal fallback instead of weakening the global shell isolation rule.
+- 2026-07-16: Portaled only the demand-detail and detail-companion overlay roots to `.functional-console`; the global shell isolation contract remains unchanged.
+- 2026-07-16: Final authenticated visual and geometry validation passed at 2133×1038 and 760×800. Drawer/header own the top edge, the global backdrop owns the shell, AI companion keeps a 16px gap, Escape/backdrop/focus/body-scroll lifecycles pass, horizontal overflow is zero, and console errors are empty.
+- 2026-07-16: Final Svelte/TypeScript check has zero errors; production build, `git diff --check`, and detector P0 gate pass. Detector findings are documented legacy selectors outside this scoped change.
+- 2026-07-16: **Status:** complete.
+
+## Current Task: Flow Detail Drawer And Unified Task Filters
+
+- 2026-07-16: Classified as complex frontend coding with shared-component, responsive, and authenticated browser-visible risk.
+- 2026-07-16: Loaded cold-start routing, complex coding workflow, tool/memory routing, planning-with-files, project-local Impeccable, design-taste-frontend, and finesse-ui instructions.
+- 2026-07-16: Ran Impeccable context for `web`; `PRODUCT.md` is absent, so this scoped refinement proceeds against the existing code and `DESIGN.md` without initiating a new product brief.
+- 2026-07-16: Inspected both supplied screenshots at original resolution and recorded the drawer, unified-filter, panel-alignment, responsive, and scroll-ownership acceptance criteria.
+- 2026-07-16: Traced demand-detail lifecycle to `DemandKanban.svelte`, confirmed the current detail still uses the generic centered modal host, and found the existing telemetry off-canvas panel as the closest repository interaction reference.
+- 2026-07-16: Traced the task toolbar to `TaskKanban.svelte`; shared Select already owns project/owner dropdown behavior, while the categorical risk filter remains a custom segmented strip.
+- 2026-07-16: Completed and recorded the mandatory three-way review. The agreed implementation uses a local state-safe demand drawer, shared Select for all categorical task filters, and one desktop table/inspector height contract with deliberate stacked fallbacks.
+- 2026-07-16: Phase 3 implementation started only after hierarchy, component ownership, responsive behavior, accessibility, validation scope, and disagreements were recorded.
+- 2026-07-16: Confirmed implementation mechanics: the workspace-scoped detail host can become a right-edge drawer in place, the companion needs a wide-screen left-of-drawer override, and execution can reuse the existing aligned panel-height token.
+- 2026-07-16: Implemented the demand drawer, focus/Escape/reduced-motion behavior, wide companion placement, non-searchable shared risk Select, and aligned execution table/inspector height contract.
+- 2026-07-16: First `git diff --check` and Svelte check pass with 0 errors; removed the only newly surfaced unused risk-button selector before continuing validation.
+- 2026-07-16: Reused the signed-in Chrome localhost session and visually reviewed the real flow-board drawer at 2133x1038 and 760x800, including long-body scroll ownership, Tab containment, Escape/focus return, and zero horizontal overflow.
+- 2026-07-16: Browser QA found the first wide AI companion collapsed to about 1px. Replaced the percentage-after-padding width calculation with a bounded flex basis, then revalidated a 620px companion, 16px drawer gap, zero overlap, Escape close, and focus return.
+- 2026-07-16: Visually reviewed execution tracking at wide desktop and 760px. Risk is a shared dropdown, table/inspector top and bottom deltas are both 0px at desktop, and the 1180px stacked state keeps a 16px gap with equal panel heights.
+- 2026-07-16: Final `pnpm -C web check` passes with 0 errors and 74 existing warnings; `pnpm -C web build` and `git diff --check` pass. Finesse detection reports P0=0; full-file detector warnings are legacy rules outside the changed surfaces.
+- 2026-07-16: Final authenticated browser smoke check confirms the semantic demand and AI dialogs, 620px companion geometry, 16px gap, no overlap/overflow, clean overlay close state, and an empty console error list.
+- 2026-07-16: **Status:** complete.
+
+
+## Current Task: Event Timeline, Flow Detail, And Execution Filters
+
+- 2026-07-15: Classified as complex frontend coding with shared-component and browser-visible regression risk.
+- 2026-07-15: Loaded cold-start routing, complex coding workflow, memory/tool routing, local Impeccable, design-taste-frontend, finesse-ui, ui-design-system, and planning-with-files instructions.
+- 2026-07-15: Ran Impeccable project context for `web`; existing `DESIGN.md` found, `PRODUCT.md` absent, so the scoped fix proceeds against existing code.
+- 2026-07-15: Recorded the dirty-tree constraint and created the current task addendum before code inspection or edits.
+- 2026-07-15: Inspected both source screenshots at original resolution and translated the visible scrollbar, modal-height, duplicate-filter, and dropdown-stacking symptoms into explicit acceptance criteria.
+- 2026-07-15: Logged and resolved one ripgrep leading-hyphen pattern error; subsequent CSS token searches use the option terminator.
+- 2026-07-15: Completed the mandatory Impeccable, design-taste-frontend, and finesse-ui reviews. All three agree on one scroll owner, canonical project/owner filters in the execution toolbar, shared Select ownership, deliberate responsive reflow, and authenticated browser coverage.
+- 2026-07-15: Resolved the demand-detail review disagreement in favor of a scoped geometry and scrollbar-rail repair that preserves long-content scrolling; a broader progressive-disclosure/shared-modal migration is explicitly deferred.
+- 2026-07-15: Phase 3 implementation started only after the shared direction and disagreement resolution were recorded in the active plan.
+- 2026-07-15: Removed the mediation ledger's nested overflow boundary; consolidated execution project/owner filtering into the active toolbar using shared Select; and repaired demand-detail/companion workspace geometry plus hidden-rail body scrolling.
+- 2026-07-15: `pnpm -C web check` passed with 0 errors and 78 existing warnings; production build and `git diff --check` passed. Targeted Impeccable detection found only legacy rules outside the changed surfaces.
+- 2026-07-15: Isolated authenticated browser validation passed decision current/all expansion, demand detail at 2048/1280/760, companion alignment and linked close, execution filter combinations, open-menu hit testing, responsive reflow, 44px narrow controls, and zero horizontal overflow.
+- 2026-07-15: **Status:** complete.
+
+
+## 2026-07-14 - Phase 68 corpus approval information architecture started
+
+- Inspected the supplied authenticated screenshot at original resolution and traced the repeated queue/detail content to `CorpusCandidateReview.svelte`.
+- Completed the mandatory Impeccable, design-taste-frontend, and finesse-ui review. All three agree on source-batch grouping, one primary proposal for ordinary review, on-demand source evidence, and full comparison only for impact review.
+- Confirmed the current candidate shape already includes document ID and source-document metadata, so the page can remove repeated presentation without dropping records or changing the backend lifecycle.
+- Recorded hierarchy, component ownership, responsive behavior, validation scope, and the comparison disagreement resolution in the active Phase 68 plan before frontend implementation.
+
+## 2026-07-14 - Phase 68 corpus approval information architecture complete
+
+- Rebuilt the queue around source-document batches, keeping every candidate row while rendering shared filename/version metadata once per batch.
+- Replaced the ordinary two-document comparison with one Typora-like live candidate workbench; moved metadata and immutable source evidence into explicit disclosures and reused shared Select for all classification controls.
+- Kept the current-context versus proposed-content comparison only for `impact_review`, preserved the two-stage publication gate, and removed the duplicated impact heading wrapper.
+- Added content-aware title suppression, bounded local queue scrolling, single-column responsive collapse, and mutually exclusive error versus successful-empty presentation.
+- Extended the authenticated Settings preview with two document batches, ordinary/high-sensitivity candidates, impact responses, lifecycle responses, and explicit populated/empty/error variants.
+- Browser validation passed source grouping, ordinary editor, shared Select open/Escape, source evidence disclosure, high-sensitivity transition, impact comparison, empty/error states, and 1440/1024/760/480 geometry. The final clean run has no console warnings or errors.
+- `pnpm -C web check` passes with 0 errors and 78 existing unrelated warnings; `pnpm -C web build`, targeted Impeccable detection, and `git diff --check` pass.
+
+## 2026-07-14 - Phase 67 shared Select and live Markdown composition started
+
+- Audited the native scope dropdown, the shared Select API/interaction contract, and the existing CodeMirror Markdown workbench.
+- Completed the mandatory Impeccable, design-taste-frontend, and finesse-ui review before editing frontend files.
+- Chose a bounded WYSIWYM implementation: canonical Markdown remains unchanged, inactive lines render semantic formatting, and the active line reveals syntax for precise editing.
+- Recorded component ownership, responsive behavior, protection rules, browser validation scope, and the rejected lossy `contenteditable` alternative in `task_plan.md`.
+- **Status:** in progress
+
+## 2026-07-14 - Phase 67 shared Select and live Markdown composition complete
+
+- Replaced the import form's native scope dropdown with shared Select, including the existing global-scope cleanup, disabled state, adaptive menu, and 44px narrow-screen control sizing.
+- Added CodeMirror-native `live` mode to MarkdownWorkbench. Inactive lines immediately render semantic Markdown while the active line exposes syntax; canonical Markdown and existing change/save/commit contracts remain unchanged.
+- Made corpus Markdown paste start in `即时排版`; retained explicit `源码 / 分屏 / 阅读` modes for precision editing and compatibility.
+- Replaced the detector-flagged blockquote side border with a semantic quote widget and restrained row tint. Final targeted Impeccable detection returns `[]`.
+- Svelte check passes with 0 errors and 78 existing warnings; TypeScript, production build, and `git diff --check` pass.
+- Isolated authenticated Chrome validation passed Select mouse/keyboard lifecycle, raw Markdown preservation, all live formatting families, fallback modes, zero console/page errors, and zero horizontal overflow at 1440/1024/760/480. Narrow Select/mode controls measure 44px.
+- Reviewed screenshots: `output/ui-validation-corpus-live-markdown-1440.png` and `output/ui-validation-corpus-live-markdown-480.png`.
+- **Status:** complete
+
+## 2026-07-15 - Phase 72 Markdown, decision ledger, palette, and flow detail redesign complete
+
+- Reduced the shared Markdown toolbar to one default `即时排版` mode while preserving explicit advanced edit and read-only preview lifecycles.
+- Hid visible option-list rails across shared Select/MultiSelect and compatible listboxes without removing overflow scrolling or keyboard behavior.
+- Replaced the detached full-width decision timeline with a contextual current/all evidence ledger inside the strongest-brain inspector, including empty, automatic, manual, actor, task, time, and commit states.
+- Introduced the supplied color library through semantic product tokens with contrast-safe foregrounds and restrained state usage.
+- Rebuilt the flow-board demand detail into a wider bounded workbench with flat facts, adjacent actions, one body scroll owner, natural-height Markdown preview, responsive one-column narrow layout, and 44px narrow actions.
+- Authenticated safe-fixture browser validation covered decision current/all/empty states, long hidden-rail dropdown overflow, selection/detail ordering, populated detail, Markdown preview/edit, and 1440/1024/760/480 geometry. A later reconnect was blocked by the browser URL policy and was not bypassed.
+- Final checks pass: `pnpm -C web check` reports 0 errors and 78 existing warnings in 6 files; production build and `git diff --check` pass. Full-file detectors report only documented legacy findings outside the Phase 72 selectors.
+- **Status:** complete
+
+## 2026-07-15 - Phase 72 interface system refinement started
+
+- Reloaded the project-local Impeccable, design-taste-frontend, finesse-ui, project UI-system, and planning-with-files guidance before frontend edits.
+- Inspected the supplied flow-board detail screenshot and recorded the nested-scroll, narrow-column, repeated-card, and first-screen hierarchy defects.
+- Established the initial product-register direction and semantic mapping for the requested source palette; implementation remains blocked on completing the mandatory isolated layout assessments and target-file audit.
+- Completed the mandatory isolated subjective layout assessment and mechanical pre-scan, then recorded the four-skill agreement, disagreement resolution, component ownership, responsive contract, protection rules, and validation scope in `task_plan.md` before frontend edits.
+- **Status:** in_progress
+
+## Session: 2026-07-13 - Responses-first LLM Transport And Unified Draft Actions
+
+- **Status:** complete with a safety-scoped browser-streaming validation exception
+- Added a unified provider client for OpenAI/Sub2API Responses and native Claude Messages, including sync and SSE parsing, auth headers, file IDs, and legacy Chat Completions URL migration.
+- Migrated demand specs, demand deconstruction, autonomous execution, telemetry review, and AI connection tests away from active Chat Completions payloads and `choices[].message` parsing.
+- Converted `/api/deconstruct` to provider SSE plus browser NDJSON and updated both Svelte consumers to read the streamed completion through a shared parser.
+- Replaced the Completions configuration choice with Responses API and Claude Messages, and moved `撤销草案` directly before `保存契约` in one right-aligned footer group.
+- Go package tests, Svelte check, production build, structural footer assertion, and diff hygiene pass. Authenticated browser validation covered both protocol-choice states without saving or calling a provider.
+- Full authenticated draft replay was stopped because the isolated copy of historical data activated background delay-alert handling; the safety reviewer rejected a restart to prevent possible external notifications.
+
+## Session: 2026-07-13 - Demand Detail Action Hierarchy And Draft Footer
+
+- **Status:** complete
+- Moved `撤销草案` into the bottom contract action row, left-separated from save/approve progression actions, while preserving the no-contract fallback and existing confirmation flow.
+- Replaced the detail action pair's inherited purple treatment with shared teal-primary and neutral-secondary semantics.
+- Authenticated DG-319 testing passed desktop and narrow layout, hover, keyboard focus, withdrawal open/cancel, action adjacency, and horizontal-overflow checks without saving or mutating business data.
+- `pnpm --dir web check`, production build, `git diff --check`, and Phase 61-targeted Impeccable detection pass; browser console errors are empty.
+
+## Session: 2026-07-13 - Deterministic Multi-select Completion
+
+- **Status:** complete
+- Reproduced the user's screenshot failure and confirmed the open candidate list covered required roles and owner controls, making their clicks hit reviewer options instead of outside-dismiss logic.
+- Reworked the shared multi-select so its bounded options participate in form flow, added selected-count plus `完成选择`, and preserved consecutive multi-selection.
+- Fixed Escape reopening, removed the parent container's unconditional open handler, and anchored the chevron to the trigger so it cannot drift into options when the list expands.
+- Real-component browser testing passed select, complete, chevron close, outside click, Escape, desktop geometry, and 480px responsive behavior without saving business data.
+- Svelte check reports 0 errors; production build, targeted Impeccable complete/layout scans, and diff hygiene pass.
+
+## Session: 2026-07-12 - Review Select Dismissal And Core-member Boundary
+
+- **Status:** complete with an authenticated-browser validation exception
+- Repaired `Select` and `MultiSelect` at the shared primitive: capture-phase outside pointer, focus exit, Escape, and an explicit chevron toggle now close either list even inside modal content that stops bubbling clicks.
+- Preserved deliberate selection semantics: a single owner selection closes immediately; reviewer multi-select remains open only so multiple people can be selected consecutively.
+- Filtered review participants through backend `coreMemberVisibility` and filtered the old-backend frontend compatibility directory through `/api/demands/options`.
+- Added directory-signature normalization so a late core-member response clears stale non-core reviewer/owner values before save.
+- Focused Go tests, `pnpm --dir web check` (0 errors), production build, targeted Impeccable complete/layout scans, and `git diff --check` pass.
+- Authenticated browser interaction was attempted after restarting Vite, but the in-app browser stayed locked to the earlier localhost connection-error page by browser security policy; no workaround or alternate browser surface was used.
+
+## Session: 2026-07-12 - Demand Detail AI Workbench And Executable Spec Draft
+
+- **Status:** complete
+
+- Implemented draft-only withdrawal and atomic cleanup of the matching review contract; frozen specifications remain immutable.
+- Expanded AI deconstruction and draft persistence with business rules, main/exception flows, permission rules, data impact, API impact, UI impact, dependencies, risks, acceptance criteria, test plan, repositories, and task breakdown.
+- Unified create, detail, and schedule companion ownership; host close now closes the companion and desktop geometry uses the real host width.
+- Fixed the adjacent detail-to-schedule transition by capturing the demand before clearing detail state.
+- Focused demand-spec tests, `pnpm -C web check`, `pnpm -C web build`, TypeScript compilation, and `git diff --check` passed.
+- Authenticated browser validation at 2133x902 measured exact group centering, a 16px panel gap, about 1px host/companion height delta, and zero horizontal overflow for detail and schedule pairs.
+- Existing draft `DG-319` displayed the implementation blueprint and guarded withdrawal confirmation; final deletion was intentionally not executed.
+
+## Session: 2026-07-11 - Health Diagnosis Intervention Modal Calibration
+
+### Phase 1: Visual and code audit
+- **Status:** complete
+- Loaded the existing-project redesign, UI audit, and file-planning workflows.
+- Recorded the constraint to reduce contrast without weakening genuine risk/intervention signals.
+- Inspected the supplied screenshot and located the modal markup in `ProjectHealthTelemetry.svelte`.
+- Captured the visual root cause: six competing accent families plus nested bordered cards, not simply “red is too bright.”
+- Traced the modal markup and confirmed it mixes inline layout styles with legacy dark rules and later light overrides.
+- Logged a harmless CSS-token search error caused by a missing `rg --` separator.
+- Next action: inspect the final active modal override block, then define and implement one scoped modal contract.
+
+### Phase 2: Visual contract
+- **Status:** complete
+- Kept desktop two-column information architecture and defined a single-column breakpoint below 860px.
+- Chose system cool neutrals and teal as the base, with muted semantic accents only where risk meaning requires them.
+- Chose body-owned scrolling, reduced nested-card borders, and scoped styles to avoid changing project tables.
+
+### Phase 3: Implementation
+- **Status:** in_progress
+- Next action: add the modal scope/context header, remove inline layout declarations, add metric tone classes, and implement the final scoped style block.
+- Implemented the scoped modal contract and passed production build plus target-component static checks.
+- First isolated browser harness attempt failed because `document.createElement` is unavailable in the constrained evaluation surface; logged and switched to direct body markup replacement.
+- Direct body replacement was also rejected by the read-only evaluation DOM. Stopped retrying DOM mutation and moved the harness to a temporary preview-served HTML file.
+
+## Session: 2026-07-11 - Streamed LLM Attachments And Demand File Archive
+
+### Phase 1: Architecture correction
+- **Status:** complete
+- Applied file-planning, self-correction, and existing admin UI workflows.
+- Recorded the corrected boundary: original files belong in backend multipart handling, compressed local storage, durable demand/deconstruction association, and provider-aware LLM delivery.
+- Confirmed the current deconstruction handler is JSON-only and sends text-only OpenAI-compatible payloads; GORM AutoMigrate is the schema path.
+- Verified the official Responses `input_file` contract and accepted `.pdf`, `.doc`, and `.docx` formats. Chose inline Base64 file data for provider delivery and multipart streaming for browser-to-server upload.
+- Traced the post-preview import transaction and selected `context_pack_id` as the stable staging link, with archive linkage finalized during `/api/tasks/import`.
+- Logged a second discovery-path error caused by naming a nonexistent root `main.go`; no implementation action depended on that failed path.
+- Logged and corrected a failed discovery command caused by an unmatched zsh glob.
+- Next action: trace provider request types, deconstruction archive creation timing, database migrations, and existing data-directory conventions before changing contracts.
+
+### Phase 2: Contract definition
+- **Status:** complete
+- Selected streamed Files API upload plus Responses `input_file`, with remote cleanup and local gzip retention.
+- Defined staged context-pack association followed by import-time archive association.
+- Defined additive multipart fields, bounded file counts/sizes, storage configuration, and attachment metadata.
+
+### Phase 3: Backend implementation
+- **Status:** complete
+- Next action: add model/migration, storage/provider helpers, handler integration, and import linkage.
+- Added the attachment model/migration, gzip storage and multipart reader, streamed Files API uploader, Responses file references, remote cleanup, and import-time archive linking.
+- Dependency cleanup hit a pnpm store-location mismatch; logged it and will retry with the already-linked store path.
+- Frontend production build and diff hygiene pass; full Svelte check remains blocked by the existing `DemandKanban.svelte:1798` type error.
+- Initial Go tests did not reach compilation because the default build cache is outside the sandbox; next run will use `/tmp/well-ambient-gocache`.
+- The cache-safe backend run compiled successfully but the broad server package was stopped by an unrelated loopback-binding test; focused new tests remain the validation target.
+
+### Phase 4: Frontend streaming conversion
+- **Status:** complete
+- Replaced local parsing with up to three retained `File` objects and multipart submission.
+- Added attachment IDs to the deconstruction/import state bridge and updated upload copy to describe compressed archival plus LLM parsing.
+- Removed browser parsing libraries from package metadata and lockfile.
+
+### Phase 5: Focused validation
+- **Status:** complete
+- Added and passed a provider-loopback end-to-end test covering upload bytes, file ID use, remote deletion, gzip metadata, demand association, and archive association.
+- Updated the test to begin with completions configuration and confirmed attachment calls auto-route to Files + Responses.
+- Complete backend suite passes; frontend production build and repository-wide diff hygiene pass.
+- `pnpm check` remains independently blocked by the pre-existing `DemandKanban.svelte:1798` union-property error; the production build validates the changed frontend path.
+
+## Session: 2026-07-11 - Demand Difficulty And Task Detail Surface
+
+### Audit
+- **Status:** complete
+- Applied the UI design-system and file-planning workflows to the two screenshot-scoped issues.
+- Traced difficulty from the custom dropdown to the schedule request and confirmed backend normalization accepts the existing option values.
+- Traced the task detail mismatch to legacy dark colors inside TaskKanban content rendered in the shared light Modal.
+
+### Implementation And Validation
+- **Status:** complete
+- Replaced the bespoke difficulty dropdown with shared Select and removed its redundant local open/close state and dark menu CSS.
+- Added the `task-detail-surface` light palette contract after all legacy TaskKanban rules, including narrow-screen layout behavior.
+- Frontend check passes with 0 errors and 74 existing warnings; production build and diff hygiene pass.
+- Focused demand scheduling test passes and confirms selected difficulty persistence.
+- Browser interaction remains unverified because both target surfaces require a real authenticated session unavailable to the standalone preview.
+
+## Session: 2026-07-11 - Adaptive Overlays And Decision Timeline
+
+### Corrective Follow-up: Historical Event Dates
+- **Status:** complete
+- User screenshot showed future-looking times under Today; traced the issue to the backend stripping dates with `Format("15:04:05")` and the frontend defaulting time-only records to today.
+- Added `occurred_at` to automatic decision records, populated it from task `LastUpdate` and fallback event timestamps, and retained `time` for compatibility.
+- Updated the timeline to prefer the full timestamp and added a safe old-backend rollover rule.
+- Verified the reported task IDs against the read-only SQLite database; their dates span June 19 through July 10 rather than today.
+- Focused Agenda tests, frontend check/build, and diff hygiene pass.
+
+### Corrective Follow-up: HR-4202 Reschedule Consistency
+- **Status:** complete
+- Traced the intervention and schedule endpoints to the same TaskTelemetry row and inspected HR-4202 plus its latest decision event read-only.
+- Prevented unchanged due dates from being presented or recorded as successful adjustments.
+- Added explicit frontend target capture, target-date button copy, server response verification, and a persisted due-date response.
+- Added and passed an intervention-to-schedule projection regression for June 25 to July 13 plus a no-op rejection assertion.
+- First test-fixture patch matched an earlier `now := time.Now()` in the same file; moved the fixture using the exact test-function boundary and reran successfully.
+- Focused server test, frontend check/build, JSON/diff hygiene pass.
+
+### Audit
+- **Status:** complete
+- Read the repository cold-start rules, complex coding preset, UI design-system skill, file-planning skill, and failure-handling skill.
+- Inspected the supplied screenshots and traced each reported behavior to the active shell, shared Select/DatePicker primitives, and `DecisionDashboard.svelte` split log region.
+- Confirmed the worktree is already dirty; changes will remain limited to the targeted UI components plus these existing planning files.
+- First combined planning-file patch failed because `progress.md` starts with `# Progress Log`, not `# Progress`; re-read the live file and applied this smaller exact-context patch.
+
+### Implementation And Validation
+- **Status:** complete
+- Added outside-click notification dismissal to the active functional shell.
+- Added shared viewport-aware up/down placement and bounded overflow to Select and DatePicker.
+- Replaced split automatic/manual log cards with one content-height, date-grouped decision event timeline.
+- `pnpm --dir web check` passes with 0 errors and 74 existing warnings.
+- `pnpm --dir web build` and `git diff --check` pass.
+- Browser-tested shared Select down/up behavior at 1280x520 with zero console errors; authenticated notification/timeline browser testing was unavailable from the no-login preview.
+- Initial preview command failed at the repository root because only `web/package.json` exists; retrying with `pnpm --dir web preview` was correct. The sandbox then blocked local binding, and the approved local preview command succeeded.
+
+## Session: 2026-07-10 — KPI Workspace Clean Rebuild
+
+### Phase 1: Failure audit
+- **Status:** complete
+- Loaded the UI audit, product-dashboard, redesign, and self-improvement workflows because the user rejected the prior KPI result.
+- Inspected the supplied screenshot and confirmed the failure is structural, not a spacing issue.
+- Identified conflicting legacy grid-area, display-contents, sticky panel, and responsive rules as the root cause.
+- Next action: replace `KPIKanban.svelte` entirely with one source-order-aligned component and one scoped style system.
+
+### Phase 2: Clean data and read-model layer
+- **Status:** complete
+- Replaced the entire legacy KPI component while preserving the performance and report-preview APIs.
+- Kept real daily/weekly summaries, member workload, Bug count, delay ratio, requirement base score, capability rating, risks, meetings, and evidence.
+- Added backward-safe frontend fallbacks for a currently running backend that has not yet restarted with the newest KPI DTO fields.
+
+### Phase 3: Single-flow workspace
+- **Status:** complete
+- Implemented one vertical flow: period toolbar, four metrics, delivery/risk overview, people capability workbench, and evidence grid.
+- Used local overview and member grids only; each collapses independently without named page-level areas or sticky page inspectors.
+- Capped the risk reader at 430px after live measurement exposed unnecessary row stretching.
+
+### Phase 4: Validation
+- **Status:** complete
+- `pnpm --dir web check` passes with 0 errors and 74 non-KPI warnings, down from 94 because the obsolete KPI CSS was deleted.
+- `pnpm --dir web build` and `git diff --check` pass.
+- Authenticated browser verification passed at the default 2133px-class viewport, 900px override, and 390px override with zero document-level horizontal overflow.
+- Runtime interactions passed: 日报/周报, member selection, personal report, evidence scoping, and team-report restoration. Browser console has zero errors.
+- Final skill pre-flight: no fake data, no marketing hero, no decorative motion, no legacy grid tracks, explicit focus states, 44px member controls, reduced-motion skeleton fallback, and bounded table/risk scrolling.
+
+## Session: 2026-07-10 — Main Workspace IA And Metrics Rebuild
+
+### Phase 1: Audit and contracts
+- **Status:** complete
+- Loaded the UI design-system, product-dashboard refinement, existing-project redesign, and file-planning workflows.
+- Locked the product design read to calm precision, low spectacle, and high information density.
+- Declared shell-owned page identity, real-data-only metrics, and preservation of existing behavior as protection rules.
+- Next action: inspect App shell subnavigation, the five target components, and relevant KPI/scoring API contracts before applying structural edits.
+
+### Phase 2: Decision, Schedule, and Evidence hierarchy
+- **Status:** complete
+- Removed the three duplicate intro/title cards and preserved their actions by moving controls into the first real data surface.
+- Rebuilt Decision's top row around six priority statistics and kept it responsive at three, two, and one columns.
+- Authenticated browser verification confirms the Schedule toolbar stays single-line at desktop and all three routes have zero document-level horizontal overflow.
+
+### Phase 3: Task information architecture and People Load
+- **Status:** complete
+- Added shell-owned Task Table, People Load, and Execution Tracking submenus with child-aware breadcrumbs and scroll reset keys.
+- Removed the in-page task title/view-switch card and replaced it with one shared filter/context toolbar.
+- Rebuilt People Load as a sortable capacity table plus selected-person risk inspector; authenticated data showed 13 members and no page overflow.
+- Kept Task Table and Execution Tracking separate while aligning their project/owner filter language.
+
+### Phase 4: Daily/weekly metrics and capability model
+- **Status:** complete
+- Removed the KPI hero card and the redundant score/distribution dashboard stack.
+- Reorganized the page into period controls, multidimensional health metrics, report evidence, personal capability matrix, and department facts.
+- Extended the KPI response with total task/Bug counts, delay ratio, derived requirement base score, scored-item count, and manual-revision count.
+- Added a focused unit test covering AI difficulty and manual-estimate base-score paths.
+
+### Phase 5: Validation and pre-flight
+- **Status:** complete
+- `pnpm --dir web check` passes with 0 errors; the 94 warnings are legacy accessibility/unused-selector noise, including selectors made obsolete by intentionally removed cards.
+- Focused KPI/server tests pass; production build and `git diff --check` pass.
+- The first sandboxed full Go run reached the existing local-listener test and was blocked from binding `httptest` on `[::1]`; the approved local-listener rerun completed with `go test ./...` passing across every package.
+- Added and passed an aggregation assertion for personal task/Bug totals, same-population delay ratio, base-score fallback, AI difficulty scoring, and manual estimate scoring.
+- Authenticated Chrome validation covered Decision, Schedule, Evidence, all three Task submenus, KPI weekly/daily switching, and 390px-class narrow layout. All target routes have zero document-level horizontal overflow; the KPI data table scrolls only inside its bounded table shell on narrow screens.
+- Anti-cheap/pre-flight outcome: the redesign removes decorative intro cards, uses one existing accent/token system, shows only real API metrics, adds no motion or fake data, and keeps product density high with explicit mobile collapse rules.
+
+## Session: 2026-07-10 — Rounded Surface And Modal Corner Audit
+
+### Phase 1: Audit
+- **Status:** complete
+- Loaded the UI design-system, existing-project redesign, and file-planning workflows.
+- Inspected the supplied screenshot and recorded the likely clipped-layer/root-radius mismatch.
+- Next action: inventory shared tokens and every modal/card/panel/container selector before choosing the smallest shared fix.
+- Confirmed the screenshot artifact comes from square translucent header/footer backgrounds escaping a `20px` modal whose overflow is intentionally visible for dropdown/date-picker overlays.
+- Rejected a blanket `overflow: hidden` modal fix because it would clip interactive overlays; the repair will radius the modal's edge sections and strengthen shared visible-surface primitives separately.
+- Audited the shared modal, project-health modal, telemetry drawer, Settings structural resets, and low-radius declarations. Shared modal primitives are already clipped; the screenshot bug is local to the demand/schedule modal family, while global work should target visible surface classes only.
+- Completed the production-page inventory across decision, demand, task, KPI, deconstructor, telemetry, shared modal, and Settings surfaces. Outer page containers already converge on the `18px` token or explicit `14px`–`22px` radii.
+
+### Phase 2: Shared and modal repair
+- **Status:** complete
+- Add a non-clipping rounded-surface contract to shared visible primitives, then give demand/schedule modal edge sections matching inner radii so overlay menus remain usable.
+- Hardened global visible surfaces with padding-box background clipping and isolated paint contexts.
+- Rounded the shared modal header layer and the demand modal family's header/footer/detail edge layers without clipping escaping dropdown/date-picker overlays.
+
+### Phase 3: Page-specific gap closure
+- **Status:** complete
+- Confirmed active outer surfaces across Decision, Demand, Task, KPI, Deconstructor, Settings, shared modal, project health, and telemetry already resolve to the rounded design-system contract.
+- Preserved intentional small radii for micro-controls and zero radii for transparent structural wrappers and the viewport-edge telemetry drawer.
+
+### Phase 4: Validation
+- **Status:** complete
+- `pnpm --dir web check` passes with 0 errors and the existing 65 warnings.
+- `pnpm --dir web build` and `git diff --check` pass.
+- Authenticated browser inspection confirms the new-demand modal's four 1px corner points expose the backdrop, not square header/footer layers; the rendered screenshot has a continuous rounded silhouette.
+- Authenticated browser audits pass for Schedule and Decision: exposed surface radii are `14px`–`20px`; the Schedule table's `0px` inner viewport remains safely nested inside a clipped `20px` parent.
+- Authenticated browser audits pass for Evidence and Task: the evidence surface is `18px`; the dense task workbench consistently uses a tighter but fully rounded `10px` tier.
+- Authenticated main-route audit also covered KPI's loading state and Settings' visible audit panel; no exposed square card/container was found. Static final-rule inspection covers KPI populated panels and Settings child routes.
+- Restored the claimed browser tab to its original Schedule page with the new-demand modal open, then released browser control.
+- Final rerun: `pnpm --dir web check` passes with 0 errors and 65 existing warnings; `pnpm --dir web build` and `git diff --check` pass.
+
 ## Session: 2026-07-10 — Controlled Autonomous Delivery Rollout
 
 ### Phase 0: Baseline and planning
@@ -1366,3 +1827,417 @@
   - `git diff --check` passed.
   - Targeted `showContextBar` scan confirmed no production page enables the optional workspace context hero.
   - Build still reports existing repository-wide Svelte warnings in `DemandKanban.svelte`, shared modal/switch, and config child components.
+
+## 2026-07-11 Phase 47 Start
+
+- Read the repository routing instructions and selected the complex coding workflow.
+- Applied the UI design-system and file-based planning skills for this cross-surface frontend fix.
+- Confirmed the flow scroll failure is a broken bounded-height chain rather than a missing overflow declaration.
+- Confirmed AI deconstruction is currently flow-only because `App.svelte` conditionally mounts it only for the board view.
+- Confirmed the demand AI-spec typography drift comes partly from invalid CSS font shorthand, and the detail backdrop close condition needs hardening.
+
+## 2026-07-11 Phase 47 Complete
+
+- Made the flow root a bounded flex surface, set the board to consume the remaining height, and made every lane a real independent scroll container.
+- Replaced the gray gap with one restrained translucent white surface behind the filter and lane region.
+- Hardened demand-detail dismissal so only a direct backdrop click closes it; nested AI actions preserve the detail modal.
+- Corrected controlled-delivery field/button typography and tightened its cards, spacing, radii, and textarea heights to the light admin-console baseline.
+- Moved AI deconstruction ownership into `DemandKanban` and exposed seeded workbench entry points from new-demand capture, schedule inspection/edit, the flow toolbar, and demand detail.
+- Removed the board-only standalone deconstructor mount from `App.svelte` so there is one reusable capability instead of a view-specific page appendage.
+- Validation passed: `pnpm build`, `pnpm exec tsc -p tsconfig.app.json --pretty false`, and `git diff --check`.
+- Browser preview reached the application login page, but no authenticated preview session was available, so protected-route visual interaction remains unverified in this run.
+
+## 2026-07-11 Phase 48 Complete
+
+- Replaced the disappearing `height: 0` flow board with a `560px–850px` viewport-clamped board and preserved independent lane scrolling.
+- Added a compact AI mode that removes the metric strip, document upload, intent console, prompt contract, empty result table, and wide editable evidence table from contextual dialogs.
+- Promoted demand association above the input and explained that it controls whether generated tasks reuse a demand task group or remain independent.
+- Added compact generated-task rows and kept synchronization analysis below them only after a result exists.
+- Made `AI 预解构` open as a right-side companion to the new-demand modal on wide screens, with a centered adaptive fallback on narrower screens.
+- Changed new-demand project options to use only `/api/projects/config`, matching the settings project source and canonical project keys/names.
+- Disabled horizontal resizing for requirement description textareas.
+- Validation passed: `pnpm build`, `pnpm exec tsc -p tsconfig.app.json --pretty false`, and `git diff --check`; existing repository-wide Svelte accessibility/unused-selector warnings remain non-blocking.
+
+## 2026-07-11 Phase 49 Complete
+
+- Updated `.agents/output/delivery.yaml` so every UI change requires authenticated browser simulation and screenshot-based visual review; authentication blockers now require waiting for user input rather than claiming completion.
+- Bound the AI companion height to the rendered new-demand modal height and centered the two-dialog desktop group with a 16px gap.
+- Split title and description into distinct compact fields and changed `/api/deconstruct` input to labeled `【需求标题】` / `【需求内容】` sections.
+- Authenticated browser validation passed at the default responsive viewport and 2048x925.
+- Wide-screen measurements: create `680x599.27`, AI `620x597`, group center `1024/1024`, gap `16px`, no horizontal overflow.
+- Screenshot review confirmed consistent surface/border/text colors, aligned top/bottom edges, readable information hierarchy, and a centered narrow-screen fallback.
+- Saved validation screenshots to `output/ui-validation-demand-ai-responsive.png` and `output/ui-validation-demand-ai-wide.png`.
+- `pnpm build`, TypeScript compilation, and `git diff --check` passed; existing repository-wide Svelte warnings remain non-blocking.
+
+## 2026-07-11 Phase 51 Complete
+
+- Added an inline search field to both compact demand-association dropdown render paths in `Deconstructor.svelte`.
+- Added real-time matching across demand ID, title, owner, repository, and project, plus a live filtered/total count and explicit no-results state.
+- Reset the search query after selection, unbound selection, outside dismissal, and reopening so stale filters do not surprise the next interaction.
+- Authenticated browser validation filtered `101` demands to `HR-4202`, selected the result, confirmed the menu closed and the value remained selected, and found no console errors or horizontal overflow.
+- Saved and reviewed `output/ui-validation-demand-association-search.png`.
+- `pnpm build`, TypeScript compilation, and `git diff --check` passed; existing repository-wide Svelte warnings remain non-blocking.
+# Health Diagnosis Intervention Modal Calibration
+
+- Added a dedicated modal scope and clearer title hierarchy without changing diagnosis data or close behavior.
+- Reworked the intervention brief, diagnostic evidence, PHDI formula, project facts, metric rows, and recommendations into the light admin-console palette.
+- Preserved red/amber/green only as low-saturation semantic states; removed glow, loud multi-color scores, and nested high-contrast surfaces.
+- Added responsive one-column layout and compact mobile treatment while keeping scrolling inside the modal body.
+- Validation: `pnpm build` passed; targeted `pnpm check` only surfaced the pre-existing `DemandKanban.svelte` union error and an existing unused selector warning; `git diff --check` passed.
+- Desktop browser harness passed at 1280×720 with no page overflow and correct modal-owned scrolling. Dynamic narrow-viewport verification was unavailable because the browser facade has no viewport resize method.
+# Task Panels Height And Internal Scroll Alignment
+
+- Located the active personnel and Jira Task status layouts and their final light-admin CSS overrides.
+- Confirmed this is a layout/overflow ownership defect, not a data rendering issue.
+- Added scoped status/personnel modifiers, a shared responsive desktop height, equal-height grid tracks, fixed toolbar rows, and internal table/inspector scrolling.
+- `pnpm build` passed with only existing Svelte warnings; `git diff --check` passed.
+- Browser harness confirmed exact 480px/480px alignment for both workbenches and verified internal table scrolling with no page overflow.
+# Compact Task Rows, Inspector Pills, And Filter Layering
+
+- Located the exact status-row, inspector fact, and top filter dropdown markup in `TaskKanban.svelte`.
+- Replaced visible task-type text with accessible SVG icons, compacted status rows to one primary line, converted inspector facts to wrapping capsules, and raised the owning filter surface above subsequent cards.
+- `pnpm build` and `git diff --check` pass; build output contains only existing warnings outside this change.
+- Browser harness verified row density, title width, icon accessibility, five capsule facts, and an unobstructed open dropdown over the metric grid.
+
+## 2026-07-12 Phase 52 Start
+
+- Applied the UI design-system and file-based planning workflows for the three-part frontend refinement.
+- Reviewed the supplied schedule screenshot and recorded the inspector density, inactive global search, and segmented login-field issues.
+- Preserved the existing dirty worktree and limited planned edits to the owning frontend components.
+- Confirmed ownership: `DemandKanban.svelte` renders the inspector, `FunctionalAdminShell.svelte` owns the inert search input, and `App.svelte` owns the login field group.
+- Implemented a real shell search flow with delayed input search, explicit submit, bounded results, empty/error states, and route-aware result actions.
+- Replaced the inspector's ruled fact grid with wrapping pills and restyled the login email suffix as an intentional capsule inside one continuous focus surface.
+- TypeScript, production build, and diff hygiene passed; the first build exposed two new search ARIA warnings, which were corrected with an explicit combobox contract and option selection state before browser review.
+- Authenticated browser validation confirmed live search results and route navigation, eight compact inspector pills, no horizontal overflow, and no console errors at `2133x902`.
+- Isolated unauthenticated validation confirmed the login prefix/suffix control at `1280x720` without changing or logging out the user's active Chrome session.
+- Added result-ID handoff from the shell to schedule/task components so selecting a global result can clear conflicting filters and focus the exact record after route navigation.
+
+## 2026-07-12 Phase 52 Complete
+
+- Delivered the compact schedule-inspector pill layout, functional global search with exact result focus, and continuous login email field group.
+- Final validation passed: TypeScript, production build, `git diff --check`, authenticated search/route/focus interaction at `2133x902`, and isolated login screenshot review at `1280x720`.
+- Final browser regression selected non-first-row `HR-4202` in both the table and inspector with no console errors or document horizontal overflow.
+# 2026-07-12 - Demand detail AI workbench and executable spec draft
+
+- Loaded the repository cold-start modules and classified the work as `coding.complex`, medium risk.
+- Applied UI skill order `ui-design-system -> finesse-ui -> design-taste-frontend`; selected product register, SOUL 4, SPECTACLE 2, DENSITY 7.
+- Inspected the dirty tree and preserved existing uncommitted demand-modal, responsive AI, and broader project changes.
+- Traced the demand spec lifecycle, deconstruction prompt/schema, delivery controls, and companion modal geometry.
+- Confirmed three root causes: no draft-withdrawal API, standalone presentation defaults for detail/schedule, and incomplete AI implementation-spec output.
+- Implemented draft-only withdrawal, expanded the AI implementation-spec schema, added the editable implementation blueprint, and unified create/schedule/detail companion ownership.
+- TypeScript compile and `git diff --check` passed; focused Go tests require the repository-standard `/tmp` cache because the sandbox blocks the default macOS Go cache.
+
+# 2026-07-12 - Streamed AI specification draft and Markdown preview
+
+- Applied the repository `coding.complex` preset, file-based planning workflow, and UI design-system audit workflow.
+- Reviewed the supplied screenshot and recorded the current textarea-matrix, nested-scroll, weak-hierarchy, and Markdown-flattening problems.
+- Preserved the existing dirty worktree; planned changes are limited to the AI specification generation/transport/rendering path plus task memory.
+- **Status:** discovery in progress
+- Implemented the first backend/frontend slice: NDJSON events, provider token streaming, heartbeat frames, transaction-gated completion, persisted Markdown, semantic preview, explicit edit mode, and safe local Markdown rendering.
+- The first combined validation command used the wrong working directory for Go paths; frontend production build still completed successfully with only existing repository warnings. Logged the error and split the next validation by package root.
+- Added a provider-level SSE regression with deliberately split Markdown/JSON delimiters; its first run was blocked before execution by sandbox loopback restrictions, so focused approved-loopback validation is required.
+- Corrected UTF-8 chunk boundaries after the SSE regression exposed multibyte Chinese characters being split by delimiter look-behind; the focused stream/spec lifecycle suite now passes.
+- TypeScript, production build, focused Go lifecycle/stream/login tests, and diff hygiene pass.
+- Browser validation reached the actual local login route at `127.0.0.1:5175`, but the long-running API does not allow the disposable local account. The login page is handed off for the user to authenticate; Markdown preview/edit and screenshot review remain pending.
+- **Status:** implementation and automated validation complete; authenticated visual acceptance pending
+- Authenticated browser validation resumed on the real DG-319 flow-board detail modal at 1280×720. The preview has 14 semantic headings, 6 lists, zero textareas, no horizontal document overflow, and modal-owned vertical scrolling.
+- Screenshot review found underscore-style Markdown emphasis leaking as literal syntax; added safe `_text_` rendering before continuing visual acceptance.
+- Rechecked the live preview after the emphasis fix: `_暂无内容_` no longer appears literally and eight `<em>` nodes render safely.
+- Verified the Preview/Edit switch against DG-319 without saving or mutating business data; edit mode exposes every governed field and preview mode restores the semantic document.
+- Authenticated screenshots passed at 1280×720 desktop and 760×900 narrow viewport with no document horizontal overflow or browser console errors.
+- Final focused Go stream/spec/login tests, TypeScript compilation, production build, and diff hygiene pass. Existing unrelated Svelte warnings remain unchanged.
+- **Status:** complete
+
+# 2026-07-12 - Impeccable review gate and shared Markdown workbench
+
+- Installed Impeccable 3.9.1 into `~/.agents/skills/impeccable` and `./.agents/skills/impeccable`; scoped installer output contained no repository metadata, sidecars, or cache files to clean.
+- Replaced the old frontend skill fallback with a mandatory Impeccable + taste-skill + finesse-ui review gate in `AGENTS.md`, `.agents/domains/coding.yaml`, `DESIGN.md`, and project routing memory.
+- Added the shared CodeMirror/GFM `MarkdownWorkbench.svelte`, migrated live AI output and persisted specification editing, and removed the page-local Markdown renderer.
+- Flattened the delivery surface to spacing and hairlines while keeping one bordered editor workbench and collapsing structured execution fields behind progressive disclosure.
+- Corrected the first narrow split-height defect discovered during authenticated browser QA.
+- Final validation passed: `pnpm check` (0 errors), `pnpm build`, `git diff --check`, Impeccable detector (`[]`), desktop edit/split/preview interaction, 760x900 responsive checks, and zero browser console errors.
+- **Status:** complete
+
+## 2026-07-14 - Phase 65 governed corpus ingestion and review center
+
+- Loaded the mandatory project-local Impeccable skill, design-taste-frontend, finesse-ui, and file-planning guidance.
+- Classified the surface as a dense product-register Settings workbench and locked a restrained, low-motion, high-density design read.
+- Started a narrow audit of the existing corpus promotion seam, LLM path, source persistence, permissions, and shared Markdown editor before any frontend edit.
+- Confirmed that the repository already migrates `ContextDocument`, links facts to documents, filters production context to active facts, and promotes accepted candidates transactionally. The implementation can extend these seams instead of replacing them.
+- Audited the current AIConfig, candidate queue, and shared Markdown workbench. The target composition is source-first library, one selected-candidate review workbench, and advanced manual fact editing within the existing three-task corpus shell.
+- Completed and recorded the mandatory Impeccable, design-taste-frontend, and finesse-ui review before any frontend edit. Shared direction and disagreements are now locked in the active Phase 65 plan.
+- Added the source-document model extensions, import/list/archive routes, LLM extraction, review-mode classifier, impact preview, and final publish endpoint. Legacy focused tests pass; the new mock-provider test needs local-loopback permission because sandboxed `httptest` cannot bind `[::1]`.
+- **Status:** in progress
+
+# 2026-07-13 - Reviewer multi-select consecutive selection correction
+
+- Restored the expected multi-select session: reviewer selection, option deselection, and expanded-state chip removal now keep the option list open.
+- Preserved capture-phase outside-pointer, focus-exit, Escape, explicit completion, and chevron dismissal; updated reviewer guidance to describe consecutive selection and outside-click completion.
+- Added a pointerdown focus guard for chip removal after authenticated testing exposed that deleting the focused remove button otherwise triggered focus-exit closure.
+- Authenticated DG-319 testing covered desktop and narrow layouts, consecutive selection, outside dismissal, option deselection, chip removal, Escape, `完成选择`, and chevron close with no browser console errors or horizontal overflow.
+- Restored all temporary reviewer values before releasing the browser tab; no save or approval action was triggered.
+- Final Svelte check passes with 0 errors and 78 existing warnings; production build, targeted Impeccable detection, and diff hygiene pass.
+- **Status:** complete
+
+# 2026-07-12 - Inline Markdown editing and review contract layout
+
+- Completed the mandatory Impeccable + taste-skill + finesse-ui review, including isolated layout assessment and mechanical scan.
+- Removed visible Markdown mode/save controls from the demand specification while preserving the shared workbench's reusable API.
+- Added double-click editing, outside-click temporary persistence, failure-safe edit retention, and a focus-only keyboard entry.
+- Rebuilt the review contract into two flat semantic groups with responsive one-column fallback and restrained summary metadata.
+- Unified demand-detail and AI companion width ownership at 960px desktop maximum.
+- Final validation passed: Svelte check with 0 errors, production build, targeted and layout-scope Impeccable scans (`[]`), `git diff --check`, authenticated DG-319 double-click/save/exit flow, 1280x720 and 760x900 layout metrics, screenshots, and zero browser console errors.
+- **Status:** complete
+
+# 2026-07-12 - Flat review contract and directory-backed reviewers
+
+- Removed the duplicate “结构化执行字段” presentation while retaining the governed payload compatibility behind the Markdown document.
+- Added the shared `MultiSelect.svelte` primitive with inline search, removable selections, keyboard handling, adaptive placement, and accessible multi-select semantics.
+- Rebuilt the review contract as one flat responsive form: multi-select reviewers/roles, shared searchable single-select owners, compact approval count, and a restrained segregation note.
+- Stopped preloading Jira `sync_users` as reviewers; default candidates now come only from implementation-task assignees and exclude the specification author.
+- Added a permission-scoped participant directory to the review-contract response and retained the already-loaded page directory as a development/backward-compatible source.
+- Final validation passed: focused Go tests, Svelte check with 0 errors, production build, diff hygiene, targeted/full layout Impeccable scans (`[]`), and authenticated DG-319 search/multi-select/default-owner/screenshot review.
+- **Status:** complete
+## 2026-07-13 — Phase 59 select lifecycle correction
+
+- Confirmed the live Vite module was current, so the remaining report was an interaction-contract bug rather than stale frontend output.
+- Kept `Select.svelte` and `MultiSelect.svelte` as typed shared primitives and extracted their duplicated outside-pointer/Escape handling into `web/src/components/shared/selectLifecycle.ts`.
+- Changed multi reviewer selection and deselection to close immediately and restore focus; removed focus-triggered opening that could move the in-flow list underneath the originating click.
+- Updated reviewer helper copy to explain the close/reopen workflow.
+- Actual-component browser checks covered selection, deselection, chevron, outside pointer, and Escape for both select modes. Svelte check, production build, complete/layout Impeccable scans, and diff hygiene pass.
+
+## 2026-07-13 — Phase 63 configuration center unified glass workbench
+
+- Removed the Settings-only KPI route and submenu while preserving the top-level KPI page and KPI permission/policy resources.
+- Added one shared Settings route registry and routed App access/fallback, shell navigation, and SettingsPanel metadata through it.
+- Rebuilt the page context, primary workbench, audit inspector, configuration forms/tables, security surfaces, and modals around one restrained glass-and-hairline system with reduced-motion and reduced-transparency fallbacks.
+- Normalized GitLab and the existing shared configuration workbenches without changing their fetch, save, test, rollback, permission, or mutation contracts.
+- Authenticated browser QA covered all 10 Settings pages, GitLab overview/edit state, and 2133x902, 1024x900, 760x900, and 480x900 responsive layouts. Fixed the mobile switch inflation found during the first 480px review.
+- Final validation passes: TypeScript, Svelte check with 0 errors, production build, targeted Impeccable detection, diff hygiene, and zero browser console errors.
+- **Status:** complete
+
+## 2026-07-13 — Phase 64 configuration alignment and dense-page normalization
+
+- Completed the mandatory Impeccable + taste-skill + finesse-ui review and recorded the progressive-disclosure decision before frontend edits.
+- Reassigned Settings geometry to one stable unified root so legacy Phase height, stretch, absolute-position, and overflow rules cannot make the audit rail or primary panel abnormally tall.
+- Rebuilt policy authorization as four task tabs and system corpus as three task tabs while preserving every existing field, API, permission, result, and mutation path.
+- Bounded policy tables, policy action vocabularies, audit history, and corpus candidate presentation; candidate review now uses the shared visual tokens and ten-item pagination.
+- TypeScript, Svelte check (0 errors, 78 existing warnings), production build, Impeccable detection (`[]`), and diff hygiene pass. Authenticated browser validation is in progress; the first 2133x902 policy pass has zero horizontal overflow and no document vertical overflow.
+- Authenticated browser validation now covers all 10 routes plus every corpus/policy task at desktop and exact 1024/760/480 viewports. GitLab's responsive audit rail is capped to 680/700px, long members/permission/audit datasets are bounded, and every measured route has zero document horizontal overflow.
+- A fresh authenticated tab verified the runtime-null memberships guard across permission and member pages with zero console errors. No mutation was submitted.
+- Final validation passes: TypeScript, Svelte check with 0 errors and 78 existing warnings, production build, targeted Impeccable detection (`[]`), and `git diff --check`.
+- **Status:** complete
+
+## 2026-07-14 - Phase 65 governed corpus ingestion and unified review center complete
+
+- Added versioned raw-document persistence, list/detail/import/archive APIs, Markdown/text normalization, configured-LLM extraction, provenance labels, failure retention, and candidate/document publication counts.
+- Extended corpus governance with editable pending candidates, ordinary immediate publication, high-sensitive/global/AI-suggestion impact staging, recorded preview actor/time, preview invalidation on re-review, and immutable final publication of the previewed candidate.
+- Rebuilt the corpus route around raw-document management, shared Markdown import/preview, advanced manual fact maintenance, a unified queue/workbench review center, and side-by-side current-versus-proposed impact review.
+- Added regression coverage for import extraction, pending exclusion, ordinary publication, pending rejection, impact bypass rejection, recorded preview, final publication, source linkage, document counts, and archive-time withdrawal of unpublished candidates.
+- Final checks pass: `go test ./... -count=1`, `pnpm -C web check` (0 errors, 78 existing warnings), `pnpm -C web build`, Impeccable detector `[]`, Finesse detector with zero findings, and target diff hygiene.
+- Authenticated fixture-browser validation passed the complete workflow at 1440/1024/760/480 widths with zero horizontal overflow and zero console errors; validation evidence is saved under `output/ui-validation-corpus-*.png`.
+- **Status:** complete
+## 2026-07-14 - Phase 66 opaque file handoff correction started
+
+- Re-loaded the required project Impeccable, design-taste-frontend, finesse-ui, OpenAI docs, planning, and self-correction guidance.
+- Confirmed the current violation on both sides of the boundary: browser `File.text()` plus backend persisted/prompt-concatenated file-derived content.
+- Recorded the three-way UI direction, provider/file ownership, persistence boundary, protection rules, validation scope, and the superseded Phase 65 normalization decision in `task_plan.md` before frontend edits.
+- The current phase will keep direct Markdown paste as a separate advanced text path while making uploaded files opaque end-to-end.
+- The first focused Go test attempt was blocked by the default user cache permissions; TypeScript passed. Validation now uses isolated `/tmp` Go caches instead of repeating the failing command.
+
+## 2026-07-14 - Phase 66 opaque file handoff correction complete
+
+- Added provider-owned opaque file inputs in `internal/llm`: Responses emits `input_file` with filename and inline Base64 data; native Messages returns an explicit unsupported-protocol error instead of parsing locally.
+- Replaced file-derived JSON content with multipart transport. The server now limits, validates, hashes, and forwards raw bytes but never decodes or concatenates them into the prompt.
+- Changed managed document persistence to use only LLM-returned `document_markdown`, summary, and candidates. Failed uploads retain metadata/hash/failure status with an empty document body, and duplicate completed uploads reuse the existing extraction.
+- Reworked the source workbench into mutually exclusive file and Markdown modes. File mode keeps only the selected `File` and transport metadata; Markdown mode reuses `MarkdownWorkbench` for intentional human text.
+- Added regression coverage for exact opaque-byte transport, prompt isolation, unsupported protocols, multipart success/missing/oversize/failure/deduplication, LLM-only persistence, and manual Markdown compatibility.
+- Final automated checks pass: `go test ./... -count=1`, TypeScript, `pnpm -C web check` with 0 errors, production build, Impeccable detection `[]`, and `git diff --check`.
+- Isolated authenticated Chrome validation passed empty, file-selected, submitting, success, failure, Markdown-edit, and Markdown-preview states at 1440/1024/760/480. All widths had zero horizontal overflow; desktop columns shared the same top edge; narrow controls measured 44px; the intentional 502 fixture was the only expected network error and there were zero unexpected console/page errors.
+- Reviewed screenshots saved as `output/ui-validation-corpus-opaque-file-desktop.png`, `output/ui-validation-corpus-opaque-file-1024.png`, `output/ui-validation-corpus-opaque-file-760.png`, and `output/ui-validation-corpus-opaque-markdown-480.png`.
+- Finesse pre-flight self-grade: the surface remains product-register, preserves one teal accent and the existing type/radius system, introduces no banned decorative patterns, uses explicit action copy, keeps labels above inputs and 44px narrow controls, and honestly claims no spectacle engine.
+- **Status:** complete
+
+## 2026-07-14 - Phase 69 transient corpus decision toasts complete
+
+- Completed the mandatory project-local Impeccable, design-taste-frontend, and finesse-ui review before frontend edits. The shared decision is global transient success plus contextual recoverable errors, with product-register styling and feedback-only motion.
+- Added `web/src/lib/toast.ts` for a bounded three-notice queue, 4.5-second default dismissal, timer cleanup, and manual dismissal.
+- Added `web/src/components/shared/ToastHost.svelte`, reusing `Alert.svelte` for the existing visual vocabulary and adding upper-right safe-area placement, reduced-motion handling, reduced-transparency fallback, responsive width, and 44px narrow close targets.
+- Mounted one host in the production `App.svelte` tree and one in the isolated settings preview tree; updated the shared alert close-label contract for accessible Chinese copy.
+- Removed the candidate review's local success state, in-container success markup, and success CSS. Reject, ordinary publish, impact-stage approval, and final impact publish now publish to the shared toast queue; contextual errors remain unchanged.
+- Final automated validation passes: `pnpm -C web check` with zero errors and existing unrelated warnings, production build, targeted Impeccable detector `[]`, and target `git diff --check`.
+- Isolated authenticated browser validation covered ordinary publish, exact final impact-publish copy, automatic dismissal, manual dismissal, contextual 503 error, and 1440/1024/760/480 layouts. Every viewport had zero horizontal overflow and the browser console had zero warnings/errors.
+- **Status:** complete
+
+## 2026-07-15 - Phase 70 impact review alignment complete
+
+- Loaded the mandatory project-local Impeccable guidance and completed the design-taste-frontend plus finesse-ui product/redesign review before frontend edits.
+- Recorded the shared direction, the superseded Phase 68 side-by-side decision, protection rules, responsive contract, validation scope, and correction log in `task_plan.md`.
+- Converted the impact comparison to one vertical reading flow and introduced a shared desktop panel height with explicit queue-list/workbench-body scrolling. Narrow layouts keep natural height.
+- `pnpm -C web check` passes with 0 errors and 78 existing unrelated warnings; the production Vite build passes.
+- Targeted Impeccable detection returns `[]`, finesse detection returns zero findings, and target diff hygiene passes.
+- At the 1440px impact-review pass, the queue and workbench both measure 670px high with identical y=179 and bottom=849; their top and bottom deltas are exactly 0px.
+- The impact comparison computes to one 950px column. “当前生效上下文” and “拟发布结果” share x=414 and appear at y=430 and y=830 respectively, confirming the ordered vertical flow.
+- The queue list is the left scroll owner (`625/701px`) and the workbench body is the right scroll owner (`530/1150px`); the header and 61px action row remain outside the body scroll. Document horizontal overflow is zero.
+- The browser's 1024 override produced a fresh 1269x720 content viewport. At that medium desktop size, impact queue/workbench both measure 520px high with 0px top/bottom delta, comparison remains one 790px column, and document overflow stays zero.
+- Visual screenshot review confirms two aligned outer bordered panels, a stable right action footer, and only the current-context comparison leg visible at the top of the right scroll body; the proposed result follows below rather than competing beside it.
+- Switching back to an ordinary candidate keeps the same 520px outer heights and 0px top/bottom delta, renders exactly one proposal region and zero comparison panes, and preserves right-body scrolling without changing the workflow.
+- Chrome's exact 760 override reports a 749x900 content viewport. The queue and workbench stack at the same x=35, the queue returns to a natural 366px block with a 320px local list, and the workbench returns to natural 1500px height with `overflow-y: visible`.
+- The two impact panes remain one 649px column at y=970 and y=1370, document overflow is zero, and all three terminal action buttons measure 44px. Screenshot review confirms a clean queue-first/workbench-second vertical composition.
+- At exact 480x900, the queue and workbench stack at x=27 with equal 415px widths; both impact panes share x=42 and 385px width, the three action buttons measure 44x385px, source evidence expands in place, and document horizontal overflow remains zero.
+- At exact 1024x900, the desktop contract is active: queue and workbench both start at y=564 and end at y=1204 with identical 640px heights. Queue-list and workbench-body own their respective scrolling, both impact panes share x=414 and 534px width, and document horizontal overflow is zero.
+- Authenticated browser coverage now includes impact and ordinary candidates, desktop and stacked layouts, source disclosure, scroll ownership, action sizing, and zero unexpected console warnings/errors. The correction is validated against actual rectangles rather than CSS declarations alone.
+- Self-review lesson: distinguish the valid outer queue/detail relationship from a redundant inner comparison grid, then verify both information order and rendered top/bottom geometry at the affected breakpoints.
+- **Status:** complete
+
+## 2026-07-15 - Phase 71 workspace-bounded toast positioning complete
+
+- Reloaded the mandatory project-local Impeccable, design-taste-frontend, finesse-ui, planning-with-files, and self-correction guidance before frontend edits.
+- Completed isolated layout judgment and mechanical pre-scan. Both confirm that the toast queue/store is valid while the viewport-root host and global fixed layer are not.
+- Recorded the shared component ownership, stage geometry, z-index, responsive, protection, and browser validation contracts in `task_plan.md` before implementation.
+- Removed the unconditional root host from `App.svelte`, mounted the production host inside a new `FunctionalAdminShell.workspace-stage`, and converted `ToastHost` from viewport-fixed/global-1400 to stage-absolute/local-10 with stage-relative width and max height.
+- Updated the isolated settings preview to use the same fixed-header, bounded-stage, internally scrolling content contract so test toasts remain visible when the review workbench is scrolled.
+- `pnpm -C web check` passes with 0 errors and the same 78 existing warnings; the production Vite build passes. Impeccable layout detection returns `[]`; targeted ToastHost/preview Impeccable and Finesse scans are clean. Broader scans only report known legacy App/Shell findings outside this positioning change.
+- Browser shell geometry at 1280x720: Header is y=0..68, workspace stage is y=68..720, and the empty host anchor is y=80, exactly 12px below the stage start. Header/toast and profile/toast intersection areas are both zero; document overflow is zero.
+- A real ordinary-candidate publish in the isolated preview rendered the 58px toast at y=142, exactly 12px inside the y=130..688 content stage. Topbar/toast intersection and page overflow are zero, with 488px remaining below the notice.
+- At exact 760x900, the production shell Header is y=0..64 and the stage is y=64..900. The host anchor begins 8px inside the stage, spans only the available workspace width, and has zero Header/profile intersection and zero document overflow.
+- A real 760px publish renders a 70px toast at y=138 inside the y=130..868 stage, leaving 660px below it. The notice uses the available 708px stage width and the close target is 44x44px.
+- At exact 480x900, a real publish renders the notice at y=153 inside the y=145..890 stage with 667px remaining below, zero topbar intersection, zero page/document overflow, and a 44x44px close target.
+- The 480px toast auto-dismisses after the existing timer and manual close removes a fresh notice immediately. Collapsing the desktop rail from 270px to 94px leaves the Header/stage boundary and 12px toast inset intact with zero Header/profile intersection.
+- Browser geometry and screenshots show the notice belongs to the review workspace rather than the Header. The selected browser surface did not expose a console-log API, so no new console-log claim is made; every exercised interaction completed without a page-control exception after the documented harness corrections.
+- Final `pnpm -C web check` passes with 0 errors and 78 existing warnings; production build, targeted Impeccable, Impeccable layout scan, targeted Finesse, and target `git diff --check` all pass.
+- Self-reflection: the prior implementation correctly separated transient success from panel content but chose the browser viewport as the overlay owner. Future shell-level overlays must first identify the intended visual boundary and establish their containing block there before selecting `fixed`, `absolute`, or z-index values.
+- **Status:** complete
+# 2026-07-18 - Backend LLM deconstruction availability audit complete
+
+- Confirmed effective configuration: AI enabled, token present and redacted, Pixel provider, `gpt-5.5`, Responses API.
+- Confirmed real gateway health through the authenticated configuration center.
+- Completed one non-synced synthetic pre-deconstruction and received three structured tasks, 76% completeness, 72% confidence, and a 16-hour overall estimate.
+- Closed the AI companion and cancelled the host new-demand form; no actual demand or task sync was submitted.
+- Focused Go configuration, provider-client, deconstruction, attachment-stream, and demand-spec stream tests pass.
+- Residual configuration debt: the database snapshot still stores legacy `endpoint_type: completions`; runtime normalization makes it safe today, but a future explicit save should persist `responses`.
+
+# 2026-07-18 - Daily Jira timing badge clarification complete
+
+- Completed the mandatory Impeccable, design-taste-frontend, and finesse-ui review before editing the Daily Jira surface.
+- Renamed the first table column and related empty/unclassified copy from age wording to timing wording without changing backend cohorts or reminder policy.
+- Replaced the wrapped age/overdue stack with one accessible, non-wrapping dot badge: red overdue, amber due within three natural days, and green healthy, followed by factual creation age.
+- `pnpm check` passes with 0 errors and 79 existing warnings; production build, Impeccable layout detection, Finesse detection, and `git diff --check` pass.
+- Real-component browser validation passed at 1280/760/480 with all semantic states, today/multi-day copy, keyboard row selection, zero browser-level overflow, a fixed 16px bottom gap, and no console errors. The isolated read-only fixture and local validation server were removed after use.
+- **Status:** complete
+
+# 2026-07-20 - Per-user project preferences complete
+
+- Added per-user project preference persistence plus authenticated `GET`/`PUT /api/me/project-preferences`; no saved rows means all projects, while selected mode stores normalized project keys.
+- Applied the preference scope to demand, Jira/task, schedule, risk, execution, agenda, strongest-brain, notification, and deconstruction/archive read paths, including direct-record access guards.
+- Added an inline preference editor to the profile popover with shared multi-select behavior, explicit all/selected modes, empty-selection protection, and page refresh events for the affected demand/Jira views.
+- Full Go suites pass for `internal/db`, `internal/server`, and `internal/agenda`; `pnpm --dir web check` passes with 0 errors and 72 pre-existing warnings; the production web build passes; exact affected-file Impeccable detection returns `[]`; `git diff --check` passes.
+- Authenticated isolated browser validation covered default-all, multi-project save, filtered agenda and Daily Jira results, restore-all, and 480px responsive behavior. Agenda results changed from 150 to 6 for HIT + NS2, and every visible Daily Jira row used HIT or NS2.
+- Fixed the mobile profile popover discovered during validation; at 480px it now stays within the viewport at x=12..468. The test user was restored to all projects, isolated services were stopped, and no demand/Jira record was created or synchronized.
+- **Status:** complete
+
+# 2026-07-20 - Daily Jira bottom ownership and Jira version-link audit complete
+
+- Removed Daily Jira's duplicate viewport-height calculation and connected the component to the same shell/workspace height chain used by Decision Agenda.
+- Authenticated 2048x925 comparison measured both routes at the same 22px bottom gutter; 1024x900 and 760x900 preserved 14px and 10px responsive gutters with zero document overflow.
+- The Jira release page for `PRJ25024 / 13622` exposes 21 issues through `project = 11900 AND fixVersion = 13622`. Existing `custom_jql` plus `SearchIssues` can ingest that issue set, but the application does not currently parse release-page URLs automatically.
+- No Jira sync or business-record mutation was performed. Frontend check/build, diff hygiene, exact-file Impeccable/Finesse scans, and authenticated console validation pass.
+- **Status:** complete
+
+# 2026-07-20 - Jira version sources and decision bottom substrate complete
+
+- Added typed Jira version sources with project number, project name, and version-page URL; server-side normalization enforces the configured Jira origin/base path, numeric version ID, project-key agreement, uniqueness, and canonical storage.
+- Jira synchronization now unions ordinary/custom JQL with version clauses such as `(project = "PRJ25024" AND fixVersion = 13622)` and includes valid version projects in keep-alive scope and project catalogs.
+- Added the responsive Settings editor with add/remove rows, immediate parsing, parsed-key adoption, invalid/duplicate feedback, overview, and confirmation summary. Existing Jira connection and custom-JQL behavior remains intact, with release sources explicitly additive.
+- Removed only the decision route's shell bottom inset. Decision Agenda and Daily Jira cards now meet the browser bottom consistently without painting over business surfaces or changing unrelated page gutters.
+- Go config/telemetry and focused server tests pass; frontend check/build, Impeccable complete/layout scans, Finesse P0 gate, and `git diff --check` pass.
+- Authenticated isolated browser validation passed the supplied version URL and both decision pages at 2048x924 and 760x900 with zero horizontal overflow and no console errors. No save, Jira sync, or business-data mutation was performed; all temporary services were stopped.
+- **Status:** complete
+
+# 2026-07-29 - Project board, Jira reverse sync, and decision table complete
+
+- Added the Schedule Governance project board with saved-project scope, priority fallback, a horizontally scrollable selector, and Todo/In Progress/Done lanes with expandable details.
+- Added Jira due-date reverse synchronization after successful schedule or decision rescheduling and Jira comment creation from non-empty decision conclusions.
+- Added per-user persisted decision-table columns, consistent Bug/Task markers, and uniform status-cell row backgrounds.
+- Go package and focused regression tests pass. Frontend check has 0 errors and 73 existing warnings; production build, exact-file Impeccable/Finesse detection, and diff hygiene pass.
+- Authenticated isolated browser validation passed at 1440×900 and 390×844, including project switching, lane recomputation, detail expansion, preference persistence across reload, responsive scroll ownership, 44px narrow controls, matching status backgrounds, and an empty console error list.
+- Jira, GitLab, and AI writes were disabled during validation. No production data was changed; temporary services and database files were removed.
+- **Status:** complete
+
+# 2026-07-30 - Delivery domain convergence implementation complete
+
+- Froze the delivery domain vocabulary and SQLite baseline before adding project, release, release-link, event, sync-operation, outbox, parent-work-item, and revision facts.
+- Added a single delivery-planning service and routed new work-item planning APIs plus the legacy schedule mutation adapter through its project/release gates, CAS checks, audit reason, atomic event, and outbox rules.
+- Added Jira release reconciliation, ambiguity handling, manual-primary preservation, migration dry-run tooling, compatibility counters, and `/api/delivery/quality` deletion-gate metrics.
+- Added the version-planning workbench, kept Project Board read-only, separated its card detail action from a persistent Jira anchor, exposed owners in collapsed cards, and restricted Task Tracking to execution tasks with optional parent context.
+- Full Go tests pass; frontend check has zero errors; production build, diff hygiene, and exact-file Impeccable detection pass. Finesse has zero P0 findings and no findings in the two new workbench surfaces.
+- Authenticated isolated browser validation passed Project Board pointer/keyboard/Jira/owner behavior at desktop and narrow widths, Version Plan selection stability and internal scrolling, and execution-only Task Tracking. No real Jira navigation or business mutation was performed.
+- Phase 8 physical deletion remains gated because the compatibility counters have not yet observed one stable release cycle with zero calls. The compatibility routes are marked deprecated and measurable, but not unsafely removed.
+- **Status:** implementation complete; compatibility deletion pending observation gate
+# 2026-07-31 - Version Plan multi-Jira association complete
+
+- Fixed the empty “all projects” Select clear affordance and portaled shared dropdowns to the body so modal/inspector overflow no longer clips long project options.
+- Routed version creation success and failure through the upper-right Toast while retaining field-local validation.
+- Replaced Jira release-version selection with project-scoped Jira work-item search, atomic multi-select association, linked-item listing, and individual removal.
+- Added release Jira-item counts and Project Board primary-release projection without per-row queries; linked Jira cards now show the local version name.
+- Kept `work_item_release_links` as the single relationship source, added candidate/count/projection indexes, blocked conflicting project changes, and prevented local associations from producing Jira fixVersion outbox writes.
+- Added the local release ownership ADR and a database schema/index/query design document. Legacy `release_jira_links` remains compatibility-only.
+- Full `go test ./...` passed. `pnpm check` passed with 0 errors and 82 pre-existing warnings; production build passed; exact affected-file Impeccable detection returned `[]`.
+- Authenticated isolated browser validation passed the desktop workflow and 744px responsive state, including both creation Toast paths, long dropdown options, two-item batch association, linked-item removal surface, and Project Board version badges. No production or real Jira data was changed.
+- **Status:** complete
+
+# 2026-07-31 - Version Plan batch-selection height stabilization complete
+
+- Reproduced the exact cumulative-growth defect in the authenticated Version Plan inspector: 12 selected Jira items grew the selector from 38px to 422px and the inspector scroll content from 556px to 940px; one long item already grew the trigger to 70px.
+- Enabled the shared MultiSelect summary presentation only for the batch Jira call site. The selector now retains a fixed control height and displays a count such as “已选 30 项”, while the overlay continues to own complete candidate display, search, clear, and continuous selection.
+- Authenticated browser validation passed at 1440×900 and 390×900. Selecting 30 of 48 candidates kept the trigger at 36px, preserved inspector height, kept the overlay inside the viewport, produced no horizontal overflow, and left browser error logs empty.
+- `pnpm check` passes with 0 errors and 79 existing warnings; production build, exact DeliveryPlan Impeccable/Finesse detection, and targeted whitespace checks pass.
+- Validation used the isolated local database with Jira, GitLab, Feishu, and AI disabled. No batch-association request or production write was submitted.
+- **Status:** complete
+
+# 2026-07-31 - Schedule inspector and task-directory convergence complete
+
+- Rebalanced the Schedule Board into a fluid table plus a 420–560px content-owned inspector, with independent body scrolling, clearer fact/edit/action/risk hierarchy, complete tab keyboard semantics, and responsive 3+2 / 2+2+1 layouts.
+- Made execution assignee facets merge the authorized user directory, configured members, and visible local-task owners. Jira aliases now resolve through the shared identity directory, while unmapped local owners remain available.
+- Kept project facets on the authoritative user-scoped project catalog. Task Table, Execution Tracking, and Personnel Load now expose identical project and owner choices in the authenticated browser fixture.
+- Full Go tests passed. Frontend check passed with 0 errors and 79 existing warnings; production build, exact whitespace checks, Impeccable detection, and the Finesse P0 gate passed.
+- Authenticated browser validation passed at 1440×900, 1024×900, 760×900, and 390×900 with internal table/inspector scrolling, no overlap or horizontal overflow, stable multi-select geometry, keyboard tab switching, and an empty clean-page console log.
+- Validation used integrations-disabled isolated SQLite data. No schedule save or production Jira/database write was performed.
+- **Status:** complete
+
+# 2026-07-31 - Task Table Work Item convergence complete
+
+- Rewired global demand/Bug search to Work Items and made Enter select the exact ID/title match or the first ranked result before navigating and scrolling to the highlighted row.
+- Restored the status Task Table to the Work Item read model with correct project/owner facets while retaining Execution Tasks for execution tracking and personnel load.
+- Removed inspector clamping/hidden-list behavior, added independent scrolling, and rebuilt task detail with the same shared `wide` Modal hierarchy used by Decision Dashboard.
+- Authenticated fixture browser validation passed at 1280×720 and 390×844 with correct Work Item/Git boundaries, filters, long-content reachability, responsive modal geometry, zero document overflow, and no console errors.
+- Frontend check, production build, targeted Impeccable/Finesse detection, static contracts, and diff hygiene pass. Validation was local and read-only.
+- **Status:** complete
+
+# 2026-07-31 - Task Table core-member candidate boundary complete
+
+- Replaced Work Item-derived owner options with the shared core-member directory while preserving real owner facts in table rows.
+- Aligned `/api/demands/options` with the central member rule: configured `sync_users` wins and custom-JQL assignees are fallback-only.
+- Added backend regressions for primary/fallback behavior and a frontend source contract preventing future Work Item-derived candidate leakage.
+- Isolated authenticated browser validation kept an external assignee visible in its row while exposing only the configured core member in the owner dropdown.
+- Internal server tests, frontend check/build, Impeccable/Finesse gates, and diff hygiene pass; no external integration or business write was used.
+- **Status:** complete
+
+# 2026-07-31 - Shared delivery owner and project directory complete
+
+- Corrected the three-person Task Table regression by separating RBAC authorization from delivery ownership. One authenticated `/api/delivery/directory` now returns configured Jira core members and the authoritative Jira/version-source project catalog.
+- Migrated Decision Dashboard, Task Table, Execution Tracking, Demand/Schedule forms, Daily Jira reassignment, Version Plan, Deconstructor, and Project Config mapping to the shared directory. Project Preferences was confirmed to already use the same backend catalog.
+- Added regressions proving RBAC-only users, visible local execution owners, task IDs, repositories, and commit evidence cannot pollute reusable owner/project candidates.
+- Complete server/database tests, frontend check/build, Impeccable detection, Finesse P0 gate, and diff hygiene pass.
+- Authenticated isolated browser validation confirmed matching 10-person and 4-project sets across the main delivery pages. Desktop and 390px Task Table checks showed an unclipped 10-option menu, zero document overflow, a 44px narrow trigger, and an error-free fresh task route.
+- Fixed an additional empty-project-config `null` payload crash found during the browser audit; external integrations remained disabled and the isolated services/database were removed.
+- **Status:** complete
+
+# 2026-07-31 - FZ-2247 dual-repository realtime trajectory repair complete
+
+- Canonicalized Jira issue identity across GitLab evidence so lowercase parser output and historical lowercase logs resolve to the existing `FZ-2247` Work Item instead of creating or hiding a Git-derived duplicate.
+- Scanned every commit in a push batch, preserved the canonical Jira owner when Git evidence arrives, and kept both `task_executor` and `crane_manager` evidence under one trajectory even when only a non-final commit carries the Jira key.
+- Added task-scoped SSE telemetry updates and open-panel background refresh with stale-request protection and no list flicker.
+- Full Go tests, frontend check/build, detector gates, whitespace checks, and authenticated browser validation passed. The live panel advanced from PUSH 3 to PUSH 4 without manual refresh and rendered both repositories at desktop, tablet, and mobile widths without overflow.
+- Production/runtime evidence still shows no `crane_manager` webhook delivery. No external GitLab mutation or deployment was performed; webhook installation/status remains the required environment follow-up.
+- **Status:** local repair and validation complete

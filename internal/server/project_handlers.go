@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	appconfig "well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/telemetry"
 )
@@ -18,7 +19,7 @@ func (s *Server) handleGetProjectConfigs(w http.ResponseWriter, r *http.Request)
 	}
 
 	var filtered []db.ProjectConfig
-	syncProjects := s.config.Jira.SyncProjects
+	syncProjects := appconfig.JiraProjectKeys(&s.config.Jira)
 	if len(syncProjects) > 0 {
 		for _, conf := range configs {
 			for _, sp := range syncProjects {
@@ -117,7 +118,7 @@ func (s *Server) handleGetProjectScores(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var filtered []db.ProjectScore
-	syncProjects := s.config.Jira.SyncProjects
+	syncProjects := appconfig.JiraProjectKeys(&s.config.Jira)
 	if len(syncProjects) > 0 {
 		for _, score := range scores {
 			for _, sp := range syncProjects {

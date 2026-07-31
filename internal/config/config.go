@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strings"
 
@@ -18,8 +19,9 @@ type Config struct {
 
 // ServerConfig holds HTTP server settings
 type ServerConfig struct {
-	Port int    `yaml:"port" json:"port"`
-	Host string `yaml:"host" json:"host"`
+	Port          int    `yaml:"port" json:"port"`
+	Host          string `yaml:"host" json:"host"`
+	AttachmentDir string `yaml:"attachment_dir" json:"attachment_dir"`
 }
 
 // GitLabConfig holds connection settings for self-hosted GitLab
@@ -64,14 +66,24 @@ type BitableConfig struct {
 
 // JiraConfig holds settings for Jira Integration
 type JiraConfig struct {
-	Enabled      bool     `yaml:"enabled" json:"enabled"`
-	BaseURL      string   `yaml:"base_url" json:"base_url"`
-	Username     string   `yaml:"username" json:"username"`
-	APIToken     string   `yaml:"api_token" json:"api_token"`
-	SyncProjects []string `yaml:"sync_projects" json:"sync_projects"`
-	SyncUsers    []string `yaml:"sync_users" json:"sync_users"`
-	SyncStatuses []string `yaml:"sync_statuses" json:"sync_statuses"`
-	CustomJQL    string   `yaml:"custom_jql" json:"custom_jql"`
+	Enabled                 bool                `yaml:"enabled" json:"enabled"`
+	BaseURL                 string              `yaml:"base_url" json:"base_url"`
+	Username                string              `yaml:"username" json:"username"`
+	APIToken                string              `yaml:"api_token" json:"api_token"`
+	SyncProjects            []string            `yaml:"sync_projects" json:"sync_projects"`
+	SyncUsers               []string            `yaml:"sync_users" json:"sync_users"`
+	SyncStatuses            []string            `yaml:"sync_statuses" json:"sync_statuses"`
+	CustomJQL               string              `yaml:"custom_jql" json:"custom_jql"`
+	VersionSources          []JiraVersionSource `yaml:"version_sources,omitempty" json:"version_sources,omitempty"`
+	VersionCatalogEnabled   bool                `yaml:"version_catalog_enabled,omitempty" json:"version_catalog_enabled"`
+	VersionWritebackEnabled bool                `yaml:"version_writeback_enabled,omitempty" json:"version_writeback_enabled"`
+}
+
+// JiraVersionSource adds every issue assigned to one Jira release version to the sync scope.
+type JiraVersionSource struct {
+	ProjectKey  string `yaml:"project_key" json:"project_key"`
+	ProjectName string `yaml:"project_name" json:"project_name"`
+	VersionURL  string `yaml:"version_url" json:"version_url"`
 }
 
 // AIConfig holds settings for LLM deconstructor
@@ -79,7 +91,7 @@ type AIConfig struct {
 	Enabled                bool    `yaml:"enabled" json:"enabled"`
 	Provider               string  `yaml:"provider" json:"provider"` // e.g. "openai"
 	BaseURL                string  `yaml:"base_url" json:"base_url"`
-	EndpointType           string  `yaml:"endpoint_type" json:"endpoint_type"` // e.g. "completions" or "responses"
+	EndpointType           string  `yaml:"endpoint_type" json:"endpoint_type"` // "responses" or native Claude "messages"; legacy "completions" migrates to responses
 	APIToken               string  `yaml:"api_token" json:"api_token"`
 	Model                  string  `yaml:"model" json:"model"`
 	ProjectArchitecture    string  `yaml:"project_architecture" json:"project_architecture"`
@@ -113,25 +125,45 @@ func SaveConfig(path string, cfg *Config) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// GetRealAPIURL returns the constructed API URL based on configuration
+// Protocol returns the active provider wire protocol. Chat Completions is kept
+// only as a persisted legacy value and is normalized to Responses.
+func (c *AIConfig) Protocol() string {
+	endpointType := strings.ToLower(strings.TrimSpace(c.EndpointType))
+	if endpointType == "messages" || endpointType == "anthropic" {
+		return "messages"
+	}
+	provider := strings.ToLower(strings.TrimSpace(c.Provider))
+	baseURL := strings.ToLower(strings.TrimSpace(c.BaseURL))
+	if (provider == "anthropic" || provider == "claude") && strings.Contains(baseURL, "api.anthropic.com") {
+		return "messages"
+	}
+	return "responses"
+}
+
+// GetRealAPIURL returns the provider endpoint for the normalized protocol.
 func (c *AIConfig) GetRealAPIURL() string {
 	urlStr := strings.TrimSpace(c.BaseURL)
 	if urlStr == "" {
 		return ""
 	}
-	endpointType := strings.ToLower(c.EndpointType)
-	if endpointType == "" {
-		endpointType = "completions"
+	protocol := c.Protocol()
+	parsed, err := url.Parse(urlStr)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimSuffix(urlStr, "/") + "/v1/" + protocol
 	}
-
-	lowerURL := strings.ToLower(urlStr)
-	if strings.Contains(lowerURL, "/v1/") || strings.HasSuffix(lowerURL, "/completions") || strings.HasSuffix(lowerURL, "/responses") {
-		return urlStr
+	pathLower := strings.ToLower(strings.TrimSuffix(parsed.Path, "/"))
+	knownSuffixes := []string{"/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages"}
+	for _, suffix := range knownSuffixes {
+		if strings.HasSuffix(pathLower, suffix) {
+			prefix := strings.TrimSuffix(parsed.Path, parsed.Path[len(parsed.Path)-len(suffix):])
+			parsed.Path = strings.TrimSuffix(prefix, "/") + "/v1/" + protocol
+			return parsed.String()
+		}
 	}
-
-	urlStr = strings.TrimSuffix(urlStr, "/")
-	if endpointType == "responses" {
-		return urlStr + "/v1/responses"
+	if strings.HasSuffix(pathLower, "/v1") {
+		parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/" + protocol
+		return parsed.String()
 	}
-	return urlStr + "/v1/chat/completions"
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/v1/" + protocol
+	return parsed.String()
 }

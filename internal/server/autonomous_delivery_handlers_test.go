@@ -11,6 +11,7 @@ import (
 
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/delivery"
 )
 
@@ -65,6 +66,40 @@ func TestDemandSpecReviewContractAndFreezeLifecycle(t *testing.T) {
 	}
 	if created.ReviewContract.Status != delivery.ReviewDraft || created.ReviewContract.AcceptanceOwner != "Product Owner" {
 		t.Fatalf("unexpected default review contract: %+v", created.ReviewContract)
+	}
+	if len(created.ReviewContract.ReviewerCandidates) != 1 || created.ReviewContract.ReviewerCandidates[0] != "Reviewer" {
+		t.Fatalf("reviewer defaults must come from delivery tasks, not Jira sync users: %+v", created.ReviewContract.ReviewerCandidates)
+	}
+	participant := userdb.User{Username: "reviewer", Email: "reviewer@example.com", Name: "Reviewer", Department: "Engineering"}
+	if err := db.DB.Create(&participant).Error; err != nil {
+		t.Fatalf("seed review participant: %v", err)
+	}
+	outsider := userdb.User{Username: "outsider", Email: "outsider@example.com", Name: "External Operator", Department: "External"}
+	if err := db.DB.Create(&outsider).Error; err != nil {
+		t.Fatalf("seed non-core participant: %v", err)
+	}
+	getContractRR := authenticatedJSONRequest(t, srv, token, http.MethodGet, "/api/review-contracts?demand_spec_version_id="+itoa(created.Spec.ID), nil)
+	if getContractRR.Code != http.StatusOK {
+		t.Fatalf("get review contract status = %d, body = %s", getContractRR.Code, getContractRR.Body.String())
+	}
+	var contractResponse struct {
+		Participants []reviewParticipantDTO `json:"participants"`
+	}
+	if err := json.NewDecoder(getContractRR.Body).Decode(&contractResponse); err != nil {
+		t.Fatalf("decode review participants: %v", err)
+	}
+	foundParticipant := false
+	for _, item := range contractResponse.Participants {
+		if item.Email == outsider.Email {
+			t.Fatalf("non-core participant leaked into review directory: %+v", contractResponse.Participants)
+		}
+		if item.Email == participant.Email && item.Name == participant.Name && item.Department == participant.Department {
+			foundParticipant = true
+			break
+		}
+	}
+	if !foundParticipant {
+		t.Fatalf("unexpected review participant directory: %+v", contractResponse.Participants)
 	}
 
 	contractBody := reviewContractPayload{
@@ -126,6 +161,59 @@ func TestDemandSpecReviewContractAndFreezeLifecycle(t *testing.T) {
 	}
 }
 
+func TestDemandSpecDraftCanBeWithdrawnButFrozenSpecCannot(t *testing.T) {
+	setupServerTestDB(t)
+	token := superAdminToken(t, "author@example.com", "Author", nil)
+	srv := NewServer(&config.Config{}, "")
+	demand := db.TaskTelemetry{
+		TaskID: "DEMAND-DRAFT-WITHDRAW", Title: "撤销规格草案", Description: "允许撤销尚未冻结的人工草案",
+		Assignee: "Author", Creator: "Author", IssueType: "demand", Status: "backlog",
+		TaskCreatedAt: time.Now(), LastUpdate: time.Now(),
+	}
+	if err := db.DB.Create(&demand).Error; err != nil {
+		t.Fatalf("seed demand: %v", err)
+	}
+
+	createRR := authenticatedJSONRequest(t, srv, token, http.MethodPost, "/api/demand-specs", demandSpecPayload{
+		DemandID: demand.TaskID, Summary: demand.Title, UserGoal: demand.Description,
+	})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create spec status = %d, body = %s", createRR.Code, createRR.Body.String())
+	}
+	var created struct {
+		Spec           demandSpecDTO     `json:"spec"`
+		ReviewContract reviewContractDTO `json:"review_contract"`
+	}
+	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	deleteRR := authenticatedJSONRequest(t, srv, token, http.MethodDelete, "/api/demand-specs/"+itoa(created.Spec.ID), nil)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("withdraw draft status = %d, body = %s", deleteRR.Code, deleteRR.Body.String())
+	}
+	var specCount int64
+	if err := db.DB.Model(&db.DemandSpecVersion{}).Where("id = ?", created.Spec.ID).Count(&specCount).Error; err != nil {
+		t.Fatalf("count spec: %v", err)
+	}
+	var contractCount int64
+	if err := db.DB.Model(&db.ReviewContract{}).Where("id = ?", created.ReviewContract.ID).Count(&contractCount).Error; err != nil {
+		t.Fatalf("count contract: %v", err)
+	}
+	if specCount != 0 || contractCount != 0 {
+		t.Fatalf("withdrawal left draft records: specs=%d contracts=%d", specCount, contractCount)
+	}
+
+	frozen := db.DemandSpecVersion{DemandID: demand.TaskID, Version: 2, Status: delivery.SpecFrozen, Summary: "frozen", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.DB.Create(&frozen).Error; err != nil {
+		t.Fatalf("seed frozen spec: %v", err)
+	}
+	deleteFrozenRR := authenticatedJSONRequest(t, srv, token, http.MethodDelete, "/api/demand-specs/"+itoa(frozen.ID), nil)
+	if deleteFrozenRR.Code != http.StatusConflict {
+		t.Fatalf("delete frozen status = %d, want %d, body = %s", deleteFrozenRR.Code, http.StatusConflict, deleteFrozenRR.Body.String())
+	}
+}
+
 func TestFreezeDemandSpecReturnsReadinessBlockers(t *testing.T) {
 	setupServerTestDB(t)
 	token := superAdminToken(t, "gate@example.com", "Gate", nil)
@@ -137,6 +225,7 @@ func TestFreezeDemandSpecReturnsReadinessBlockers(t *testing.T) {
 
 	createRR := authenticatedJSONRequest(t, srv, token, http.MethodPost, "/api/demand-specs", demandSpecPayload{
 		DemandID: demand.TaskID, Summary: "Incomplete", ReadinessScore: 20,
+		Tasks: []TaskDetail{{ID: "task-blocked", Title: "Review readiness", Assignee: "Reviewer"}},
 	})
 	if createRR.Code != http.StatusCreated {
 		t.Fatalf("create incomplete spec: %d %s", createRR.Code, createRR.Body.String())

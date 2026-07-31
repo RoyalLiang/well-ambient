@@ -17,6 +17,7 @@ type DemandSpecVersion struct {
 	IntentConfidence       float64    `json:"intent_confidence"`
 	Summary                string     `gorm:"type:text" json:"summary"`
 	UserGoal               string     `gorm:"type:text" json:"user_goal"`
+	MarkdownContent        string     `gorm:"type:text" json:"markdown_content"`
 	FactsJSON              string     `gorm:"type:text" json:"facts_json"`
 	InferencesJSON         string     `gorm:"type:text" json:"inferences_json"`
 	MissingContextJSON     string     `gorm:"type:text" json:"missing_context_json"`
@@ -121,6 +122,7 @@ type ExecutionAction struct {
 // selected by the production context-pack builder.
 type CorpusCandidate struct {
 	ID                    uint       `gorm:"primaryKey" json:"id"`
+	ContextDocumentID     uint       `gorm:"index" json:"context_document_id"`
 	ExecutionRunID        uint       `gorm:"index" json:"execution_run_id"`
 	DemandSpecVersionID   uint       `gorm:"index" json:"demand_spec_version_id"`
 	ContextPackID         uint       `gorm:"index" json:"context_pack_id"`
@@ -130,15 +132,23 @@ type CorpusCandidate struct {
 	Title                 string     `json:"title"`
 	Summary               string     `gorm:"type:text" json:"summary"`
 	Content               string     `gorm:"type:text" json:"content"`
+	SourceAnchor          string     `gorm:"type:text" json:"source_anchor"`
+	EvidenceKind          string     `gorm:"index;size:32" json:"evidence_kind"`
+	AIModel               string     `gorm:"size:160" json:"ai_model"`
 	ProvenanceJSON        string     `gorm:"type:text" json:"provenance_json"`
 	Confidence            float64    `json:"confidence"`
 	Sensitivity           string     `gorm:"size:32" json:"sensitivity"`
+	ReviewMode            string     `gorm:"index;size:32" json:"review_mode"`
 	Status                string     `gorm:"index;size:32" json:"status"`
 	ReviewedBy            string     `gorm:"size:160" json:"reviewed_by"`
 	ReviewNote            string     `gorm:"type:text" json:"review_note"`
+	ImpactPreviewedBy     string     `gorm:"size:160" json:"impact_previewed_by"`
+	PublishedBy           string     `gorm:"size:160" json:"published_by"`
 	AcceptedContextFactID uint       `gorm:"index" json:"accepted_context_fact_id"`
 	ExpiresAt             *time.Time `json:"expires_at"`
 	ReviewedAt            *time.Time `json:"reviewed_at"`
+	ImpactPreviewedAt     *time.Time `json:"impact_previewed_at"`
+	PublishedAt           *time.Time `json:"published_at"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }

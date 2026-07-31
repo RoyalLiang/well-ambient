@@ -1,3 +1,1015 @@
+## [ERR-20260721-023] frontend-validation-run-from-repository-root
+
+**Logged**: 2026-07-21T15:24:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The final frontend check and build were first launched from the repository root, which has no pnpm importer manifest.
+
+### Error
+```text
+ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND No package.json was found in /Users/eddie/Workspace/well-ambient
+```
+
+### Context
+- Operation: rerun the final Svelte check and production build after the responsive height fixes.
+- The frontend package lives under `web/`, so the root working directory was invalid for these commands.
+
+### Suggested Fix
+Run frontend package commands with `workdir=/Users/eddie/Workspace/well-ambient/web`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+- Recurrence-Count: 4
+- Last-Seen: 2026-07-22
+
+### Resolution
+- **Resolved**: 2026-07-21T15:25:00+08:00
+- **Notes**: Re-ran both commands from `web/`.
+
+---
+
+## [ERR-20260731-030] stale-sse-browser-harness
+
+**Logged**: 2026-07-31T23:59:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first realtime telemetry observation reused a browser EventSource across a rebuilt backend, so persisted evidence was present but the open panel did not receive the new named SSE event.
+
+### Error
+```text
+Expected the open FZ-2247 trajectory to add crane_manager evidence automatically; the panel remained at PUSH 1 until its manual refresh.
+```
+
+### Context
+- The isolated backend had been stopped, rebuilt, and restarted after the browser had already opened its SSE connection.
+- SQLite confirmed both repository records were persisted correctly.
+- Reloading the authenticated app created a fresh EventSource; a subsequent webhook changed the open panel from PUSH 3 to PUSH 4 without any UI refresh action.
+
+### Suggested Fix
+When validating realtime behavior after rebuilding or restarting the isolated backend, reload the authenticated app before the assertion and prove persistence separately from delivery.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/App.svelte, web/src/components/CommitTelemetryPanel.svelte, internal/server/notification_handlers.go
+- See Also: ERR-20260731-025, ERR-20260731-026, ERR-20260731-027
+
+### Resolution
+- **Resolved**: 2026-07-31T23:59:00+08:00
+- **Notes**: Recreated the browser SSE connection and observed the next FZ-2247 webhook appear live; the panel showed both task_executor and crane_manager with no console errors.
+
+---
+
+## [ERR-20260721-022] copied-db-overrode-isolated-config
+
+**Logged**: 2026-07-21T15:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A copied historical database loaded its persisted configuration after startup and overrode the Jira-disabled validation YAML.
+
+### Error
+```text
+Loaded configuration from database version 19
+Starting well-ambient server on 0.0.0.0:8080
+Starting background Jira task synchronization worker...
+```
+
+### Context
+- Operation: start an isolated authenticated UI backend using a copied database for long-data layout validation.
+- The YAML disabled all external integrations and selected port 18080, but `config_versions` in the copied database had higher runtime precedence.
+- The sandbox denied the unexpected 8080 bind, so no validation service remained running.
+
+### Suggested Fix
+When reusing historical data for isolated UI validation, remove persisted `config_versions` from the temporary copy before startup, then verify the startup log shows the intended loopback address and no external worker.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/config/config.go, internal/server/server.go, well-ambient.db
+
+### Resolution
+- **Resolved**: 2026-07-21T15:00:00+08:00
+- **Notes**: Cleared only the temporary copy's `config_versions` table and retained the Jira-disabled YAML as the sole runtime configuration.
+
+---
+
+## [ERR-20260721-021] parallel-validation-setup-dependency
+
+**Logged**: 2026-07-21T14:55:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+An isolated validation database copy raced the temporary directory creation because dependent setup commands were launched in parallel.
+
+### Error
+```text
+cp: /private/tmp/well-layout-validation/well-ambient.db: No such file or directory
+```
+
+### Context
+- Operation: prepare a copied SQLite database and locally built server for authenticated UI validation.
+- The directory creation, server build, and database copy were submitted in the same parallel batch even though the copy depended on the directory.
+
+### Suggested Fix
+Create the validation directory first, then parallelize only the independent server build and database copy.
+
+### Metadata
+- Reproducible: yes
+- Related Files: well-ambient.db
+
+### Resolution
+- **Resolved**: 2026-07-21T14:55:00+08:00
+- **Notes**: Re-ran the database copy after confirming the temporary directory and built server existed.
+
+---
+
+## [ERR-20260720-026] isolated-ui-validation-hit-existing-8080-service
+
+**Logged**: 2026-07-20T22:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: browser-validation
+
+### Summary
+The first isolated full-app validation attempts reached an existing service on port 8080, so local development login returned 401 instead of reaching the fixture backend.
+
+### Error
+```text
+login status 401; fixture backend received no request
+```
+
+### Context
+- Static Vite preview did not proxy the login API.
+- The normal Vite development proxy targets `localhost:8080`, which was already occupied.
+- A direct `::1` host value was also invalid because the server formats addresses without IPv6 brackets.
+
+### Resolution
+Started a fresh fixture backend on `127.0.0.1:18080` and a temporary Vite validation config proxying `/api` to that port. Authenticated browser validation then passed, and the temporary repo config was removed.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/vite.config.ts, internal/server/server.go
+
+---
+
+## [ERR-20260721-020] responsive-submenu-click-after-auto-collapse
+
+**Logged**: 2026-07-21T14:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Responsive browser validation timed out when clicking a secondary navigation item after its primary item auto-collapsed the mobile rail.
+
+### Error
+```text
+Playwright selector deadline exceeded while clicking the flow-board submenu
+```
+
+### Context
+- Operation: validate the flow board after applying a sub-860px viewport override.
+- The primary navigation click succeeded, but responsive navigation closed the rail before the secondary click.
+
+### Suggested Fix
+After responsive primary navigation, capture a fresh DOM snapshot and reopen the rail before locating and clicking the submenu.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/prototype/FunctionalAdminShell.svelte
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-21T14:20:00+08:00
+- **Notes**: Continued validation using the responsive rail toggle before the submenu click.
+
+---
+
+## [ERR-20260720-025] version-source-test-omitted-jira-base-url
+
+**Logged**: 2026-07-20T17:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend-test
+
+### Summary
+The named version-source preference test supplied a release URL but omitted the Jira base URL, so the source was correctly excluded as invalid.
+
+### Error
+```text
+version source project missing from options
+```
+
+### Context
+- Operation: verify that version-only projects and configured names flow into user project preferences.
+- Version source validity intentionally depends on parsing against the configured Jira base URL.
+
+### Resolution
+Added the matching fixture base URL and reran the server package tests.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/project_preference_handlers_test.go, internal/config/jira_versions.go
+
+---
+
+## [ERR-20260720-024] project-preference-test-used-wrong-server-fields
+
+**Logged**: 2026-07-20T17:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend-test
+
+### Summary
+A new project-preference test referenced guessed `Server.mu` and `Server.cfg` fields, so the test package did not compile.
+
+### Error
+```text
+server.mu undefined
+server.cfg undefined
+```
+
+### Context
+- Operation: add coverage proving a named Jira version source appears in user project preferences.
+- The actual server configuration field is `Server.config` and this test does not require concurrent mutation.
+
+### Resolution
+Changed the test fixture to set `server.config.Jira.VersionSources` directly, then reran the server package tests.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/project_preference_handlers_test.go, internal/server/server.go
+
+---
+
+## [ERR-20260720-023] browser-binding-was-finalized
+
+**Logged**: 2026-07-20T18:42:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first follow-up browser call assumed a prior task's finalized browser variable was still available in the current execution context.
+
+### Error
+```text
+browser is not defined
+```
+
+### Context
+- The previous validation had already finalized its controlled tabs.
+- The current task needed a new authenticated geometry pass for Daily Jira and a read-only inspection of an already-open Jira version page.
+
+### Suggested Fix
+At the start of each browser task, reuse a live browser binding only when it is actually present; otherwise initialize the browser runtime once, name the session, discover visible user tabs, and claim exact returned tab objects.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+---
+
+## [ERR-20260731-021] authenticated-preview-not-running
+
+**Logged**: 2026-07-31T16:38:57+08:00
+**Priority**: low
+**Status**: pending
+**Area**: frontend
+
+### Summary
+The expected local authenticated frontend preview was not available for the initial browser reproduction.
+
+### Error
+```text
+curl: (7) Failed to connect to 127.0.0.1 port 5173
+```
+
+### Context
+- Operation: probe the previously used local Vite URL before building browser red-light assertions.
+- The current thread has no attached terminal session and no process was listening on the expected port.
+
+### Suggested Fix
+Use the repository's isolated database and local authentication bootstrap to start a fresh backend/frontend pair, then run the browser reproduction against that bounded environment.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/vite.config.ts
+
+---
+
+## [ERR-20260731-020] shell-backticks-in-read-only-rg-query
+
+**Logged**: 2026-07-31T11:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A read-only `rg` query used Markdown backticks inside a double-quoted shell command, so zsh attempted command substitution.
+
+### Error
+```text
+zsh:1: command not found: Modal
+```
+
+### Context
+- Operation: locate the shared-modal addendum in `task_plan.md`.
+- No file mutation or application process was involved.
+
+### Suggested Fix
+Use a single-quoted search pattern or remove Markdown delimiters from shell arguments.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md
+
+### Resolution
+- **Resolved**: 2026-07-31T11:20:00+08:00
+- **Notes**: Replaced the query with a single-quoted literal pattern and retained the repository command-escaping rule for later checks.
+
+---
+
+---
+
+## [ERR-20260730-001] broad-context-free-conditional-replacement
+
+**Logged**: 2026-07-30T15:41:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+A compatibility guard intended for the release creation helper matched the first identical project-key condition in the file and broke the release list build.
+
+### Error
+```
+internal/server/release_handlers.go:49:25: undefined: scopedProjectKey
+```
+
+### Context
+- Operation: preserve the existing project-scoped release creation behavior while validating optional project binding on the new page-level endpoint.
+- The patch matched `if projectKey != ""` without including the target function context, so it modified `handleListReleases` instead of `createLocalRelease`.
+
+### Suggested Fix
+Use function-level context for repeated conditionals, inspect both the intended function and the first file occurrence after patching, and run the focused compile test immediately.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/release_handlers.go
+
+### Resolution
+- **Resolved**: 2026-07-30T15:42:00+08:00
+- **Notes**: Restored the list filter, applied the scoped-route guard inside `createLocalRelease`, and reran the focused and full server test gates.
+
+---
+
+## [ERR-20260729-001] shell-search-pattern-used-unescaped-backtick
+
+**Logged**: 2026-07-29T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A combined ripgrep command embedded a backtick pattern inside a double-quoted shell command and failed during parsing.
+
+### Error
+```text
+zsh:3: unmatched "
+```
+
+### Context
+- Operation: inspect frontend API calls while auditing overlapping strongest-brain pages.
+- The search pattern mixed shell double quotes with a literal Svelte template backtick.
+
+### Suggested Fix
+Split the search into simple single-quoted patterns or omit the backtick-specific branch when ordinary fetch patterns are sufficient.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/prototype/FunctionalAdminShell.svelte
+
+### Resolution
+- **Resolved**: 2026-07-29T00:01:00+08:00
+- **Notes**: Re-ran the inspection with a simpler pattern and obtained the required navigation and API ownership evidence.
+
+---
+
+## [ERR-20260726-001] skill-installer-python-ca-chain
+
+**Logged**: 2026-07-26T12:38:49+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+The global skill installer could not download a public GitHub archive because the local Python runtime could not validate the TLS certificate chain.
+
+### Error
+```text
+ssl.SSLCertVerificationError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate
+```
+
+### Context
+- Command: `install-skill-from-github.py --repo mattpocock/skills ...`
+- The same repository was reachable through Git over HTTPS.
+- Disabling TLS verification would weaken the installation boundary.
+
+### Suggested Fix
+Use the installer's supported `--method git` fallback so Git performs the authenticated TLS transport and sparse checkout.
+
+### Metadata
+- Reproducible: yes
+- Related Files: /Users/eddie/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py
+
+### Resolution
+- **Resolved**: 2026-07-26T12:38:49+08:00
+- **Notes**: Retried with the supported Git method instead of bypassing certificate validation.
+
+---
+
+## [ERR-20260724-001] go-build-default-cache-denied
+
+**Logged**: 2026-07-24T01:24:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+The isolated browser-validation backend build reused the macOS Go cache and was denied by the workspace sandbox.
+
+### Error
+```text
+open /Users/eddie/Library/Caches/go-build/...: operation not permitted
+```
+
+### Context
+- Operation attempted: build a temporary local backend for authenticated UI validation.
+- The output binary and validation database were already scoped to `/tmp`; only the implicit Go cache escaped that boundary.
+
+### Suggested Fix
+Set `GOCACHE=/tmp/well-ambient-gocache` on every local Go build or test command in this workspace.
+
+### Metadata
+- Reproducible: yes
+- Related Files: cmd/server/main.go
+- See Also: ERR-20260713-010, ERR-20260715-001, ERR-20260720-013
+
+### Resolution
+- **Resolved**: 2026-07-24T01:24:00+08:00
+- **Notes**: Retried the temporary backend build with the established `/tmp` Go cache.
+
+---
+
+## [ERR-20260720-020] go-build-cache-sandbox-denied
+
+**Logged**: 2026-07-20T19:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first Jira version-source test command used the default macOS Go build cache, which the workspace sandbox cannot read.
+
+### Error
+```
+open /Users/eddie/Library/Caches/go-build/...: operation not permitted
+```
+
+### Context
+- Operation: run focused config, server, and telemetry Go tests after adding Jira version-link parsing.
+- The config package completed, while packages sharing the denied compiled artifact failed during setup.
+
+### Suggested Fix
+Set `GOCACHE=/tmp/well-ambient-gocache` for repository Go validation inside the sandbox.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/config/jira_versions.go, internal/server/jira_worker.go
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-23
+
+### Resolution
+- **Resolved**: 2026-07-20T19:36:00+08:00
+- **Notes**: Switched the focused rerun to the established `/tmp` Go cache path. The same sandbox denial recurred on 2026-07-23 and was handled with that cache path.
+
+---
+
+## [ERR-20260720-021] broad-config-example-read-exposed-secret-field
+
+**Logged**: 2026-07-20T19:36:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+A broad Jira block inspection included an existing credential field even though only safe schema keys were needed.
+
+### Error
+```
+The command printed the Jira api_token line from config.example.yaml.
+```
+
+### Context
+- Operation: locate the example Jira block before deciding whether to document `version_sources`.
+- A prior project learning already required narrow safe-field inspection for configuration files.
+
+### Suggested Fix
+Do not read configuration-value blocks. Inspect type definitions and exact safe key names only, and skip example-file edits when their context would expose credentials.
+
+### Metadata
+- Reproducible: yes
+- Related Files: config.example.yaml, internal/config/config.go
+- See Also: ERR-20260720-010
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-21
+
+### Resolution
+- **Resolved**: 2026-07-20T19:37:00+08:00
+- **Notes**: Stopped reading or editing the example config and kept implementation/documentation in typed code and UI surfaces only.
+
+---
+
+## [ERR-20260720-022] server-tests-loopback-denied
+
+**Logged**: 2026-07-20T22:16:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The sandboxed full server suite could compile but could not open the IPv6 loopback listener required by existing `httptest.NewServer` cases.
+
+### Error
+```
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Context
+- Operation: run the full `internal/server` suite after Jira version-source changes.
+- Failure occurred in an existing GitLab webhook HTTP test before the changed Jira tests completed.
+
+### Suggested Fix
+Run the bounded `go test ./internal/server` command with loopback permission after it compiles in the sandbox.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_handlers_gitlab_webhook_test.go
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-30
+
+### Resolution
+- **Resolved**: 2026-07-20T22:17:00+08:00
+- **Notes**: Reran the full server suite with loopback permission; it passed. The same sandbox-only failure recurred on 2026-07-30 during delivery-baseline validation and the bounded escalated rerun passed.
+
+### Resolution
+- **Resolved**: 2026-07-20T18:45:00+08:00
+- **Notes**: Reinitialized the browser connection, claimed the exact local-app and Jira-version tabs returned by discovery, and completed the read-only checks.
+
+---
+
+## [ERR-20260720-010] chrome-evaluate-dom-is-read-only
+
+**Logged**: 2026-07-20T09:51:10+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome evaluation surface exposes DOM nodes as read-only objects, so it cannot host an ephemeral overdue-state fixture.
+
+### Error
+```
+TypeError: Cannot set property className of [object Object] which has only a getter
+```
+
+### Context
+- The live Daily Jira dataset currently contains no `latest_decision` rows, so a temporary two-column due state was considered for visual-only verification.
+- The operation was intentionally local and non-persistent, but this browser surface disallows DOM mutation.
+
+### Suggested Fix
+Do not bypass the read-only browser contract. Validate the available live state in the browser, validate the due selector and two-column source contract statically, and defer real due-state pixels until such a Jira exists in authenticated data.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-07-20T09:52:00+08:00
+- **Notes**: Stopped attempting DOM mutation, preserved live business data, and limited browser claims to the available no-decision state.
+
+---
+
+## [ERR-20260720-020] isolated-task-filter-loopback-bind-denied
+
+**Logged**: 2026-07-20T16:28:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The isolated current-source backend and Vite validation servers could not bind their loopback ports inside the default sandbox.
+
+### Error
+```text
+listen tcp 127.0.0.1:18081: bind: operation not permitted
+Error: listen EPERM: operation not permitted 127.0.0.1:5176
+```
+
+### Context
+- Attempted to start a copied-database backend with every external integration disabled on port 18081 and a temporary Vite proxy on port 5176.
+- Existing user-owned services on ports 8080 and 5173 were intentionally left untouched.
+
+### Suggested Fix
+Rerun only the two loopback-only validation services with managed escalation, finish authenticated read-only browser checks, then stop both isolated sessions.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte, web/src/components/shared/MultiSelect.svelte
+- See Also: ERR-20260720-014
+
+### Resolution
+- **Resolved**: 2026-07-20T18:16:00+08:00
+- **Notes**: Started only the copied-database backend and temporary Vite proxy with managed loopback permission, completed authenticated read-only validation, stopped both sessions, and confirmed the original 8080/5173 services were not replaced.
+
+---
+
+## [ERR-20260720-021] browser-clear-filter-footer-became-stale
+
+**Logged**: 2026-07-20T16:38:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The browser check tried to read the open multi-select footer after clicking its conditional clear button, but the clear action removed that button and focus-out closed the dropdown.
+
+### Error
+```text
+Playwright selector deadline exceeded
+```
+
+### Context
+- The `全部项目` action correctly cleared the project values.
+- The follow-up locator assumed the dropdown would remain open even though the clicked control disappeared after the state change.
+
+### Suggested Fix
+After clicking a conditional control that removes itself, capture a fresh DOM snapshot and verify the closed-control summary plus filtered table state instead of reusing a footer locator.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MultiSelect.svelte
+- See Also: ERR-20260720-019
+
+### Resolution
+- **Resolved**: 2026-07-20T16:39:00+08:00
+- **Notes**: A fresh snapshot showed `全部项目`, the project dropdown closed, and the remaining two-owner filter returned 35 rows as expected.
+- See Also: ERR-20260720-009
+
+---
+
+## [ERR-20260720-022] browser-clean-tab-api-assumptions
+
+**Logged**: 2026-07-20T18:12:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The clean-console browser check first assumed unsupported `tabs.open` and `playwright.domcontentloaded` helpers.
+
+### Error
+```text
+browser.tabs.open is not a function
+cleanTab2.playwright.domcontentloaded is not a function
+```
+
+### Context
+- A fresh tab was needed so pre-authentication 403 logs would not be confused with post-login component errors.
+- The browser binding supports `tabs.new()`, `tab.goto()`, snapshots, locators, and `dev.logs()`, but not the two assumed helpers.
+
+### Suggested Fix
+Create the tab with `tabs.new()`, navigate with `tab.goto()`, wait briefly for application hydration, then inspect the DOM and tab-scoped error log.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-07-20T18:13:00+08:00
+- **Notes**: A fresh authenticated tab navigated through Task Tracking to Execution Tracking and returned an empty tab-scoped console error list.
+
+---
+
+## [ERR-20260720-009] chrome-evaluate-classlist-method-unavailable
+
+**Logged**: 2026-07-20T09:50:10+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome evaluation wrapper also exposed `classList` without callable DOMTokenList methods.
+
+### Error
+```
+TypeError: s.classList.add is not a function
+```
+
+### Context
+- A temporary, non-persistent overdue state was being composed only to validate two-column geometry and semantic tint.
+- Read-only DOM properties and direct property assignment work reliably in this wrapper; several prototype convenience methods do not.
+
+### Suggested Fix
+For ephemeral browser fixtures in this runtime, prefer direct `className` and `innerHTML` assignment, always restore the original values, and avoid DOM prototype helpers.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-006, ERR-20260720-008
+
+### Resolution
+- **Resolved**: 2026-07-20T09:51:00+08:00
+- **Notes**: Switched the temporary state fixture to direct properties and restored the original DOM immediately after measurement.
+
+---
+
+## [ERR-20260720-008] chrome-evaluate-parsefloat-shadowed
+
+**Logged**: 2026-07-20T09:49:20+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome evaluation sandbox exposed `parseFloat` as a non-callable binding during title-line measurement.
+
+### Error
+```
+TypeError: parseFloat is not a function
+```
+
+### Context
+- The selected long-title Jira was already verified correctly.
+- Only the derived line-count calculation failed; raw title height and computed line-height remained available.
+
+### Suggested Fix
+Return raw geometry and computed CSS strings from the browser, then infer the line count outside the page evaluation instead of calling the shadowed global.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-007
+
+### Resolution
+- **Resolved**: 2026-07-20T09:50:00+08:00
+- **Notes**: Removed the in-page numeric parsing and completed the measurement using raw bounding-box height plus computed line-height.
+
+---
+
+## [ERR-20260720-007] chrome-evaluate-mouseevent-constructor-unavailable
+
+**Logged**: 2026-07-20T09:48:10+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome evaluation wrapper did not expose `MouseEvent` as a constructible browser global for synthetic row activation.
+
+### Error
+```
+TypeError: MouseEvent is not a constructor
+```
+
+### Context
+- Tried explicit event dispatch after the target row's `click()` method was unavailable.
+- The target identifier was then corrected to a Jira row confirmed present in the current 135-row bucket.
+
+### Suggested Fix
+Return to the Playwright locator for the confirmed-present Jira key; the earlier locator timeout was caused by requesting a row absent from the current bucket, not by the row being offscreen.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-005, ERR-20260720-006
+
+### Resolution
+- **Resolved**: 2026-07-20T09:49:00+08:00
+- **Notes**: Used the locator only after confirming the exact Jira key exists in the current rendered bucket, then verified selection through the inspector.
+
+---
+
+## [ERR-20260720-006] chrome-row-click-method-unavailable
+
+**Logged**: 2026-07-20T09:47:30+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The browser evaluation found the target table row, but its convenience `click()` method was unavailable in this runtime.
+
+### Error
+```
+TypeError: row.click is not a function
+```
+
+### Context
+- Followed the fallback from ERR-20260720-005 to activate a rendered Jira row without scrolling or business mutation.
+- The returned row supports event dispatch but not the HTMLElement convenience method in this evaluation wrapper.
+
+### Suggested Fix
+Dispatch a bubbling, cancelable `MouseEvent('click')` on the located row and confirm selection through the inspector key before measuring.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-005
+
+### Resolution
+- **Resolved**: 2026-07-20T09:48:00+08:00
+- **Notes**: Used explicit mouse-event dispatch and verified the selected Jira key in the inspector before continuing.
+
+---
+
+## [ERR-20260720-005] chrome-offscreen-jira-row-locator-timeout
+
+**Logged**: 2026-07-20T09:46:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The text-filtered Playwright locator timed out while activating an offscreen Jira row that was already present in the rendered table.
+
+### Error
+```
+Playwright selector deadline exceeded
+waiting on click for selector tbody tr >> internal:has-text="NS2-1779"i
+```
+
+### Context
+- Final authenticated validation needed a two-line Jira title without changing business data.
+- The table renders a large locally scrollable row set, and the wrapper locator did not resolve the offscreen match before its selector deadline.
+
+### Suggested Fix
+Use an in-page exact text lookup over the already-rendered rows and dispatch the existing row click handler, then verify the selected inspector title before measuring.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-002, ERR-20260720-004
+
+### Resolution
+- **Resolved**: 2026-07-20T09:47:00+08:00
+- **Notes**: Switched to a bounded DOM row lookup for the non-mutating selection state and continued the same authenticated validation.
+
+---
+
+## [ERR-20260720-004] daily-jira-geometry-missing-scroll-selector
+
+**Logged**: 2026-07-20T09:39:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first Daily Jira geometry probe assumed a `.table-scroll` selector that does not exist in the rendered component.
+
+### Error
+```
+TypeError: Cannot read properties of null (reading 'scrollHeight')
+```
+
+### Context
+- Measured inspector section bounds and scroll ownership before the visual fix.
+- The missing optional list selector caused the whole evaluation to abort.
+
+### Suggested Fix
+Probe candidate overflow selectors from the component source and guard every optional element before reading geometry.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-003
+
+### Resolution
+- **Resolved**: 2026-07-20T09:39:30+08:00
+- **Notes**: Re-ran the measurement with null-safe element geometry and enumerated actual scroll owners instead of assuming the list class.
+
+---
+
+## [ERR-20260720-003] chrome-stale-claimed-tab-handle
+
+**Logged**: 2026-07-20T09:37:23+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The persisted Chrome tab object no longer owned its previously claimed tab even though the tab remained open.
+
+### Error
+```
+Tab not found: 733581466. Existing tabs: none
+```
+
+### Context
+- Attempted to reuse the prior turn's `grayFixTab` handle for authenticated Daily Jira geometry inspection.
+- `chrome.user.openTabs()` still listed the application tab, but the claimed handle had expired.
+
+### Suggested Fix
+Refresh the open-tab list and reclaim the existing tab by id before continuing; do not open a duplicate authenticated application tab.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260720-002
+
+### Resolution
+- **Resolved**: 2026-07-20T09:38:00+08:00
+- **Notes**: Reclaimed tab `733581466` from the current Chrome tab list and continued on the existing authenticated session.
+
+---
+
+## [ERR-20260720-002] chrome-role-locator-hidden-responsive-nav
+
+**Logged**: 2026-07-20T09:27:12+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The role-based Daily Jira navigation locator timed out while the responsive shell did not expose the target as a visible role match.
+
+### Error
+```text
+Playwright selector deadline exceeded
+waiting on click for selector internal:role=button[name=/每日 Jira/]
+```
+
+### Context
+- Operation attempted: route-isolation check at the calibrated 1024px viewport.
+- The exact navigation item was present, but the role query did not produce a clickable visible target in that responsive shell state.
+
+### Suggested Fix
+Use the established visible button locator filtered by rendered text after returning to a wide viewport, then verify route state through computed frame class and background.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/prototype/FunctionalAdminShell.svelte
+- See Also: ERR-20260719-030
+
+### Resolution
+- **Resolved**: 2026-07-20T09:27:12+08:00
+- **Notes**: Switched to `locator('button').filter({hasText:'每日 Jira'})` at 1440px, verified the agenda-only class was absent and Daily Jira retained the original gray substrate, then returned to Decision Agenda.
+
+---
+
+## [ERR-20260720-001] rg-leading-hyphen-pattern
+
+**Logged**: 2026-07-20T09:27:12+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Ripgrep parsed a CSS custom-property search pattern as an option because the pattern began with two hyphens.
+
+### Error
+```text
+rg: unrecognized flag --wa-surface-flat
+```
+
+### Context
+- Operation attempted: locate the existing `--wa-surface-flat` token definition.
+
+### Suggested Fix
+Insert `--` before any ripgrep pattern that starts with a hyphen and place glob options before positional paths.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/styles/modern-admin-tokens.css
+
+### Resolution
+- **Resolved**: 2026-07-20T09:27:12+08:00
+- **Notes**: Re-ran the search with `rg -n -- "--wa-surface-flat"` and confirmed the project token definition.
+
+---
+
 ## [ERR-20260620-001] apply_patch_context
 
 **Logged**: 2026-06-20T12:46:00+08:00
@@ -26,11 +1038,610 @@ Use smaller context blocks around the exact current file excerpt after formatter
 
 ---
 
+## [ERR-20260718-012] frontend-check-run-from-repository-root
+
+**Logged**: 2026-07-18T20:21:10+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The frontend check was first run from the repository root, while this repository keeps its pnpm package manifest under `web/`.
+
+### Error
+```text
+ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND No package.json was found in /Users/eddie/Workspace/well-ambient
+```
+
+### Context
+- Attempted `pnpm check` from the repository root after editing Svelte components.
+- `web/package.json` contains the actual `check` script.
+
+### Suggested Fix
+Run frontend package scripts with `workdir=/Users/eddie/Workspace/well-ambient/web`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-07-18T20:21:10+08:00
+- **Notes**: Located the package manifest and continued validation from `web/`.
+
+---
+
+## [ERR-20260718-004] zsh-empty-glob-in-readonly-search
+
+**Logged**: 2026-07-18T14:28:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: config
+
+### Summary
+A repository credential search used the unmatched shell glob `.env*`, so zsh stopped the command before `rg` ran.
+
+### Error
+```text
+zsh:1: no matches found: .env*
+```
+
+### Context
+- The command was read-only and made no file changes.
+- The search combined fixed paths with an optional dotenv glob under zsh's default `nomatch` behavior.
+
+### Suggested Fix
+Discover optional dotenv files with `rg --files -g '.env*'` or search the repository using `rg` include globs instead of passing an unmatched shell glob.
+
+### Metadata
+- Reproducible: yes
+- Related Files: .env.example
+
+### Resolution
+- **Resolved**: 2026-07-18T14:28:00+08:00
+- **Notes**: Replaced the shell-expanded path with repository-level `rg` include/exclude globs.
+
+---
+
+## [ERR-20260718-005] unmatched-shell-quote-in-source-search
+
+**Logged**: 2026-07-18T14:31:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A combined source inspection command embedded backticks and both quote styles in one `rg` expression, leaving zsh with an unmatched quote.
+
+### Error
+```text
+zsh:1: unmatched "
+```
+
+### Context
+- The command was read-only and stopped before either source inspection ran.
+- The intended follow-up was to inspect the login response contract and startup API calls.
+
+### Suggested Fix
+Split source inspection and fetch-call discovery into simple commands with single-purpose quoting.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/App.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T14:31:00+08:00
+- **Notes**: Replaced the combined command with separate `sed` and fixed-string `rg` calls.
+
+---
+
+## [ERR-20260718-006] stale-duplicate-input-patch
+
+**Logged**: 2026-07-18T14:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A narrow patch attempted to remove a duplicate search input seen in a combined source dump, but a direct source re-read showed only one input node.
+
+### Error
+```text
+apply_patch verification failed: Failed to find expected lines
+```
+
+### Suggested Fix
+Re-read the exact source hunk before patching when combined command output may repeat adjacent lines.
+
+### Metadata
+- Reproducible: no
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T14:35:00+08:00
+- **Notes**: Direct `sed` and `rg` checks confirmed exactly one search input; no code change was needed.
+
+---
+
+## [ERR-20260718-007] sandbox-localhost-bind-denied
+
+**Logged**: 2026-07-18T14:36:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The sandbox denied binding the isolated browser-validation fixture server to `127.0.0.1:5174`.
+
+### Error
+```text
+Error: listen EPERM: operation not permitted 127.0.0.1:5174
+```
+
+### Suggested Fix
+Rerun the exact narrow localhost fixture-server command with managed escalation rather than retrying other ports.
+
+### Metadata
+- Reproducible: yes
+- Related Files: /tmp/well-ambient-daily-jira-fixture.mjs
+- Recurrence-Count: 3
+- Last-Seen: 2026-07-24
+
+### Resolution
+- **Resolved**: 2026-07-18T14:36:00+08:00
+- **Notes**: Managed approval allowed the fixture-only runs; the latest recurrence used the isolated copied database, disabled every external integration, and started Vite on the same validated local port.
+
+---
+
+## [ERR-20260718-008] malformed-multi-file-apply-patch
+
+**Logged**: 2026-07-18T14:37:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+A combined planning/error-log patch left an empty hunk marker before the next file section, so the patch parser rejected it.
+
+### Error
+```text
+apply_patch verification failed: invalid hunk
+```
+
+### Suggested Fix
+Use one complete patch per file when updating several task-state files programmatically.
+
+### Metadata
+- Reproducible: yes
+- Related Files: findings.md, progress.md, .learnings/ERRORS.md
+
+### Resolution
+- **Resolved**: 2026-07-18T14:37:00+08:00
+- **Notes**: Reissued three valid file-scoped patches.
+
+---
+
+## [ERR-20260718-009] unsupported-browser-locator-scroll-method
+
+**Logged**: 2026-07-18T14:39:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The in-app browser locator does not expose upstream Playwright `scrollIntoViewIfNeeded`.
+
+### Error
+```text
+dailyInspector.scrollIntoViewIfNeeded is not a function
+```
+
+### Suggested Fix
+Use the documented page-level `tab.dom_cua.scroll({x, y})` interface and verify with a fresh screenshot.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T14:39:00+08:00
+- **Notes**: Used documented DOM scrolling and visually verified the stacked inspector.
+
+---
+
+## [ERR-20260718-010] full-server-tests-loopback-bind-denied
+
+**Logged**: 2026-07-18T14:43:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The complete server suite includes GitLab webhook tests that open an `httptest` loopback listener, which the sandbox denied.
+
+### Error
+```text
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Suggested Fix
+Rerun the exact server test command with managed loopback escalation after the focused sandbox-safe tests pass.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_handlers_gitlab_webhook_test.go
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-18T14:44:00+08:00
+- **Notes**: The complete `internal/server` suite passed under managed loopback approval.
+
+---
+
+## [ERR-20260718-011] sandbox-local-runtime-control-denied
+
+**Logged**: 2026-07-18T16:03:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+The sandbox blocked localhost curl access, process inspection, and terminating the confirmed stale backend process.
+
+### Error
+```text
+curl: (7) Failed to connect to 127.0.0.1 port 8080
+zsh:kill: kill failed: operation not permitted
+```
+
+### Suggested Fix
+Use managed escalation for the exact localhost diagnostic and confirmed process-control commands; do not guess alternate ports or terminate unrelated processes.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/server.go
+
+### Resolution
+- **Resolved**: 2026-07-18T16:04:00+08:00
+- **Notes**: Managed access confirmed the 404, identified the repository `go run` parent/child, restarted it, and verified 401 through direct and proxied routes.
+
+---
+
+## [ERR-20260718-001] chrome-hidden-wait-cdp-short-timeout
+
+**Logged**: 2026-07-18T14:14:55+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Chrome's locator wait for the deconstruction loading label hit a short CDP evaluation timeout even though the LLM request was still running.
+
+### Error
+```text
+Timed out after 3000ms waiting for selector internal:text="解构分析中"s: Timed out after 1ms waiting for CDP command Runtime.evaluate.
+```
+
+### Context
+- Waited for the live AI deconstruction label to become hidden after submitting a harmless synthetic request.
+- The requested locator timeout was longer, but the Chrome control layer failed its underlying evaluation earlier.
+
+### Suggested Fix
+Poll a narrowly scoped result/status container in separate browser calls and treat this control-layer timeout independently from the in-flight application request.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: web/src/components/Deconstructor.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T14:14:55+08:00
+- **Notes**: Continued with short, targeted status reads without resubmitting the deconstruction request.
+
+---
+
+## [ERR-20260715-005] stale-component-subdirectory-assumption
+
+**Logged**: 2026-07-15T17:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A parallel source read assumed the components lived under `web/src/lib/components`, but this checkout keeps them under `web/src/components`.
+
+### Error
+```text
+sed: web/src/lib/components/TaskKanban.svelte: No such file or directory
+```
+
+### Suggested Fix
+Resolve component paths with `rg --files` before parallel line-range reads when prior notes omit or may stale the exact directory.
+
+### Resolution
+- **Resolved**: 2026-07-15T17:21:00+08:00
+- **Notes**: Located the current files under `web/src/components` and stopped using the invalid paths.
+
+---
+
+## [ERR-20260715-006] stale-browser-toolbar-selector
+
+**Logged**: 2026-07-15T18:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The final browser geometry check queried an obsolete execution-toolbar class and then dereferenced the missing element.
+
+### Error
+```text
+TypeError: Cannot read properties of null (reading 'querySelectorAll')
+```
+
+### Suggested Fix
+Resolve the active component class from the current source before the measurement and null-check optional DOM targets.
+
+### Resolution
+- **Resolved**: 2026-07-15T18:36:00+08:00
+- **Notes**: Switched the check to the current `.phase41-execution-controls` surface.
+
+---
+
+## [ERR-20260714-006] markdown-workbench-css-block-closure
+
+**Logged**: 2026-07-14T16:34:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The first Svelte check after adding live Markdown mode found a missing closing brace in the existing visually-hidden preview access rule.
+
+### Error
+```text
+web/src/components/shared/MarkdownWorkbench.svelte:588:1 Error: } expected (css)
+```
+
+### Context
+- The patch removed an apparently duplicated brace without first matching it to the preceding multi-line selector block.
+- TypeScript passed because the error was confined to the Svelte style parser.
+
+### Suggested Fix
+Inspect the numbered CSS block around any apparently redundant brace before removing it, then run `pnpm -C web check` immediately after structural Svelte edits.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MarkdownWorkbench.svelte
+
+### Resolution
+- **Resolved**: 2026-07-14T16:35:00+08:00
+- **Notes**: Restored the missing block closure and scheduled the complete Svelte check for an immediate rerun.
+
+---
+
+## [ERR-20260714-007] svelte-constructor-parameter-property
+
+**Logged**: 2026-07-14T16:37:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Svelte's current preprocessing configuration rejected a TypeScript accessibility modifier on a constructor parameter.
+
+### Error
+```text
+TypeScript language features like accessibility modifiers on constructor parameters are not natively supported
+```
+
+### Context
+- `MarkdownTaskWidget` used `constructor(private checked: boolean)`.
+- Plain typed class fields are supported and preserve identical runtime behavior.
+
+### Suggested Fix
+Use an explicit class field plus assignment in Svelte component scripts unless the repository enables full script preprocessing.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MarkdownWorkbench.svelte
+
+### Resolution
+- **Resolved**: 2026-07-14T16:38:00+08:00
+- **Notes**: Replaced the parameter property with `checked: boolean` and a constructor assignment.
+
+---
+
+## [ERR-20260714-008] browser-runtime-process-conflict
+
+**Logged**: 2026-07-14T16:40:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The in-app browser bootstrap again failed before session creation because the client attempted to redefine the protected runtime `process` property.
+
+### Error
+```text
+Cannot redefine property: process
+```
+
+### Suggested Fix
+After one real bootstrap attempt and the required Browser skill read, use the repository's established system-Chrome plus isolated local fixture fallback instead of retrying the same runtime conflict.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/config/CorpusSourceLibrary.svelte, web/src/components/shared/MarkdownWorkbench.svelte
+
+### Resolution
+- **Resolved**: 2026-07-14T16:41:00+08:00
+- **Notes**: Switched to the bundled Playwright runtime and installed Chrome without touching production data.
+
+---
+
+## [ERR-20260714-009] browser-validation-ambiguous-scope-label
+
+**Logged**: 2026-07-14T16:43:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first validation run used a strict `适用范围` text locator that matched both the import form and the advanced manual form.
+
+### Error
+```text
+strict mode violation: getByText('适用范围', { exact: true }) resolved to 2 elements
+```
+
+### Suggested Fix
+Anchor browser assertions to the unique shared component ID when repeated form labels are intentionally present on the page.
+
+### Metadata
+- Reproducible: yes
+- Related Files: /tmp/well-ambient-phase67-browser.mjs
+
+### Resolution
+- **Resolved**: 2026-07-14T16:44:00+08:00
+- **Notes**: Replaced the broad text wait with `#corpus-import-scope`.
+
+---
+
+## [ERR-20260713-005] apply-patch-binary-cleanup
+
+**Logged**: 2026-07-13T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+`apply_patch` could not delete a temporary PNG validation artifact because it only accepts UTF-8 text input.
+
+### Error
+```text
+apply_patch verification failed: invalid utf-8 sequence
+```
+
+### Resolution
+Use a scoped filesystem removal only for the binary artifact created by this task; continue using `apply_patch` for source and text-file edits.
+
+---
+
+## [ERR-20260713-004] multiselect-focus-layout-click-through
+
+**Logged**: 2026-07-13T10:02:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Opening the in-flow multi-select during input focus changed layout before the originating click completed and allowed an option to be selected accidentally.
+
+### Error
+```text
+Clicking the candidate combobox added 张路路 and left no visible listbox.
+```
+
+### Resolution
+Focus no longer opens either shared combobox. Multi-select opens after the completed input click, while text input and ArrowDown retain explicit open behavior.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MultiSelect.svelte, web/src/components/shared/Select.svelte
+
+---
+
+## [ERR-20260713-003] process-inspection-sandbox
+
+**Logged**: 2026-07-13T10:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+The sandbox blocked `ps` while inspecting the process serving port 5175.
+
+### Error
+```text
+zsh: operation not permitted: ps
+```
+
+### Resolution
+Used read-only `lsof` instead and confirmed PID 4420 serves from `/Users/eddie/Workspace/well-ambient/web`; an approved loopback curl then confirmed the live module contains the latest implementation.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md
+
+---
+
+## [ERR-20260713-001] inline-dropdown-pointerdown-toggle
+
+**Logged**: 2026-07-13T09:42:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Opening an inline-expanding dropdown exposed two hit-test defects: premature layout mutation and a chevron positioned relative to the expanding wrapper instead of the fixed trigger.
+
+### Error
+```text
+Expected 3 selected reviewers after opening; browser snapshot showed 4 and added 张路路.
+```
+
+### Context
+- Actual `MultiSelect.svelte` mounted in the temporary browser validation harness.
+- Chevron pointerdown both prevented default and opened the in-flow option region.
+
+### Resolution
+Pointerdown now only prevents focus transfer and parent propagation. The parent trigger no longer forces every click back through `openDropdown`, the click toggle is deferred until the pointer sequence finishes, and the trigger itself is now the chevron's positioning context so the control cannot move over list options.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MultiSelect.svelte
+
+---
+
+## [ERR-20260713-002] apply-patch-stale-progress-context
+
+**Logged**: 2026-07-13T09:49:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+A combined final-state patch used an outdated top-of-file context for `progress.md` and was rejected atomically.
+
+### Resolution
+Re-read the current task, progress, findings, and learning sections, then applied smaller exact-context patches successfully.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md, progress.md, findings.md, .learnings/LEARNINGS.md
+
+---
+
+## [ERR-20260712-005] local-browser-error-page-lock
+
+**Logged**: 2026-07-12T23:30:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend-validation
+
+### Summary
+The local Vite listener was initially stopped, and the in-app browser navigated to Chrome's generated connection-error `data:` page. After the server restarted, browser security policy blocked navigation and DOM interaction from that error page.
+
+### Resolution
+Did not bypass the browser policy or switch browser surfaces. Completed the focused Go regression, Svelte type check, production build, Impeccable complete/layout scans, responsive source review, and diff hygiene; recorded authenticated live interaction as an explicit validation exception.
+
+---
+
 ## [ERR-20260705-001] bundled_soffice_missing_little_cms
 
 **Logged**: 2026-07-05T13:15:45Z
 **Priority**: low
-**Status**: pending
+**Status**: resolved
 **Area**: tooling
 
 ### Summary
@@ -175,3 +1786,1777 @@ Before using planning-with-files in this repository, check whether `task_plan.md
 - **Notes**: Restored the three files to HEAD and continued implementation without staging the accidental overwrite.
 
 ---
+# [ERR-20260711-001] frontend-path-assumption
+
+**Logged**: 2026-07-11T10:55:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Frontend component inspection initially used `web/src/lib` instead of the repository's `web/src/components` path.
+
+### Error
+```
+sed: web/src/lib/DemandKanban.svelte: No such file or directory
+```
+
+### Context
+- Read-only inspection command for flow board and AI deconstruction components.
+- The repository stores these Svelte components under `web/src/components`.
+
+### Suggested Fix
+Resolve component paths with `rg --files` before assuming a source subdirectory.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DemandKanban.svelte
+
+---
+
+# [ERR-20260712-002] skill-installer-python-ca-chain
+
+**Logged**: 2026-07-12T22:10:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The GitHub skill installer's default Python download transport failed local certificate-chain verification.
+
+### Error
+```text
+ssl.SSLCertVerificationError: certificate verify failed: unable to get local issuer certificate
+```
+
+### Resolution
+Re-ran the same official installer with `--method git`. Both scoped Impeccable installs completed without disabling certificate verification or copying the full repository.
+
+---
+
+# [ERR-20260712-003] warm-memory-shape-assumption
+
+**Logged**: 2026-07-12T22:28:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: task-state
+
+### Summary
+A read-only state probe assumed `warm_memory` was an array and called `slice()`, but the project schema stores it as an object.
+
+### Resolution
+Inspected the live schema first, then used exact object fields for the final state update.
+
+---
+
+# [ERR-20260712-004] impeccable-broad-scan-scope
+
+**Logged**: 2026-07-12T22:46:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend-validation
+
+### Summary
+A complete Impeccable scan included the entire legacy `DemandKanban.svelte` file and returned unrelated historical warnings outside the detail-modal change.
+
+### Resolution
+Kept those findings as explicit existing debt, ran the complete detector on the two changed UI components, and ran the layout-scoped detector across all three target files. Both scoped gates returned `[]` without broadening the requested change.
+
+---
+## [ERR-20260712-003] shell_glob
+
+**Logged**: 2026-07-12T23:23:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+An optional `.env*` path glob aborted a combined ripgrep diagnostic under zsh.
+
+### Error
+```
+zsh: no matches found: .env*
+```
+
+### Context
+- Searched optional environment files alongside explicit source paths.
+- zsh expanded the unmatched glob before ripgrep could run.
+
+### Suggested Fix
+Quote optional globs or omit them and search only discovered explicit paths.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md
+
+### Resolution
+- **Resolved**: 2026-07-12T23:23:00+08:00
+- **Commit/PR**: none
+- **Notes**: Continued with explicit source paths and no repeated wildcard invocation.
+
+---
+
+## [ERR-20260713-006] browser-local-server-unavailable
+
+**Logged**: 2026-07-13T11:43:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Authenticated browser validation initially targeted a stopped local Vite server.
+
+### Error
+```text
+net::ERR_CONNECTION_REFUSED at http://127.0.0.1:5175/
+```
+
+### Context
+- Browser validation reused the prior Phase 59 development URL without first verifying the listener.
+- The source and production build were valid; only the local validation server was absent.
+
+### Suggested Fix
+Check the local listener or start the scoped Vite development server before opening the validation tab.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-07-13T11:44:00+08:00
+- **Commit/PR**: none
+- **Notes**: Started the local-only Vite server and reused the existing browser binding.
+
+---
+
+## [ERR-20260713-007] multiselect-chip-removal-focus-exit
+
+**Logged**: 2026-07-13T11:52:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Removing a selected chip while the multi-select was open still closed the list through focus exit.
+
+### Error
+```text
+After clicking “移除 白凌云”, the selected chips were empty but visible listboxes changed from 1 to 0.
+```
+
+### Context
+- The direct `finishSelection()` call had already been removed.
+- Pointerdown focused the chip's remove button; the subsequent value update removed that focused button from the DOM, producing a focusout with no in-component related target.
+
+### Suggested Fix
+Prevent the remove button's pointerdown from moving focus, while preserving its click action and stopping propagation inside the component.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/shared/MultiSelect.svelte
+
+### Resolution
+- **Resolved**: 2026-07-13T11:53:00+08:00
+- **Commit/PR**: none
+- **Notes**: Added a non-mutating pointerdown guard to the chip remove button; browser validation covers the open-state removal path.
+
+---
+
+## [ERR-20260713-008] browser-cross-locator-filter
+
+**Logged**: 2026-07-13T12:42:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Chrome validation could not compose one locator into another locator's `filter({ has })` option.
+
+### Error
+```text
+Cannot read private member #e from an object whose class did not declare it
+```
+
+### Context
+- Tried to identify the DG-319 demand card by combining a card locator with a nested Jira-link locator.
+- The browser control layer rejected the cross-locator object even though both locators belonged to the same tab.
+
+### Suggested Fix
+After refreshing the DOM snapshot, prefer an exact unique visible-text locator or one self-contained stable CSS selector instead of passing locator instances across `filter({ has })`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DemandKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-07-13T12:43:00+08:00
+- **Commit/PR**: none
+- **Notes**: Re-snapshotted, confirmed the exact demand title was unique, and opened the detail through that supported locator.
+
+---
+
+## [ERR-20260713-009] zsh-unmatched-source-glob
+
+**Logged**: 2026-07-13T13:17:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Source discovery failed because zsh expanded an unmatched root `*.go`/`*.yml` glob before ripgrep ran.
+
+### Error
+```text
+zsh:1: no matches found: *.go
+```
+
+### Suggested Fix
+Discover files with `rg --files` first or quote optional globs so the shell cannot reject an empty match.
+
+### Resolution
+- **Resolved**: 2026-07-13T13:17:00+08:00
+- **Notes**: Continued with explicit paths and `rg --files`; no wildcard retry.
+
+---
+
+## [ERR-20260713-010] go-build-default-cache-denied
+
+**Logged**: 2026-07-13T13:18:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The browser-validation server build used Go's default cache outside the writable sandbox.
+
+### Error
+```text
+open /Users/eddie/Library/Caches/go-build/...: operation not permitted
+```
+
+### Suggested Fix
+Use `GOCACHE=/tmp/well-ambient-gocache` for every Go build/test command in this workspace.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/daily_jira_handlers_test.go
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-18
+
+### Resolution
+- **Resolved**: 2026-07-13T13:18:00+08:00
+- **Notes**: Rebuilt successfully with the workspace-standard `/tmp` cache.
+
+---
+
+## [ERR-20260713-011] isolated-browser-historical-background-actions
+
+**Logged**: 2026-07-13T13:29:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+An isolated backend using a copied historical database activated delay-alert background processing even though Jira, GitLab, Feishu, and AI were disabled in the temporary config.
+
+### Error
+```text
+Email extension hook: Send delay alert email to ...
+```
+
+### Suggested Fix
+Use a purpose-built fixture database with only the required user, demand, draft, and contract rows for browser validation. Do not reuse a production-like historical database for isolated full-app runs.
+
+### Resolution
+- **Resolved**: 2026-07-13T13:29:00+08:00
+- **Notes**: Stopped the server, accepted the safety rejection on restart, and completed validation with authenticated non-provider UI checks, loopback protocol tests, and a structural footer-order assertion.
+
+---
+
+## [ERR-20260713-012] finalized-chrome-tab-binding-reuse
+
+**Logged**: 2026-07-13T23:16:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A Chrome tab binding from the completed Settings validation was no longer defined after the tab had been finalized.
+
+### Error
+```text
+settingsTab is not defined
+```
+
+### Context
+- Attempted to reuse the prior task's `settingsTab` binding for a new Settings refinement pass.
+- The persistent Chrome connection remains valid; only the finalized tab binding is stale.
+
+### Suggested Fix
+After a task finalizes browser tabs, obtain a fresh tab from the existing browser binding on the next validation pass instead of assuming the old page variable survives.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SettingsPanel.svelte
+
+### Resolution
+- **Resolved**: 2026-07-13T23:16:00+08:00
+- **Commit/PR**: none
+- **Notes**: The next browser step will claim a fresh authenticated tab through the existing Chrome binding.
+
+---
+
+## [ERR-20260713-013] config-component-path-assumption
+
+**Logged**: 2026-07-13T23:34:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first Phase 64 source inspection assumed the corpus configuration components lived directly under `web/src/components`.
+
+### Error
+```text
+nl: web/src/components/CorpusCandidateReview.svelte: No such file or directory
+rg: web/src/components/AIConfig.svelte: No such file or directory
+```
+
+### Suggested Fix
+Resolve component locations with `rg --files web/src` before opening guessed paths in this repository.
+
+### Resolution
+- **Resolved**: 2026-07-13T23:34:00+08:00
+- **Notes**: Located both files under `web/src/components/config` and resumed inspection there.
+
+---
+
+## [ERR-20260713-014] settings-phase-class-warning-explosion
+
+**Logged**: 2026-07-13T23:48:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Removing the legacy Settings Phase classes from the live root correctly disabled obsolete height rules, but caused Svelte to report hundreds of newly unused legacy selectors.
+
+### Error
+```text
+svelte-check found 0 errors and 522 warnings in 9 files
+```
+
+### Suggested Fix
+Until the historical CSS blocks are removed in a dedicated cleanup, keep their compatibility class names and use one stable unified-root selector to own current layout geometry above them.
+
+### Resolution
+- **Resolved**: 2026-07-13T23:48:00+08:00
+- **Notes**: Restored Phase compatibility classes, added `#settings-unified-root`, and scoped the authoritative panel geometry plus policy semantic overrides to that root.
+
+---
+
+## [ERR-20260714-001] responsive-metric-assumed-active-tab
+
+**Logged**: 2026-07-14T00:03:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first narrow corpus metric assumed the off-canvas sidebar button had changed routes and then treated the missing library grid as an active-tab mismatch. A second tab click proved the target route had not mounted at all.
+
+### Error
+```text
+TypeError: getComputedStyle expects an Element
+Playwright selector deadline exceeded
+waiting on click for selector internal:role=tab[name=/^资料库/]
+```
+
+### Suggested Fix
+Switch routes while the desktop sidebar is visibly available, then apply the requested narrow viewport. Select the exact task tab and null-check optional DOM targets before measuring.
+
+### Resolution
+- **Resolved**: 2026-07-14T00:03:00+08:00
+- **Notes**: Responsive route validation now follows desktop navigation first, viewport override second, with guarded state metrics.
+
+---
+
+## [ERR-20260714-002] null-memberships-permission-route
+
+**Logged**: 2026-07-14T00:16:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Authenticated permission-route validation exposed a user record whose runtime `memberships` value was null even though the frontend type declared an array.
+
+### Error
+```text
+TypeError: Cannot read properties of null (reading 'filter')
+at groupMemberCount (SettingsPanel.svelte)
+```
+
+### Suggested Fix
+Normalize API collection fields at the read boundary before filtering or iterating them.
+
+### Resolution
+- **Resolved**: 2026-07-14T00:16:00+08:00
+- **Notes**: Added `membershipsForUser()` and reused it in coverage counting plus member-table rendering.
+
+---
+
+## [ERR-20260714-003] chrome-new-tab-url-ignored
+
+**Logged**: 2026-07-14T00:19:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome client accepted `tabs.new({ url })` but created an `about:blank` tab in this runtime.
+
+### Error
+```text
+url: about:blank
+```
+
+### Suggested Fix
+Create the tab first and then call `tab.goto(url)` explicitly.
+
+### Resolution
+- **Resolved**: 2026-07-14T00:19:00+08:00
+- **Notes**: Explicit `goto('http://localhost:5173/')` loaded the authenticated app successfully.
+
+---
+
+## [ERR-20260714-004] final-route-forcing-timeout
+
+**Logged**: 2026-07-14T00:23:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The final browser handoff tried to force the original validation tab onto the policy list after resetting the viewport, but the expected tab locator was not mounted in that tab state.
+
+### Error
+```text
+Playwright selector deadline exceeded
+waiting on click for selector internal:role=tab[name=/^策略列表/]
+```
+
+### Suggested Fix
+Do not force a cosmetic final route after validation is complete; preserve the authenticated tab's current state and finalize it directly.
+
+### Resolution
+- **Resolved**: 2026-07-14T00:23:00+08:00
+- **Notes**: Finalized the existing authenticated Settings tab without another route mutation.
+
+---
+
+## [ERR-20260714-005] context-import-invalid-test-fixtures
+
+**Logged**: 2026-07-14T15:36:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first full Go run failed two new context-import boundary tests because the JSON fixture encoded literal backslash-n text and the missing-file fixture supplied an invalid empty multipart stream.
+
+### Error
+```text
+manual Markdown source contained literal \\n sequences
+read multipart body: multipart: NextPart: EOF
+```
+
+### Suggested Fix
+Represent JSON newline escapes once inside the raw fixture string, and build a valid multipart form containing metadata but no file when testing the missing-file branch.
+
+### Resolution
+- **Resolved**: 2026-07-14T15:36:00+08:00
+- **Notes**: Corrected both fixtures without changing the ingestion implementation and scheduled the full suite for an immediate rerun.
+
+---
+
+## [ERR-20260715-001] go-build-cache-permission
+
+**Logged**: 2026-07-15T16:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first Go validation attempt could not write the default user build cache in the managed workspace.
+
+### Error
+```text
+permission denied while writing the default Go build cache
+```
+
+### Suggested Fix
+Use an isolated writable cache under `/tmp` for repository validation instead of retrying the same default cache.
+
+### Resolution
+- **Resolved**: 2026-07-15T16:01:00+08:00
+- **Notes**: Subsequent Go-related validation uses `GOCACHE=/tmp/well-ambient-gocache`.
+
+---
+
+## [ERR-20260715-002] unsafe-live-backend-validation-escalation
+
+**Logged**: 2026-07-15T16:18:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Starting the real backend for UI validation would have loaded live credentials, listened broadly, and enabled development authentication.
+
+### Error
+```text
+escalation rejected: live credentials + 0.0.0.0 listener + development authentication
+```
+
+### Suggested Fix
+Validate the built frontend against an isolated same-origin fixture server bound only to `127.0.0.1` with synthetic authenticated data.
+
+### Resolution
+- **Resolved**: 2026-07-15T16:20:00+08:00
+- **Notes**: No real backend or live data was used; all browser mutations stayed inside the disposable local fixture.
+
+---
+
+## [ERR-20260715-003] browser-local-url-policy-reconnect
+
+**Logged**: 2026-07-15T16:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+After an already-successful browser validation session reset, the replacement tab entered a local connection-error page and the browser URL policy refused programmatic reconnection to the fixture.
+
+### Error
+```text
+Browser Use rejected the local navigation due to URL policy.
+```
+
+### Suggested Fix
+Do not bypass the browser policy. Retain the successful measurements already collected and complete validation with current build, type, diff, detector, and source-contract checks.
+
+### Resolution
+- **Resolved**: 2026-07-15T16:41:00+08:00
+- **Notes**: The browser session was finalized and viewport overrides were reset without further navigation attempts.
+
+---
+
+## [ERR-20260715-004] ripgrep-leading-hyphen-pattern
+
+**Logged**: 2026-07-15T17:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A CSS token search pattern beginning with `--` was parsed by ripgrep as a command flag.
+
+### Error
+```text
+rg: unrecognized flag --z|z-index|overlay|dropdown|popover
+```
+
+### Context
+- Attempted a combined CSS token and z-index search while diagnosing dropdown stacking.
+- The pattern began with `--z`, so `rg` treated it as an option instead of a pattern.
+
+### Suggested Fix
+Terminate options before any pattern that can begin with a hyphen: `rg -- '<pattern>' <paths>`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/styles/modern-admin-tokens.css
+
+### Resolution
+- **Resolved**: 2026-07-15T17:06:00+08:00
+- **Notes**: Continue with `rg -- '<pattern>'`; do not retry the failing form.
+
+---
+
+## [ERR-20260718-002] server-test-concurrent-source-gap
+
+**Logged**: 2026-07-18T14:16:20+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first elevated server test compile observed route registrations before the concurrently edited Jira daily-audit handler file was present.
+
+### Error
+```text
+internal/server/server.go:66:87: s.handleGetDailyJiraAudit undefined
+internal/server/server.go:67:129: s.handlePostDailyJiraReview undefined
+```
+
+### Context
+- The worktree already contained unrelated active edits.
+- `internal/server/daily_jira_handlers.go` appeared immediately after the failed compile and defined both handlers.
+
+### Suggested Fix
+When a dirty worktree is changing concurrently, re-check the exact missing symbols and rerun the narrow test once the referenced file is present; do not patch unrelated in-progress code.
+
+### Metadata
+- Reproducible: no
+- Related Files: internal/server/server.go, internal/server/daily_jira_handlers.go
+
+### Resolution
+- **Resolved**: 2026-07-18T14:17:10+08:00
+- **Notes**: Reran the focused deconstruction server tests after the handler file appeared; all selected tests passed.
+
+---
+
+## [ERR-20260718-003] context-pack-schema-column-assumption
+
+**Logged**: 2026-07-18T14:19:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A read-only diagnostic query used `budget_tokens`, while the current `context_packs` table names the column `token_budget`.
+
+### Error
+```text
+no such column: budget_tokens
+```
+
+### Suggested Fix
+Inspect the current SQLite table schema before querying task-generated diagnostic artifacts.
+
+### Metadata
+- Reproducible: yes
+- Related Files: well-ambient.db
+
+### Resolution
+- **Resolved**: 2026-07-18T14:19:00+08:00
+- **Notes**: Reissued the read-only query with the actual `token_budget` column.
+
+---
+
+## [ERR-20260718-013] local-vite-sandbox-bind
+
+**Logged**: 2026-07-18T20:22:30+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The local Vite validation server could not bind a loopback port inside the restricted sandbox.
+
+### Error
+```text
+Error: listen EPERM: operation not permitted 127.0.0.1:4173
+```
+
+### Suggested Fix
+When browser-visible local validation requires a loopback server, retry the narrowly scoped `pnpm dev` command with the managed local-server approval.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-07-18T20:23:25+08:00
+- **Notes**: Started the same loopback-only server under the approved prefix, completed validation, and stopped it afterward.
+
+---
+
+## [ERR-20260718-014] persistent-browser-locator-name-collision
+
+**Logged**: 2026-07-18T20:28:40+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A reused browser-control variable name resolved to a locator from an earlier session and targeted the wrong tab label.
+
+### Error
+```text
+Timed out waiting for a stale tab locator instead of the visible "当天 1" tab.
+```
+
+### Suggested Fix
+Use task-specific fresh binding names in the persistent browser kernel and take a fresh DOM snapshot after any locator timeout before rebuilding the locator.
+
+### Metadata
+- Reproducible: no
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T20:29:10+08:00
+- **Notes**: Re-snapshotted the page, used a unique locator binding, and verified the green healthy state successfully.
+
+---
+
+## [ERR-20260718-015] chrome-browser-client-owner-methods
+
+**Logged**: 2026-07-18T21:08:30+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Chrome session naming and user-tab claiming were called on the wrong browser-client owners.
+
+### Error
+```text
+agent.setSessionName is not a function
+chromeValidation.tabs.claim is not a function
+```
+
+### Context
+- The persistent Chrome browser binding was still valid after the previous task finalized its controlled tabs.
+- The attempted calls treated session naming as an `agent` method and user-tab claiming as a `tabs` method.
+
+### Suggested Fix
+Call `browserBinding.nameSession(name)` for the session label and `browserBinding.user.claimTab(tabId)` for an existing user tab. Use `browserBinding.tabs.finalize(...)` only for end-of-task cleanup.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+- See Also: ERR-20260718-014
+
+### Resolution
+- **Resolved**: 2026-07-18T21:09:00+08:00
+- **Notes**: Claimed the authenticated well-ambient tab through `chromeValidation.user.claimTab`, completed all geometry checks, and retained the user-owned tab during finalization.
+
+---
+
+## [ERR-20260718-016] frontend-check-workdir
+
+**Logged**: 2026-07-18T22:04:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The frontend type check was started from the repository root even though the pnpm importer manifest lives under `web/`.
+
+### Error
+```text
+ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND No package.json was found in /Users/eddie/Workspace/well-ambient
+```
+
+### Context
+- Command attempted: `pnpm check`
+- The repository is not a root pnpm workspace; frontend scripts are owned by `web/package.json`.
+
+### Suggested Fix
+Run frontend scripts with `workdir=/Users/eddie/Workspace/well-ambient/web` or use `pnpm --dir web <script>`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-07-18T22:04:20+08:00
+- **Notes**: Subsequent frontend checks were routed through the `web/` importer.
+
+---
+
+## [ERR-20260718-017] duplicate-drawer-close-label
+
+**Logged**: 2026-07-18T22:14:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The event drawer backdrop and close button shared the same accessible name, so a strict role locator matched both during keyboard validation.
+
+### Error
+```text
+strict mode violation: getByRole('button', { name: '关闭事件记录' }) resolved to 2 elements
+```
+
+### Context
+- The backdrop is intentionally a full-viewport button and the header has a separate close button.
+- Both controls originally exposed `aria-label="关闭事件记录"`.
+
+### Suggested Fix
+Give the backdrop a distinct accessible name while keeping the visible close action unchanged.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionEventCenter.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T22:14:20+08:00
+- **Notes**: Renamed the backdrop to `关闭事件记录背景层`; the header close button retains `关闭事件记录`.
+
+---
+
+## [ERR-20260718-018] collapsed-sidebar-submenu-locator
+
+**Logged**: 2026-07-18T22:19:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The narrow-screen browser check tried to click the Daily Jira submenu while the responsive sidebar kept that submenu collapsed.
+
+### Error
+```text
+Playwright selector deadline exceeded waiting on getByRole('button', { name: /每日 Jira 决策看板/ })
+```
+
+### Context
+- Viewport width was 520px.
+- The top-level Decision Dashboard route changed successfully, but the child menu was not interactable in the collapsed navigation state.
+
+### Suggested Fix
+Take a fresh DOM snapshot at the narrow breakpoint and use the visible menu-expansion control before selecting Daily Jira.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/prototype/FunctionalAdminShell.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T22:21:00+08:00
+- **Notes**: Opened the mobile rail before each navigation level, reached Daily Jira through the visible submenu, and completed the 520px viewport check.
+
+---
+
+## [ERR-20260718-019] chrome-console-method-name
+
+**Logged**: 2026-07-18T22:23:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome browser-client Playwright facade does not expose a `consoleMessages()` method.
+
+### Error
+```text
+eventTab.playwright.consoleMessages is not a function
+```
+
+### Context
+- DOM, locator, keyboard, and evaluation APIs were working normally.
+- The failure was limited to choosing the wrong diagnostic method name.
+
+### Suggested Fix
+Inspect the installed browser-client API definition and use its supported console or page-error reader.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionEventCenter.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T22:31:00+08:00
+- **Notes**: The installed Chrome facade does not expose the attempted method. Runtime validation instead completed through successful route, drawer, keyboard, focus, and geometry interactions, together with passing static checks and design detectors.
+
+---
+
+## [ERR-20260718-020] nonextensible-page-window
+
+**Logged**: 2026-07-18T22:26:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome validation environment prevents adding custom properties to the page `window` object.
+
+### Error
+```text
+TypeError: Cannot add property __eventValidationLogs, object is not extensible
+```
+
+### Context
+- A temporary property was intended to hold runtime error messages during route replays.
+- Page evaluation itself remained available.
+
+### Suggested Fix
+Store temporary diagnostic output in a hidden DOM element and keep event-handler state inside a closure instead of extending `window`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionEventCenter.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T22:26:20+08:00
+- **Notes**: Switched the temporary runtime log collector to a hidden DOM node.
+
+---
+
+## [ERR-20260718-021] browser-evaluate-dom-construction
+
+**Logged**: 2026-07-18T22:28:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The controlled Chrome evaluation facade does not expose `document.createElement` as a callable DOM method.
+
+### Error
+```text
+TypeError: document.createElement is not a function
+```
+
+### Context
+- The attempted hidden-node collector followed the fallback from ERR-20260718-020.
+- Existing DOM querying and element attribute APIs remained available.
+
+### Suggested Fix
+Use a temporary data attribute on the existing document root instead of creating a new node.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionEventCenter.svelte
+- See Also: ERR-20260718-020
+
+### Resolution
+- **Resolved**: 2026-07-18T22:28:20+08:00
+- **Notes**: Routed temporary diagnostic output through an attribute on `document.documentElement`.
+
+---
+
+## [ERR-20260718-022] browser-evaluate-dom-mutation
+
+**Logged**: 2026-07-18T22:29:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The controlled Chrome evaluation facade exposes DOM state for reading but not root-element mutation methods such as `setAttribute`.
+
+### Error
+```text
+TypeError: document.documentElement.setAttribute is not a function
+```
+
+### Context
+- This was the second fallback for storing temporary console diagnostics inside the page.
+- All requested product interactions and read-only geometry evaluations still worked.
+
+### Suggested Fix
+Do not inject a page-side log collector through this facade. Use the browser client's native log command when available, or rely on clean runtime interactions plus static checks and record the diagnostic limitation.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionEventCenter.svelte
+- See Also: ERR-20260718-019, ERR-20260718-020, ERR-20260718-021
+
+### Resolution
+- **Resolved**: 2026-07-18T22:29:20+08:00
+- **Notes**: Stopped attempting page mutation and retained the successful interaction, type, build, and detector evidence.
+
+---
+
+## [ERR-20260718-023] chrome-tab-attach-api-drift
+
+**Logged**: 2026-07-18T23:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The current Chrome browser facade can discover user tabs but does not expose the previously assumed `tabs.attach` method.
+
+### Error
+```text
+chrome.tabs.attach is not a function
+```
+
+### Context
+- The authenticated `http://localhost:5173/` tab was returned by `chrome.user.openTabs()`.
+- The stale bound tab needed to be replaced without losing the user's login state.
+
+### Suggested Fix
+Inspect the current browser facade methods and use its supported existing-tab activation or binding API instead of assuming `tabs.attach`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T23:10:00+08:00
+- **Notes**: Used `chrome.user.openTabs()` and passed the exact returned tab object to `chrome.user.claimTab(tab)`, preserving the authenticated page.
+
+---
+
+## [ERR-20260718-024] pnpm-check-root-without-manifest
+
+**Logged**: 2026-07-18T23:22:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The frontend check was first invoked from the repository root, which does not own a package manifest.
+
+### Error
+```text
+ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND No package.json was found in /Users/eddie/Workspace/well-ambient
+```
+
+### Context
+- The only package manifest for the Svelte frontend is `web/package.json`.
+- No implementation files were changed by the failed command.
+
+### Suggested Fix
+Run pnpm frontend scripts with `workdir=/Users/eddie/Workspace/well-ambient/web`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-07-18T23:22:30+08:00
+- **Notes**: Located `web/package.json` and moved all subsequent frontend checks to the `web` package directory.
+
+---
+
+## [ERR-20260718-025] chrome-locator-focus-method
+
+**Logged**: 2026-07-18T23:27:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The current Chrome locator facade supports `press()` but does not expose a Playwright-style `focus()` method.
+
+### Error
+```text
+longAgendaRow.focus is not a function
+```
+
+### Context
+- The row keyboard-opening path needed validation without triggering any live mutation.
+- Browser API documentation lists locator `press(value, options)` as the supported keyboard method.
+
+### Suggested Fix
+Call `locator.press('Space')` or `locator.press('Enter')` directly instead of a separate `focus()` call.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+
+### Resolution
+- **Resolved**: 2026-07-18T23:27:20+08:00
+- **Notes**: Switched the keyboard validation path to the documented locator `press()` method.
+
+---
+## [ERR-20260719-026] chrome-viewport-requires-integer-dimensions
+
+**Logged**: 2026-07-19T10:24:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome viewport calibration call rejected a fractional width while validating responsive drawer geometry.
+
+### Error
+```
+Expected integer, received float
+path: width
+```
+
+### Context
+- Operation: `viewportControl.set()` during 1440/1024/760/520 responsive validation.
+- Input included `width: 921.6` to compensate for the browser's 90% zoom calibration.
+- The viewport API schema accepts integers only.
+
+### Suggested Fix
+Round every calibrated width and height before calling `viewportControl.set()`, then verify the actual CSS viewport returned by the page.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+- See Also: ERR-20260718-023
+
+### Resolution
+- **Resolved**: 2026-07-19T10:29:00+08:00
+- **Notes**: Rounded calibrated viewport dimensions to integers; the 1440/1024/760/520 responsive geometry sweep completed successfully.
+
+---
+## [ERR-20260719-027] chrome-cua-scroll-parameter-names
+
+**Logged**: 2026-07-19T10:31:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome computer-action scroll call rejected Playwright-style `deltaY` parameters during short-viewport drawer validation.
+
+### Error
+```
+cua.scroll requires x, y, scrollX, and scrollY
+```
+
+### Context
+- Operation: wheel-scroll the hidden-rail requirement drawer at a 1024x650 CSS viewport.
+- Attempted input used `deltaY: 420`.
+- This browser facade requires explicit `scrollX` and `scrollY` fields.
+
+### Suggested Fix
+Call `cua.scroll({ x, y, scrollX: 0, scrollY: amount })` and verify the target container's `scrollTop` changes.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+- See Also: ERR-20260718-025
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-19
+
+### Resolution
+- **Resolved**: 2026-07-19T10:32:00+08:00
+- **Notes**: Re-ran with `scrollX` and `scrollY`; the hidden-rail drawer reached its 130px maximum scroll and exposed the action row while the document remained viewport-locked.
+- **Follow-up**: The flattened-drawer check again confirmed that Chrome scrolling requires all four fields: `x`, `y`, `scrollX`, and `scrollY`; the 1024x650 drawer reached its 113px maximum while the document stayed locked.
+
+---
+## [ERR-20260719-028] browser-evaluate-parsefloat-shadowing
+
+**Logged**: 2026-07-19T11:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+An authenticated drawer geometry check failed because the page evaluation context did not expose the expected global `parseFloat` function.
+
+### Error
+```
+TypeError: parseFloat is not a function
+```
+
+### Context
+- Operation: derive the rendered line count for a long requirement title from its computed line height.
+- The evaluation called unqualified `parseFloat(...)` inside the page context.
+- All prior drawer measurements completed; only the derived line-count probe failed.
+
+### Suggested Fix
+Use `Number.parseFloat(getComputedStyle(element).lineHeight)` in browser evaluation code and rerun the complete interaction cleanup sequence.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+- See Also: ERR-20260718-025
+
+### Resolution
+- **Resolved**: 2026-07-19T11:09:00+08:00
+- **Notes**: Re-ran the long-title geometry check with `Number.parseFloat`; the two-line title, fixed 147px header, card containment, decision-surface separation, and viewport-locked document all passed.
+
+---
+
+## [ERR-20260719-029] browser-page-evaluate-method-location
+
+**Logged**: 2026-07-19T12:44:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The final browser cleanup probe first called `evaluate` on the Chrome page wrapper instead of its Playwright capability.
+
+### Error
+```
+chromeValidation.evaluate is not a function
+```
+
+### Context
+- Operation: restore the real viewport and confirm final document geometry, drawer state, focus return, and console errors.
+- The Chrome wrapper exposes page evaluation through `chromeValidation.playwright.evaluate(...)`.
+- The viewport reset completed before the unsupported method call.
+
+### Suggested Fix
+Use the wrapper's `playwright` capability for DOM evaluation and keep `dev.logs(...)` on the wrapper's development capability.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+
+### Resolution
+- **Resolved**: 2026-07-19T12:44:00+08:00
+- **Notes**: Re-ran with `chromeValidation.playwright.evaluate(...)`; the real 2133x906 document matched the viewport exactly, both drawers were closed, focus had returned to the table row, and the error console was empty.
+
+---
+
+## [ERR-20260719-030] chrome-role-row-transient-timeout
+
+**Logged**: 2026-07-19T13:21:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first role-and-accessible-name row lookup timed out while reopening the authenticated requirement drawer.
+
+### Error
+```
+Timed out after 3000ms waiting for selector internal:role=row[name=/ZPU-2769/]
+```
+
+### Context
+- Operation: reopen the screenshot Jira row after reclaiming the existing authenticated Chrome tab.
+- The table contained 134 rows and the target text was present; only the role lookup timed out during a short CDP evaluation window.
+
+### Suggested Fix
+For this virtualized table, locate `tbody tr` and filter by the unique Jira text before clicking.
+
+### Metadata
+- Reproducible: no
+- Related Files: web/src/components/DecisionDashboard.svelte
+
+### Resolution
+- **Resolved**: 2026-07-19T13:22:00+08:00
+- **Notes**: `locator('tbody tr').filter({ hasText: 'ZPU-2769' })` returned exactly one row and opened the drawer successfully.
+
+---
+
+## [ERR-20260719-031] chrome-locator-hover-unsupported
+
+**Logged**: 2026-07-19T13:26:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The Chrome locator facade does not expose an upstream Playwright `hover()` method.
+
+### Error
+```
+flatBodyLocator.hover is not a function
+```
+
+### Context
+- Operation: position the pointer over the hidden-rail drawer body before short-viewport wheel validation.
+- The drawer geometry had already provided a safe interior point for direct computer-action scrolling.
+
+### Suggested Fix
+Pass an explicit interior `x` and `y` point with `scrollX` and `scrollY` to the Chrome computer-action scroll call.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DecisionDashboard.svelte
+- See Also: ERR-20260718-009, ERR-20260719-027
+
+### Resolution
+- **Resolved**: 2026-07-19T13:27:00+08:00
+- **Notes**: Direct scrolling at the drawer-body coordinates reached the 113px maximum and made the action row visible without moving the document.
+
+---
+## [ERR-20260720-017] impeccable-target-scan-expanded-to-repository
+
+**Logged**: 2026-07-20T10:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Appending `.` to an Impeccable target scan expanded the detector across the repository and returned unrelated legacy warnings.
+
+### Error
+```
+The result included App.svelte, DemandKanban.svelte, detector fixtures, and output prototypes outside the two affected files.
+```
+
+### Context
+- Operation: final UI anti-pattern detection for TaskKanban and FunctionalAdminShell.
+
+### Suggested Fix
+Pass only the exact affected paths for a scoped final scan. Use a separate repository-wide audit only when the task explicitly includes legacy cleanup.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte, web/src/components/prototype/FunctionalAdminShell.svelte
+
+### Resolution
+- **Resolved**: 2026-07-20T10:46:00+08:00
+- **Notes**: Re-ran with only the two affected files. The remaining three warnings are pre-existing legacy sections outside this change; the dedicated layout scan is clean.
+
+---
+
+## [ERR-20260720-016] finesse-reference-path-was-one-level-deeper
+
+**Logged**: 2026-07-20T10:43:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first Finesse preflight read omitted the `references/` directory and failed to find the required files.
+
+### Error
+```
+sed: /Users/eddie/.codex/skills/finesse-skill/anti-cheap.md: No such file or directory
+sed: /Users/eddie/.codex/skills/finesse-skill/preflight.md: No such file or directory
+```
+
+### Context
+- Operation: mandatory anti-cheap and preflight review before final delivery.
+
+### Suggested Fix
+Resolve referenced paths relative to the skill entrypoint and verify them with `rg --files` before reading.
+
+### Metadata
+- Reproducible: yes
+- Related Files: /Users/eddie/.codex/skills/finesse-skill/SKILL.md
+
+### Resolution
+- **Resolved**: 2026-07-20T10:44:00+08:00
+- **Notes**: Located and read both files from `finesse-skill/references/`.
+
+---
+
+## [ERR-20260720-015] copied-db-versioned-config-overrode-safe-startup-config
+
+**Logged**: 2026-07-20T10:37:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The validation server loaded the newest versioned configuration from the copied database and overrode the external safe config, briefly starting the Jira worker before the sandbox denied the port bind.
+
+### Error
+```
+Loaded configuration from database version 19
+Starting background Jira task synchronization worker...
+```
+
+### Context
+- Operation: start an isolated authenticated UI validation server from `/tmp` with every external integration disabled.
+- The database was a disposable `/tmp` copy, never the workspace database, and the process exited immediately when the local bind failed.
+
+### Suggested Fix
+When validating from a copied database, sanitize the newest `config_versions.config_json` in the copy as well as supplying an external config. Confirm the effective startup log before opening the browser.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_version_handlers.go, internal/server/server.go
+
+### Resolution
+- **Resolved**: 2026-07-20T10:38:00+08:00
+- **Notes**: Replaced only the copied database's latest configuration with an integration-disabled local profile. The workspace database and live business data were not modified.
+
+---
+
+## [ERR-20260720-014] loopback-bind-and-approval-channel-unavailable
+
+**Logged**: 2026-07-20T10:37:00+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: tests
+
+### Summary
+Both backend and Vite loopback binds were denied inside the sandbox, and the scoped escalation request could not be reviewed because the approval stream disconnected.
+
+### Error
+```
+listen tcp 127.0.0.1:8080: bind: operation not permitted
+listen EPERM: operation not permitted 127.0.0.1:5173
+Automatic approval review failed: stream disconnected before completion
+```
+
+### Context
+- Operation: run authenticated browser validation against an isolated `/tmp` database copy with all external integrations disabled.
+- Static checks and production build can continue, but live breakpoint, computed-style, and interaction evidence cannot be produced without an authorized local listener.
+
+### Suggested Fix
+Retry only after explicit user approval or a restored approval channel; do not switch to the workspace database or another unsafe runtime path.
+
+### Metadata
+- Reproducible: environment-dependent
+- Related Files: web/vite.config.ts, tmp/ui-validation-config.yaml
+
+---
+
+## [ERR-20260720-013] go-build-default-cache-denied
+
+**Logged**: 2026-07-20T10:36:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first isolated validation-server build attempted to use the macOS user Go cache, which is outside the writable sandbox.
+
+### Error
+```
+open /Users/eddie/Library/Caches/go-build/...: operation not permitted
+```
+
+### Context
+- Operation: compile the current backend to `/tmp` so validation would not run a stale checked-in binary.
+
+### Suggested Fix
+Set `GOCACHE=/tmp/well-ambient-gocache` for local validation builds in this workspace.
+
+### Metadata
+- Reproducible: yes
+- Related Files: cmd/server/main.go
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-31T23:19:00+08:00
+
+### Resolution
+- **Resolved**: 2026-07-20T10:36:30+08:00
+- **Notes**: Rebuilt successfully with the Go cache redirected to `/tmp`.
+
+---
+
+## [ERR-20260720-012] broad-config-read-exposed-checked-in-secrets
+
+**Logged**: 2026-07-20T10:43:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A broad configuration preview returned checked-in integration credentials that were irrelevant to the UI validation task.
+
+### Error
+```
+The requested line range included credential fields from config.example.yaml and config_test.yaml.
+```
+
+### Context
+- Operation: inspect only the local server port and integration enablement before authenticated browser validation.
+- The command requested complete configuration sections instead of narrowly matching safe structural fields.
+
+### Suggested Fix
+Never dump project configuration files when only host, port, or boolean feature state is needed. Use a narrow parser or exact safe-field match that excludes tokens, secrets, usernames, and URLs carrying credentials.
+
+### Metadata
+- Reproducible: yes
+- Related Files: config.example.yaml, config_test.yaml
+- Recurrence-Count: 2
+- Last-Seen: 2026-07-31T23:18:00+08:00
+
+### Resolution
+- **Resolved**: 2026-07-20T10:44:00+08:00
+- **Notes**: Stopped reading the supplied configs and created a separate minimal validation config with every external integration disabled.
+
+---
+
+## [ERR-20260720-011] sandbox-process-list-denied
+
+**Logged**: 2026-07-20T10:41:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The sandbox denied a broad process-list command used to locate an existing local preview server.
+
+### Error
+```
+zsh: operation not permitted: ps
+```
+
+### Context
+- Operation: determine whether the authenticated development server and frontend preview were still running.
+- The later fixed-port HTTP probes established that no local service was listening.
+
+### Suggested Fix
+Probe the repository's configured local ports directly instead of enumerating all host processes.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/vite.config.ts
+
+### Resolution
+- **Resolved**: 2026-07-20T10:42:00+08:00
+- **Notes**: Replaced process enumeration with bounded HTTP checks on the expected backend and frontend ports.
+
+---
+## [ERR-20260720-018] project-preference-snapshot-scope-not-forwarded
+
+**Logged**: 2026-07-20T16:20:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+The first focused Go test build failed because the new project scope reached the strongest-brain snapshot loader but was not forwarded into the read-model builder.
+
+### Error
+```
+internal/server/strongest_brain_handlers.go:592:61: undefined: projectKeys
+```
+
+### Context
+- Operation: run focused project-preference tests after adding server-side scope filtering.
+- `buildStrongestBrainDecisionSnapshot` accepted `projectKeys`, while `buildStrongestBrainDecisionReadModel` still had its original signature and referenced a name outside its scope.
+
+### Suggested Fix
+Thread the normalized scope through every layer that adds task-derived records, including weak-semantic evidence decisions, and retain variadic compatibility for existing direct unit-test callers.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/strongest_brain_handlers.go
+
+### Resolution
+- **Resolved**: 2026-07-20T16:23:00+08:00
+- **Notes**: Forwarded the normalized scope through the variadic read-model builder and reran the focused db/server/agenda tests successfully.
+
+---
+
+## [ERR-20260720-019] browser-validation-guessed-daily-jira-heading
+
+**Logged**: 2026-07-20T14:48:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: browser-validation
+
+### Summary
+The authenticated browser check clicked the correct Daily Jira navigation item but waited for a guessed heading that the page does not render.
+
+### Error
+```text
+Playwright selector deadline exceeded while waiting for "每日 Jira 风险审计"
+```
+
+### Context
+- The navigation state had already changed successfully.
+- The wait target came from an assumption instead of the post-click DOM snapshot.
+
+### Resolution
+Captured a fresh DOM snapshot, anchored validation to the actual `7 日及以上 Jira 列表` structure, and verified that all 19 visible rows belonged only to HIT or NS2.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+---
+
+## [ERR-20260731-022] shell-expanded-static-contract-pattern
+
+**Logged**: 2026-07-31T16:52:43+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: validation
+
+### Summary
+A Node static-contract check embedded JavaScript template literals in a double-quoted shell command, so zsh interpreted the backticks and `?` pattern before Node received the script.
+
+### Error
+```text
+zsh:1: bad pattern: /api/work-items?search=
+```
+
+### Resolution
+Rewrote the validation command with a single-quoted JavaScript program and double-quoted JavaScript strings. The same four contracts then passed.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/prototype/FunctionalAdminShell.svelte, web/src/components/TaskKanban.svelte
+
+---
+
+## [ERR-20260731-023] broad-example-config-inspection-exposed-secret-shaped-values
+
+**Logged**: 2026-07-31T16:55:30+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: credential-hygiene
+
+### Summary
+A broad inspection of `config.example.yaml` returned credential-shaped example values that were not needed for the UI validation.
+
+### Resolution
+Stopped reading configuration contents and switched browser validation to a local fixture-only API. Future startup discovery should inspect config schemas or targeted non-secret keys, never whole configuration files.
+
+### Metadata
+- Reproducible: yes
+- Related Files: config.example.yaml
+
+---
+
+## [ERR-20260731-024] local-validation-command-recovery
+
+**Logged**: 2026-07-31T17:04:12+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: validation
+
+### Summary
+Three local-only validation steps needed correction: the sandbox denied the first Vite bind, one search command had an unmatched shell quote, and one broad multi-hunk patch no longer matched the edited date section.
+
+### Resolution
+Reran only the local preview and fixture services with scoped approval, replaced the malformed search with a literal-safe command, and split the date-format edit into small context-anchored patches. No external integration or business write was enabled.
+
+### Metadata
+- Reproducible: environment-dependent
+- Related Files: web/src/components/TaskKanban.svelte, web/src/components/prototype/FunctionalAdminShell.svelte
+- Recurrence-Count: 3
+- Last-Seen: 2026-07-31T20:08:00+08:00
+
+---
+
+## [ERR-20260731-025] core-member-browser-harness-recovery
+
+**Logged**: 2026-07-31T17:24:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: validation
+
+### Summary
+The first combined patch used stale task-plan context, browser validation initially guessed unsupported viewport and finalization call shapes, and the full server suite hit a sandbox-denied `httptest` listener.
+
+### Error
+```text
+apply_patch verification failed
+setViewportSize is not a function
+browser.tabs.finalize expects an options object
+panic: httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Resolution
+Split the patch into file-local hunks anchored to current content, kept the data-boundary validation at the unaffected desktop breakpoint, finalized the browser with `{ tabIds: [...] }`, and reran the server suite with scoped approval so its existing temporary-listener test could execute. The local read-only fixture and preview were stopped after validation.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md, internal/server/server_test.go, web/src/components/TaskKanban.svelte
+
+---
+
+## [ERR-20260731-026] execution-tracking-validation-api-recovery
+
+**Logged**: 2026-07-31T18:04:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: validation
+
+### Summary
+The execution-tracking validation initially used unsupported browser viewport and geometry calls, a broad patch missed current context, and the sandbox denied an existing server test listener.
+
+### Error
+```text
+setViewportSize is not a function
+boundingBox is not a function
+apply_patch verification failed
+httptest: failed to listen on a port: operation not permitted
+```
+
+### Context
+- Breakpoint validation was required for the trajectory modal.
+- The browser runtime exposes viewport overrides through the browser capability, not the tab Playwright subset.
+- The server suite contains an existing `httptest` listener that needs scoped execution outside the filesystem sandbox.
+
+### Suggested Fix
+Read the viewport capability documentation before responsive checks, use screenshots plus supported locator reads for geometry, split patches into current file-local hunks, and rerun listener-dependent tests with the narrowest approved command.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte, web/src/components/CommitTelemetryPanel.svelte, internal/server/execution_task_catalog_test.go
+- See Also: ERR-20260731-025
+
+### Resolution
+- **Resolved**: 2026-07-31T18:04:00+08:00
+- **Notes**: Used the browser viewport capability for 760/390 validation, verified the modal visually, split edits into scoped patches, and completed the focused server suite with scoped approval.
+
+---
+
+## [ERR-20260731-027] full-server-suite-sandbox-listener
+
+**Logged**: 2026-07-31T19:40:30+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The focused execution and task-directory tests passed, while the complete server suite again reached an unrelated `httptest` case that cannot bind an IPv6 loopback listener inside the sandbox.
+
+### Error
+```text
+panic: httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Context
+- Command: `GOCACHE=/tmp/well-ambient-go-cache go test ./internal/server ./internal/db -count=1`
+- The failure occurs in `TestEnsureGitLabWebhooksUpdatesExistingHook`, after the changed execution/task-directory tests have passed.
+
+### Suggested Fix
+Rerun the same bounded Go test command with local loopback-listener permission; keep the focused no-listener regression suite as the sandbox-safe validation loop.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_handlers_gitlab_webhook_test.go
+- See Also: ERR-20260731-025, ERR-20260731-026
+
+### Resolution
+- **Resolved**: 2026-07-31T19:42:00+08:00
+- **Notes**: Reran the bounded suite with local loopback-listener permission. Updated the pre-existing execution summary test to the new evidence-backed WorkItem projection contract; the complete server and database suites then passed.
+
+---
+
+## [ERR-20260731-028] demand-directory-compatibility-patch-syntax
+
+**Logged**: 2026-07-31T23:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+A deletion hunk that replaced demand-option assignee collection left two stale closing braces, so gofmt stopped before the focused directory tests could run.
+
+### Error
+```text
+internal/server/demand_handlers.go:61:2: expected declaration, found '}'
+```
+
+### Suggested Fix
+Inspect the complete edited function boundary immediately after a multi-block deletion, then run gofmt before combining it with tests.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/demand_handlers.go
+- See Also: ERR-20260731-024
+
+### Resolution
+- **Resolved**: 2026-07-31T23:09:00+08:00
+- **Notes**: Removed the two stale braces and reran formatting plus the same focused regression command.
+
+---
+
+## [ERR-20260731-029] nullable-project-config-payload
+
+**Logged**: 2026-07-31T23:22:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The empty project-config endpoint returned JSON `null`, which replaced the schedule page's array state and broke the next reactive `.filter()`.
+
+### Error
+```text
+TypeError: Cannot read properties of null (reading 'filter')
+```
+
+### Context
+- Authenticated isolated browser validation navigated from the schedule surface to Version Plan with an empty project-config table.
+- The authoritative delivery project directory remained populated, but the unrelated editable project-config request assigned `null` directly to `projectConfigs`.
+
+### Suggested Fix
+Normalize list-shaped API payloads at the client boundary with `Array.isArray(payload) ? payload : []` before assigning reactive array state.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DemandKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-07-31T23:28:00+08:00
+- **Notes**: Added array normalization and repeated frontend check/build plus clean authenticated route validation.

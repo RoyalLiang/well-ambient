@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/deliveryplanning"
 	"well-ambient/internal/kanban"
 	"well-ambient/internal/telemetry"
 )
@@ -68,7 +70,7 @@ func (s *Server) syncJiraTasks() {
 		jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
 		issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
 		createdTime := parseJiraTime(issue.Fields.Created)
-		jiraProject := formatJiraProjectLabel(issue.Fields.Project.Key, issue.Fields.Project.Name)
+		projectKey := deliveryplanning.NormalizeProjectKey(issue.Fields.Project.Key)
 
 		// Check if task exists in SQLite DB
 		var existing db.TaskTelemetry
@@ -77,8 +79,12 @@ func (s *Server) syncJiraTasks() {
 			// Insert new task
 			newTelemetry := db.TaskTelemetry{
 				TaskID:        issue.Key,
+				ProjectKey:    projectKey,
+				Source:        "jira",
+				ExternalKey:   issue.Key,
+				PlanningState: deliveryplanning.PlanningReady,
 				Title:         issue.Fields.Summary,
-				Repo:          firstNonBlank(jiraProject, "-"),
+				Repo:          "-",
 				Assignee:      assigneeName,
 				Branch:        "-",
 				LastCommit:    "-",
@@ -119,8 +125,20 @@ func (s *Server) syncJiraTasks() {
 				hasChanges = true
 			}
 
-			if jiraProject != "" && existing.Repo != jiraProject {
-				existing.Repo = jiraProject
+			if existing.ProjectKey == "" && projectKey != "" {
+				existing.ProjectKey = projectKey
+				hasChanges = true
+			}
+			if existing.Source == "" {
+				existing.Source = "jira"
+				hasChanges = true
+			}
+			if existing.ExternalKey == "" {
+				existing.ExternalKey = issue.Key
+				hasChanges = true
+			}
+			if existing.PlanningState == "" {
+				existing.PlanningState = deliveryplanning.PlanningReady
 				hasChanges = true
 			}
 
@@ -148,6 +166,7 @@ func (s *Server) syncJiraTasks() {
 				}
 			}
 		}
+		s.reconcileJiraIssueVersions(issue)
 		// 每次成功拉取到 Jira 任务时同步其评论
 		s.syncJiraComments(jc, issue.Key)
 	}
@@ -161,6 +180,8 @@ func (s *Server) syncJiraTasks() {
 	if err := db.DB.Where("task_id LIKE '%-%'").Find(&activeLocalTasks).Error; err == nil && len(activeLocalTasks) > 0 {
 		var activeKeys []string
 		now := time.Now()
+		configuredProjectKeys := config.JiraProjectKeys(&s.config.Jira)
+		restrictKeepAliveProjects := len(s.config.Jira.SyncProjects) > 0 || (len(s.config.Jira.VersionSources) > 0 && strings.TrimSpace(s.config.Jira.CustomJQL) == "")
 		for _, t := range activeLocalTasks {
 			if !shouldIncludeInJiraKeepAlive(t, now) {
 				continue
@@ -207,10 +228,10 @@ func (s *Server) syncJiraTasks() {
 				continue
 			}
 
-			// 3. Limit to configured SyncProjects
-			if len(s.config.Jira.SyncProjects) > 0 {
+			// 3. Limit to projects covered by ordinary or release-version sources.
+			if restrictKeepAliveProjects {
 				isSync := false
-				for _, sp := range s.config.Jira.SyncProjects {
+				for _, sp := range configuredProjectKeys {
 					if strings.EqualFold(strings.TrimSpace(sp), projKey) {
 						isSync = true
 						break
@@ -255,7 +276,7 @@ func (s *Server) syncJiraTasks() {
 
 				jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
 				issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
-				jiraProject := formatJiraProjectLabel(issue.Fields.Project.Key, issue.Fields.Project.Name)
+				projectKey := deliveryplanning.NormalizeProjectKey(issue.Fields.Project.Key)
 
 				var existing db.TaskTelemetry
 				if err := db.DB.Where("task_id = ?", issue.Key).First(&existing).Error; err == nil {
@@ -277,8 +298,20 @@ func (s *Server) syncJiraTasks() {
 						existing.IssueType = issueType
 						hasChanges = true
 					}
-					if jiraProject != "" && existing.Repo != jiraProject {
-						existing.Repo = jiraProject
+					if existing.ProjectKey == "" && projectKey != "" {
+						existing.ProjectKey = projectKey
+						hasChanges = true
+					}
+					if existing.Source == "" {
+						existing.Source = "jira"
+						hasChanges = true
+					}
+					if existing.ExternalKey == "" {
+						existing.ExternalKey = issue.Key
+						hasChanges = true
+					}
+					if existing.PlanningState == "" {
+						existing.PlanningState = deliveryplanning.PlanningReady
 						hasChanges = true
 					}
 					if existing.Status != jiraMappedStatus && time.Since(existing.LastUpdate) > 15*time.Second {
@@ -295,6 +328,7 @@ func (s *Server) syncJiraTasks() {
 							_ = kanban.SyncTaskToKanban(&existing)
 						}
 					}
+					s.reconcileJiraIssueVersions(issue)
 					// 自动同步评论
 					s.syncJiraComments(jc, issue.Key)
 				}
@@ -341,9 +375,23 @@ func mapJiraIssueType(jiraIssueType string) string {
 	case "bug", "缺陷", "故障", "defect":
 		return "bug"
 	case "task", "任务", "story", "故事", "requirement", "需求", "feature", "epic":
-		return "demand"
+		return "requirement"
 	default:
-		return "demand"
+		return "requirement"
+	}
+}
+
+func (s *Server) reconcileJiraIssueVersions(issue telemetry.JiraIssue) {
+	if s == nil || s.config == nil || !s.config.Jira.VersionCatalogEnabled || db.DB == nil {
+		return
+	}
+	state, err := telemetry.JiraIssueVersionState(issue)
+	if err != nil {
+		log.Printf("Jira sync: failed to normalize version facts for %s: %v", issue.Key, err)
+		return
+	}
+	if _, err := deliveryplanning.NewService(db.DB).ReconcileExternalIssue(context.Background(), state); err != nil {
+		log.Printf("Jira sync: failed to reconcile version facts for %s: %v", issue.Key, err)
 	}
 }
 
@@ -382,56 +430,72 @@ func shouldIncludeInJiraKeepAlive(task db.TaskTelemetry, now time.Time) bool {
 
 // buildJQL constructs a JQL query string from the Jira sync configuration
 func buildJQL(cfg *config.JiraConfig) string {
+	var ordinaryJQL string
 	if strings.TrimSpace(cfg.CustomJQL) != "" {
-		return strings.TrimSpace(cfg.CustomJQL)
-	}
+		ordinaryJQL = strings.TrimSpace(cfg.CustomJQL)
+	} else {
+		var parts []string
 
-	var parts []string
-
-	// Filter by projects
-	if len(cfg.SyncProjects) > 0 {
-		var quotedProjects []string
-		for _, p := range cfg.SyncProjects {
-			if p = strings.TrimSpace(p); p != "" {
-				quotedProjects = append(quotedProjects, fmt.Sprintf("%q", p))
+		// Filter by projects
+		if len(cfg.SyncProjects) > 0 {
+			var quotedProjects []string
+			for _, p := range cfg.SyncProjects {
+				if p = strings.TrimSpace(p); p != "" {
+					quotedProjects = append(quotedProjects, fmt.Sprintf("%q", p))
+				}
+			}
+			if len(quotedProjects) > 0 {
+				parts = append(parts, fmt.Sprintf("project in (%s)", strings.Join(quotedProjects, ", ")))
 			}
 		}
-		if len(quotedProjects) > 0 {
-			parts = append(parts, fmt.Sprintf("project in (%s)", strings.Join(quotedProjects, ", ")))
-		}
-	}
 
-	// Filter by assignees
-	if len(cfg.SyncUsers) > 0 {
-		var quotedUsers []string
-		for _, u := range cfg.SyncUsers {
-			if u = strings.TrimSpace(u); u != "" {
-				quotedUsers = append(quotedUsers, fmt.Sprintf("%q", u))
+		// Filter by assignees
+		if len(cfg.SyncUsers) > 0 {
+			var quotedUsers []string
+			for _, u := range cfg.SyncUsers {
+				if u = strings.TrimSpace(u); u != "" {
+					quotedUsers = append(quotedUsers, fmt.Sprintf("%q", u))
+				}
+			}
+			if len(quotedUsers) > 0 {
+				parts = append(parts, fmt.Sprintf("assignee in (%s)", strings.Join(quotedUsers, ", ")))
 			}
 		}
-		if len(quotedUsers) > 0 {
-			parts = append(parts, fmt.Sprintf("assignee in (%s)", strings.Join(quotedUsers, ", ")))
-		}
-	}
 
-	// Filter by status/progress
-	if len(cfg.SyncStatuses) > 0 {
-		var quotedStatuses []string
-		for _, st := range cfg.SyncStatuses {
-			if st = strings.TrimSpace(st); st != "" {
-				quotedStatuses = append(quotedStatuses, fmt.Sprintf("%q", st))
+		// Filter by status/progress
+		if len(cfg.SyncStatuses) > 0 {
+			var quotedStatuses []string
+			for _, st := range cfg.SyncStatuses {
+				if st = strings.TrimSpace(st); st != "" {
+					quotedStatuses = append(quotedStatuses, fmt.Sprintf("%q", st))
+				}
+			}
+			if len(quotedStatuses) > 0 {
+				parts = append(parts, fmt.Sprintf("status in (%s)", strings.Join(quotedStatuses, ", ")))
 			}
 		}
-		if len(quotedStatuses) > 0 {
-			parts = append(parts, fmt.Sprintf("status in (%s)", strings.Join(quotedStatuses, ", ")))
-		}
+
+		ordinaryJQL = strings.Join(parts, " AND ")
 	}
 
-	if len(parts) == 0 {
-		return ""
+	versionJQL := buildJiraVersionJQL(cfg)
+	switch {
+	case ordinaryJQL != "" && versionJQL != "":
+		return fmt.Sprintf("(%s) OR %s", ordinaryJQL, versionJQL)
+	case versionJQL != "":
+		return versionJQL
+	default:
+		return ordinaryJQL
 	}
+}
 
-	return strings.Join(parts, " AND ")
+func buildJiraVersionJQL(cfg *config.JiraConfig) string {
+	refs := config.JiraVersionReferences(cfg)
+	clauses := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		clauses = append(clauses, fmt.Sprintf(`(project = %q AND fixVersion = %s)`, ref.ProjectKey, ref.VersionID))
+	}
+	return strings.Join(clauses, " OR ")
 }
 
 // parseJiraTime parses standard Jira timestamps into time.Time
@@ -493,6 +557,33 @@ func (s *Server) syncAssigneeToJira(issueKey string, localAssignee string) {
 	} else {
 		log.Printf("Jira sync: successfully synced assignee for %s to Jira (%s)", issueKey, jiraUser)
 	}
+}
+
+func (s *Server) syncDueDateToJira(issueKey, dueDate string) {
+	if !s.config.Jira.Enabled || strings.TrimSpace(dueDate) == "" {
+		return
+	}
+	log.Printf("Jira sync: attempting to sync due date for %s -> %s", issueKey, dueDate)
+	jc := telemetry.NewJiraClient(&s.config.Jira)
+	if err := jc.UpdateDueDate(issueKey, dueDate); err != nil {
+		log.Printf("Jira sync: failed to sync due date for %s to Jira: %v", issueKey, err)
+		return
+	}
+	log.Printf("Jira sync: successfully synced due date for %s to Jira (%s)", issueKey, dueDate)
+}
+
+func (s *Server) syncDecisionCommentToJira(issueKey, comment string) {
+	comment = strings.TrimSpace(comment)
+	if !s.config.Jira.Enabled || comment == "" {
+		return
+	}
+	log.Printf("Jira sync: attempting to add decision comment for %s", issueKey)
+	jc := telemetry.NewJiraClient(&s.config.Jira)
+	if err := jc.AddComment(issueKey, comment); err != nil {
+		log.Printf("Jira sync: failed to add decision comment for %s: %v", issueKey, err)
+		return
+	}
+	log.Printf("Jira sync: successfully added decision comment for %s", issueKey)
 }
 
 // syncJiraUserToLocal automatically upserts the user info retrieved from Jira into the local users table.

@@ -20,6 +20,9 @@ func InitializeSeeds(db *gorm.DB) error {
 		{Code: "demands:write", Name: "创建与指派需求", Description: "有权在需求看板中创建新需求并指派负责人"},
 		{Code: "dashboard:read", Name: "查看协同看板页面", Description: "有权查看主界面协同看板、AI 需求解构日志与全部任务看板"},
 		{Code: "demands:read", Name: "查看需求看板页面", Description: "有权查看需求看板泳道及其排期卡片"},
+		{Code: "delivery:read", Name: "查看交付计划与发布版本", Description: "有权查看交付项、项目版本、发布范围和同步状态"},
+		{Code: "delivery:plan", Name: "维护交付计划", Description: "有权通过统一规划入口调整项目、版本、负责人、截止日和规划状态"},
+		{Code: "release:manage", Name: "管理发布版本", Description: "有权同步 Jira 版本目录以及创建或维护本地发布版本"},
 		{Code: "decision:read", Name: "查看决策大屏页面", Description: "有权查看红区卡点诊断盘与决策会议大屏"},
 		{Code: "ai_context:read", Name: "查看 AI 上下文注册表", Description: "有权查看用于 AI 需求解构的架构、流程、功能边界与估算规则上下文"},
 		{Code: "ai_context:write", Name: "管理 AI 上下文注册表", Description: "有权新增、修改、停用 AI 上下文事实、文档与上下文包配置"},
@@ -109,6 +112,9 @@ func InitializeSeeds(db *gorm.DB) error {
 		"kpi:read",
 		"dashboard:read",
 		"demands:read",
+		"delivery:read",
+		"delivery:plan",
+		"release:manage",
 		"decision:read",
 		"ai_context:read",
 		"ai_context:write",
@@ -142,7 +148,7 @@ func InitializeSeeds(db *gorm.DB) error {
 
 	// Member gets dashboard:read, demands:read, decision:read
 	memberID := groupMap["member"]
-	memberPermCodes := []string{"dashboard:read", "demands:read", "decision:read", "demand_spec:read"}
+	memberPermCodes := []string{"dashboard:read", "demands:read", "delivery:read", "decision:read", "demand_spec:read"}
 	for _, code := range memberPermCodes {
 		if pID, ok := permMap[code]; ok {
 			var count int64
@@ -152,6 +158,39 @@ func InitializeSeeds(db *gorm.DB) error {
 					UserGroupID:  memberID,
 					PermissionID: pID,
 				})
+			}
+		}
+	}
+
+	// Compatibility bridge during the delivery-domain cutover. Custom groups
+	// that already carry demands permissions keep equivalent access without
+	// widening any project scope.
+	compatibilityMappings := map[string]string{
+		"demands:read":  "delivery:read",
+		"demands:write": "delivery:plan",
+	}
+	for legacyCode, deliveryCode := range compatibilityMappings {
+		legacyID, legacyOK := permMap[legacyCode]
+		deliveryID, deliveryOK := permMap[deliveryCode]
+		if !legacyOK || !deliveryOK {
+			continue
+		}
+		var legacyGrants []GroupPermission
+		if err := db.Where("permission_id = ?", legacyID).Find(&legacyGrants).Error; err != nil {
+			return err
+		}
+		for _, grant := range legacyGrants {
+			var count int64
+			db.Model(&GroupPermission{}).
+				Where("user_group_id = ? AND permission_id = ?", grant.UserGroupID, deliveryID).
+				Count(&count)
+			if count == 0 {
+				if err := db.Create(&GroupPermission{
+					UserGroupID:  grant.UserGroupID,
+					PermissionID: deliveryID,
+				}).Error; err != nil {
+					return err
+				}
 			}
 		}
 	}
