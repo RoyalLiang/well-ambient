@@ -327,6 +327,9 @@ func (s *Service) ApplyPlanningChange(ctx context.Context, command PlanningComma
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
+		if _, err := appendWorkItemAsset(ctx, tx, event); err != nil {
+			return err
+		}
 		result = after
 		return nil
 	})

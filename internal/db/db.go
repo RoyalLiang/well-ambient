@@ -361,6 +361,9 @@ func InitDB(dbPath string) error {
 	if err != nil {
 		return err
 	}
+	if err := MigrateDataAssets(DB); err != nil {
+		return err
+	}
 	// Task-tracking read models filter by normalized issue type before status,
 	// project and owner. Expression/composite indexes keep those dashboard reads
 	// index-backed without changing legacy mixed-case telemetry rows.

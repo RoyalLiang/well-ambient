@@ -38,6 +38,9 @@ func openPlanningTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
+	if err := db.MigrateDataAssets(conn); err != nil {
+		t.Fatalf("migrate data assets: %v", err)
+	}
 	return conn
 }
 
@@ -163,11 +166,50 @@ func TestApplyPlanningChangeIsAtomicAndCreatesAuditAndOutbox(t *testing.T) {
 	if got := primaryReleaseID(snapshot.Links); got != release.ID {
 		t.Fatalf("primary release = %d, want %d", got, release.ID)
 	}
-	var eventCount, operationCount int64
+	var eventCount, operationCount, assetCount, assetPayloadCount int64
 	conn.Model(&db.WorkItemEvent{}).Count(&eventCount)
 	conn.Model(&db.WorkItemSyncOperation{}).Count(&operationCount)
-	if eventCount != 1 || operationCount != 1 {
-		t.Fatalf("audit/outbox counts = %d/%d, want 1/1", eventCount, operationCount)
+	conn.Model(&db.DataAssetEvent{}).Count(&assetCount)
+	conn.Model(&db.DataAssetEventPayload{}).Count(&assetPayloadCount)
+	if eventCount != 1 || operationCount != 1 || assetCount != 1 || assetPayloadCount != 1 {
+		t.Fatalf("audit/outbox/asset/payload counts = %d/%d/%d/%d, want 1/1/1/1", eventCount, operationCount, assetCount, assetPayloadCount)
+	}
+}
+
+func TestApplyPlanningChangeRollsBackWhenAssetAppendFails(t *testing.T) {
+	conn := openPlanningTestDB(t)
+	task := db.TaskTelemetry{
+		TaskID: "HIT-ROLLBACK", IssueType: "demand", ProjectKey: "HIT",
+		PlanningState: PlanningReady, Assignee: "alice",
+	}
+	if err := conn.Create(&task).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := conn.Exec(`CREATE TRIGGER force_asset_insert_failure
+		BEFORE INSERT ON data_asset_events
+		BEGIN SELECT RAISE(ABORT, 'forced asset failure'); END`).Error; err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	assignee := "bob"
+	_, err := NewService(conn).ApplyPlanningChange(context.Background(), PlanningCommand{
+		WorkItemID: task.TaskID, ExpectedRevision: 0, Assignee: &assignee,
+		Reason: "test atomic rollback", Actor: "pm", Source: "manual",
+	})
+	if err == nil {
+		t.Fatal("expected asset append failure")
+	}
+	var stored db.TaskTelemetry
+	if err := conn.Where("task_id = ?", task.TaskID).First(&stored).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if stored.Assignee != "alice" || stored.Revision != 0 {
+		t.Fatalf("planning mutation escaped rollback: %+v", stored)
+	}
+	var domainEvents, assetEvents int64
+	conn.Model(&db.WorkItemEvent{}).Count(&domainEvents)
+	conn.Model(&db.DataAssetEvent{}).Count(&assetEvents)
+	if domainEvents != 0 || assetEvents != 0 {
+		t.Fatalf("rollback left domain/asset events = %d/%d", domainEvents, assetEvents)
 	}
 }
 

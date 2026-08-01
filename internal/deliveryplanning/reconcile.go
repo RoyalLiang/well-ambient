@@ -62,7 +62,7 @@ func (s *Service) ReconcileExternalIssue(ctx context.Context, state ExternalIssu
 
 		allExternal := append([]ExternalRelease{}, state.TargetReleases...)
 		allExternal = append(allExternal, state.AffectedReleases...)
-		releasesByIdentity, err := upsertExternalReleaseFacts(tx, state.ProjectKey, allExternal, s.now())
+		releasesByIdentity, err := upsertExternalReleaseFacts(ctx, tx, state.ProjectKey, allExternal, s.now())
 		if err != nil {
 			return err
 		}
@@ -154,8 +154,11 @@ func (s *Service) ReconcileExternalIssue(ctx context.Context, state ExternalIssu
 			if err := tx.Create(&event).Error; err != nil {
 				return err
 			}
+			if _, err := appendWorkItemAsset(ctx, tx, event); err != nil {
+				return err
+			}
 		} else if conflictCode != "" {
-			if err := appendConflictOnce(tx, task, conflictCode, after); err != nil {
+			if err := appendConflictOnce(ctx, tx, task, conflictCode, after, s.now()); err != nil {
 				return err
 			}
 		}
@@ -165,7 +168,7 @@ func (s *Service) ReconcileExternalIssue(ctx context.Context, state ExternalIssu
 	return result, err
 }
 
-func upsertExternalReleaseFacts(conn *gorm.DB, projectKey string, releases []ExternalRelease, syncedAt time.Time) (map[string]db.ReleaseVersion, error) {
+func upsertExternalReleaseFacts(ctx context.Context, conn *gorm.DB, projectKey string, releases []ExternalRelease, syncedAt time.Time) (map[string]db.ReleaseVersion, error) {
 	byIdentity := make(map[string]db.ReleaseVersion)
 	for _, external := range releases {
 		external.ProjectKey = projectKey
@@ -176,6 +179,12 @@ func upsertExternalReleaseFacts(conn *gorm.DB, projectKey string, releases []Ext
 		status := strings.ToLower(strings.TrimSpace(external.Status))
 		if status == "" {
 			status = ReleasePlanned
+		}
+		var before db.ReleaseVersion
+		beforeErr := conn.Where("project_key = ? AND source = ? AND external_id = ?", projectKey, "jira", externalID).
+			First(&before).Error
+		if beforeErr != nil && !errors.Is(beforeErr, gorm.ErrRecordNotFound) {
+			return nil, beforeErr
 		}
 		row := db.ReleaseVersion{
 			ProjectKey:  projectKey,
@@ -199,6 +208,13 @@ func upsertExternalReleaseFacts(conn *gorm.DB, projectKey string, releases []Ext
 		}
 		if err := conn.Where("project_key = ? AND source = ? AND external_id = ?", projectKey, "jira", externalID).
 			First(&row).Error; err != nil {
+			return nil, err
+		}
+		var beforeRow *db.ReleaseVersion
+		if beforeErr == nil {
+			beforeRow = &before
+		}
+		if _, err := appendReleaseVersionAsset(ctx, conn, beforeRow, row, syncedAt); err != nil {
 			return nil, err
 		}
 		byIdentity[externalID] = row
@@ -328,7 +344,7 @@ func workItemFactsSignature(snapshot WorkItemSnapshot) string {
 	return string(payload)
 }
 
-func appendConflictOnce(conn *gorm.DB, task db.TaskTelemetry, code string, snapshot WorkItemSnapshot) error {
+func appendConflictOnce(ctx context.Context, conn *gorm.DB, task db.TaskTelemetry, code string, snapshot WorkItemSnapshot, occurredAt time.Time) error {
 	var count int64
 	if err := conn.Model(&db.WorkItemEvent{}).
 		Where("work_item_id = ? AND event_type = ? AND reason = ? AND revision = ?",
@@ -340,7 +356,7 @@ func appendConflictOnce(conn *gorm.DB, task db.TaskTelemetry, code string, snaps
 		return nil
 	}
 	afterJSON, _ := json.Marshal(snapshot)
-	return conn.Create(&db.WorkItemEvent{
+	event := db.WorkItemEvent{
 		WorkItemID: task.TaskID,
 		ProjectKey: task.ProjectKey,
 		EventType:  "release_scope_conflict_detected",
@@ -350,8 +366,13 @@ func appendConflictOnce(conn *gorm.DB, task db.TaskTelemetry, code string, snaps
 		Revision:   task.Revision,
 		Source:     "jira",
 		SyncState:  "conflict",
-		CreatedAt:  time.Now(),
-	}).Error
+		CreatedAt:  occurredAt,
+	}
+	if err := conn.Create(&event).Error; err != nil {
+		return err
+	}
+	_, err := appendWorkItemAsset(ctx, conn, event)
+	return err
 }
 
 func containsUint(values []uint, wanted uint) bool {

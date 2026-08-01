@@ -2,6 +2,7 @@ package deliveryplanning
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 	"well-ambient/internal/db"
@@ -18,7 +19,8 @@ func TestReconcileExternalIssueSingleTargetBugIsIdempotent(t *testing.T) {
 		t.Fatalf("create task: %v", err)
 	}
 	service := NewService(conn)
-	service.now = func() time.Time { return time.Date(2026, 7, 30, 2, 0, 0, 0, time.UTC) }
+	now := time.Date(2026, 7, 30, 2, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
 	state := ExternalIssueVersionState{
 		IssueKey:   task.TaskID,
 		ProjectKey: "HIT",
@@ -51,12 +53,42 @@ func TestReconcileExternalIssueSingleTargetBugIsIdempotent(t *testing.T) {
 	if second.WorkItem.Revision != 1 {
 		t.Fatalf("idempotent reconcile advanced revision to %d", second.WorkItem.Revision)
 	}
-	var releaseCount, linkCount, eventCount int64
+	var releaseCount, linkCount, eventCount, assetCount int64
 	conn.Model(&db.ReleaseVersion{}).Count(&releaseCount)
 	conn.Model(&db.WorkItemReleaseLink{}).Count(&linkCount)
 	conn.Model(&db.WorkItemEvent{}).Count(&eventCount)
-	if releaseCount != 2 || linkCount != 2 || eventCount != 1 {
-		t.Fatalf("idempotent counts release/link/event = %d/%d/%d, want 2/2/1", releaseCount, linkCount, eventCount)
+	conn.Model(&db.DataAssetEvent{}).Count(&assetCount)
+	if releaseCount != 2 || linkCount != 2 || eventCount != 1 || assetCount != 3 {
+		t.Fatalf("idempotent counts release/link/event/asset = %d/%d/%d/%d, want 2/2/1/3", releaseCount, linkCount, eventCount, assetCount)
+	}
+
+	now = now.Add(time.Hour)
+	changed := state
+	changed.TargetReleases = append([]ExternalRelease(nil), state.TargetReleases...)
+	changed.TargetReleases[0].Name = "1.2 renamed"
+	changed.TargetReleases[0].Description = "updated release evidence"
+	third, err := service.ReconcileExternalIssue(context.Background(), changed)
+	if err != nil {
+		t.Fatalf("release metadata reconcile: %v", err)
+	}
+	if third.WorkItem.Revision != 1 {
+		t.Fatalf("release-only metadata change advanced work item revision to %d", third.WorkItem.Revision)
+	}
+	conn.Model(&db.WorkItemEvent{}).Count(&eventCount)
+	conn.Model(&db.DataAssetEvent{}).Count(&assetCount)
+	if eventCount != 1 || assetCount != 4 {
+		t.Fatalf("release-only update audit counts work-item/assets = %d/%d, want 1/4", eventCount, assetCount)
+	}
+	var releaseAsset db.DataAssetEvent
+	if err := conn.Where("subject_type = ? AND event_type = ?", "release_version", "release_version_updated").First(&releaseAsset).Error; err != nil {
+		t.Fatalf("load release update asset: %v", err)
+	}
+	var releasePayload db.DataAssetEventPayload
+	if err := conn.Where("event_id = ?", releaseAsset.ID).First(&releasePayload).Error; err != nil {
+		t.Fatalf("load release update payload: %v", err)
+	}
+	if !strings.Contains(string(releasePayload.Data), "1.2 renamed") || !strings.Contains(string(releasePayload.Data), "updated release evidence") {
+		t.Fatalf("release update evidence was not preserved: %s", releasePayload.Data)
 	}
 }
 

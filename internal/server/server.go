@@ -82,6 +82,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/decision/daily-jira", s.withPermission("decision:read", s.handleGetDailyJiraAudit))
 	s.mux.HandleFunc("POST /api/decision/daily-jira/review", s.withPermission("decision:read", s.withPermission("demands:write", s.handlePostDailyJiraReview)))
 	s.mux.HandleFunc("GET /api/logs", s.withAuth(s.handleGetLogs))
+	s.mux.HandleFunc("GET /api/data-assets/events", s.withPermission("data_asset:read", s.handleListDataAssetEvents))
+	s.mux.HandleFunc("GET /api/data-assets/events/{id}", s.withPermission("data_asset:read", s.handleGetDataAssetEvent))
+	s.mux.HandleFunc("GET /api/data-assets/snapshots/latest", s.withPermission("data_asset:read", s.handleGetLatestDataAssetSnapshot))
+	s.mux.HandleFunc("GET /api/data-assets/snapshots/{id}", s.withPermission("data_asset:read", s.handleGetDataAssetSnapshot))
 
 	// Protected Config APIs
 	s.mux.HandleFunc("GET /api/config", s.withPermission("config:read", s.handleGetConfig))
