@@ -16,6 +16,12 @@ import (
 	"well-ambient/internal/db"
 )
 
+func TestProviderFilesHTTPClientHasNoOverallTimeout(t *testing.T) {
+	if got := providerFilesHTTPClient().Timeout; got != 0 {
+		t.Fatalf("provider files timeout = %s, want no overall timeout", got)
+	}
+}
+
 func TestDeconstructAttachmentStreamsStoresAndLinks(t *testing.T) {
 	if err := db.InitDB(":memory:"); err != nil {
 		t.Fatalf("init database: %v", err)

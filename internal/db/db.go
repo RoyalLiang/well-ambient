@@ -2,7 +2,9 @@ package db
 
 import (
 	"time"
+	"well-ambient/internal/dailyjira"
 	userdb "well-ambient/internal/db/user"
+	"well-ambient/internal/readmodel"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -32,14 +34,19 @@ type TaskTelemetry struct {
 	Description       string     `json:"description"` // 详细描述
 	Repo              string     `json:"repo"`
 	Assignee          string     `gorm:"index" json:"assignee"`
+	JiraReporter      string     `gorm:"column:jira_reporter" json:"jira_reporter"`
+	JiraReporterUser  string     `gorm:"column:jira_reporter_user" json:"-"`
 	Creator           string     `json:"creator"`      // 创建人
 	CreatorDept       string     `json:"creator_dept"` // 创建人部门
 	Branch            string     `gorm:"index" json:"branch"`
 	LastCommit        string     `json:"last_commit"`
 	Status            string     `gorm:"index" json:"status"` // backlog, progress, review, done
 	IssueType         string     `gorm:"index;index:idx_task_jira_project_type,priority:3" json:"issue_type"`
+	Priority          string     `gorm:"index;size:32" json:"priority"`
+	Severity          string     `gorm:"index;size:32" json:"severity"`
 	TaskCreatedAt     time.Time  `json:"task_created_at"`
 	LastUpdate        time.Time  `gorm:"index" json:"last_update"`
+	SourceUpdatedAt   time.Time  `gorm:"column:source_updated_at" json:"source_updated_at"`
 	CompletedAt       *time.Time `json:"completed_at"`                              // 完成时间
 	DueDate           *time.Time `json:"due_date"`                                  // 任务截止时间
 	DecisionLogs      string     `json:"decision_logs"`                             // 会议决策历史，存储为 JSON 字符串
@@ -209,27 +216,58 @@ type ConfigVersion struct {
 
 // GitCommitLog tracks detailed git activities for tasks (one task to many commits/repos)
 type GitCommitLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	TaskID    string    `gorm:"index;column:task_id" json:"task_id"`
-	Repo      string    `json:"repo"`
-	Branch    string    `json:"branch"`
-	CommitID  string    `json:"commit_id"`
-	Message   string    `json:"message"`
-	Author    string    `json:"author"`
-	MrIID     int       `json:"mr_iid"`
-	MrURL     string    `json:"mr_url"`
-	Action    string    `json:"action"` // git_push, mr_open, mr_merge, mr_close, etc.
-	CreatedAt time.Time `json:"created_at"`
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	TaskID             string    `gorm:"index;column:task_id" json:"task_id"`
+	Repo               string    `json:"repo"`
+	Branch             string    `json:"branch"`
+	CommitID           string    `json:"commit_id"`
+	Message            string    `json:"message"`
+	Author             string    `json:"author"`
+	MrIID              int       `json:"mr_iid"`
+	MrURL              string    `json:"mr_url"`
+	Action             string    `json:"action"` // git_push, mr_open, mr_merge, mr_close, etc.
+	DedupeKey          string    `gorm:"index;size:255;column:dedupe_key" json:"dedupe_key,omitempty"`
+	ContentFingerprint string    `gorm:"index;size:64;column:content_fingerprint" json:"content_fingerprint,omitempty"`
+	DuplicateOfCommit  string    `gorm:"size:160;column:duplicate_of_commit" json:"duplicate_of_commit,omitempty"`
+	TelemetryQuality   string    `gorm:"size:32;column:telemetry_quality" json:"telemetry_quality,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // JiraCommentLog tracks discussion updates pulled from Jira issues (comments)
 type JiraCommentLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	TaskID    string    `gorm:"index" json:"task_id"`
-	CommentID string    `gorm:"uniqueIndex" json:"comment_id"` // Jira comment ID for idempotency
-	Author    string    `json:"author"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `gorm:"index" json:"created_at"`
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	TaskID          string     `gorm:"index" json:"task_id"`
+	CommentID       string     `gorm:"uniqueIndex" json:"comment_id"` // Jira comment ID for idempotency
+	Author          string     `json:"author"`
+	Body            string     `json:"body"`
+	Current         bool       `gorm:"index;not null;default:true" json:"current"`
+	CreatedAt       time.Time  `gorm:"index" json:"created_at"`
+	SourceUpdatedAt *time.Time `gorm:"index;column:source_updated_at" json:"source_updated_at"`
+}
+
+// JiraInboundSyncState is the durable checkpoint for the Jira pull worker.
+// SuccessfulThrough advances only after every issue selected for a cycle has
+// reconciled successfully, so restarts and partial failures remain retryable.
+type JiraInboundSyncState struct {
+	Scope             string    `gorm:"primaryKey;size:64" json:"scope"`
+	SuccessfulThrough time.Time `gorm:"index;column:successful_through" json:"successful_through"`
+	LastStartedAt     time.Time `gorm:"column:last_started_at" json:"last_started_at"`
+	LastSucceededAt   time.Time `gorm:"column:last_succeeded_at" json:"last_succeeded_at"`
+	LastError         string    `gorm:"type:text;column:last_error" json:"last_error"`
+	LastIssueCount    int       `gorm:"column:last_issue_count" json:"last_issue_count"`
+	LastChangedCount  int       `gorm:"column:last_changed_count" json:"last_changed_count"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// JiraIssueSyncState records the latest Jira issue revision whose comments and
+// dependent projections completed successfully. TaskTelemetry.SourceUpdatedAt
+// remains a source fact; this row is operational retry state.
+type JiraIssueSyncState struct {
+	TaskID          string    `gorm:"primaryKey;size:160;column:task_id" json:"task_id"`
+	SourceUpdatedAt time.Time `gorm:"index;column:source_updated_at" json:"source_updated_at"`
+	LastSucceededAt time.Time `gorm:"column:last_succeeded_at" json:"last_succeeded_at"`
+	LastError       string    `gorm:"type:text;column:last_error" json:"last_error"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Notification represents a notification event in the system
@@ -331,6 +369,8 @@ func InitDB(dbPath string) error {
 		&ConfigVersion{},
 		&GitCommitLog{},
 		&JiraCommentLog{},
+		&JiraInboundSyncState{},
+		&JiraIssueSyncState{},
 		&Notification{},
 		&UserNotificationState{},
 		&UserProjectPreference{},
@@ -357,11 +397,32 @@ func InitDB(dbPath string) error {
 		&ExecutionRun{},
 		&ExecutionAction{},
 		&CorpusCandidate{},
+		&SolutionAsset{},
+		&SolutionRevision{},
+		&SolutionSourceRef{},
+		&SolutionPolishJob{},
+		&SolutionPromptTemplate{},
+		&SolutionJiraOutbox{},
+		&SolutionCatalogEntry{},
+		&SolutionCatalogSearchToken{},
+		&SolutionCatalogSyncJob{},
+		&SolutionComparison{},
+		&SolutionStandardizationProposal{},
+		&SolutionStandard{},
+		&SolutionStandardRevision{},
+		&PerformanceScoreRun{},
+		&PerformanceScoreSnapshot{},
+		&PerformanceEvidenceFact{},
+		&PerformanceWorkItemEvent{},
+		&PerformanceAuditEvent{},
 	)
 	if err != nil {
 		return err
 	}
 	if err := MigrateDataAssets(DB); err != nil {
+		return err
+	}
+	if err := dailyjira.Migrate(DB); err != nil {
 		return err
 	}
 	// Task-tracking read models filter by normalized issue type before status,
@@ -370,17 +431,78 @@ func InitDB(dbPath string) error {
 	taskTrackingIndexes := []string{
 		`CREATE INDEX IF NOT EXISTS idx_task_tracking_kind_status_project_owner
 			ON task_telemetries (LOWER(TRIM(issue_type)), status, project_key, assignee)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_tracking_active_last_update
+			ON task_telemetries (last_update DESC, task_id)
+			WHERE status IS NULL OR LOWER(TRIM(status)) NOT IN ('done','closed','resolved','completed','archived','已完成','已关闭')`,
 		`CREATE INDEX IF NOT EXISTS idx_task_tracking_parent_group
 			ON task_telemetries (parent_work_item_id, task_group_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_git_evidence_task_created
 			ON git_commit_logs (task_id, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_git_commit_dedupe_nonempty
+			ON git_commit_logs (dedupe_key) WHERE TRIM(dedupe_key) <> ''`,
+		`CREATE INDEX IF NOT EXISTS idx_task_agenda_active
+			ON task_telemetries (last_update DESC, task_id)
+			WHERE status IS NULL OR LOWER(TRIM(status)) <> 'done'`,
+		`CREATE INDEX IF NOT EXISTS idx_task_agenda_history
+			ON task_telemetries (last_update DESC, task_id)
+			WHERE LOWER(TRIM(status)) IN ('done', 'review')`,
+		`CREATE INDEX IF NOT EXISTS idx_task_agenda_repo
+			ON task_telemetries (repo)`,
+		`CREATE INDEX IF NOT EXISTS idx_git_evidence_task_action_created
+			ON git_commit_logs (task_id, action, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_notification_task_type_created
+			ON notifications (task_id, type, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_jira_event_task_action_created
+			ON decision_events (task_id, action, created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_daily_jira_decision_task_created
+			ON daily_jira_decisions (task_id, created_at DESC, id DESC)`,
 	}
 	for _, statement := range taskTrackingIndexes {
 		if err := DB.Exec(statement).Error; err != nil {
 			return err
 		}
 	}
+	if err := MigrateAllPageReadIndexes(DB); err != nil {
+		return err
+	}
+	if err := ensureDefaultSolutionPrompts(DB); err != nil {
+		return err
+	}
 
-	// Seed data for RBAC
-	return userdb.InitializeSeeds(DB)
+	// Seed data for RBAC before attaching the request-scoped query observer so
+	// startup migrations and seeds are not reported as HTTP read work.
+	if err := userdb.InitializeSeeds(DB); err != nil {
+		return err
+	}
+	return readmodel.InstallGORMObserver(DB)
+}
+
+func ensureDefaultSolutionPrompts(conn *gorm.DB) error {
+	defaults := []struct {
+		purpose, name, prompt string
+	}{
+		{"solution_polish", "默认方案润色", DefaultSolutionPolishPrompt},
+		{"solution_compare_requirement", "默认需求等价性对比", DefaultSolutionRequirementComparisonPrompt},
+		{"solution_compare_compatibility", "默认方案兼容性对比", DefaultSolutionCompatibilityComparisonPrompt},
+	}
+	for _, item := range defaults {
+		var count int64
+		if err := conn.Model(&SolutionPromptTemplate{}).
+			Where("purpose = ? AND scope_type = ? AND scope_id = ?", item.purpose, "global", "").
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		now := time.Now()
+		if err := conn.Create(&SolutionPromptTemplate{
+			Purpose: item.purpose, ScopeType: "global", ScopeID: "", Version: 1,
+			Status: "active", Name: item.name, SystemPrompt: item.prompt,
+			CreatedBy: "system", ActivatedBy: "system", ActivatedAt: &now, CreatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

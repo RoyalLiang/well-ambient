@@ -142,6 +142,22 @@ func EvaluateActiveTasks(tasks []db.TaskTelemetry) []AgendaItem {
 
 // GenerateAutonomousDecisions simulates AI automatic state transition logs in background (Ambient Sync)
 func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
+	records := make([]automaticDecisionTaskRecord, 0, len(tasks))
+	for _, task := range tasks {
+		records = append(records, automaticDecisionTaskRecord{
+			TaskID:     task.TaskID,
+			Assignee:   task.Assignee,
+			Status:     task.Status,
+			LastUpdate: task.LastUpdate,
+		})
+	}
+	if db.DB != nil {
+		_ = preloadAutomaticDecisionEvidence(db.DB, records)
+	}
+	return generateAutonomousDecisions(records)
+}
+
+func generateAutonomousDecisions(tasks []automaticDecisionTaskRecord) []AutoDecision {
 	var logs []AutoDecision
 	now := time.Now()
 
@@ -160,7 +176,7 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 				TaskID:     t.TaskID,
 				Message:    "🤖 检测到事项已完成验收，AI 已自动将该任务流转至 DONE 并归档。",
 				Assignee:   t.Assignee,
-			}))
+			}, t))
 		} else if t.Status == "review" {
 			logs = append(logs, withLatestCommitReference(AutoDecision{
 				Time:       occurredAt.Format("15:04:05"),
@@ -168,7 +184,7 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 				TaskID:     t.TaskID,
 				Message:    fmt.Sprintf("🤖 检测到开发者 %s 发起评审，AI 已自动流转至 Review 并提醒评审人。", t.Assignee),
 				Assignee:   t.Assignee,
-			}))
+			}, t))
 		}
 	}
 
@@ -200,8 +216,8 @@ func GenerateAutonomousDecisions(tasks []db.TaskTelemetry) []AutoDecision {
 	return logs
 }
 
-func withLatestCommitReference(decision AutoDecision) AutoDecision {
-	commitID, commitURL, hasWeakSemanticEvidence := latestCommitReference(decision.TaskID)
+func withLatestCommitReference(decision AutoDecision, task automaticDecisionTaskRecord) AutoDecision {
+	commitID, commitURL, hasWeakSemanticEvidence := latestCommitReference(task)
 	decision.CommitID = commitID
 	decision.CommitURL = commitURL
 	if commitID == "" && hasWeakSemanticEvidence {
@@ -210,24 +226,18 @@ func withLatestCommitReference(decision AutoDecision) AutoDecision {
 	return decision
 }
 
-func latestCommitReference(taskID string) (string, string, bool) {
-	taskID = strings.TrimSpace(taskID)
-	if db.DB == nil || taskID == "" {
-		return "", "", false
-	}
-
-	var gitLogs []db.GitCommitLog
-	if err := db.DB.
-		Where("task_id = ? AND action = ? AND commit_id <> ?", taskID, "git_push", "").
-		Order("created_at desc").
-		Limit(20).
-		Find(&gitLogs).Error; err != nil || len(gitLogs) == 0 {
+func latestCommitReference(task automaticDecisionTaskRecord) (string, string, bool) {
+	taskID := strings.TrimSpace(task.TaskID)
+	if taskID == "" {
 		return "", "", false
 	}
 
 	hasWeakSemanticEvidence := false
-	for _, gitLog := range gitLogs {
-		if telemetry.IsWeakSemanticCommit(taskID, gitLog) {
+	for index, gitLog := range task.GitCommitLogs {
+		if index >= 20 {
+			break
+		}
+		if telemetry.IsWeakSemanticCommitWithNotifications(taskID, gitLog, task.Notifications) {
 			hasWeakSemanticEvidence = true
 			continue
 		}
@@ -237,20 +247,24 @@ func latestCommitReference(taskID string) (string, string, bool) {
 			continue
 		}
 
-		var notification db.Notification
-		if err := db.DB.
-			Where("task_id = ? AND type = ? AND link LIKE ?", taskID, "git_push", "%"+commitID+"%").
-			Order("created_at desc").
-			First(&notification).Error; err == nil {
-			return commitID, strings.TrimSpace(notification.Link), hasWeakSemanticEvidence
+		fallbackURL := ""
+		for _, notification := range task.Notifications {
+			if notification.Type != "git_push" {
+				continue
+			}
+			link := strings.TrimSpace(notification.Link)
+			if link == "" {
+				continue
+			}
+			if strings.Contains(link, commitID) {
+				return commitID, link, hasWeakSemanticEvidence
+			}
+			if fallbackURL == "" {
+				fallbackURL = link
+			}
 		}
 
-		_ = db.DB.
-			Where("task_id = ? AND type = ? AND link <> ?", taskID, "git_push", "").
-			Order("created_at desc").
-			First(&notification).Error
-
-		return commitID, strings.TrimSpace(notification.Link), hasWeakSemanticEvidence
+		return commitID, fallbackURL, hasWeakSemanticEvidence
 	}
 
 	return "", "", hasWeakSemanticEvidence

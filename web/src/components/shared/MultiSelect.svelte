@@ -28,6 +28,7 @@
   export let ariaLabel = '';
   export let showClear = false;
   export let clearText = '清除筛选';
+  export let shadowless = false;
 
   let isOpen = false;
   let searchText = '';
@@ -235,7 +236,7 @@
   });
 </script>
 
-<div class="multi-select-group" class:disabled class:compact class:summary-mode={summaryMode} class:overlay bind:this={selectContainer} on:focusout={handleFocusOut}>
+<div class="multi-select-group" class:disabled class:compact class:summary-mode={summaryMode} class:overlay class:shadowless bind:this={selectContainer} on:focusout={handleFocusOut}>
   {#if label}
     <label class="multi-select-label" for={id}>
       {label}{#if required}<span class="required-star">*</span>{/if}
@@ -307,6 +308,7 @@
     {#if isOpen && !disabled}
       <div
         class="multi-select-dropdown"
+        class:shadowless
         class:is-overlay={overlay}
         class:is-positioned={dropdownPositioned}
         class:drop-up={dropdownPlacement === 'up'}
@@ -372,6 +374,7 @@
   .multi-select-wrapper { position: relative; width: 100%; min-width: 0; overflow: visible; }
   .multi-select-trigger { position: relative; width: 100%; min-width: 0; min-height: var(--wa-control-h, 38px); display: flex; align-items: center; flex-wrap: wrap; gap: 6px; box-sizing: border-box; padding: 5px 36px 5px 8px; border: 1px solid rgba(123, 143, 160, .2); border-radius: var(--wa-radius-md, 10px); background: rgba(255, 255, 255, .72); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78); cursor: text; transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease; }
   .multi-select-trigger:hover, .multi-select-trigger:focus-within, .multi-select-trigger.is-active { border-color: var(--wa-border-focus, rgba(0, 143, 150, .86)); background: var(--wa-surface-flat, #fbfdfe); box-shadow: inset 0 1px 0 rgba(255,255,255,.88), 0 0 0 3px rgba(0,143,150,.1); }
+  .multi-select-group.shadowless .multi-select-trigger, .multi-select-group.shadowless .multi-select-trigger:hover, .multi-select-group.shadowless .multi-select-trigger:focus-within, .multi-select-group.shadowless .multi-select-trigger.is-active, .multi-select-dropdown.shadowless { box-shadow: none; }
   .multi-select-trigger.is-disabled { border-color: rgba(123, 143, 160, .12); background: rgba(245, 248, 251, .72); box-shadow: none; cursor: not-allowed; }
   .multi-select-trigger input { min-width: 116px; flex: 1 1 132px; height: 26px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--wa-text-strong, #0d1722); font: inherit; font-size: 12px; }
   .multi-select-trigger input::placeholder { color: var(--wa-text-muted, #667789); opacity: 1; }

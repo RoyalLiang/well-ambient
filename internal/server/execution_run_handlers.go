@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -12,7 +13,12 @@ import (
 
 	"well-ambient/internal/db"
 	"well-ambient/internal/delivery"
+	"well-ambient/internal/readmodel"
+
+	"gorm.io/gorm"
 )
+
+const maxExecutionActionsPerRun = 20
 
 type createExecutionRunRequest struct {
 	ExecutionPreflight executionPreflightRequest `json:"preflight"`
@@ -32,20 +38,91 @@ type verifyExecutionRunRequest struct {
 
 func (s *Server) handleListExecutionRuns(w http.ResponseWriter, r *http.Request) {
 	demandID := strings.TrimSpace(r.URL.Query().Get("demand_id"))
-	query := db.DB.Order("created_at desc")
-	if demandID != "" {
-		query = query.Where("demand_id = ?", demandID)
-	}
-	var runs []db.ExecutionRun
-	if err := query.Find(&runs).Error; err != nil {
+	position := struct {
+		CreatedAt time.Time `json:"created_at"`
+		ID        uint      `json:"id"`
+	}{}
+	var items []executionRunDTO
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "execution_runs", Contract: "execution-runs",
+			Scope: map[string]string{"demand_id": demandID}, Cursor: r.URL.Query().Get("cursor"),
+			Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		query := tx.Order("created_at desc, id desc").Limit(window.Limit + 1)
+		if demandID != "" {
+			query = query.Where("demand_id = ?", demandID)
+		}
+		if window.HasCursor {
+			query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", position.CreatedAt, position.CreatedAt, position.ID)
+		}
+		var runs []db.ExecutionRun
+		if err := query.Find(&runs).Error; err != nil {
+			return err
+		}
+		hasMore := len(runs) > window.Limit
+		if hasMore {
+			runs = runs[:window.Limit]
+		}
+		actionsByRun, err := loadExecutionActionsForRuns(tx, runs, maxExecutionActionsPerRun)
+		if err != nil {
+			return err
+		}
+		items = make([]executionRunDTO, 0, len(runs))
+		for _, run := range runs {
+			items = append(items, executionRunDTO{ExecutionRun: run, Actions: actionsByRun[run.ID]})
+		}
+		last := position
+		if len(runs) > 0 {
+			last.CreatedAt = runs[len(runs)-1].CreatedAt
+			last.ID = runs[len(runs)-1].ID
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		http.Error(w, "failed to list execution runs", http.StatusInternalServerError)
 		return
 	}
-	items := make([]executionRunDTO, 0, len(runs))
-	for _, run := range runs {
-		items = append(items, executionRunWithActions(run))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "page": page})
+}
+
+func loadExecutionActionsForRuns(tx *gorm.DB, runs []db.ExecutionRun, perRunLimit int) (map[uint][]db.ExecutionAction, error) {
+	result := make(map[uint][]db.ExecutionAction, len(runs))
+	if len(runs) == 0 || perRunLimit <= 0 {
+		return result, nil
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+	ids := make([]uint, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, run.ID)
+	}
+	var actions []db.ExecutionAction
+	err := tx.Raw(`
+		SELECT id, execution_run_id, action_key, action, status, actor, request_hash,
+		       request_json, result_json, external_ref, error_message, created_at
+		FROM (
+			SELECT execution_actions.*,
+			       ROW_NUMBER() OVER (PARTITION BY execution_run_id ORDER BY created_at DESC, id DESC) AS read_rank
+			FROM execution_actions
+			WHERE execution_run_id IN ?
+		)
+		WHERE read_rank <= ?
+		ORDER BY execution_run_id ASC, created_at ASC, id ASC`, ids, perRunLimit).Scan(&actions).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, action := range actions {
+		result[action.ExecutionRunID] = append(result[action.ExecutionRunID], action)
+	}
+	return result, nil
 }
 
 func (s *Server) handleCreateExecutionRun(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +457,10 @@ func recordExecutionAction(run db.ExecutionRun, action, actor string, request, r
 
 func executionRunWithActions(run db.ExecutionRun) executionRunDTO {
 	actions := []db.ExecutionAction{}
-	_ = db.DB.Where("execution_run_id = ?", run.ID).Order("created_at asc").Find(&actions).Error
+	_ = db.DB.Where("execution_run_id = ?", run.ID).Order("created_at desc, id desc").Limit(100).Find(&actions).Error
+	for left, right := 0, len(actions)-1; left < right; left, right = left+1, right-1 {
+		actions[left], actions[right] = actions[right], actions[left]
+	}
 	return executionRunDTO{ExecutionRun: run, Actions: actions}
 }
 

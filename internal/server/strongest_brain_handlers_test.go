@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
+
+	"gorm.io/gorm"
 )
 
 func seedStrongestBrainUser(t *testing.T) string {
@@ -478,6 +481,59 @@ func TestStrongestBrainDeliveryCockpitAggregatesPhaseSignals(t *testing.T) {
 	}
 	if response.Override.Recent == 0 || !response.Authorization.ExplainPanelAvailable {
 		t.Fatalf("expected override and authorization summaries: override=%+v authorization=%+v", response.Override, response.Authorization)
+	}
+}
+
+func TestStrongestBrainReleaseSummaryEndpointAvoidsFullCockpitProjection(t *testing.T) {
+	token := seedStrongestBrainUser(t)
+	releaseDate := time.Date(2026, time.August, 18, 0, 0, 0, 0, time.UTC)
+	release := db.ReleaseVersion{
+		ProjectKey:  "FMS",
+		Source:      "local",
+		ExternalID:  "release-summary-only",
+		Name:        "FMS 6.0.0",
+		Status:      "released",
+		ReleaseDate: &releaseDate,
+	}
+	if err := db.DB.Create(&release).Error; err != nil {
+		t.Fatalf("seed release: %v", err)
+	}
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8080}}, "")
+	req := httptest.NewRequest(http.MethodGet, "/api/strongest-brain/releases", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+
+	var response StrongestBrainReleaseSummary
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Total != 1 || response.Released != 1 || len(response.Recent) != 1 {
+		t.Fatalf("unexpected release summary: %+v", response)
+	}
+	if response.Recent[0].Name != release.Name || response.Recent[0].ReleaseDate != "2026-08-18" {
+		t.Fatalf("unexpected recent release: %+v", response.Recent[0])
+	}
+}
+
+func TestStrongestBrainExecutionLogQueryUsesJoinInsteadOfTaskIDList(t *testing.T) {
+	seedStrongestBrainUser(t)
+	var logs []db.GitCommitLog
+	statement := strongestBrainExecutionLogsQuery([]string{"FMS"}).
+		Session(&gorm.Session{DryRun: true}).
+		Order("git_commit_logs.created_at DESC").
+		Find(&logs).
+		Statement
+	sql := strings.ToUpper(statement.SQL.String())
+	if !strings.Contains(sql, "JOIN TASK_TELEMETRIES") {
+		t.Fatalf("expected task-scope join, SQL = %s", sql)
+	}
+	if strings.Contains(sql, "TASK_ID IN") {
+		t.Fatalf("execution log query must not expand every task ID, SQL = %s", sql)
 	}
 }
 

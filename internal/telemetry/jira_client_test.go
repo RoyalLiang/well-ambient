@@ -19,6 +19,26 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 	return fn(request)
 }
 
+func TestJiraGetCommentsPaginatesWithoutDroppingEdits(t *testing.T) {
+	client := NewJiraClient(&config.JiraConfig{BaseURL: "https://jira.example.com"})
+	requests := 0
+	client.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		body := `{"startAt":0,"maxResults":1,"total":2,"comments":[{"id":"1","body":"[方案] A","created":"2026-08-12T10:00:00Z","updated":"2026-08-12T10:01:00Z"}]}`
+		if requests == 2 {
+			if request.URL.Query().Get("startAt") != "1" {
+				t.Fatalf("second page startAt = %q", request.URL.Query().Get("startAt"))
+			}
+			body = `{"startAt":1,"maxResults":1,"total":2,"comments":[{"id":"2","body":"[方案] B","created":"2026-08-12T11:00:00Z","updated":"2026-08-12T11:02:00Z"}]}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	comments, err := client.GetComments("WA-1")
+	if err != nil || len(comments) != 2 || comments[1].ID != "2" || comments[1].Updated == "" || requests != 2 {
+		t.Fatalf("comments=%+v requests=%d err=%v", comments, requests, err)
+	}
+}
+
 func TestJiraClientNewRequest(t *testing.T) {
 	// 1. Basic Auth test
 	basicCfg := &config.JiraConfig{

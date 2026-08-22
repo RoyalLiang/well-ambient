@@ -19,6 +19,11 @@ type Service struct {
 	now        func() time.Time
 }
 
+const workItemDonePredicate = `LOWER(TRIM(status)) IN ('done','closed','resolved','completed','archived','已完成','已关闭')`
+const workItemActivePredicate = `(status IS NULL OR NOT (` + workItemDonePredicate + `))`
+const workItemReviewPredicate = `LOWER(TRIM(status)) IN ('verification','review','testing','in_review','验收','评审','测试')`
+const workItemProgressPredicate = `LOWER(TRIM(status)) IN ('in_progress','progress','active','doing','进行中','处理中','排查')`
+
 func NewService(conn *gorm.DB) *Service {
 	return &Service{
 		repository: NewRepository(conn),
@@ -76,6 +81,9 @@ func (s *Service) QueryPlan(ctx context.Context, query PlanQuery) (PlanSnapshot,
 	if len(query.PlanningState) > 0 {
 		conn = conn.Where("LOWER(planning_state) IN ?", normalizeStrings(query.PlanningState))
 	}
+	if assignees := normalizeStrings(query.Assignees); len(assignees) > 0 {
+		conn = conn.Where("LOWER(TRIM(assignee)) IN ?", assignees)
+	}
 	if search := strings.TrimSpace(query.Search); search != "" {
 		pattern := "%" + strings.ToUpper(search) + "%"
 		conn = conn.Where("(UPPER(task_id) LIKE ? OR UPPER(title) LIKE ? OR UPPER(assignee) LIKE ?)", pattern, pattern, pattern)
@@ -89,9 +97,27 @@ func (s *Service) QueryPlan(ctx context.Context, query PlanQuery) (PlanSnapshot,
 		)`, query.ReleaseID)
 	}
 
-	var total int64
-	if err := conn.Count(&total).Error; err != nil {
+	var summary PlanSummary
+	summaryProjection := fmt.Sprintf(`
+		COUNT(*) AS total,
+		COALESCE(SUM(CASE WHEN %[4]s THEN 1 ELSE 0 END), 0) AS active,
+		COALESCE(SUM(CASE WHEN %[1]s THEN 1 ELSE 0 END), 0) AS done,
+		COALESCE(SUM(CASE WHEN %[4]s AND NOT (%[2]s) AND NOT (%[3]s) THEN 1 ELSE 0 END), 0) AS backlog,
+		COALESCE(SUM(CASE WHEN %[3]s THEN 1 ELSE 0 END), 0) AS progress,
+		COALESCE(SUM(CASE WHEN %[2]s THEN 1 ELSE 0 END), 0) AS review,
+		COALESCE(SUM(CASE WHEN LOWER(TRIM(issue_type)) IN ('bug','defect','缺陷','故障') THEN 0 ELSE 1 END), 0) AS requirements,
+		COALESCE(SUM(CASE WHEN LOWER(TRIM(issue_type)) IN ('bug','defect','缺陷','故障') THEN 1 ELSE 0 END), 0) AS bugs,
+		COALESCE(SUM(CASE WHEN TRIM(project_key) <> '' THEN 1 ELSE 0 END), 0) AS planned,
+		COALESCE(SUM(CASE WHEN TRIM(project_key) = '' THEN 1 ELSE 0 END), 0) AS unplanned
+	`, workItemDonePredicate, workItemReviewPredicate, workItemProgressPredicate, workItemActivePredicate)
+	if err := conn.Session(&gorm.Session{}).Select(summaryProjection).Scan(&summary).Error; err != nil {
 		return PlanSnapshot{}, err
+	}
+	itemsConn := conn.Session(&gorm.Session{})
+	total := summary.Total
+	if query.ActiveOnly {
+		itemsConn = itemsConn.Where(workItemActivePredicate)
+		total = summary.Active
 	}
 	limit := query.Limit
 	if limit <= 0 || limit > 500 {
@@ -102,14 +128,14 @@ func (s *Service) QueryPlan(ctx context.Context, query PlanQuery) (PlanSnapshot,
 		offset = 0
 	}
 	var tasks []db.TaskTelemetry
-	if err := conn.Order("last_update DESC, task_id ASC").Limit(limit).Offset(offset).Find(&tasks).Error; err != nil {
+	if err := itemsConn.Order("last_update DESC, task_id ASC").Limit(limit).Offset(offset).Find(&tasks).Error; err != nil {
 		return PlanSnapshot{}, err
 	}
 	items, err := loadWorkItemSnapshots(s.repository.conn.WithContext(ctx), tasks)
 	if err != nil {
 		return PlanSnapshot{}, err
 	}
-	return PlanSnapshot{Items: items, Total: total, Limit: limit, Offset: offset}, nil
+	return PlanSnapshot{Items: items, Total: total, Limit: limit, Offset: offset, Summary: summary}, nil
 }
 
 func (s *Service) QueryWorkItem(ctx context.Context, workItemID string) (WorkItemSnapshot, error) {

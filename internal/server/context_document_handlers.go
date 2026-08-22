@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -16,6 +17,7 @@ import (
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	providerllm "well-ambient/internal/llm"
+	"well-ambient/internal/readmodel"
 
 	"gorm.io/gorm"
 )
@@ -71,48 +73,97 @@ type corpusDocumentCandidateDraft struct {
 
 func (s *Server) handleListContextDocuments(w http.ResponseWriter, r *http.Request) {
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
-	query := db.DB.Order("updated_at desc, id desc").Limit(200)
-	switch status {
-	case "all":
-	case "active", "archived":
-		query = query.Where("status = ?", status)
-	default:
-		query = query.Where("status <> ?", "archived")
+	if status != "all" && status != "active" && status != "archived" {
+		status = "visible"
 	}
-
-	var documents []db.ContextDocument
-	if err := query.Find(&documents).Error; err != nil {
+	position := struct {
+		UpdatedAt time.Time `json:"updated_at"`
+		ID        uint      `json:"id"`
+	}{}
+	var items []contextDocumentDTO
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "context_corpus", Contract: "context-documents",
+			Scope: map[string]string{"status": status}, Cursor: r.URL.Query().Get("cursor"),
+			Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		query := tx.Order("updated_at desc, id desc").Limit(window.Limit + 1)
+		switch status {
+		case "all":
+		case "active", "archived":
+			query = query.Where("status = ?", status)
+		default:
+			query = query.Where("status <> ?", "archived")
+		}
+		if window.HasCursor {
+			query = query.Where("updated_at < ? OR (updated_at = ? AND id < ?)", position.UpdatedAt, position.UpdatedAt, position.ID)
+		}
+		var documents []db.ContextDocument
+		if err := query.Find(&documents).Error; err != nil {
+			return err
+		}
+		hasMore := len(documents) > window.Limit
+		if hasMore {
+			documents = documents[:window.Limit]
+		}
+		ids := make([]uint, 0, len(documents))
+		for _, document := range documents {
+			ids = append(ids, document.ID)
+		}
+		type candidateCounts struct {
+			ContextDocumentID uint
+			CandidateCount    int
+			PendingCount      int
+			PublishedCount    int
+		}
+		countsByDocument := make(map[uint]candidateCounts, len(ids))
+		if len(ids) > 0 {
+			var counts []candidateCounts
+			if err := tx.Model(&db.CorpusCandidate{}).
+				Select(`context_document_id,
+					COUNT(*) AS candidate_count,
+					SUM(CASE WHEN status IN ('pending', 'impact_review') THEN 1 ELSE 0 END) AS pending_count,
+					SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS published_count`).
+				Where("context_document_id IN ?", ids).
+				Group("context_document_id").Scan(&counts).Error; err != nil {
+				return err
+			}
+			for _, count := range counts {
+				countsByDocument[count.ContextDocumentID] = count
+			}
+		}
+		items = make([]contextDocumentDTO, 0, len(documents))
+		for _, document := range documents {
+			document.Content = ""
+			count := countsByDocument[document.ID]
+			items = append(items, contextDocumentDTO{
+				ContextDocument: document,
+				CandidateCount:  count.CandidateCount,
+				PendingCount:    count.PendingCount,
+				PublishedCount:  count.PublishedCount,
+			})
+		}
+		last := position
+		if len(documents) > 0 {
+			last.UpdatedAt = documents[len(documents)-1].UpdatedAt
+			last.ID = documents[len(documents)-1].ID
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		http.Error(w, "failed to list context documents", http.StatusInternalServerError)
 		return
 	}
-	ids := make([]uint, 0, len(documents))
-	for _, document := range documents {
-		ids = append(ids, document.ID)
-	}
-	var candidates []db.CorpusCandidate
-	if len(ids) > 0 {
-		_ = db.DB.Where("context_document_id IN ?", ids).Find(&candidates).Error
-	}
-	byDocument := make(map[uint][]db.CorpusCandidate)
-	for _, candidate := range candidates {
-		byDocument[candidate.ContextDocumentID] = append(byDocument[candidate.ContextDocumentID], candidate)
-	}
-	items := make([]contextDocumentDTO, 0, len(documents))
-	for _, document := range documents {
-		document.Content = ""
-		item := contextDocumentDTO{ContextDocument: document}
-		for _, candidate := range byDocument[document.ID] {
-			item.CandidateCount++
-			if candidate.Status == "pending" || candidate.Status == "impact_review" {
-				item.PendingCount++
-			}
-			if candidate.Status == "accepted" {
-				item.PublishedCount++
-			}
-		}
-		items = append(items, item)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "page": page})
 }
 
 func (s *Server) handleGetContextDocument(w http.ResponseWriter, r *http.Request) {
@@ -127,8 +178,23 @@ func (s *Server) handleGetContextDocument(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var candidates []db.CorpusCandidate
-	_ = db.DB.Where("context_document_id = ?", document.ID).Order("created_at asc, id asc").Find(&candidates).Error
-	writeJSON(w, http.StatusOK, map[string]interface{}{"document": document, "candidates": candidates})
+	if err := db.DB.WithContext(r.Context()).Where("context_document_id = ?", document.ID).
+		Order("created_at desc, id desc").Limit(101).Find(&candidates).Error; err != nil {
+		http.Error(w, "failed to load bounded document candidates", http.StatusInternalServerError)
+		return
+	}
+	hasMore := len(candidates) > 100
+	if hasMore {
+		candidates = candidates[:100]
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"document":   document,
+		"candidates": candidates,
+		"candidate_page": map[string]interface{}{
+			"limit": 100, "has_more": hasMore,
+			"continuation_endpoint": fmt.Sprintf("/api/corpus-candidates?document_id=%d", document.ID),
+		},
+	})
 }
 
 func (s *Server) handleImportContextDocument(w http.ResponseWriter, r *http.Request) {

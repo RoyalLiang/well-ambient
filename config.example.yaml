@@ -1,6 +1,34 @@
+performance_brain:
+  enabled: true
+  interval_minutes: 60
+  assessment_window_days: 90
+  retention_days: 90
+  formula_version: v6.0
+  # shadow 只产生参考分与审计快照；完成数据质量验收后改为 formal 才发布正式分。
+  publication_mode: shadow
+  demand_metrics_enabled: true
+  bug_metrics_enabled: true
+  code_metrics_enabled: true
+  jira_history_enabled: true
+  git_dedupe_enabled: true
+  evidence_coverage_gate: 0.70
+  minimum_samples: 5
+  minimum_exposure_days: 30
+  busy_retry_attempts: 3
+  busy_retry_delay_ms: 200
+
+solution_catalog:
+  # 已发布方案立即进入增量队列；该间隔用于修复漏投影并统一扫描新发布版本。
+  interval_minutes: 30
+  # 每个新发布方案最多进入多少组两轮对比，避免全量 N² 比较。
+  candidate_limit: 8
+  recall_threshold: 0.18
+
 server:
     port: 8080
     host: 0.0.0.0
+    # Jira 方案回写所使用的浏览器可访问地址。
+    public_url: https://ambient.example.com
     attachment_dir: ""
 gitlab:
     enabled: true

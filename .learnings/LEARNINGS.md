@@ -30,6 +30,82 @@ For cross-page bottom-alignment claims, measure the exact affected route and a k
 
 ---
 
+## [LRN-20260821-005] generated-sql-template-placeholder-parity
+
+**Logged**: 2026-08-21T19:08:00+08:00
+**Area**: database-migration
+
+### Summary
+Generated SQLite trigger templates should be validated immediately after placeholder changes; Go's format-string analysis catches missing arguments before migration runtime.
+
+### Action
+Keep the focused package test adjacent to each generated-trigger edit, especially when adding both a new `UPDATE OF` column list and a new `WHEN` predicate.
+
+---
+
+## [LRN-20260812-002] correction
+
+**Logged**: 2026-08-12T13:30:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: docs
+
+### Summary
+技术团队考核制度应先定义统一能力标准，项目、Bug、回炉和回退只是成员表现证据，不能反过来成为制度主体。
+
+### Details
+此前工作簿以项目质量事件和系数模型为主，虽然能计算个人结果，但没有先回答技术团队成员应被考核哪些核心能力、不同技术角色如何适用统一标准。用户澄清目标是规定一套针对技术团队成员的考核标准。
+
+### Suggested Action
+先定义通用考核维度、1—5分行为锚点、角色权重、证据要求、评级门槛和复核机制；再将项目交付、Bug、Bug回炉、版本回退等系统数据映射为证据和量化信号。
+
+### Metadata
+- Source: user_feedback
+- Related Files: outputs/019fdb47-81b1-7940-9f2d-5098adb30344/研发成员能力分判定表-项目质量系数版-v5.xlsx
+- Tags: performance-standard, technical-team, scorecard, evidence
+- Pattern-Key: domain.performance_standard_before_metrics
+- Recurrence-Count: 1
+- First-Seen: 2026-08-12
+- Last-Seen: 2026-08-12
+
+### Resolution
+- 已重新建立以六个通用能力维度为主体的技术团队成员考核标准。
+- 项目、Bug、回炉和回退被明确放入系统证据映射层，不直接替代能力评分。
+- 增加角色权重、1—5分锚点、独立复核、五席会议和自动验收测试。
+
+---
+
+## [LRN-20260812-001] correction
+
+**Logged**: 2026-08-12T11:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: docs
+
+### Summary
+绩效工作簿必须交付可直接执行的业务闭环，不能只提供维度、权重和制度说明。
+
+### Details
+首版研发绩效判定表虽然具备权重、证据门槛和专家审计，但缺少逐事件台账、明确数据来源、填报责任、计算口径、复核动作和会议签署入口。用户反馈“输出过于抽象，没法执行”。正确的交付应让使用者可以从周期建档开始，依次录入工作项、质量事件和协作成果，由公式形成指标分，再完成责任归因、独立复核、专家校准与发布。
+
+### Suggested Action
+以后生成绩效或治理类表格时，至少同时交付：操作步骤、RACI、数据字典、事件级台账、可观察指标阈值、自动计算、门槛校验、争议处理、会议记录和一套可删除的匿名演示数据；逐项写清谁填、何时填、来源、公式、异常如何处理。
+
+### Metadata
+- Source: user_feedback
+- Related Files: outputs/019fdb47-81b1-7940-9f2d-5098adb30344/研发成员绩效判定表-专家审计版.xlsx
+- Tags: performance, spreadsheet, execution, workflow, audit
+- Pattern-Key: artifact.scorecard_requires_operational_loop
+- Recurrence-Count: 1
+- First-Seen: 2026-08-12
+- Last-Seen: 2026-08-12
+
+### Resolution
+- Rebuilt the workbook around a 7-step operational workflow, RACI, frozen period setup, three event ledgers, 10 formula-driven metrics, controlled attribution/review states, automatic gating, and a four-outcome calibration meeting.
+- Added anonymous demo data, 12 formula boundary tests, five-seat expert re-review, formula-error scanning, and visual verification of every worksheet.
+
+---
+
 ## [LRN-20260720-003] correction
 
 **Logged**: 2026-07-20T10:35:00+08:00
@@ -404,5 +480,68 @@ Expose one typed delivery directory endpoint and make every delivery owner/proje
 - Added `/api/delivery/directory` as the common owner/project option source.
 - Migrated delivery filters and forms away from visible-row, Git, repository, hardcoded, and RBAC-derived candidates.
 - Added backend contract tests for configured-member and authoritative-project behavior.
+
+---
+## [LRN-20260813-001] best_practice
+
+**Logged**: 2026-08-13T12:28:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: config
+
+### Summary
+Versioned configuration restore must inherit newly introduced schema sections from the current file instead of silently resetting them to zero values.
+
+### Details
+The server correctly parsed `performance_brain.enabled: true`, but startup then unmarshalled a July configuration archive created before that section existed and replaced the entire config struct. The missing section became `Enabled:false`, so the scheduler never started. Archived fields must remain authoritative, while fields absent because of schema evolution need file-backed defaults.
+
+### Suggested Action
+When restoring a versioned configuration, merge by field presence before decoding into a typed struct. Add one regression for a legacy snapshot missing the new section and another proving an explicitly archived section still wins.
+
+### Metadata
+- Source: error
+- Related Files: internal/server/config_version_handlers.go, internal/server/config_version_handlers_test.go
+- Tags: config-versioning, schema-evolution, startup, performance-runner
+- Pattern-Key: config.version_restore.inherit_missing_schema
+- Recurrence-Count: 1
+- First-Seen: 2026-08-13
+- Last-Seen: 2026-08-13
+
+### Resolution
+- Added presence-aware top-level section inheritance during startup restore.
+- Added red-to-green regressions for missing-section inheritance and archived-section precedence.
+- Full Go tests, `go vet`, and diff hygiene pass.
+
+---
+
+## [LRN-20260813-002] correction
+
+**Logged**: 2026-08-13T14:58:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: full-stack
+
+### Summary
+Personnel performance must separate a calculable reference score from the evidence gates that authorize a formal rating.
+
+### Details
+The scorecard correctly required per-metric sample minimums and global publication gates, but the implementation returned every below-minimum metric as unavailable. It also required `due_date` before C01 could see a Jira item, even when the item had a cycle-local resolution. Real Jira history therefore produced no observed score for most core members, and the UI collapsed “evidence exists but is not publishable” into N/A. The user reported this as all members scoring zero.
+
+### Suggested Action
+Treat cycle-local Jira resolution and cycle-local due dates as separate eligibility facts: C01 may use completed or due requirements, while C02 remains due-only. Calculate low-sample metrics as reference values, mark sample qualification independently, and let only qualified metrics contribute to formal coverage, core readiness, and published final scores. Label reference and formal scores explicitly in every UI surface.
+
+### Metadata
+- Source: user_feedback
+- Related Files: internal/performance/scoring.go, internal/performance/rules.go, internal/performance/types.go, web/src/components/PerformanceCalculationGuide.svelte
+- Tags: personnel-performance, jira-history, sample-gate, publication-gate, reference-score
+- Pattern-Key: domain.performance.reference_not_publication
+- Recurrence-Count: 1
+- First-Seen: 2026-08-13
+- Last-Seen: 2026-08-13
+
+### Resolution
+- Admitted cycle-resolved requirements without due dates into C01 while preserving due-only C02.
+- Added an explicit per-metric sample qualification flag and kept low-sample results out of formal coverage and final-score publication.
+- Renamed the displayed trial value to reference score and separated it from the formal score and evidence status.
 
 ---

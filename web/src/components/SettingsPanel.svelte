@@ -3,11 +3,15 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import Button from './shared/Button.svelte';
   import Alert from './shared/Alert.svelte';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import GitLabConfig from './config/GitLabConfig.svelte';
   import FeishuConfig from './config/FeishuConfig.svelte';
   import JiraConfig from './config/JiraConfig.svelte';
+  import PerformanceConfig from './config/PerformanceConfig.svelte';
   import ProjectConfig from './config/ProjectConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
+  import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
+  import { showToast } from '../lib/toast';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import { resetSettingsWorkspaceScroll } from '../lib/settings-ui';
   import {
@@ -52,11 +56,13 @@
   let gitlabStatus: ConnectionStatus = 'warning';
   let feishuStatus: ConnectionStatus = 'warning';
   let jiraStatus: ConnectionStatus = 'warning';
+  let performanceStatus: ConnectionStatus = 'warning';
   let aiStatus: ConnectionStatus = 'warning';
 
   $: gitlabStatus = globalConfig.gitlab?.enabled ? 'online' : 'warning';
   $: feishuStatus = globalConfig.feishu?.enabled ? 'online' : 'warning';
   $: jiraStatus = globalConfig.jira?.enabled ? 'online' : 'warning';
+  $: performanceStatus = globalConfig.performance_brain?.enabled ? 'online' : 'warning';
   $: aiStatus = globalConfig.ai?.enabled ? 'online' : 'warning';
 
   let activeSection: SettingsSection = 'gitlab';
@@ -79,7 +85,7 @@
   }
 
   interface GlobalConfig {
-    server: { host: string; port: number };
+    server: { host: string; port: number; public_url?: string; attachment_dir?: string };
     gitlab: {
       enabled?: boolean;
       base_url: string;
@@ -127,6 +133,24 @@
         version_url: string;
       }>;
     };
+    performance_brain: {
+      enabled: boolean;
+      interval_minutes: number;
+      assessment_window_days: number;
+      retention_days: number;
+      formula_version: string;
+      evidence_coverage_gate: number;
+      minimum_samples: number;
+      minimum_exposure_days: number;
+      busy_retry_attempts: number;
+      busy_retry_delay_ms: number;
+			publication_mode: 'shadow' | 'formal';
+			demand_metrics_enabled: boolean;
+			bug_metrics_enabled: boolean;
+			code_metrics_enabled: boolean;
+			jira_history_enabled: boolean;
+			git_dedupe_enabled: boolean;
+    };
   }
 
   interface ConfigDiffEntry {
@@ -150,7 +174,7 @@
   }
 
   let globalConfig: GlobalConfig = {
-    server: { host: '', port: 0 },
+    server: { host: '', port: 0, public_url: '', attachment_dir: '' },
     gitlab: { base_url: '', secret_token: '', repos: [] },
     feishu: {
       app_id: '',
@@ -171,7 +195,25 @@
       estimation_guidelines: '',
       default_work_hours_per_day: 8
     },
-    jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '', version_sources: [] }
+    jira: { enabled: false, base_url: '', username: '', api_token: '', sync_projects: [], sync_users: [], sync_statuses: [], custom_jql: '', version_sources: [] },
+    performance_brain: {
+      enabled: false,
+      interval_minutes: 60,
+      assessment_window_days: 90,
+      retention_days: 90,
+      formula_version: 'v6.0',
+      evidence_coverage_gate: 0.7,
+      minimum_samples: 5,
+      minimum_exposure_days: 30,
+      busy_retry_attempts: 3,
+      busy_retry_delay_ms: 200,
+      publication_mode: 'shadow',
+      demand_metrics_enabled: true,
+      bug_metrics_enabled: true,
+      code_metrics_enabled: true,
+      jira_history_enabled: true,
+      git_dedupe_enabled: true
+    }
   };
 
   let saving = false;
@@ -183,7 +225,7 @@
   let configVersionError = '';
   let rollbackLoadingID: number | null = null;
 
-  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(activeSection);
+  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(activeSection);
   $: visibleConfigVersions = isIntegrationSection
     ? configVersions.filter(v => configVersionTouchesSection(v, activeSection))
     : configVersions;
@@ -303,7 +345,6 @@
   let authorizationPolicies: AuthorizationPolicy[] = [];
   let authorizationAuditLogs: AuthorizationAuditLog[] = [];
   let authorizationPolicyError = '';
-  let authorizationPolicySuccess = '';
   let authorizationPolicySaving = false;
   let authorizationDecision: AuthorizationDecision | null = null;
   let authorizationExplainError = '';
@@ -422,7 +463,7 @@
   let lastUpdatedBySection = {} as Record<SettingsSection, string>;
   let settingsInspector: AdminInspectorRecord;
   $: lastUpdatedBySection = SETTINGS_NAV_ITEMS.reduce((result, item) => {
-    result[item.id] = configVersions.find(version => (version.changed_sections || []).includes(item.id))?.created_at || '';
+    result[item.id] = configVersions.find(version => configVersionTouchesSection(version, item.id))?.created_at || '';
     return result;
   }, {} as Record<SettingsSection, string>);
   $: {
@@ -439,6 +480,7 @@
     feishuStatus;
     jiraStatus;
     aiStatus;
+    performanceStatus;
     serverStatus;
     settingsInspector = buildSettingsInspector();
   }
@@ -474,7 +516,6 @@
   let membershipScope: 'global' | 'repo' = 'global';
   let membershipScopeID = '';
   let membershipError = '';
-  let membershipSuccess = '';
 
   // Transfer admin state
   let showTransferModal = false;
@@ -543,7 +584,7 @@
 
   function configVersionTouchesSection(version: ConfigVersion, section: string) {
     const sections = version.changed_sections || [];
-    return sections.includes(section);
+    return sections.includes(section === 'performance' ? 'performance_brain' : section);
   }
 
   function formatDateTime(value: string) {
@@ -618,14 +659,33 @@
         }
         await fetchConfigVersions(true);
         window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
+        showToast(`${sectionDisplayName(key)}配置已保存。`, {
+          title: isToggle ? '开关已更新' : '保存成功'
+        });
       } else {
         saveError = '保存配置失败: ' + result.message;
+        showToast(saveError, { type: 'error', title: '保存失败' });
       }
     } catch (e: any) {
       saveError = '网络请求失败: ' + e.message;
+      showToast(saveError, { type: 'error', title: '保存失败' });
     } finally {
       saving = false;
     }
+  }
+
+  async function saveSolutionPublicURL(value: string) {
+    const newConfig = {
+      ...globalConfig,
+      server: { ...globalConfig.server, public_url: value }
+    };
+    const res = await fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newConfig)
+    });
+    if (!res.ok) throw new Error((await res.text()) || '保存方案公开地址失败');
+    globalConfig = newConfig;
+    await fetchConfigVersions(true);
+    window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
   }
 
   function handleConfigClose() {
@@ -638,7 +698,9 @@
     if (section === 'gitlab') return gitlabStatus;
     if (section === 'feishu') return feishuStatus;
     if (section === 'jira') return jiraStatus;
+    if (section === 'performance') return performanceStatus;
     if (section === 'ai') return aiStatus;
+    if (section === 'solution_prompts') return currentUserPermissions.includes('solution_prompt:manage') ? 'online' : 'warning';
     if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning';
     if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read') ? 'online' : 'warning';
     return serverStatus;
@@ -658,8 +720,10 @@
     if (section === 'gitlab') return `${globalConfig.gitlab?.repos?.length || 0} 个仓库`;
     if (section === 'feishu') return globalConfig.feishu?.bot?.enabled ? '机器人已启用' : '机器人待配置';
     if (section === 'jira') return `${globalConfig.jira?.sync_projects?.length || 0} 个项目`;
+    if (section === 'performance') return globalConfig.performance_brain?.enabled ? '后台计算已启用' : '后台计算未启用';
     if (section === 'projects') return `${globalConfig.jira?.sync_projects?.length || 0} 个映射`;
     if (section === 'ai') return globalConfig.ai?.model || '模型待配置';
+    if (section === 'solution_prompts') return globalConfig.server?.public_url ? '链接地址已配置' : '链接地址待配置';
     if (section === 'ai_context') return globalConfig.ai?.project_architecture ? '语料已就绪' : '语料待配置';
     if (section === 'users') return `${users.length} 位成员`;
     if (section === 'matrix') return `${permissionMeta.length} 个权限`;
@@ -674,12 +738,14 @@
   }
 
   function requiredPermissionLabel(section: SettingsSection) {
-    if (['gitlab', 'feishu', 'jira', 'projects', 'ai'].includes(section)) return '配置只读';
+    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(section)) return '配置只读';
+    if (section === 'solution_prompts') return '全局超管';
     if (section === 'ai_context') return '语料只读';
     return '成员只读';
   }
 
   function sectionDisplayName(section: string) {
+    if (section === 'performance_brain') return '绩效计算';
     return SETTINGS_NAV_ITEMS.find(item => item.id === section)?.label || section;
   }
 
@@ -688,9 +754,10 @@
   }
 
   function sectionApiLinks(section: SettingsSection) {
-    if (['gitlab', 'feishu', 'jira', 'projects', 'ai', 'ai_context'].includes(section)) {
+    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'].includes(section)) {
       return ['/api/config', '/api/config/versions'];
     }
+    if (section === 'solution_prompts') return ['/api/solution-prompts', '/api/config'];
     if (section === 'users') return ['/api/users', '/api/groups'];
     if (section === 'matrix') return ['/api/groups', '/api/permissions'];
     if (section === 'policies') return ['/api/authz/policies', '/api/authz/explain', '/api/authz/audit-logs'];
@@ -797,7 +864,6 @@
 
   async function saveAuthorizationPolicy() {
     authorizationPolicyError = '';
-    authorizationPolicySuccess = '';
     if (!policyForm.action.trim()) {
       authorizationPolicyError = 'Action 不能为空';
       return;
@@ -816,10 +882,10 @@
       });
       const data = await res.json();
       if (!res.ok || data.success === false) throw new Error(data.message || '策略保存失败');
-      authorizationPolicySuccess = '授权策略已保存';
       await fetchAuthorizationPolicies();
+      showToast('授权策略已保存。', { title: '保存成功' });
     } catch (e: any) {
-      authorizationPolicyError = e.message || '策略保存失败';
+      showToast(e.message || '策略保存失败', { type: 'error', title: '保存失败' });
     } finally {
       authorizationPolicySaving = false;
     }
@@ -1014,14 +1080,12 @@
     membershipScope = 'global';
     membershipScopeID = '';
     membershipError = '';
-    membershipSuccess = '';
     showGroupDropdown = false;
     showAddMembershipModal = true;
   }
 
   async function saveMembership() {
     membershipError = '';
-    membershipSuccess = '';
     if (membershipScope === 'repo' && !membershipScopeID) {
       membershipError = '请填写作用域的具体仓库名/项目ID';
       return;
@@ -1041,16 +1105,14 @@
       });
       const data = await res.json();
       if (res.ok) {
-        membershipSuccess = '成员分配添加成功！';
-        fetchUsers();
-        setTimeout(() => {
-          showAddMembershipModal = false;
-        }, 1000);
+        await fetchUsers();
+        showAddMembershipModal = false;
+        showToast('成员分配已保存。', { title: '保存成功' });
       } else {
-        membershipError = data.message || '操作失败';
+        showToast(data.message || '成员分配保存失败', { type: 'error', title: '保存失败' });
       }
     } catch (e: any) {
-      membershipError = '请求失败: ' + e.message;
+      showToast('请求失败: ' + e.message, { type: 'error', title: '保存失败' });
     }
   }
 
@@ -1345,10 +1407,24 @@
             <FeishuConfig config={globalConfig.feishu} lastUpdated={lastUpdatedBySection.feishu} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
     {:else if activeSection === 'jira'}
             <JiraConfig config={globalConfig.jira} lastUpdated={lastUpdatedBySection.jira} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'jira'} />
+    {:else if activeSection === 'performance'}
+            <PerformanceConfig
+              config={globalConfig.performance_brain}
+              coreMembers={globalConfig.jira?.sync_users || []}
+              usesJQLFallback={(globalConfig.jira?.sync_users || []).length === 0 && !!globalConfig.jira?.custom_jql?.trim()}
+              canWrite={currentUserPermissions.includes('config:write')}
+              lastUpdated={lastUpdatedBySection.performance}
+              on:save={handleSaveConfig}
+              {saveError}
+              {saving}
+              saveSuccess={saveSuccess && saveSuccessKey === 'performance_brain'}
+            />
     {:else if activeSection === 'projects'}
             <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} />
     {:else if activeSection === 'ai'}
             <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} {currentUserPermissions} />
+    {:else if activeSection === 'solution_prompts'}
+            <SolutionPromptConfig publicURL={globalConfig.server?.public_url || ''} onSavePublicURL={saveSolutionPublicURL} />
     {:else if activeSection === 'ai_context'}
             <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} {currentUserPermissions} />
     {:else if activeSection === 'users'}
@@ -1545,10 +1621,6 @@
         {#if authorizationPolicyError}
           <div class="error-banner">{authorizationPolicyError}</div>
         {/if}
-        {#if authorizationPolicySuccess}
-          <div class="success-banner">{authorizationPolicySuccess}</div>
-        {/if}
-
         <div class="settings-task-tabs" role="tablist" aria-label="策略化授权任务">
           <button
             id="policy-tab-list"
@@ -2090,16 +2162,13 @@
     <div class="modal-card">
       <div class="modal-header">
         <h3>分配权限组与作用域隔离</h3>
-        <button class="close-modal-btn" on:click={() => showAddMembershipModal = false}>&times;</button>
+        <OverlayCloseButton label="关闭分配权限组弹窗" on:click={() => showAddMembershipModal = false} />
       </div>
       <div class="modal-body">
         {#if membershipError}
           <div class="error-banner">{membershipError}</div>
         {/if}
-        {#if membershipSuccess}
-          <div class="success-banner">{membershipSuccess}</div>
-        {/if}
-        
+
         <div class="field-item">
           <label for="membership-target-user">目标成员账户</label>
           <input id="membership-target-user" type="text" value={membershipTargetUser} disabled class="input-disabled font-mono" />
@@ -2172,14 +2241,11 @@
           <span class="danger-kicker font-mono">Remove membership</span>
           <h3 id="remove-membership-title">移除成员用户组</h3>
         </div>
-        <button
-          class="close-modal-btn"
-          aria-label="关闭移除成员用户组确认弹窗"
+        <OverlayCloseButton
+          label="关闭移除成员用户组确认弹窗"
           on:click={closeRemoveMembershipModal}
           disabled={removingMembership}
-        >
-          &times;
-        </button>
+        />
       </div>
       <div class="modal-body">
         <div class="delete-target-card">
@@ -2219,7 +2285,7 @@
     <div class="modal-card">
       <div class="modal-header">
         <h3 style="color: #ef4444;">警告：超级管理员控制权转让</h3>
-        <button class="close-modal-btn" on:click={() => showTransferModal = false}>&times;</button>
+        <OverlayCloseButton label="关闭超级管理员转让弹窗" on:click={() => showTransferModal = false} />
       </div>
       <div class="modal-body">
         {#if transferError}
@@ -2257,7 +2323,7 @@
     <div class="modal-card">
       <div class="modal-header">
         <h3>创建自定义组 (Role Group)</h3>
-        <button class="close-modal-btn" on:click={() => showCreateGroupModal = false}>&times;</button>
+        <OverlayCloseButton label="关闭创建自定义组弹窗" on:click={() => showCreateGroupModal = false} />
       </div>
       <div class="modal-body">
         {#if createGroupError}
@@ -2292,13 +2358,10 @@
           <span class="danger-kicker font-mono">Delete custom group</span>
           <h3 id="delete-group-title">删除自定义用户组</h3>
         </div>
-        <button
-          class="close-modal-btn"
-          aria-label="关闭删除用户组确认弹窗"
+        <OverlayCloseButton
+          label="关闭删除用户组确认弹窗"
           on:click={() => { showDeleteGroupModal = false; deleteGroupTarget = null; }}
-        >
-          &times;
-        </button>
+        />
       </div>
       <div class="modal-body">
         <div class="delete-target-card">
@@ -3568,9 +3631,10 @@
   }
 
   .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--wa-touch-h, 44px);
+    align-items: start;
+    gap: var(--wa-space-4, 16px);
     padding: 16px 20px;
     border-bottom: 1px solid rgba(51, 65, 85, 0.4);
     background: #0b1329;
@@ -3584,9 +3648,12 @@
   }
 
   .modal-header h3 {
+    min-width: 0;
     margin: 0;
     font-size: 1.1rem;
     color: #f8fafc;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
 
   .danger-kicker {
@@ -3638,20 +3705,6 @@
 
   .delete-confirm-copy {
     margin-top: 14px;
-  }
-
-  .close-modal-btn {
-    background: transparent;
-    border: none;
-    color: #64748b;
-    font-size: 1.5rem;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0;
-  }
-
-  .close-modal-btn:hover {
-    color: #e2e8f0;
   }
 
   .modal-body {
@@ -4118,6 +4171,10 @@
   }
 
   @media (max-width: 760px) {
+    .modal-header {
+      gap: var(--wa-space-3, 12px);
+    }
+
     .section-card,
     .config-audit-panel {
       padding: 16px;
@@ -5761,7 +5818,7 @@
     background: rgba(239, 249, 250, 0.64) !important;
   }
 
-  .phase41-settings button:not(.btn):not(.close-modal-btn):not(.dropdown-backdrop-overlay),
+  .phase41-settings button:not(.btn):not(.dropdown-backdrop-overlay),
   .phase41-settings :global(.copy-link),
   .phase41-settings :global(.gen-btn),
   .phase41-settings :global(.delete-btn),
@@ -5775,7 +5832,7 @@
     transition: background 140ms var(--wa-ease, ease), border-color 140ms var(--wa-ease, ease), transform 140ms var(--wa-ease, ease);
   }
 
-  .phase41-settings button:not(.btn):not(.close-modal-btn):not(.dropdown-backdrop-overlay):hover,
+  .phase41-settings button:not(.btn):not(.dropdown-backdrop-overlay):hover,
   .phase41-settings :global(.copy-link:hover),
   .phase41-settings :global(.gen-btn:hover),
   .phase41-settings :global(.control-btn:hover) {
@@ -7216,7 +7273,7 @@
   }
 
   /* Unified Settings workbench: the final rendered contract for every Settings route. */
-  .settings-unified {
+  #settings-unified-root.settings-unified {
     --settings-line: rgba(83, 108, 130, 0.16);
     --settings-line-strong: rgba(59, 87, 111, 0.28);
     --settings-glass: rgba(248, 252, 253, 0.78);
@@ -7230,9 +7287,10 @@
     --settings-accent: var(--wa-accent, #008f96);
     --settings-accent-strong: var(--wa-accent-strong, #006f76);
     --settings-accent-soft: rgba(0, 143, 150, 0.09);
+    display: grid;
     width: 100%;
     min-width: 0;
-    padding: 0 0 28px;
+    padding: 0;
     color: var(--settings-text);
   }
 
@@ -7248,8 +7306,21 @@
   }
 
   .settings-unified .settings-content-shell {
+    flex: 1 1 auto;
     display: grid;
+    grid-template-rows: auto minmax(min-content, 1fr);
     gap: 16px;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.without-audit {
+    flex: 1 0 auto;
+    min-height: 0;
+    align-items: stretch !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.without-audit .settings-primary-pane {
+    align-self: stretch !important;
+    height: auto !important;
   }
 
   .settings-unified .settings-context-panel {
@@ -8158,10 +8229,6 @@
   }
 
   @media (max-width: 760px) {
-    .settings-unified {
-      padding-bottom: 18px;
-    }
-
     .settings-unified .settings-content-shell {
       gap: 12px;
     }

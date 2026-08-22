@@ -3,46 +3,98 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"log"
 	"net/http"
-	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"well-ambient/internal/agenda"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/deliveryplanning"
+	"well-ambient/internal/performance"
+	"well-ambient/internal/readmodel"
 	"well-ambient/internal/server/authz"
+	"well-ambient/internal/solutioncatalog"
+	"well-ambient/internal/solutions"
 	"well-ambient/internal/telemetry"
 )
 
 // Server encapsulates the HTTP server logic
 type Server struct {
-	config           *config.Config
-	configPath       string
-	mux              *http.ServeMux
-	jiraAssigneeSync func(issueKey, assignee string)
-	jiraDueDateSync  func(issueKey, dueDate string)
-	jiraCommentSync  func(issueKey, comment string)
-	jiraReleaseList  func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error)
+	config              *config.Config
+	configPath          string
+	mux                 *http.ServeMux
+	handler             http.Handler
+	readRegistry        *readmodel.Registry
+	jiraAssigneeSync    func(issueKey, assignee string)
+	jiraDueDateSync     func(issueKey, dueDate string)
+	jiraCommentSync     func(issueKey, comment string)
+	jiraDailyReviewSync func(issueKey string, assignee *string, comment string) error
+	jiraReleaseList     func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error)
+	jiraInboundSyncMu   sync.Mutex
+	solutionLLM         func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+	solutionJiraPost    func(issueKey, comment string) error
+	solutionJiraRead    func(issueKey string) ([]telemetry.JiraComment, error)
+	solutions           *solutions.Module
+	solutionCatalog     *solutioncatalog.Module
+	performance         *performance.Module
 }
 
 // NewServer creates a new server instance
 func NewServer(cfg *config.Config, configPath string) *Server {
+	catalogConfig := cfg.SolutionCatalog.Normalized()
+	solutionModule := solutions.New(db.DB)
+	if err := solutionModule.MigrateLegacyInitialDrafts(context.Background()); err != nil {
+		log.Printf("Solution lifecycle migration failed: %v", err)
+	}
 	s := &Server{
 		config:     cfg,
 		configPath: configPath,
 		mux:        http.NewServeMux(),
+		solutions:  solutionModule,
+		solutionCatalog: solutioncatalog.New(db.DB, solutioncatalog.Settings{
+			Interval:        time.Duration(catalogConfig.IntervalMinutes) * time.Minute,
+			CandidateLimit:  catalogConfig.CandidateLimit,
+			RecallThreshold: catalogConfig.RecallThreshold,
+		}),
 	}
+	s.performance = performance.New(db.DB, s.performanceSettings())
 	s.jiraAssigneeSync = s.syncAssigneeToJira
 	s.jiraDueDateSync = s.syncDueDateToJira
 	s.jiraCommentSync = s.syncDecisionCommentToJira
+	s.jiraDailyReviewSync = func(issueKey string, assignee *string, comment string) error {
+		return telemetry.NewJiraClient(&s.config.Jira).UpdateIssueWithComment(issueKey, assignee, comment)
+	}
 	s.jiraReleaseList = func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error) {
 		return telemetry.NewJiraClient(&s.config.Jira).ListProjectReleases(ctx, projectKey)
 	}
+	s.solutionLLM = func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+		return queryServerLLMContext(ctx, s.config, systemPrompt, userPrompt)
+	}
+	s.solutionJiraRead = func(issueKey string) ([]telemetry.JiraComment, error) {
+		return telemetry.NewJiraClient(&s.config.Jira).GetComments(issueKey)
+	}
+	s.solutionJiraPost = func(issueKey, comment string) error {
+		marker := strings.SplitN(comment, "\n", 2)[0]
+		return s.ensureSolutionJiraComment(issueKey, marker, comment)
+	}
 	s.routes()
+	if db.DB != nil {
+		if err := readmodel.EnsureDatasets(db.DB, allPageReadDatasets()); err != nil {
+			panic(fmt.Sprintf("initialize all-page read generations: %v", err))
+		}
+	}
+	readRegistry, err := readmodel.NewRegistry(allPageReadContracts())
+	if err != nil {
+		panic(fmt.Sprintf("invalid all-page read contracts: %v", err))
+	}
+	s.readRegistry = readRegistry
+	s.handler = readRegistry.Wrap(s.mux)
 
 	// Bind the telemetry notification broadcast callback to avoid import cycles
 	telemetry.OnNotificationBroadcast = BroadcastNotifications
@@ -51,7 +103,30 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	return s
 }
 
-// routes sets up API routing
+func (s *Server) performanceSettings() performance.Settings {
+	performanceConfig := s.config.PerformanceBrain.Normalized()
+	return performance.Settings{
+		Enabled:             performanceConfig.Enabled,
+		CoreMembers:         s.configuredKPICoreMembers(),
+		Interval:            time.Duration(performanceConfig.IntervalMinutes) * time.Minute,
+		Window:              time.Duration(performanceConfig.AssessmentWindowDays) * 24 * time.Hour,
+		Retention:           time.Duration(performanceConfig.RetentionDays) * 24 * time.Hour,
+		FormulaVersion:      performanceConfig.FormulaVersion,
+		CoverageGate:        performanceConfig.EvidenceCoverageGate,
+		MinimumSamples:      performanceConfig.MinimumSamples,
+		MinimumExposureDays: performanceConfig.MinimumExposureDays,
+		BusyRetries:         performanceConfig.BusyRetryAttempts,
+		BusyRetryDelay:      time.Duration(performanceConfig.BusyRetryDelayMS) * time.Millisecond,
+		PublicationMode:     performanceConfig.PublicationMode,
+		EnableDemandMetrics: *performanceConfig.DemandMetricsEnabled,
+		EnableBugMetrics:    *performanceConfig.BugMetricsEnabled,
+		EnableCodeMetrics:   *performanceConfig.CodeMetricsEnabled,
+		JiraHistoryEnabled:  *performanceConfig.JiraHistoryEnabled,
+		GitDedupeEnabled:    *performanceConfig.GitDedupeEnabled,
+		FeatureFlagsSet:     true,
+	}
+}
+
 // routes sets up API routing
 func (s *Server) routes() {
 	// Status and Health Check (No Auth)
@@ -71,6 +146,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/delivery/directory", s.withAuth(s.handleGetDeliveryDirectory))
 	s.mux.HandleFunc("GET /api/task-tracking/assignees", s.withPermission("delivery:read", s.handleGetTaskTrackingAssignees))
 	s.mux.HandleFunc("GET /api/strongest-brain/evidence-chain", s.withPermission("dashboard:read", s.handleGetStrongestBrainEvidenceChain))
+	s.mux.HandleFunc("GET /api/performance/explanation", s.withAuth(s.withGlobalSuperAdmin(s.handleGetPerformanceExplanation)))
+	s.mux.HandleFunc("GET /api/performance/snapshots/{id}", s.withAuth(s.withGlobalSuperAdmin(s.handleGetPerformanceSnapshot)))
+	s.mux.HandleFunc("POST /api/performance/evidence", s.withAuth(s.withGlobalSuperAdmin(s.handleAppendPerformanceEvidence)))
+	s.mux.HandleFunc("GET /api/strongest-brain/releases", s.withPermission("decision:read", s.handleGetStrongestBrainReleases))
 	s.mux.HandleFunc("GET /api/strongest-brain/delivery-cockpit", s.withPermission("decision:read", s.handleGetStrongestBrainDeliveryCockpit))
 	s.mux.HandleFunc("GET /api/strongest-brain/decision-queue", s.withPermission("decision:read", s.handleGetStrongestBrainDecisionQueue))
 	s.mux.HandleFunc("GET /api/strongest-brain/exceptions", s.withPermission("decision:read", s.handleGetStrongestBrainExceptions))
@@ -80,6 +159,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/strongest-brain/ai-traces", s.withPermission("ai_context:read", s.handleGetStrongestBrainAITraces))
 	s.mux.HandleFunc("POST /api/strongest-brain/intervention", s.withPermission("demands:write", s.handleStrongestBrainIntervention))
 	s.mux.HandleFunc("GET /api/decision/daily-jira", s.withPermission("decision:read", s.handleGetDailyJiraAudit))
+	s.mux.HandleFunc("POST /api/decision/daily-jira/sync", s.withPermission("decision:read", s.handlePostDailyJiraSync))
 	s.mux.HandleFunc("POST /api/decision/daily-jira/review", s.withPermission("decision:read", s.withPermission("demands:write", s.handlePostDailyJiraReview)))
 	s.mux.HandleFunc("GET /api/logs", s.withAuth(s.handleGetLogs))
 	s.mux.HandleFunc("GET /api/data-assets/events", s.withPermission("data_asset:read", s.handleListDataAssetEvents))
@@ -135,6 +215,24 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/demand-specs/ai-stream", s.withPermission("demand_spec:write", s.handleStreamAIDemandSpec))
 	s.mux.HandleFunc("DELETE /api/demand-specs/{id}", s.withPermission("demand_spec:write", s.handleDeleteDemandSpecDraft))
 	s.mux.HandleFunc("POST /api/demand-specs/{id}/freeze", s.withPermission("demand_spec:freeze", s.handleFreezeDemandSpec))
+	s.mux.HandleFunc("GET /api/solutions/workspace", s.withPermission("solution:read", withSolutionCompression(s.handleGetSolutionWorkspace)))
+	s.mux.HandleFunc("POST /api/solutions/draft", s.withPermission("solution:write", withSolutionCompression(s.handleSaveSolutionDraft)))
+	s.mux.HandleFunc("POST /api/solutions/fork", s.withPermission("solution:write", withSolutionCompression(s.handleForkSolutionDraft)))
+	s.mux.HandleFunc("POST /api/solutions/polish", s.withPermission("solution:write", withSolutionCompression(s.handleRequestSolutionPolish)))
+	s.mux.HandleFunc("POST /api/solutions/jobs/{id}/retry", s.withPermission("solution:write", withSolutionCompression(s.handleRetrySolutionJob)))
+	s.mux.HandleFunc("POST /api/solutions/candidates/{id}/apply", s.withPermission("solution:write", withSolutionCompression(s.handleApplySolutionCandidate)))
+	s.mux.HandleFunc("POST /api/solutions/publish", s.withPermission("solution:publish", withSolutionCompression(s.handlePublishSolution)))
+	s.mux.HandleFunc("GET /api/solution-catalog", s.withPermission("solution:read", withSolutionCompression(s.handleListSolutionCatalog)))
+	s.mux.HandleFunc("GET /api/solution-catalog/projects", s.withPermission("solution:read", s.handleListSolutionCatalogProjects))
+	s.mux.HandleFunc("GET /api/solution-catalog/{id}", s.withPermission("solution:read", withSolutionCompression(s.handleGetSolutionCatalogEntry)))
+	s.mux.HandleFunc("GET /api/solution-standards", s.withPermission("solution:read", withSolutionCompression(s.handleListSolutionStandards)))
+	s.mux.HandleFunc("GET /api/solution-standards/{id}", s.withPermission("solution:read", withSolutionCompression(s.handleGetSolutionStandard)))
+	s.mux.HandleFunc("POST /api/solution-catalog/reconcile", s.withPermission("solution:publish", s.withGlobalSuperAdmin(s.handleReconcileSolutionCatalog)))
+	s.mux.HandleFunc("POST /api/solution-catalog/proposals/{id}/review", s.withPermission("solution:publish", withSolutionCompression(s.handleReviewSolutionProposal)))
+	s.mux.HandleFunc("GET /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleListSolutionPrompts)))
+	s.mux.HandleFunc("POST /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleSaveSolutionPrompt)))
+	s.mux.HandleFunc("POST /api/solution-prompts/test", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleTestSolutionPrompt)))
+	s.mux.HandleFunc("POST /api/solution-prompts/{id}/activate", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleActivateSolutionPrompt)))
 	s.mux.HandleFunc("GET /api/review-contracts", s.withPermission("demand_spec:read", s.handleGetReviewContract))
 	s.mux.HandleFunc("POST /api/review-contracts", s.withPermission("review_contract:manage", s.handleSaveReviewContract))
 	s.mux.HandleFunc("POST /api/review-contracts/{id}/approve", s.withPermission("review_contract:manage", s.handleApproveReviewContract))
@@ -164,6 +262,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/releases/jira-search", s.withPermission("release:manage", s.handleSearchJiraReleases))
 	s.mux.HandleFunc("GET /api/releases/{id}", s.withPermission("delivery:read", s.handleGetRelease))
 	s.mux.HandleFunc("PATCH /api/releases/{id}", s.withPermission("release:manage", s.handlePatchRelease))
+	s.mux.HandleFunc("POST /api/releases/{id}/publish", s.withPermission("release:manage", s.handlePublishRelease))
+	s.mux.HandleFunc("POST /api/releases/{id}/archive", s.withPermission("release:manage", s.handleArchiveRelease))
+	s.mux.HandleFunc("POST /api/releases/{id}/discard", s.withPermission("release:manage", s.handleDiscardRelease))
+	s.mux.HandleFunc("DELETE /api/releases/{id}", s.withPermission("release:manage", s.handleDeleteRelease))
 	s.mux.HandleFunc("GET /api/releases/{id}/jira-issues", s.withPermission("delivery:read", s.handleListReleaseJiraIssues))
 	s.mux.HandleFunc("POST /api/releases/{id}/jira-issues/bulk", s.withPermission("release:manage", s.handleBulkAddReleaseJiraIssues))
 	s.mux.HandleFunc("DELETE /api/releases/{id}/jira-issues/{work_item_id}", s.withPermission("release:manage", s.handleDeleteReleaseJiraIssue))
@@ -173,6 +275,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/work-items", s.withPermission("delivery:read", s.handleListWorkItems))
 	s.mux.HandleFunc("GET /api/work-items/{id}", s.withPermission("delivery:read", s.handleGetWorkItem))
 	s.mux.HandleFunc("PATCH /api/work-items/{id}/planning", s.withPermission("delivery:plan", s.handlePatchWorkItemPlanning))
+	s.mux.HandleFunc("POST /api/work-items/{id}/complete", s.withAuth(s.handleCompleteWorkItem))
 	s.mux.HandleFunc("POST /api/work-items/bulk-planning", s.withPermission("delivery:plan", s.handleBulkWorkItemPlanning))
 	s.mux.HandleFunc("GET /api/delivery/exceptions", s.withPermission("decision:read", s.handleGetDeliveryExceptions))
 	s.mux.HandleFunc("GET /api/delivery/quality", s.withPermission("decision:read", s.handleGetDeliveryQuality))
@@ -307,8 +410,10 @@ func resourceTypeForPermission(permission string) string {
 		return "config"
 	case "users":
 		return "user"
-	case "demands", "demand_spec", "review_contract", "execution":
+	case "demands", "demand_spec", "review_contract", "execution", "solution":
 		return "demand"
+	case "solution_prompt":
+		return "config"
 	case "corpus_candidate":
 		return "config"
 	case "ai_context":
@@ -324,11 +429,31 @@ func resourceTypeForPermission(permission string) string {
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	log.Printf("Starting well-ambient server on %s", addr)
+	workerContext, stopWorkers := context.WithCancel(context.Background())
 
 	// Start background Jira sync worker
 	go s.startJiraSyncWorker()
+	go s.startSolutionWorker()
+	go s.startDailyJiraProjectionWorker(workerContext)
+	catalogStarted := s.solutionCatalog != nil && s.solutionCatalog.Start(workerContext)
+	if s.performance != nil {
+		s.performance.Start(workerContext)
+	}
+	defer func() {
+		stopWorkers()
+		if s.performance != nil {
+			s.performance.Stop()
+		}
+		if catalogStarted {
+			s.solutionCatalog.Stop()
+		}
+	}()
 
-	return http.ListenAndServe(addr, s.mux)
+	handler := s.handler
+	if handler == nil {
+		handler = s.mux
+	}
+	return http.ListenAndServe(addr, handler)
 }
 
 // handleHealth checks system readiness
@@ -337,10 +462,111 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-// handleStatus returns current telemetry summary (mock for MVP skeleton)
+type jiraInboundStatus struct {
+	Enabled           bool       `json:"enabled"`
+	State             string     `json:"state"`
+	SuccessfulThrough *time.Time `json:"successful_through,omitempty"`
+	LastStartedAt     *time.Time `json:"last_started_at,omitempty"`
+	LastSucceededAt   *time.Time `json:"last_succeeded_at,omitempty"`
+	LastIssueCount    int        `json:"last_issue_count"`
+	LastChangedCount  int        `json:"last_changed_count"`
+	HasError          bool       `json:"has_error"`
+}
+
+func optionalStatusTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
+}
+
+func (s *Server) jiraInboundStatus(now time.Time) jiraInboundStatus {
+	status := jiraInboundStatus{State: "disabled"}
+	if s == nil || s.config == nil || !s.config.Jira.Enabled {
+		return status
+	}
+	status.Enabled = true
+	status.State = "pending"
+	if db.DB == nil {
+		status.State = "unavailable"
+		status.HasError = true
+		return status
+	}
+
+	var checkpoint db.JiraInboundSyncState
+	if err := db.DB.Where("scope = ?", jiraInboundSyncScope).First(&checkpoint).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return status
+		}
+		status.State = "unavailable"
+		status.HasError = true
+		return status
+	}
+
+	status.SuccessfulThrough = optionalStatusTime(checkpoint.SuccessfulThrough)
+	status.LastStartedAt = optionalStatusTime(checkpoint.LastStartedAt)
+	status.LastSucceededAt = optionalStatusTime(checkpoint.LastSucceededAt)
+	status.LastIssueCount = checkpoint.LastIssueCount
+	status.LastChangedCount = checkpoint.LastChangedCount
+	status.HasError = strings.TrimSpace(checkpoint.LastError) != ""
+
+	const staleAfter = 10 * time.Minute
+	switch {
+	case status.HasError:
+		status.State = "error"
+	case checkpoint.LastStartedAt.IsZero():
+		status.State = "pending"
+	case checkpoint.LastStartedAt.After(checkpoint.LastSucceededAt):
+		status.State = "syncing"
+		if now.Sub(checkpoint.LastStartedAt) > staleAfter {
+			status.State = "stale"
+		}
+	case checkpoint.LastSucceededAt.IsZero():
+		status.State = "pending"
+	case now.Sub(checkpoint.LastSucceededAt) > staleAfter:
+		status.State = "stale"
+	default:
+		status.State = "healthy"
+	}
+	return status
+}
+
+// handleStatus returns current process and inbound synchronization health.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"online", "version":"0.1.0", "telemetry":{"active_hooks":0}}`))
+	payload := struct {
+		Status        string                  `json:"status"`
+		Version       string                  `json:"version"`
+		Telemetry     map[string]int          `json:"telemetry"`
+		JiraSync      jiraInboundStatus       `json:"jira_sync"`
+		ReadContracts readmodel.Inventory     `json:"read_contracts"`
+		ReadPaths     []readmodel.Observation `json:"read_paths"`
+	}{
+		Status:        "online",
+		Version:       "0.1.0",
+		Telemetry:     map[string]int{"active_hooks": 0},
+		JiraSync:      s.jiraInboundStatus(time.Now()),
+		ReadContracts: s.readContractInventory(strings.EqualFold(r.URL.Query().Get("read_contracts"), "full")),
+		ReadPaths:     s.readPathObservations(),
+	}
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("Status response encode failed: %v", err)
+	}
+}
+
+func (s *Server) readContractInventory(includeDeclarations bool) readmodel.Inventory {
+	if s == nil || s.readRegistry == nil {
+		return readmodel.Inventory{}
+	}
+	return s.readRegistry.Inventory(includeDeclarations)
+}
+
+func (s *Server) readPathObservations() []readmodel.Observation {
+	if s == nil || s.readRegistry == nil {
+		return []readmodel.Observation{}
+	}
+	return s.readRegistry.Snapshot()
 }
 
 // handleGitLabWebhook processes incoming GitLab events
@@ -406,7 +632,11 @@ type TelemetryActivityDTO struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// handleGetTaskCommits returns all git commit/MR logs associated with a task_id
+const maxTaskActivityRows = 100
+
+// handleGetTaskCommits returns the most recent bounded git/Jira activity window
+// associated with a task_id. The response remains an array for legacy clients;
+// the hard cap prevents one old task from materializing an unbounded timeline.
 func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 	taskID := r.URL.Query().Get("task_id")
 	if taskID == "" {
@@ -423,18 +653,25 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskIDVariants := []string{taskID}
-	for _, variant := range []string{strings.ToUpper(taskID), strings.ToLower(taskID)} {
-		if !slices.Contains(taskIDVariants, variant) {
-			taskIDVariants = append(taskIDVariants, variant)
-		}
+	var gitLogs []db.GitCommitLog
+	if err := db.DB.WithContext(r.Context()).
+		Where("LOWER(task_id) = LOWER(?)", taskID).
+		Order("created_at DESC, id DESC").
+		Limit(maxTaskActivityRows).
+		Find(&gitLogs).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query Git task activity: %v", err), http.StatusInternalServerError)
+		return
 	}
 
-	var gitLogs []db.GitCommitLog
-	_ = db.DB.Where("task_id IN ?", taskIDVariants).Find(&gitLogs)
-
 	var jiraComments []db.JiraCommentLog
-	_ = db.DB.Where("task_id IN ?", taskIDVariants).Find(&jiraComments)
+	if err := db.DB.WithContext(r.Context()).
+		Where("LOWER(task_id) = LOWER(?) AND current = ?", taskID, true).
+		Order("created_at DESC, id DESC").
+		Limit(maxTaskActivityRows).
+		Find(&jiraComments).Error; err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query Jira task activity: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// 合并为 TelemetryActivityDTO
 	activities := []TelemetryActivityDTO{}
@@ -468,6 +705,9 @@ func (s *Server) handleGetTaskCommits(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(activities, func(i, j int) bool {
 		return activities[i].CreatedAt.After(activities[j].CreatedAt)
 	})
+	if len(activities) > maxTaskActivityRows {
+		activities = activities[:maxTaskActivityRows]
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(activities); err != nil {

@@ -21,7 +21,9 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(s.config); err != nil {
+	response := *s.config
+	response.PerformanceBrain = response.PerformanceBrain.Normalized()
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding config: %v", err)
 	}
 }
@@ -147,7 +149,7 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 			res.Success = false
 			res.Message = "AI config is missing in test request"
 		} else {
-			res.Success, res.Message, res.Details = testAIConnection(req.AI)
+			res.Success, res.Message, res.Details = testAIConnection(r.Context(), req.AI)
 		}
 	default:
 		res.Success = false

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, tick } from 'svelte';
   import { lockBodyScroll, unlockBodyScroll } from '../../lib/modalScrollLock';
+  import OverlayCloseButton from './OverlayCloseButton.svelte';
   const dispatch = createEventDispatcher();
 
   export let show = false;
@@ -8,6 +9,8 @@
   export let variant: 'dialog' | 'drawer' = 'dialog';
   export let size: 'default' | 'wide' = 'default';
   export let closeLabel = '关闭弹窗';
+  export let shadowless = false;
+  export let hideBodyScrollbar = false;
 
   let backdropEl: HTMLDivElement;
   let modalContainer: HTMLDivElement;
@@ -121,6 +124,7 @@
   >
     <div
       class="modal-container"
+      class:shadowless
       class:is-drawer={variant === 'drawer'}
       class:is-wide={size === 'wide' && variant === 'dialog'}
       bind:this={modalContainer}
@@ -133,11 +137,9 @@
     >
       <header class="modal-header">
         <h3 class="modal-title" id={modalId}>{title}</h3>
-        <button class="close-btn" on:click={close} aria-label={closeLabel}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
+        <OverlayCloseButton label={closeLabel} on:click={close} />
       </header>
-      <div class="modal-body">
+      <div class:hide-body-scrollbar={hideBodyScrollbar} class="modal-body">
         <slot />
       </div>
       {#if $$slots.footer}
@@ -213,6 +215,11 @@
     animation: drawerIn 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  .modal-container.shadowless,
+  .modal-container.shadowless.is-drawer {
+    box-shadow: none;
+  }
+
   .modal-container.is-wide {
     max-width: 960px;
     max-height: min(900px, calc(100vh - 48px));
@@ -233,9 +240,10 @@
 
   .modal-header {
     flex: 0 0 auto;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--wa-touch-h, 44px);
+    align-items: start;
+    gap: var(--wa-space-4, 16px);
     padding: 20px 24px;
     border-bottom: 1px solid rgba(123, 143, 160, 0.14);
     border-radius: calc(var(--wa-radius-xl, 18px) - 1px) calc(var(--wa-radius-xl, 18px) - 1px) 0 0;
@@ -244,32 +252,15 @@
   }
 
   .modal-title {
+    min-width: 0;
     margin: 0;
     color: var(--wa-text-strong, #0d1722);
     font-size: 18px;
     line-height: 1.25;
     font-weight: 820;
     letter-spacing: 0;
-  }
-
-  .close-btn {
-    width: 34px;
-    height: 34px;
-    background: rgba(102, 119, 137, 0.08);
-    border: none;
-    color: var(--wa-text-muted, #667789);
-    cursor: pointer;
-    padding: 0;
-    border-radius: var(--wa-radius-md, 7px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-  }
-
-  .close-btn:hover {
-    background: rgba(0, 143, 150, 0.1);
-    color: var(--wa-accent-strong, #006f76);
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
 
   .modal-body {
@@ -280,6 +271,14 @@
     box-sizing: border-box;
     scrollbar-width: thin;
     scrollbar-color: rgba(0, 143, 150, 0.38) rgba(121, 139, 159, 0.1);
+  }
+
+  .modal-body.hide-body-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .modal-body.hide-body-scrollbar::-webkit-scrollbar {
+    display: none;
   }
 
   .modal-footer {
@@ -329,17 +328,13 @@
     }
 
     .modal-container:not(.is-drawer) .modal-header {
+      gap: var(--wa-space-3, 12px);
       padding: 14px 16px;
     }
 
     .modal-container:not(.is-drawer) .modal-footer,
     .modal-container.is-wide .modal-footer {
       padding: 12px 16px;
-    }
-
-    .modal-container:not(.is-drawer) .close-btn {
-      width: 44px;
-      height: 44px;
     }
 
     .modal-container.is-drawer {

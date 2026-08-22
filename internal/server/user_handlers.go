@@ -136,25 +136,45 @@ func (s *Server) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var users []userdb.User
-	if err := db.DB.Order("created_at asc").Find(&users).Error; err != nil {
+	if err := db.DB.WithContext(r.Context()).Order("created_at asc, id asc").Limit(5000).Find(&users).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Query users failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	type membershipRow struct {
+		UserID           uint   `gorm:"column:user_id"`
+		GroupName        string `gorm:"column:group_name"`
+		GroupDisplayName string `gorm:"column:group_display_name"`
+		Scope            string `gorm:"column:scope"`
+		ScopeID          string `gorm:"column:scope_id"`
+	}
+	membershipsByUser := make(map[uint][]UserGroupMembershipDTO, len(users))
+	if len(users) > 0 {
+		userIDs := make([]uint, 0, len(users))
+		for _, currentUser := range users {
+			userIDs = append(userIDs, currentUser.ID)
+			membershipsByUser[currentUser.ID] = []UserGroupMembershipDTO{}
+		}
+		var rows []membershipRow
+		if err := db.DB.WithContext(r.Context()).Table("user_group_memberships").
+			Select("user_group_memberships.user_id, user_groups.name AS group_name, user_groups.display_name AS group_display_name, user_group_memberships.scope, user_group_memberships.scope_id").
+			Joins("JOIN user_groups ON user_groups.id = user_group_memberships.user_group_id").
+			Where("user_group_memberships.user_id IN ?", userIDs).
+			Order("user_group_memberships.user_id, user_group_memberships.id").
+			Scan(&rows).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Query user memberships failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		for _, row := range rows {
+			membershipsByUser[row.UserID] = append(membershipsByUser[row.UserID], UserGroupMembershipDTO{
+				GroupName: row.GroupName, GroupDisplayName: row.GroupDisplayName,
+				Scope: row.Scope, ScopeID: row.ScopeID,
+			})
+		}
+	}
+
 	var userDTOs []UserDTO
 	for _, u := range users {
-		var memberships []UserGroupMembershipDTO
-		err := db.DB.Table("user_group_memberships").
-			Select("user_groups.name as group_name, user_groups.display_name as group_display_name, user_group_memberships.scope, user_group_memberships.scope_id").
-			Joins("join user_groups on user_groups.id = user_group_memberships.user_group_id").
-			Where("user_group_memberships.user_id = ?", u.ID).
-			Scan(&memberships).Error
-
-		if err != nil {
-			log.Printf("Query memberships failed for user %s: %v", u.Username, err)
-			memberships = []UserGroupMembershipDTO{}
-		}
-
 		userDTOs = append(userDTOs, UserDTO{
 			ID:          u.ID,
 			Username:    u.Username,
@@ -162,7 +182,7 @@ func (s *Server) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 			Name:        u.Name,
 			Avatar:      u.Avatar,
 			Department:  u.Department,
-			Memberships: memberships,
+			Memberships: membershipsByUser[u.ID],
 			CreatedAt:   u.CreatedAt,
 		})
 	}

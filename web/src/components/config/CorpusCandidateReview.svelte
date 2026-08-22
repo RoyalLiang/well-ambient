@@ -4,6 +4,7 @@
   import MarkdownWorkbench, { type MarkdownMode } from '../shared/MarkdownWorkbench.svelte';
   import Select from '../shared/Select.svelte';
   import { showToast } from '../../lib/toast';
+  import { PagedResource } from '../../lib/paged-resource';
 
   export let currentUserPermissions: string[] = [];
 
@@ -36,6 +37,13 @@
     source_document?: SourceDocumentRef;
     created_at: string;
   };
+
+  const candidateResource = new PagedResource<Candidate>({
+    endpoint: () => '/api/corpus-candidates?status=review_queue',
+    itemKey: candidate => candidate.id,
+    pageSize: 50,
+    errorMessage: '加载统一审核队列失败'
+  });
 
   type CandidateDraft = Pick<Candidate,
     'candidate_type' | 'scope' | 'scope_id' | 'title' | 'summary' | 'content' |
@@ -92,6 +100,8 @@
 
   let candidates: Candidate[] = [];
   let loading = false;
+  let loadingMore = false;
+  let hasMoreCandidates = false;
   let error = '';
   let selectedID = 0;
   let selectedCandidate: Candidate | null = null;
@@ -120,6 +130,7 @@
 
   onMount(() => {
     if (canRead) void loadCandidates();
+    return () => candidateResource.dispose();
   });
 
   async function parseResponse(response: Response) {
@@ -136,10 +147,10 @@
     loading = true;
     error = '';
     try {
-      const response = await fetch('/api/corpus-candidates?status=review_queue');
-      const data = await parseResponse(response);
-      if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
-      candidates = Array.isArray(data.items) ? data.items : [];
+      const state = await candidateResource.refresh();
+      if (state.error) throw new Error(state.error);
+      candidates = state.items;
+      hasMoreCandidates = Boolean(state.page?.has_more && state.page?.next_cursor);
       const next = candidates.find(item => item.id === preferredID) || candidates[0] || null;
       if (next) await selectCandidate(next);
       else clearSelection();
@@ -147,6 +158,22 @@
       error = reason.message || '加载统一审核队列失败';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMoreCandidates() {
+    if (loadingMore || !hasMoreCandidates) return;
+    loadingMore = true;
+    error = '';
+    try {
+      const state = await candidateResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      candidates = state.items;
+      hasMoreCandidates = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (reason: any) {
+      error = reason.message || '更多审核候选加载失败';
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -389,7 +416,7 @@
     </div>
 
     {#if error}<div class="review-message error" role="alert">{error}</div>{/if}
-    {#if loading}
+    {#if loading && candidates.length === 0}
       <div class="review-loading" aria-live="polite"><span></span><span></span><span></span></div>
     {:else if !error && candidates.length === 0}
       <div class="review-empty">
@@ -424,6 +451,11 @@
                 </div>
               </section>
             {/each}
+            {#if hasMoreCandidates}
+              <button class="candidate-load-more" type="button" on:click={loadMoreCandidates} disabled={loadingMore}>
+                {loadingMore ? '正在加载更多候选' : '加载更多候选'}
+              </button>
+            {/if}
           </div>
         </aside>
 
@@ -616,6 +648,10 @@
   .candidate-queue-head strong { color: var(--scw-ink, #0d1722); font-size: 13px; }
   .candidate-queue-head span { color: var(--scw-muted, #667789); font: 11px/1 var(--wa-font-mono, monospace); }
   .candidate-queue-list { min-height: 0; max-height: none; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .candidate-load-more { width: 100%; min-height: 44px; border: 0; border-top: 1px solid var(--scw-line, rgba(92, 116, 137, .16)); background: rgba(251, 253, 254, .72); color: var(--scw-accent-strong, #006f76); font: 760 12px/1 var(--wa-font-sans, sans-serif); cursor: pointer; }
+  .candidate-load-more:hover { background: rgba(0, 143, 150, .06); }
+  .candidate-load-more:focus-visible { outline: 2px solid rgba(0, 143, 150, .34); outline-offset: -2px; }
+  .candidate-load-more:disabled { cursor: progress; opacity: .62; }
   .source-batch { min-width: 0; border-bottom: 1px solid var(--scw-line, rgba(92, 116, 137, .16)); }
   .source-batch:last-child { border-bottom: 0; }
   .source-batch-head { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px 12px 8px; background: rgba(233, 241, 244, .62); }

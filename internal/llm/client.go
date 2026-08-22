@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"well-ambient/internal/config"
 )
@@ -21,7 +20,6 @@ const (
 	defaultModel           = "gpt-4o"
 	defaultAnthropicTokens = 4096
 	maxResponseBody        = 4 << 20
-	defaultRequestTimeout  = 90 * time.Second
 )
 
 type Request struct {
@@ -175,7 +173,7 @@ func (c Client) do(ctx context.Context, input Request, stream bool) (*http.Respo
 	} else {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.Config.APIToken))
 	}
-	client := c.httpClient(stream)
+	client := c.httpClient()
 	response, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("contact LLM provider: %w", err)
@@ -183,16 +181,16 @@ func (c Client) do(ctx context.Context, input Request, stream bool) (*http.Respo
 	return response, protocol, nil
 }
 
-func (c Client) httpClient(stream bool) *http.Client {
+func (c Client) httpClient() *http.Client {
 	if c.HTTPClient != nil {
-		return c.HTTPClient
+		client := *c.HTTPClient
+		client.Timeout = 0
+		return &client
 	}
-	if stream {
-		// A streaming response can legitimately stay open for an arbitrary
-		// duration. Request context cancellation still stops the read.
-		return &http.Client{}
-	}
-	return &http.Client{Timeout: defaultRequestTimeout}
+	// Model generation can legitimately stay open for an arbitrary duration.
+	// Timeout must remain zero; caller context cancellation still stops the
+	// request when a browser disconnects or the owning service shuts down.
+	return &http.Client{}
 }
 
 func buildPayload(cfg config.AIConfig, input Request, stream bool) (map[string]any, error) {

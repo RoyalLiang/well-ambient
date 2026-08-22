@@ -3,6 +3,7 @@
   import Button from '../shared/Button.svelte';
   import MarkdownWorkbench, { type MarkdownMode } from '../shared/MarkdownWorkbench.svelte';
   import Select from '../shared/Select.svelte';
+  import { PagedResource } from '../../lib/paged-resource';
 
   export let currentUserPermissions: string[] = [];
   export let aiReady = false;
@@ -34,6 +35,13 @@
     updated_at: string;
   };
 
+  const documentResource = new PagedResource<ContextDocument>({
+    endpoint: () => '/api/context/documents',
+    itemKey: document => document.id,
+    pageSize: 50,
+    errorMessage: '原始资料加载失败'
+  });
+
   const dispatch = createEventDispatcher<{ imported: { candidateCount: number }; openreview: void }>();
   const scopeOptions = [
     { value: 'global', label: '全局' },
@@ -51,6 +59,8 @@
   let selectedDocument: ContextDocument | null = null;
   let selectedDocumentID = 0;
   let loading = false;
+  let loadingMore = false;
+  let hasMoreDocuments = false;
   let detailLoading = false;
   let error = '';
   let mode: 'view' | 'import' = 'view';
@@ -73,6 +83,7 @@
 
   onMount(() => {
     if (canRead) void loadDocuments();
+    return () => documentResource.dispose();
   });
 
   async function parseResponse(response: Response) {
@@ -89,10 +100,10 @@
     loading = true;
     error = '';
     try {
-      const response = await fetch('/api/context/documents');
-      const data = await parseResponse(response);
-      if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
-      documents = Array.isArray(data.items) ? data.items : [];
+      const state = await documentResource.refresh();
+      if (state.error) throw new Error(state.error);
+      documents = state.items;
+      hasMoreDocuments = Boolean(state.page?.has_more && state.page?.next_cursor);
       const nextID = preferredID && documents.some(item => item.id === preferredID)
         ? preferredID
         : documents[0]?.id || 0;
@@ -105,6 +116,22 @@
       error = reason.message || '原始资料加载失败';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadMoreDocuments() {
+    if (loadingMore || !hasMoreDocuments) return;
+    loadingMore = true;
+    error = '';
+    try {
+      const state = await documentResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      documents = state.items;
+      hasMoreDocuments = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (reason: any) {
+      error = reason.message || '更多原始资料加载失败';
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -322,7 +349,7 @@
           <strong>资料版本</strong>
           <button type="button" on:click={() => loadDocuments()} disabled={loading}>{loading ? '加载中' : '刷新'}</button>
         </div>
-        {#if loading}
+        {#if loading && documents.length === 0}
           <div class="source-skeleton" aria-label="原始资料加载中"><span></span><span></span><span></span></div>
         {:else if documents.length === 0}
           <div class="source-empty">
@@ -350,6 +377,11 @@
                 </span>
               </button>
             {/each}
+            {#if hasMoreDocuments}
+              <button class="source-load-more" type="button" on:click={loadMoreDocuments} disabled={loadingMore}>
+                {loadingMore ? '正在加载更多资料' : '加载更多资料'}
+              </button>
+            {/if}
           </div>
         {/if}
       </aside>
@@ -508,6 +540,8 @@
   .source-list > button { width: 100%; min-width: 0; display: grid; gap: 6px; padding: 12px; border: 0; border-bottom: 1px solid var(--scw-line, rgba(92, 116, 137, .16)); background: transparent; color: var(--scw-text, #293847); text-align: left; cursor: pointer; }
   .source-list > button:last-child { border-bottom: 0; }
   .source-list > button:hover, .source-list > button.active { background: rgba(0, 143, 150, .06); }
+  .source-list > button.source-load-more { min-height: 44px; place-items: center; color: var(--scw-accent-strong, #006f76); text-align: center; font-size: 12px; font-weight: 760; }
+  .source-list > button.source-load-more:disabled { cursor: progress; opacity: .62; }
   .source-list > button strong { overflow: hidden; color: var(--scw-ink, #0d1722); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
   .source-list > button small { overflow: hidden; color: var(--scw-muted, #667789); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .source-row-meta, .source-row-facts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; color: var(--scw-subtle, #8a99aa); font-size: 10px; }

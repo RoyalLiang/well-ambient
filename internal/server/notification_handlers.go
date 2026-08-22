@@ -56,7 +56,35 @@ var (
 	clients          = make(map[chan struct{}]bool)
 	configClients    = make(map[chan ConfigVersionDTO]bool)
 	telemetryClients = make(map[chan string]bool)
+	telemetryPending = make(map[chan string]map[string]struct{})
 )
+
+func registerTelemetryClient(ch chan string) {
+	clientsMu.Lock()
+	telemetryClients[ch] = true
+	telemetryPending[ch] = make(map[string]struct{})
+	clientsMu.Unlock()
+}
+
+func unregisterTelemetryClient(ch chan string) {
+	clientsMu.Lock()
+	delete(telemetryClients, ch)
+	delete(telemetryPending, ch)
+	clientsMu.Unlock()
+}
+
+func takePendingTelemetryUpdates(ch chan string) []string {
+	clientsMu.Lock()
+	pending := telemetryPending[ch]
+	updates := make([]string, 0, len(pending))
+	for taskID := range pending {
+		updates = append(updates, taskID)
+	}
+	clear(pending)
+	clientsMu.Unlock()
+	sort.Strings(updates)
+	return updates
+}
 
 // BroadcastNotifications triggers an immediate refresh on all connected SSE clients
 func BroadcastNotifications() {
@@ -82,6 +110,12 @@ func BroadcastTelemetryUpdated(taskID string) {
 		select {
 		case ch <- taskID:
 		default:
+			pending := telemetryPending[ch]
+			if pending == nil {
+				pending = make(map[string]struct{})
+				telemetryPending[ch] = pending
+			}
+			pending[taskID] = struct{}{}
 		}
 	}
 }
@@ -131,15 +165,15 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 	clientsMu.Lock()
 	clients[notifier] = true
 	configClients[configNotifier] = true
-	telemetryClients[telemetryNotifier] = true
 	clientsMu.Unlock()
+	registerTelemetryClient(telemetryNotifier)
 
 	defer func() {
 		clientsMu.Lock()
 		delete(clients, notifier)
 		delete(configClients, configNotifier)
-		delete(telemetryClients, telemetryNotifier)
 		clientsMu.Unlock()
+		unregisterTelemetryClient(telemetryNotifier)
 		close(notifier)
 		close(configNotifier)
 		close(telemetryNotifier)
@@ -170,6 +204,11 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 		case taskID := <-telemetryNotifier:
 			if !sendTelemetryUpdatedEvent(w, r, flusher, taskID) {
 				return
+			}
+			for _, pendingTaskID := range takePendingTelemetryUpdates(telemetryNotifier) {
+				if !sendTelemetryUpdatedEvent(w, r, flusher, pendingTaskID) {
+					return
+				}
 			}
 		case <-ticker.C:
 			if !s.sendNotificationsEvent(w, r, flusher, userID) {
@@ -411,9 +450,22 @@ func (s *Server) computeDelayAlerts() []NotificationAlert {
 		return alerts
 	}
 
-	var tasks []db.TaskTelemetry
-	// Select active tasks that are NOT done
-	err := db.DB.Where("status != 'done'").Find(&tasks).Error
+	// Notification reads run on the SSE initial payload and fallback heartbeat.
+	// Keep this path side-effect free and avoid hydrating the much wider task
+	// telemetry model when only six reminder fields are required.
+	type delayAlertTask struct {
+		TaskID        string
+		Title         string
+		Assignee      string
+		Status        string
+		IssueType     string
+		TaskCreatedAt time.Time
+	}
+	var tasks []delayAlertTask
+	err := db.DB.Model(&db.TaskTelemetry{}).
+		Select("task_id", "title", "assignee", "status", "issue_type", "task_created_at").
+		Where(`status IS NULL OR LOWER(TRIM(status)) NOT IN ('done','closed','resolved','completed','archived','已完成','已关闭')`).
+		Find(&tasks).Error
 	if err != nil {
 		log.Printf("SSE: failed to query active tasks: %v", err)
 		return alerts
@@ -466,10 +518,6 @@ func (s *Server) computeDelayAlerts() []NotificationAlert {
 			}
 
 			alerts = append(alerts, alert)
-
-			// Trigger extension hook (e.g. Email Alert)
-			var sender NotificationSender = &EmailNotificationSender{}
-			_ = sender.SendDelayAlert(alert)
 		}
 	}
 

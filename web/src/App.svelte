@@ -6,6 +6,7 @@
   import DeliveryPlan from './components/DeliveryPlan.svelte';
   import InsightsWorkspace from './components/InsightsWorkspace.svelte';
   import ProjectBoard from './components/ProjectBoard.svelte';
+  import SolutionCenter from './components/SolutionCenter.svelte';
   import TaskKanban from './components/TaskKanban.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
@@ -19,10 +20,11 @@
     type SettingsSection
   } from './lib/settings-sections';
 
-  type AppTab = 'decision' | 'schedule' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
+  type AppTab = 'decision' | 'schedule' | 'solutions' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
   type DecisionView = 'agenda' | 'daily_jira';
   type DemandView = 'board' | 'schedule' | 'releases' | 'projects';
   type TaskView = 'status' | 'execution';
+	type KPIView = 'overview' | 'calculation';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
 
@@ -58,10 +60,11 @@
     dateTime: string;
   }
 
-  const consoleTabs: AppTab[] = ['decision', 'schedule', 'evidence', 'tasks', 'kpi', 'settings'];
+  const consoleTabs: AppTab[] = ['decision', 'schedule', 'solutions', 'evidence', 'tasks', 'kpi', 'settings'];
   const tabPermissions: Record<Exclude<AppTab, 'no_permission'>, string[]> = {
     decision: ['decision:read'],
     schedule: ['demands:read'],
+    solutions: ['solution:read'],
     evidence: ['dashboard:read'],
     tasks: ['dashboard:read'],
     kpi: ['kpi:read'],
@@ -89,6 +92,17 @@
       actions: [
         { label: '进入任务跟踪', route: 'tasks', kind: 'primary' },
         { label: '查看健康诊断', route: 'evidence' }
+      ]
+    },
+    solutions: {
+      kicker: 'SOLUTION GOVERNANCE',
+      title: '方案中心',
+      summary: '统一查阅已发布方案、相似需求对比和经审核的标准方案。',
+      statusLabel: '已发布方案目录',
+      tone: 'cyan',
+      actions: [
+        { label: '返回排期治理', route: 'schedule', kind: 'primary' },
+        { label: '查看证据链', route: 'evidence' }
       ]
     },
     evidence: {
@@ -142,6 +156,7 @@
   let activeSettingsSection: SettingsSection = 'gitlab';
   let activeDemandView: DemandView = 'schedule';
   let activeTaskView: TaskView = 'status';
+	let activeKPIView: KPIView = 'overview';
   let availableRoutes: AppTab[] = [];
   let latestDecisionEventSummary: WorkspaceDecisionEventSummary | null = null;
   let decisionTimelineDrawerRequest = 0;
@@ -269,6 +284,9 @@
   $: if (jwtToken && permissionsHydrated && activeTab === 'settings' && !canAccessSettingsSection(activeSettingsSection)) {
     activeSettingsSection = firstAccessibleSettingsSection();
   }
+	$: if (currentUserRole !== 'super_admin' && activeKPIView === 'calculation') {
+		activeKPIView = 'overview';
+	}
   $: activeWorkspace = getWorkspacePresentation(activeTab);
   $: workspaceActions = activeWorkspace.actions.filter((action) => availableRoutes.includes(action.route));
   $: workspaceSignals = [
@@ -292,8 +310,12 @@
     ? ['管理台', '决策看板', activeDecisionView === 'daily_jira' ? '每日 Jira' : '决策事项']
     : activeTab === 'schedule'
       ? ['管理台', '排期治理', activeDemandView === 'board' ? '流转看板' : activeDemandView === 'projects' ? '项目看板' : activeDemandView === 'releases' ? '版本计划' : '排期看板']
+      : activeTab === 'solutions'
+        ? ['管理台', '方案中心']
       : activeTab === 'tasks'
         ? ['管理台', '任务跟踪', activeTaskView === 'status' ? '任务表' : '执行追踪']
+				: activeTab === 'kpi'
+					? ['管理台', '度量洞察', activeKPIView === 'calculation' ? '计算说明' : '度量概览']
         : ['管理台', activeWorkspace.title];
   $: workspaceContextMeta = `未读遥测 ${activeAlerts.length}`;
 
@@ -316,6 +338,22 @@
     
     // If no permission for any page
     activeTab = 'no_permission';
+  }
+
+  function applyLocationIntent() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'solutions' && hasPermission('solution:read')) {
+      activeTab = 'solutions';
+    }
+    if (params.get('tab') === 'schedule' && hasPermission('demands:read')) {
+      activeTab = 'schedule';
+      activeDemandView = 'schedule';
+    }
+    const settingsSection = params.get('settings');
+    if (settingsSection && isSettingsSection(settingsSection) && canAccessSettingsSection(settingsSection)) {
+      activeTab = 'settings';
+      activeSettingsSection = settingsSection;
+    }
   }
 
   // Save original fetch
@@ -461,6 +499,7 @@
         autoRedirectTab();
         await refreshCurrentUserProfile();
         autoRedirectTab();
+        applyLocationIntent();
         
         loginUsernamePrefix = '';
         loginPassword = '';
@@ -613,6 +652,13 @@
     activeTab = 'tasks';
   }
 
+	function handleKPINavigate(view: KPIView | string) {
+		if (!hasPermission('kpi:read')) return;
+		if (view === 'calculation' && currentUserRole !== 'super_admin') return;
+		activeKPIView = view === 'calculation' ? 'calculation' : 'overview';
+		activeTab = 'kpi';
+	}
+
   function openDeliveryPlan(_workItemID: string) {
     activeDemandView = 'releases';
     activeTab = 'schedule';
@@ -760,6 +806,7 @@
       loadConfig();
       connectSSE();
       autoRedirectTab();
+      applyLocationIntent();
     }
 
     const handleOutsideClick = (e: MouseEvent) => {
@@ -865,6 +912,7 @@
     activeDecisionView={activeDecisionView}
     activeScheduleView={activeDemandView}
     activeTaskView={activeTaskView}
+		activeKPIView={activeKPIView}
     authDegraded={authDegraded}
     authDegradedMessage={authDegradedMessage}
     onNavigate={handleConsoleNavigate}
@@ -872,6 +920,7 @@
     onDecisionNavigate={handleDecisionNavigate}
     onScheduleNavigate={handleScheduleNavigate}
     onTaskNavigate={handleTaskNavigate}
+		onKPINavigate={handleKPINavigate}
     onLogout={logout}
     onClearAlerts={clearAllAlerts}
     onDismissAlert={dismissAlert}
@@ -918,6 +967,8 @@
         <div class="console-functional-stack">
           <InsightsWorkspace activeLens="health" />
         </div>
+      {:else if activeTab === 'solutions'}
+        <SolutionCenter currentUserPermissions={currentUserPermissions} />
       {:else if activeTab === 'tasks'}
         <TaskKanban
           activeTaskView={activeTaskView}
@@ -925,7 +976,7 @@
           onOpenDeliveryPlan={openDeliveryPlan}
         />
       {:else if activeTab === 'kpi'}
-        <InsightsWorkspace activeLens="kpi" />
+				<InsightsWorkspace activeLens={activeKPIView === 'calculation' ? 'performance' : 'kpi'} />
       {:else if activeTab === 'settings'}
         {#key activeSettingsSection}
           <SettingsPanel
@@ -1096,7 +1147,7 @@
         证据链
       </button>
     {/if}
-    {#if hasPermission('config:read') || hasPermission('users:read') || hasPermission('kpi:read')}
+    {#if hasPermission('config:read') || hasPermission('solution_prompt:manage') || hasPermission('users:read') || hasPermission('kpi:read')}
       <button class="tab-btn" on:click={() => activeTab = 'settings'}>
         配置中心
       </button>

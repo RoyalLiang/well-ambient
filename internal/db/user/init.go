@@ -42,6 +42,10 @@ func InitializeSeeds(db *gorm.DB) error {
 		{Code: "execution:accept", Name: "验收自治交付", Description: "有权以审核契约中的业务验收人身份确认或拒绝交付结果"},
 		{Code: "corpus_candidate:read", Name: "查看语料候选", Description: "有权查看交付复盘生成的知识和案例候选"},
 		{Code: "corpus_candidate:review", Name: "审核语料候选", Description: "有权接受或拒绝语料候选并将接受项纳入版本化上下文事实"},
+		{Code: "solution:read", Name: "查看需求方案", Description: "有权查看需求的方案草案、候选版本、已发布版本及其来源状态"},
+		{Code: "solution:write", Name: "编辑与润色需求方案", Description: "有权编辑需求方案草案、请求 Agent 润色并人工应用候选版本"},
+		{Code: "solution:publish", Name: "发布需求方案", Description: "有权把人工确认的需求方案草案发布为需求当前方案"},
+		{Code: "solution_prompt:manage", Name: "管理方案润色提示词", Description: "仅全局超级管理员可新增、测试、启用和回滚方案润色提示词版本"},
 	}
 
 	log.Println("Seeding default permissions (incremental)...")
@@ -134,6 +138,9 @@ func InitializeSeeds(db *gorm.DB) error {
 		"execution:accept",
 		"corpus_candidate:read",
 		"corpus_candidate:review",
+		"solution:read",
+		"solution:write",
+		"solution:publish",
 	}
 	for _, code := range adminPermCodes {
 		if pID, ok := permMap[code]; ok {
@@ -150,7 +157,7 @@ func InitializeSeeds(db *gorm.DB) error {
 
 	// Member gets dashboard:read, demands:read, decision:read
 	memberID := groupMap["member"]
-	memberPermCodes := []string{"dashboard:read", "demands:read", "delivery:read", "decision:read", "demand_spec:read"}
+	memberPermCodes := []string{"dashboard:read", "demands:read", "delivery:read", "decision:read", "demand_spec:read", "solution:read"}
 	for _, code := range memberPermCodes {
 		if pID, ok := permMap[code]; ok {
 			var count int64

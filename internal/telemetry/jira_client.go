@@ -27,19 +27,38 @@ type JiraVersion struct {
 }
 
 type JiraIssue struct {
-	Key    string `json:"key"`
+	Key       string `json:"key"`
+	Changelog struct {
+		Histories []JiraHistory `json:"histories"`
+	} `json:"changelog"`
 	Fields struct {
-		Summary     string `json:"summary"`
-		Description string `json:"description"`
-		Created     string `json:"created"`
-		IssueType   struct {
+		Summary              string `json:"summary"`
+		Description          string `json:"description"`
+		Created              string `json:"created"`
+		ResolutionDate       string `json:"resolutiondate"`
+		DueDate              string `json:"duedate"`
+		TimeOriginalEstimate int64  `json:"timeoriginalestimate"`
+		TimeTracking         struct {
+			OriginalEstimateSeconds int64 `json:"originalEstimateSeconds"`
+		} `json:"timetracking"`
+		IssueType struct {
 			Name string `json:"name"`
 		} `json:"issuetype"`
+		Parent     *JiraIssueReference `json:"parent"`
+		IssueLinks []JiraIssueLink     `json:"issuelinks"`
+		Priority   struct {
+			Name string `json:"name"`
+		} `json:"priority"`
 		Assignee *struct {
 			Name         string `json:"name"`
 			EmailAddress string `json:"emailAddress"`
 			DisplayName  string `json:"displayName"`
 		} `json:"assignee"`
+		Reporter *struct {
+			Name         string `json:"name"`
+			EmailAddress string `json:"emailAddress"`
+			DisplayName  string `json:"displayName"`
+		} `json:"reporter"`
 		Status struct {
 			Name string `json:"name"`
 		} `json:"status"`
@@ -51,6 +70,41 @@ type JiraIssue struct {
 		Versions    []JiraVersion `json:"versions"`
 		Updated     string        `json:"updated"`
 	} `json:"fields"`
+}
+
+type JiraIssueReference struct {
+	Key    string `json:"key"`
+	Fields struct {
+		IssueType struct {
+			Name string `json:"name"`
+		} `json:"issuetype"`
+	} `json:"fields"`
+}
+
+type JiraIssueLink struct {
+	Type struct {
+		Name    string `json:"name"`
+		Inward  string `json:"inward"`
+		Outward string `json:"outward"`
+	} `json:"type"`
+	InwardIssue  *JiraIssueReference `json:"inwardIssue"`
+	OutwardIssue *JiraIssueReference `json:"outwardIssue"`
+}
+
+type JiraHistory struct {
+	ID      string `json:"id"`
+	Created string `json:"created"`
+	Author  struct {
+		Name         string `json:"name"`
+		EmailAddress string `json:"emailAddress"`
+		DisplayName  string `json:"displayName"`
+	} `json:"author"`
+	Items []struct {
+		Field      string `json:"field"`
+		FieldID    string `json:"fieldId"`
+		FromString string `json:"fromString"`
+		ToString   string `json:"toString"`
+	} `json:"items"`
 }
 
 type JiraSearchResponse struct {
@@ -107,9 +161,15 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 	var allIssues []JiraIssue
 	startAt := 0
 	maxResults := 50
+	fields := strings.Join([]string{
+		"summary", "description", "created", "issuetype", "assignee", "reporter", "status", "project",
+		"fixVersions", "versions", "updated", "resolutiondate", "duedate",
+		"timeoriginalestimate", "timetracking", "priority",
+		"parent", "issuelinks",
+	}, ",")
 
 	for {
-		path := fmt.Sprintf("/rest/api/2/search?jql=%s&startAt=%d&maxResults=%d", url.QueryEscape(jql), startAt, maxResults)
+		path := fmt.Sprintf("/rest/api/2/search?jql=%s&startAt=%d&maxResults=%d&fields=%s&expand=changelog", url.QueryEscape(jql), startAt, maxResults, url.QueryEscape(fields))
 		req, err := jc.newRequest("GET", path, nil)
 		if err != nil {
 			return nil, err
@@ -430,6 +490,53 @@ func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error
 	return nil
 }
 
+// UpdateIssueWithComment applies a Daily Jira decision in one Jira issue update.
+// A nil assignee keeps the current owner; a non-nil value updates or clears it.
+func (jc *JiraClient) UpdateIssueWithComment(issueKey string, assigneeName *string, comment string) error {
+	issueKey = strings.TrimSpace(issueKey)
+	comment = strings.TrimSpace(comment)
+	if issueKey == "" {
+		return fmt.Errorf("issue key is required")
+	}
+	if comment == "" {
+		return fmt.Errorf("decision comment is required")
+	}
+
+	payload := map[string]interface{}{
+		"update": map[string]interface{}{
+			"comment": []map[string]interface{}{{"add": map[string]string{"body": comment}}},
+		},
+	}
+	if assigneeName != nil {
+		var name interface{} = strings.TrimSpace(*assigneeName)
+		if name == "" {
+			name = nil
+		}
+		payload["fields"] = map[string]interface{}{
+			"assignee": map[string]interface{}{"name": name},
+		}
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := jc.newRequest(http.MethodPut, fmt.Sprintf("/rest/api/2/issue/%s", url.PathEscape(issueKey)), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira decision update failed with status %s: %s", resp.Status, string(respBytes))
+	}
+	return nil
+}
+
 func (jc *JiraClient) UpdateDueDate(issueKey, dueDate string) error {
 	payload := map[string]interface{}{
 		"fields": map[string]string{
@@ -486,34 +593,48 @@ type JiraComment struct {
 	} `json:"author"`
 	Body    string `json:"body"`
 	Created string `json:"created"`
+	Updated string `json:"updated"`
 }
 
 type JiraCommentsResponse struct {
-	Comments []JiraComment `json:"comments"`
+	StartAt    int           `json:"startAt"`
+	MaxResults int           `json:"maxResults"`
+	Total      int           `json:"total"`
+	Comments   []JiraComment `json:"comments"`
 }
 
 func (jc *JiraClient) GetComments(issueKey string) ([]JiraComment, error) {
-	path := fmt.Sprintf("/rest/api/2/issue/%s/comment", issueKey)
-	req, err := jc.newRequest("GET", path, nil)
-	if err != nil {
-		return nil, err
+	basePath := fmt.Sprintf("/rest/api/2/issue/%s/comment", issueKey)
+	comments := make([]JiraComment, 0)
+	startAt := 0
+	for {
+		path := basePath
+		if startAt > 0 {
+			path = fmt.Sprintf("%s?startAt=%d&maxResults=100", basePath, startAt)
+		}
+		req, err := jc.newRequest("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := jc.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("Jira get comments failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+		var page JiraCommentsResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		comments = append(comments, page.Comments...)
+		if page.Total <= len(comments) || len(page.Comments) == 0 || page.Total == 0 {
+			return comments, nil
+		}
+		startAt += len(page.Comments)
 	}
-
-	resp, err := jc.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Jira get comments failed with status %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	var res JiraCommentsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, err
-	}
-
-	return res.Comments, nil
 }

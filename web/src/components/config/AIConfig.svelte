@@ -5,7 +5,9 @@
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
   import MarkdownWorkbench from '../shared/MarkdownWorkbench.svelte';
+  import { showToast } from '../../lib/toast';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
+  import { PagedResource } from '../../lib/paged-resource';
   import CorpusCandidateReview from './CorpusCandidateReview.svelte';
   import CorpusSourceLibrary from './CorpusSourceLibrary.svelte';
 
@@ -64,6 +66,14 @@
     created_at?: string;
     updated_at?: string;
   }
+
+  const contextFactResource = new PagedResource<ContextFact>({
+    endpoint: () => '/api/context/facts',
+    selectItems: payload => normalizeContextFactList(payload),
+    itemKey: contextFactKey,
+    pageSize: 50,
+    errorMessage: '系统设计语料加载失败'
+  });
 
   interface ContextFactForm {
     type: string;
@@ -160,10 +170,11 @@
 
   let contextFacts: ContextFact[] = [];
   let contextFactsLoading = false;
+  let contextFactsLoadingMore = false;
+  let hasMoreContextFacts = false;
   let contextFactsError = '';
   let contextFactSaving = false;
   let contextFactSaveError = '';
-  let contextFactSaveSuccess = '';
   let editingContextFactId: ContextFactID | null = null;
   let contextFactForm: ContextFactForm = createBlankContextFactForm();
   let previewDemand = '';
@@ -252,6 +263,7 @@
 
   onMount(() => {
     fetchContextFacts();
+    return () => contextFactResource.dispose();
   });
 
   function formatUpdated(value: string) {
@@ -452,7 +464,6 @@
     editingContextFactId = null;
     contextFactForm = createBlankContextFactForm();
     contextFactSaveError = '';
-    contextFactSaveSuccess = '';
   }
 
   function beginEditContextFact(fact: ContextFact) {
@@ -471,7 +482,6 @@
       confidence: Number(fact.confidence) || 0.85
     };
     contextFactSaveError = '';
-    contextFactSaveSuccess = '';
   }
 
   function buildContextFactPayload() {
@@ -507,10 +517,10 @@
     contextFactsLoading = true;
     contextFactsError = '';
     try {
-      const res = await fetch('/api/context/facts');
-      const data = await parseJSONResponse(res);
-      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-      contextFacts = normalizeContextFactList(data);
+      const state = await contextFactResource.refresh();
+      if (state.error) throw new Error(state.error);
+      contextFacts = state.items;
+      hasMoreContextFacts = Boolean(state.page?.has_more && state.page?.next_cursor);
     } catch (e: any) {
       contextFactsError = e.message || '系统设计语料加载失败';
     } finally {
@@ -518,9 +528,24 @@
     }
   }
 
+  async function loadMoreContextFacts() {
+    if (contextFactsLoadingMore || !hasMoreContextFacts) return;
+    contextFactsLoadingMore = true;
+    contextFactsError = '';
+    try {
+      const state = await contextFactResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      contextFacts = state.items;
+      hasMoreContextFacts = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (e: any) {
+      contextFactsError = e.message || '更多系统设计语料加载失败';
+    } finally {
+      contextFactsLoadingMore = false;
+    }
+  }
+
   async function saveContextFact() {
     contextFactSaveError = '';
-    contextFactSaveSuccess = '';
     if (!contextFactForm.summary.trim() || !contextFactForm.content.trim()) {
       contextFactSaveError = '请填写事实摘要和事实内容';
       return;
@@ -531,6 +556,7 @@
     }
 
     const payload = buildContextFactPayload();
+    const wasEditing = Boolean(editingContextFactId);
     const method = editingContextFactId ? 'PUT' : 'POST';
     contextFactSaving = true;
     try {
@@ -552,11 +578,11 @@
       if (!res.ok || data.success === false) {
         throw new Error(data.message || data.error || `HTTP ${res.status}`);
       }
-      contextFactSaveSuccess = editingContextFactId ? '系统设计资料已更新' : '系统设计资料已创建';
       await fetchContextFacts();
-      if (!editingContextFactId) beginCreateContextFact();
+      if (!wasEditing) beginCreateContextFact();
+      showToast(wasEditing ? '系统设计资料已更新。' : '系统设计资料已创建。', { title: '保存成功' });
     } catch (e: any) {
-      contextFactSaveError = e.message || '系统设计资料保存失败';
+      showToast(e.message || '系统设计资料保存失败', { type: 'error', title: '保存失败' });
     } finally {
       contextFactSaving = false;
     }
@@ -633,10 +659,6 @@
 </script>
 
 <div class="scw-workbench">
-  {#if showEnginePanel && saveSuccess}
-    <Alert type="success" title="配置已保存" message="AI 引擎连接与估算参数已更新，版本审计会记录本次变更。" />
-  {/if}
-
   {#if showEnginePanel && !editing && isConfigured}
     <section class="scw-overview" aria-label="AI 引擎配置状态">
       <header class="scw-header">
@@ -909,10 +931,6 @@
           {/if}
         </div>
 
-        {#if saveError}
-          <Alert type="error" title="保存失败" message={saveError} />
-        {/if}
-
         <div class="scw-actions">
           <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>
           <Button variant="secondary" on:click={finishClose} disabled={saving}>取消</Button>
@@ -1009,7 +1027,7 @@
             </button>
           </div>
 
-          {#if contextFactsLoading}
+          {#if contextFactsLoading && contextFacts.length === 0}
             <div class="scw-skeleton" aria-label="系统设计语料加载中">
               <span></span>
               <span></span>
@@ -1042,6 +1060,11 @@
                   </div>
                 </button>
               {/each}
+              {#if hasMoreContextFacts}
+                <button class="context-facts-load-more" type="button" on:click={loadMoreContextFacts} disabled={contextFactsLoadingMore}>
+                  {contextFactsLoadingMore ? '正在加载更多资料' : '加载更多资料'}
+                </button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -1055,10 +1078,6 @@
           {#if contextFactSaveError}
             <div class="scw-inline-error">{contextFactSaveError}</div>
           {/if}
-          {#if contextFactSaveSuccess}
-            <div class="scw-inline-success">{contextFactSaveSuccess}</div>
-          {/if}
-
           <div class="scw-form-grid">
             <div class="scw-choice-field">
               <span class="scw-native-label">资料类型</span>
@@ -1320,6 +1339,20 @@
     display: grid;
     gap: 16px;
   }
+
+  .context-facts-load-more {
+    width: 100%;
+    min-height: 44px;
+    border: 0;
+    border-top: 1px solid var(--scw-line, rgba(92, 116, 137, 0.16));
+    background: rgba(251, 253, 254, 0.72);
+    color: var(--scw-accent-strong, #006f76);
+    font: 760 12px/1 var(--wa-font-sans, sans-serif);
+    cursor: pointer;
+  }
+
+  .context-facts-load-more:focus-visible { outline: 2px solid rgba(0, 143, 150, 0.34); outline-offset: -2px; }
+  .context-facts-load-more:disabled { cursor: progress; opacity: 0.62; }
 
   @media (max-width: 760px) {
     .manual-context-tools summary {

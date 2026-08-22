@@ -1,63 +1,201 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-07-31T23:59:00+08:00",
+  "updated_at": "2026-08-21T18:59:00+08:00",
   "active_task": {
-    "goal": "Restore FZ-2247 realtime code evidence across task_executor and crane_manager",
-    "intent": "bugfix",
+    "goal": "Introduce a bounded Daily Jira read architecture targeting millisecond page reads at ten million task rows",
+    "intent": "daily_jira_ten_million_keyset_read_model",
     "complexity": "multi_step",
-    "continuity": "multi_turn",
-    "freshness": "local_repo",
+    "continuity": "single_turn",
+    "freshness": "disposable_ten_million_benchmark_plus_main_database_read_only_explain",
     "risk": "medium",
-    "phase": "fz-2247-dual-repository-trajectory-local-repair-complete",
+    "phase": "complete_locally_rollout_pending",
     "loaded_modules": [
       "core-lite",
       "state-lite",
-      "domains/coding",
+      "domains/review",
       "workflow/default",
       "runtime/memory",
-      "impeccable",
-      "taste-skill",
-      "finesse-skill",
       "diagnosing-bugs",
-      "browser",
-      "self-improvement"
+      "planning-with-files",
+      "codebase-design",
+      "impeccable",
+      "design-taste-frontend",
+      "finesse-ui",
+      "self-improving"
     ]
   },
   "warm_memory": {
-    "summary": "FZ-2247 Git evidence now canonicalizes to the Jira Work Item, preserves its owner, captures every commit in multi-commit pushes, reads historical case variants, and refreshes an open trajectory through task-scoped SSE. Isolated validation showed task_executor and crane_manager together with no lowercase duplicate; production still needs crane_manager webhook delivery verification.",
-    "latest_diagnostic": {
-      "goal": "Make FZ-2247 code trajectory capture and display commits from task_executor and crane_manager in realtime.",
-      "status": "complete_locally",
+    "summary": "Jira inbound synchronization now reconciles items that leave the primary JQL, advances durable cycle and per-item watermarks only after success, treats comments as a current projection, emits each changed task immediately without burst loss, and refreshes all Jira-backed product views through one event scheduler while retaining polling fallback.",
+    "current_summary": "Daily Jira now uses a trigger-maintained bounded read model with counter summaries, generation-bound row-value keyset pagination, indexed server search, bounded Top-N enrichment, virtual rendering, and same-generation atomic multi-page refresh. A disposable 10M-row warm benchmark keeps reader page p95 below 0.9ms; full tests and authenticated browser validation pass. Main migration, restart, and production HTTP concurrency telemetry remain pending.",
+    "daily_jira_ten_million_read_architecture": {
+      "status": "complete_locally_rollout_pending",
       "findings": [
-        "ExtractTaskID emitted lowercase fz-2247, splitting new Git evidence from the uppercase Jira FZ-2247 row and making the exact commits API miss it.",
-        "Canonicalizing directly onto the Jira row initially exposed a second defect: Git authors could overwrite the Jira assignee and make the Work Item disappear under core-member visibility.",
-        "The push handler only checked the branch and last commit; a Jira key carried by an earlier commit in the same crane_manager batch could be missed.",
-        "The open CommitTelemetryPanel fetched once and did not consume application SSE updates.",
-        "Current database evidence has task_executor webhook delivery for FZ-2247 but no crane_manager webhook delivery at all, even though the repository is configured."
+        "ReadPage caps pages at 100 and owns normalized scope, search adapter, cursor fingerprint, generation checks, counter summaries, and monotonic row-value seek internals.",
+        "SQLite triggers maintain unresolved Jira projection entries, counters, generation, and optional FTS; natural-day transitions run in indexed 5000-row background batches outside requests.",
+        "Initial materialization precedes secondary-index creation, v2-to-v3 replaces old sorting indexes and task triggers, and projection-irrelevant task updates do not invalidate cursors.",
+        "The handler enriches at most 100 task IDs with indexed per-task Top-N events and latest decisions; the browser stages one generation through the loaded frontier before an atomic refresh swap."
       ],
       "validation": [
-        "env GOCACHE=/tmp/well-ambient-fz2247-gocache go test ./... -count=1 passed",
-        "pnpm check passed with 0 errors and existing warnings; pnpm build passed",
-        "affected-file Impeccable detection returned []; Finesse reported P0=0",
-        "authenticated isolated browser validation showed PUSH advance from 3 to 4 without manual refresh and displayed two task_executor plus two crane_manager commits under FZ-2247",
-        "isolated SQLite verification showed one Jira FZ-2247 row owned by 梁志远, zero lowercase duplicate rows, and two commits per repository",
-        "1440x900, 760x900, and 390x844 trajectory modal checks had zero document/panel horizontal overflow, a working close path, and zero browser warnings or errors"
+        "Disposable 10M-row warm benchmark with 100-row pages and 500 samples measured reader first-page p95 0.824ms, cursor-page p95 0.845ms, selective key p95 0.367ms, selective title p95 0.525ms, and midpoint/tail raw seek p95 0.115/0.112ms.",
+        "Full go test ./... and go vet ./... pass; the default and sqlite_fts5 Daily Jira suites pass.",
+        "All 64 frontend contracts pass; svelte-check has zero errors, production build passes, and Impeccable/Finesse report no Daily Jira findings.",
+        "Authenticated isolated browser validation loaded 260 rows and preserved scrollTop 13144.5, scrollHeight 13555, and equal 519.5px panels across a real generation-changing 30-second automatic refresh."
       ],
       "touched_files": [
-        "internal/telemetry/handler.go",
-        "internal/telemetry/task_identity_test.go",
+        "internal/dailyjira/read_model.go",
+        "internal/dailyjira/migration.go",
+        "internal/server/daily_jira_handlers.go",
+        "internal/server/daily_jira_projection_worker.go",
+        "internal/db/db.go",
+        "web/src/components/DailyJiraAudit.svelte",
+        "cmd/daily-jira-read-bench/main.go",
+        "docs/daily-jira-10m-read-architecture.md"
+      ],
+      "next_action": "Rehearse the first materialization on a production-sized backup, schedule the migration and controlled service restart, then capture HTTP p95, SQLite busy time, stale-cursor rate, response bytes, and browser long tasks under real concurrency."
+    },
+    "daily_jira_actor_drift_fix": {
+      "status": "complete_locally_restart_required",
+      "findings": [
+        "The retained FZ-2257 event jira:FZ-2257:2964008:0 records priority Medium to Highest with actor 武海洋 [X], while a controlled read-only Jira query returns the same event facts with actor 武海洋.",
+        "Actor display-name drift entered the immutable payload hash and failed both the 30-second worker and the manual endpoint that reuses it; the button was not the root cause.",
+        "AppendSourceEventAllowingActorDrift first enforces the full hash, then retries with the retained actor only for an existing dedupe-key conflict. Different business payloads still return ErrSourceEventConflict.",
+        "The existing UI already treats manual synchronization as a small secondary action and automatically refreshes through telemetry SSE with a visible-page 30-second polling fallback; no frontend edit was needed.",
+        "Canonical bootstrap reports the project guidance as existing, and the global pre-delivery reflection gate is present in project AGENTS without replacing project-specific cold-start, UI, or skill routing."
+      ],
+      "validation": [
+        "The exact FZ-2257 regression failed before the fix and now passes; a two-cycle mock Jira worker regression confirms the second author-renamed cycle succeeds with one retained source event.",
+        "A controlled live Jira read-only probe confirmed history 2964008 still represents priority Medium to Highest and only the author display name changed.",
+        "A full read-only replay copied 205041 retained events into memory and checked all 185 current Jira issues with zero conflicts and zero new evidence.",
+        "go test ./... -count=1 and go vet ./... pass; all 57 frontend contracts pass.",
+        "Svelte and TypeScript checks report zero errors with 86 existing warnings; the production build and git diff hygiene pass; Impeccable returns no Daily Jira findings.",
+        "No real Jira write, main-database mutation, service restart, or deployment was performed."
+      ],
+      "touched_files": [
+        "AGENTS.md",
+        "internal/performance/source_events.go",
+        "internal/performance/module_test.go",
+        "internal/server/jira_worker.go",
+        "internal/server/jira_worker_test.go",
+        ".agents/state.json",
+        "task_plan.md",
+        "findings.md",
+        "progress.md"
+      ],
+      "next_action": "Restart the main service through the normal controlled path, then verify the jira-inbound checkpoint clears and observe one ordinary Jira change refresh Daily Jira automatically; no restart was performed in this task."
+    },
+    "latest_diagnostic": {
+      "goal": "Eliminate permanent and multi-minute Jira status/comment staleness without a DL-4309-specific patch.",
+      "status": "complete_locally",
+      "findings": [
+        "DL-4309 was already Done with comment 533697 in Jira at about 22:41 and appeared locally around 22:45, proving delayed reconciliation and UI refresh rather than a permanent Jira authorization failure.",
+        "The primary JQL excludes Done immediately, stable issues refetched comments serially and sometimes twice per cycle, comment-only changes did not broadcast, and Task, Demand, and Decision views relied on 15 to 60 second polling.",
+        "Durable cycle and issue watermarks, bounded known-key overlap queries, per-key merge and recency ordering, current comment projection, and success-only checkpoint advancement close the inbound boundary.",
+        "Changed issues broadcast immediately; per-client SSE overflow is retained in a deduplicated pending set, and the shared browser scheduler coalesces updates, queues an in-flight follow-up, defers hidden tabs, and preserves polling fallback.",
+        "Public status now reports safe Jira inbound health states and timestamps without leaking concrete provider errors."
+      ],
+      "validation": [
+        "Full Go tests pass with controlled loopback permission and go vet passes with an isolated build cache",
+        "All 45 frontend contracts pass; 9 directly cover shared telemetry refresh and all four Jira-backed consumers",
+        "Svelte and TypeScript checks report zero errors, the production build passes, and git diff hygiene passes",
+        "Impeccable reports no findings on the four consumers; Finesse only reports pre-existing Task and Demand CSS fallbacks outside this change",
+        "Authenticated 1920 by 813 isolated browser validation changes DL-4309 from in progress to done in about 635ms with one work-items request, identical table geometry, and an empty console",
+        "Temporary service workers, copied databases, preview processes, and generated validation files were removed; real Jira and the main database were read-only"
+      ],
+      "touched_files": [
+        "internal/db/db.go",
+        "internal/server/jira_worker.go",
+        "internal/server/jira_worker_test.go",
         "internal/server/notification_handlers.go",
         "internal/server/notification_telemetry_sse_test.go",
         "internal/server/server.go",
-        "internal/server/server_test.go",
-        "web/src/App.svelte",
-        "web/src/components/CommitTelemetryPanel.svelte",
+        "internal/server/jira_sync_status_test.go",
+        "web/src/lib/telemetry-refresh.ts",
+        "web/src/components/TaskKanban.svelte",
+        "web/src/components/DemandKanban.svelte",
+        "web/src/components/DecisionDashboard.svelte",
+        "web/src/components/DailyJiraAudit.svelte",
+        "web/tests/telemetry-refresh.test.ts",
+        "web/tests/telemetry-refresh-consumers.test.ts",
         ".agents/state.json",
-        ".learnings/ERRORS.md",
         "task_plan.md",
+        "findings.md",
         "progress.md"
       ],
-      "next_action": "Deploy the local repair, then use the existing GitLab webhook status/ensure workflow to verify crane_manager sends Push Hook events; no external GitLab mutation was performed in this run."
+      "next_action": "Deploy or restart the backend and frontend through the normal controlled process, then watch api status jira_sync and one ordinary Jira status or comment change; no deployment, service restart, or real Jira mutation was performed."
+    },
+    "performance_diagnostic": {
+      "status": "diagnosis_complete_no_fix",
+      "findings": [
+        "Current work items are 35,566 versus 687 in HEAD, with 34,514 Done and 34,406 locally updated on 2026-08-17.",
+        "TaskKanban performs 72 sequential 500-row API pages, about 33.1MB JSON, roughly 3.0 seconds of service query and encoding, then full-set reactive computation and DOM rendering.",
+        "Exact server search for HR-4202 is about 43 to 46ms and 1.6KB; the slowdown occurs after search selects a result and navigates into the all-items task page.",
+        "Active-only comparison is 1,052 rows, 3 pages, about 971KB and 35ms, proving historical Done rows define the performance cliff.",
+        "Performance Jira history writes analytical samples into task_telemetries and refreshes LastUpdate, crossing the operational catalog boundary.",
+        "The 30-second Jira reconciliation loads the enlarged Jira set and may create about 708 key batches; shouldIncludeInJiraKeepAlive is tested but unused by the production batch builder."
+      ],
+      "validation": [
+        "Authenticated browser decision page reload reached 207 rows in about 2.2 seconds.",
+        "Authenticated global search navigated to a task table that ultimately contained 35,566 unfiltered rows and blocked ordinary DOM inspection during load.",
+        "Three read-only service probes reproduced the all-items path at about 3.0 to 3.1 seconds and exact search at about 43 to 44ms.",
+        "Read-only SQLite EXPLAIN showed temp B-tree sorting and offset growth; no application code or main database data was changed."
+      ],
+      "touched_files": [
+        ".agents/state.json",
+        "task_plan.md",
+        "findings.md",
+        "progress.md"
+      ],
+      "next_action": "If authorized to fix, first separate performance-history visibility from the operational catalog and implement server-side task pagination/search; then make SSE and polling incremental and bound Jira reconciliation before secondary index/compression work."
+    },
+    "performance_fix": {
+      "status": "complete_locally_restart_required",
+      "findings": [
+        "The original screenshot query was abnormal for an interactive read path: it materialized about 35,578 complete task rows although only about 1,052 were active.",
+        "Task default loading is now active-only with database summary aggregation; exact historical Done search fetches the selected record directly and clearing search drops the historical pin.",
+        "Agenda reads bounded field projections and batch-associated evidence in five SQL statements, while one shared frontend resource owns single-flight and freshness.",
+        "Jira reconciliation no longer expands 35,500 local history rows into hundreds of key JQL batches; project-window results remain intersected with known keys.",
+        "Notification SSE projects only required active fields and does not invoke the Email extension on a read.",
+        "DecisionDashboard now polls a release-only endpoint; full delivery snapshots reuse one task/user read and join Git logs through task_telemetries instead of generating an unbounded task_id IN list."
+      ],
+      "validation": [
+        "Real database copy improved the default workset from 35,566 rows, 72 requests, about 33.1MB and 3.0 to 3.1 seconds to 1,052 rows, 3 requests, 971,732 bytes and 105.6ms.",
+        "Exact historical search returned one row in 41.6ms and clearing the global search restored the 1,052-row active set.",
+        "Full Go tests and go vet pass; all 54 frontend contracts pass; Svelte and TypeScript report zero errors; production build passes.",
+        "Impeccable reports no findings and Finesse reports zero P0; only pre-existing pure-white P2 values remain.",
+        "Authenticated isolated browser validation crossed a 15-second refresh interval at wide, 760px, and 390px with no document overflow and no repeated full cockpit scan, SQLite variable overflow, or notification Email hook.",
+        "The 371MB temporary database and binary, temporary pnpm store, local services, and browser tab were removed; the main database and external systems were not modified."
+      ],
+      "next_action": "Restart the main backend and frontend through the normal controlled process so the code and new indexes become active, then monitor slow-SQL logs for one ordinary page and search cycle."
+    },
+    "daily_jira_writeback": {
+      "status": "complete_locally_live_jira_validation_blocked",
+      "findings": [
+        "The old Daily Jira refresh only reloaded the local projection; it did not trigger an inbound Jira cycle, so a stopped or failed worker left stale assignee and comment facts visible after refresh.",
+        "Manual source synchronization now serializes with the 30-second worker and returns the persisted cycle result instead of silently presenting stale data.",
+        "The Jira reporter display name and username are projected into local telemetry so reassignment can target the actual reporter even when that person is outside the configured Daily Jira assignee scope.",
+        "Decision comments are required on both client and server; Jira comment plus optional assignee is written atomically before the local decision transaction, and Jira failure leaves local decision state unchanged."
+      ],
+      "validation": [
+        "Full go test ./... and go vet ./... pass; focused Daily Jira server regressions cover NS2-2262 scope exit, blank comment, atomic specified-person update, reporter return, and Jira failure rollback.",
+        "Eight frontend Daily Jira and telemetry-refresh contracts pass; svelte-check reports zero errors and the production build succeeds.",
+        "Impeccable and Finesse detectors report zero findings for DailyJiraAudit.svelte.",
+        "Built-app Chromium validation with local API mocks passed the real Daily Jira route at 1440x900, 900x900, and 390x844; both target modes, disabled and enabled comment states, submitted payload, manual sync, screenshots, zero console errors, and no document overflow were verified."
+      ],
+      "touched_files": [
+        "internal/db/db.go",
+        "internal/telemetry/jira_client.go",
+        "internal/server/server.go",
+        "internal/server/jira_worker.go",
+        "internal/server/daily_jira_handlers.go",
+        "internal/server/daily_jira_handlers_test.go",
+        "web/src/components/DailyJiraAudit.svelte",
+        "web/tests/daily-jira-decision-writeback.test.ts",
+        ".agents/state.json",
+        "task_plan.md",
+        "findings.md",
+        "progress.md"
+      ],
+      "next_action": "Restart through the normal controlled deployment path, fix or rotate the currently rejected Jira credential, then verify NS2-2262 with one real assignee and comment change; no real Jira mutation was performed."
     },
     "constraints": [
       "Daily Jira must keep agenda/manual decision work intact and remain a decision submenu, not a new top-level cockpit.",
@@ -280,7 +418,7 @@
       ,"Viewport drawer and surface contrast pnpm -C web check, pnpm -C web build, git diff --check, reduced-motion, and detector P0 gates passed"
     ],
     "blockers": [],
-    "next_action": "No remaining local implementation action; deploy or restart the main service only when requested."
+    "next_action": "Restart through the normal controlled deployment path, restore valid Jira authentication, and verify NS2-2262 end to end; no deployment, main-database change, or real Jira write was performed."
   },
   "compression": {
     "meaningful_tool_calls": 154,

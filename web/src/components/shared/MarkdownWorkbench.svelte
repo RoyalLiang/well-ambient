@@ -36,6 +36,8 @@
   export let placeholder = '使用 Markdown 编写内容…';
   export let minHeight = 460;
   export let showToolbar = true;
+  export let showDocumentMeta = false;
+  export let embedded = false;
   export let streaming = false;
   export let inlineEditing = false;
   export let saving = false;
@@ -60,6 +62,8 @@
   $: rendered = renderMarkdown(value);
   $: normalizedAvailableModes = Array.from(new Set<MarkdownMode>(availableModes.length ? availableModes : ['live']));
   $: toolbarModes = normalizedAvailableModes.includes(mode) ? normalizedAvailableModes : [mode];
+  $: showInlineEditStatus = inlineEditing && mode === 'edit';
+  $: showWorkbenchToolbar = showToolbar && (showDocumentMeta || toolbarModes.length > 1);
   $: lineCount = value ? value.split('\n').length : 1;
   $: if (editorView && value !== editorView.state.doc.toString()) {
     editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: value } });
@@ -432,6 +436,8 @@
   class:streaming
   class:readonly
   class:toolbar-hidden={!showToolbar}
+  class:workbench-header-hidden={!showInlineEditStatus && !showWorkbenchToolbar}
+  class:embedded
   class:inline-editable={inlineEditing && !readonly}
   class:editing-inline={inlineEditing && mode === 'edit'}
   class:auto-height={autoHeight}
@@ -441,7 +447,7 @@
   aria-busy={saving}
   bind:this={workbenchRoot}
 >
-  {#if inlineEditing && mode === 'edit'}
+  {#if showInlineEditStatus}
     <header class="inline-edit-status" aria-live="polite">
       <div>
         <strong>{saving ? '正在保存 Markdown…' : '正在编辑 Markdown'}</strong>
@@ -449,22 +455,26 @@
       </div>
       <span>{lineCount} 行 · {value.length} 字符</span>
     </header>
-  {:else if showToolbar}
-    <header class="workbench-toolbar">
-      <div class="document-identity">
-        <strong>{label}</strong>
-        <span>{description}</span>
-      </div>
-      <div class="mode-switch" aria-label="Markdown 显示模式">
-        {#each toolbarModes as toolbarMode}
-          <button
-            type="button"
-            class:active={mode === toolbarMode}
-            aria-pressed={mode === toolbarMode}
-            on:click={() => setMode(toolbarMode)}
-          >{modeLabels[toolbarMode]}</button>
-        {/each}
-      </div>
+  {:else if showWorkbenchToolbar}
+    <header class:meta-hidden={!showDocumentMeta} class="workbench-toolbar">
+      {#if showDocumentMeta}
+        <div class="document-identity">
+          <strong>{label}</strong>
+          <span>{description}</span>
+        </div>
+      {/if}
+      {#if toolbarModes.length > 1}
+        <div class="mode-switch" aria-label="Markdown 显示模式">
+          {#each toolbarModes as toolbarMode}
+            <button
+              type="button"
+              class:active={mode === toolbarMode}
+              aria-pressed={mode === toolbarMode}
+              on:click={() => setMode(toolbarMode)}
+            >{modeLabels[toolbarMode]}</button>
+          {/each}
+        </div>
+      {/if}
     </header>
   {/if}
 
@@ -510,6 +520,11 @@
     background: var(--wa-surface-flat, #fbfdfe);
     color: var(--wa-text-main, #293847);
   }
+  .markdown-workbench.embedded {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
   .workbench-toolbar {
     min-height: 54px;
     display: flex;
@@ -520,6 +535,7 @@
     border-bottom: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18));
     background: var(--wa-surface-inset, #f5f8fb);
   }
+  .workbench-toolbar.meta-hidden { justify-content: flex-end; }
   .inline-edit-status {
     min-height: 48px;
     display: flex;
@@ -576,6 +592,7 @@
   }
   .editor-pane, .preview-pane { min-width: 0; min-height: 0; overflow: auto; }
   .editor-pane { border-right: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); background: #fbfcfd; }
+  .embedded .editor-pane, .embedded .preview-pane { background: transparent; }
   .editor-host { height: 100%; min-height: inherit; }
   .mode-live .workbench-body, .mode-edit .workbench-body, .mode-preview .workbench-body { grid-template-columns: minmax(0, 1fr); }
   .mode-live .preview-pane, .mode-edit .preview-pane, .mode-preview .editor-pane { display: none; }
@@ -608,6 +625,8 @@
   .streaming .preview-pane::after { content: ''; display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; border-radius: 2px; background: var(--wa-accent, #008f96); vertical-align: -.15em; animation: caret-blink .8s steps(1) infinite; }
   .toolbar-hidden { grid-template-rows: minmax(0, 1fr); }
   .toolbar-hidden.editing-inline { grid-template-rows: auto minmax(0, 1fr); }
+  .workbench-header-hidden { grid-template-rows: minmax(0, 1fr) auto; }
+  .toolbar-hidden.workbench-header-hidden { grid-template-rows: minmax(0, 1fr); }
   .auto-height.mode-preview {
     height: auto;
     min-height: var(--workbench-height);
@@ -615,6 +634,7 @@
     overflow: visible;
   }
   .auto-height.mode-preview.toolbar-hidden { grid-template-rows: auto; }
+  .auto-height.mode-preview.workbench-header-hidden { grid-template-rows: auto; }
   .auto-height.mode-preview .workbench-body,
   .auto-height.mode-preview .preview-pane {
     min-height: var(--workbench-height);

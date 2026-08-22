@@ -131,8 +131,8 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	var latest db.ConfigVersion
 	err := db.DB.Order("version desc").First(&latest).Error
 	if err == nil {
-		var restored config.Config
-		if unmarshalErr := json.Unmarshal([]byte(latest.ConfigJSON), &restored); unmarshalErr != nil {
+		restored, unmarshalErr := restoreVersionedConfig(*cfg, latest.ConfigJSON)
+		if unmarshalErr != nil {
 			return fmt.Errorf("latest database config snapshot is invalid: %w", unmarshalErr)
 		}
 		*cfg = restored
@@ -172,6 +172,45 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	return nil
 }
 
+// restoreVersionedConfig keeps archived sections authoritative while allowing
+// configuration sections introduced after that archive was written to inherit
+// their values from the current file. Without this schema-evolution merge, an
+// old snapshot silently resets every newly added top-level section to Go zero
+// values during startup.
+func restoreVersionedConfig(fileConfig config.Config, archivedJSON string) (config.Config, error) {
+	var archivedSections map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(archivedJSON), &archivedSections); err != nil {
+		return config.Config{}, err
+	}
+	if archivedSections == nil {
+		archivedSections = make(map[string]json.RawMessage)
+	}
+
+	fileJSON, err := json.Marshal(fileConfig)
+	if err != nil {
+		return config.Config{}, err
+	}
+	var fileSections map[string]json.RawMessage
+	if err := json.Unmarshal(fileJSON, &fileSections); err != nil {
+		return config.Config{}, err
+	}
+	for section, value := range fileSections {
+		if _, exists := archivedSections[section]; !exists {
+			archivedSections[section] = value
+		}
+	}
+
+	mergedJSON, err := json.Marshal(archivedSections)
+	if err != nil {
+		return config.Config{}, err
+	}
+	var restored config.Config
+	if err := json.Unmarshal(mergedJSON, &restored); err != nil {
+		return config.Config{}, err
+	}
+	return restored, nil
+}
+
 func (s *Server) applyConfig(next config.Config) error {
 	if s.configPath != "" {
 		if err := config.SaveConfig(s.configPath, &next); err != nil {
@@ -182,6 +221,9 @@ func (s *Server) applyConfig(next config.Config) error {
 		log.Printf("Warning: configPath is empty, configuration not saved to disk")
 	}
 	*s.config = next
+	if s.performance != nil {
+		s.performance.Reconfigure(s.performanceSettings())
+	}
 	return nil
 }
 

@@ -11,6 +11,8 @@ import (
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/telemetry"
+
+	"gorm.io/gorm"
 )
 
 type StrongestBrainDecisionQueueResponse struct {
@@ -475,13 +477,12 @@ func buildStrongestBrainScheduleSnapshot(now time.Time, projectScopes ...[]strin
 	if len(projectScopes) > 0 {
 		projectKeys = projectScopes[0]
 	}
-	var tasks []db.TaskTelemetry
-	query := db.ApplyTaskProjectScope(db.DB.Where("status != ?", "archived"), projectKeys)
-	if err := query.Find(&tasks).Error; err != nil {
+	tasks, err := loadStrongestBrainTasks(projectKeys)
+	if err != nil {
 		return ScheduleResponseDTO{}, err
 	}
-	var users []userdb.User
-	if err := db.DB.Find(&users).Error; err != nil {
+	users, err := loadStrongestBrainUsers()
+	if err != nil {
 		return ScheduleResponseDTO{}, err
 	}
 	return buildScheduleResponse(tasks, users, now), nil
@@ -492,28 +493,85 @@ func buildStrongestBrainExecutionSnapshot(now time.Time, projectScopes ...[]stri
 	if len(projectScopes) > 0 {
 		projectKeys = projectScopes[0]
 	}
-	var tasks []db.TaskTelemetry
-	query := db.ApplyTaskProjectScope(db.DB.Where("status != ?", "archived"), projectKeys)
-	if err := query.Find(&tasks).Error; err != nil {
+	tasks, err := loadStrongestBrainTasks(projectKeys)
+	if err != nil {
 		return ExecutionTasksResponseDTO{}, nil, err
 	}
-	var taskIDs []string
-	for _, task := range tasks {
-		if strings.TrimSpace(task.TaskID) != "" {
-			taskIDs = append(taskIDs, strings.TrimSpace(task.TaskID))
-		}
+	logs, err := loadStrongestBrainExecutionLogs(projectKeys)
+	if err != nil {
+		return ExecutionTasksResponseDTO{}, nil, err
 	}
-	var logs []db.GitCommitLog
-	if len(taskIDs) > 0 {
-		if err := db.DB.Where("task_id IN ?", taskIDs).Order("created_at desc").Find(&logs).Error; err != nil {
-			return ExecutionTasksResponseDTO{}, nil, err
-		}
-	}
-	var users []userdb.User
-	if err := db.DB.Find(&users).Error; err != nil {
+	users, err := loadStrongestBrainUsers()
+	if err != nil {
 		return ExecutionTasksResponseDTO{}, nil, err
 	}
 	return buildExecutionTasksResponse(tasks, logs, users, now), logs, nil
+}
+
+func buildStrongestBrainDeliverySnapshots(now time.Time, projectKeys []string) (ScheduleResponseDTO, ExecutionTasksResponseDTO, []db.GitCommitLog, error) {
+	tasks, err := loadStrongestBrainTasks(projectKeys)
+	if err != nil {
+		return ScheduleResponseDTO{}, ExecutionTasksResponseDTO{}, nil, err
+	}
+	users, err := loadStrongestBrainUsers()
+	if err != nil {
+		return ScheduleResponseDTO{}, ExecutionTasksResponseDTO{}, nil, err
+	}
+	logs, err := loadStrongestBrainExecutionLogs(projectKeys)
+	if err != nil {
+		return ScheduleResponseDTO{}, ExecutionTasksResponseDTO{}, nil, err
+	}
+	return buildScheduleResponse(tasks, users, now), buildExecutionTasksResponse(tasks, logs, users, now), logs, nil
+}
+
+func loadStrongestBrainTasks(projectKeys []string) ([]db.TaskTelemetry, error) {
+	var tasks []db.TaskTelemetry
+	query := db.ApplyTaskProjectScope(
+		db.DB.Where("LOWER(TRIM(status)) <> ?", "archived"),
+		projectKeys,
+	)
+	if err := query.Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func loadStrongestBrainUsers() ([]userdb.User, error) {
+	var users []userdb.User
+	if err := db.DB.Find(&users).Error; err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func strongestBrainExecutionLogsQuery(projectKeys []string) *gorm.DB {
+	query := db.DB.
+		Model(&db.GitCommitLog{}).
+		Select("git_commit_logs.*").
+		Joins("JOIN task_telemetries AS task_scope ON task_scope.task_id = git_commit_logs.task_id").
+		Where("LOWER(TRIM(task_scope.status)) <> ?", "archived")
+
+	projectKeys = db.NormalizeProjectKeys(projectKeys)
+	if len(projectKeys) == 0 {
+		return query
+	}
+	clauses := []string{"UPPER(task_scope.project_key) IN ?"}
+	args := []interface{}{projectKeys}
+	for _, projectKey := range projectKeys {
+		clauses = append(clauses, "((task_scope.project_key IS NULL OR TRIM(task_scope.project_key) = '') AND UPPER(task_scope.task_id) LIKE ?)")
+		args = append(args, projectKey+"-%")
+	}
+	return query.Where("("+strings.Join(clauses, " OR ")+")", args...)
+}
+
+func loadStrongestBrainExecutionLogs(projectKeys []string) ([]db.GitCommitLog, error) {
+	var logs []db.GitCommitLog
+	if err := strongestBrainExecutionLogsQuery(projectKeys).
+		Order("git_commit_logs.created_at DESC").
+		Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 type strongestBrainDecisionReadModel struct {
@@ -561,13 +619,9 @@ func buildStrongestBrainDecisionSnapshot(now time.Time, projectScopes ...[]strin
 	if len(projectScopes) > 0 {
 		projectKeys = projectScopes[0]
 	}
-	schedule, err := buildStrongestBrainScheduleSnapshot(now, projectKeys)
+	schedule, execution, logs, err := buildStrongestBrainDeliverySnapshots(now, projectKeys)
 	if err != nil {
-		return strongestBrainDecisionReadModel{}, fmt.Errorf("build schedule snapshot: %w", err)
-	}
-	execution, logs, err := buildStrongestBrainExecutionSnapshot(now, projectKeys)
-	if err != nil {
-		return strongestBrainDecisionReadModel{}, fmt.Errorf("build execution snapshot: %w", err)
+		return strongestBrainDecisionReadModel{}, fmt.Errorf("build delivery snapshots: %w", err)
 	}
 	return buildStrongestBrainDecisionReadModel(schedule, execution, logs, now, projectKeys), nil
 }

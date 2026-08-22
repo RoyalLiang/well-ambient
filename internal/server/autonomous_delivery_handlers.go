@@ -142,7 +142,8 @@ func (s *Server) handleListDemandSpecs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var specs []db.DemandSpecVersion
-	if err := db.DB.Where("demand_id = ?", demandID).Order("version desc").Find(&specs).Error; err != nil {
+	if err := db.DB.WithContext(r.Context()).Where("demand_id = ?", demandID).
+		Order("version desc").Limit(100).Find(&specs).Error; err != nil {
 		http.Error(w, "failed to list demand specs", http.StatusInternalServerError)
 		return
 	}

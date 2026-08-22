@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { AdminInspectorRecord, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS, formatAdminDate } from '../lib/admin-console/contract';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
 
   interface ProjectScore {
     id?: number;
@@ -436,13 +437,13 @@
       <div class="project-health-state wa-admin-card font-mono">正在加载项目证据健康数据</div>
     {:else if errorMsg}
       <div class="project-health-state is-error wa-admin-card font-mono">加载失败 · {errorMsg}</div>
-    {:else if searchMatchedScores.length === 0}
-      <div class="project-health-state wa-admin-card font-mono">没有匹配的项目证据数据</div>
+    {:else if scores.length === 0}
+      <div class="project-health-state wa-admin-card font-mono">暂无项目证据数据</div>
     {:else}
       <div class="health-decision-strip wa-admin-card" aria-label="证据健康异常筛选">
         <div class="health-decision-copy">
           <span class="eyebrow">Evidence triage</span>
-          <strong>{redProjectCount > 0 ? `${redProjectCount} 个红区项目需要今天介入` : yellowProjectCount > 0 ? `${yellowProjectCount} 个黄区项目需要本周补证据` : '当前项目证据健康稳定'}</strong>
+          <strong>{searchMatchedScores.length === 0 ? '当前搜索无匹配项目' : redProjectCount > 0 ? `${redProjectCount} 个红区项目需要今天介入` : yellowProjectCount > 0 ? `${yellowProjectCount} 个黄区项目需要本周补证据` : '当前项目证据健康稳定'}</strong>
           <small>{searchMatchedScores.length} 个可见项目 · 平均健康度 {averageScore}% · 按最低证据维度排序</small>
         </div>
         <div class="health-filter-group" role="group" aria-label="按健康状态筛选">
@@ -498,7 +499,9 @@
                 <tbody>
                   {#if rankedFilteredScores.length === 0}
                     <tr>
-                      <td colspan={projectHealthColumns.length + 1} class="project-health-empty-row">当前状态筛选下暂无项目</td>
+                      <td colspan={projectHealthColumns.length + 1} class="project-health-empty-row">
+                        {searchQuery ? '没有匹配当前搜索的项目' : '当前状态筛选下暂无项目'}
+                      </td>
                     </tr>
                   {:else}
                   {#each rankedFilteredScores as score}
@@ -609,8 +612,13 @@
             </div>
           {:else}
             <div class="project-health-inspector-empty">
-              <strong>暂无项目证据</strong>
-              <span>等待项目分数生成后显示检查项。</span>
+              {#if searchQuery || healthFilter !== 'all'}
+                <strong>当前筛选下暂无项目</strong>
+                <span>调整搜索词或健康状态筛选后继续查看。</span>
+              {:else}
+                <strong>暂无项目证据</strong>
+                <span>等待项目分数生成后显示检查项。</span>
+              {/if}
             </div>
           {/if}
         </aside>
@@ -633,7 +641,7 @@
             <span>项目健康诊断</span>
             <h3>{getDisplayName(selectedProjectScore)} 健康诊断与介入方案</h3>
           </div>
-          <button class="close-btn" on:click={closeDetailsModal} aria-label="关闭健康诊断弹窗">&times;</button>
+          <OverlayCloseButton label="关闭健康诊断弹窗" on:click={closeDetailsModal} />
         </div>
         
         <div class="modal-body">
@@ -1174,19 +1182,6 @@
     font-weight: 800;
     color: #f1f5f9;
     letter-spacing: 0;
-  }
-
-  .close-btn {
-    background: transparent;
-    border: none;
-    color: #64748b;
-    font-size: 1.5rem;
-    cursor: pointer;
-    transition: color 0.2s, transform 0.2s;
-  }
-  .close-btn:hover {
-    color: #f8fafc;
-    transform: scale(1.1);
   }
 
   .modal-body {
@@ -2874,15 +2869,6 @@
     color: var(--wa-text-strong);
   }
 
-  .close-btn {
-    color: var(--wa-text-muted);
-  }
-
-  .close-btn:hover {
-    color: var(--wa-text-strong);
-    transform: none;
-  }
-
   .intervention-brief-card,
   .detail-grid,
   .phdi-display,
@@ -2957,6 +2943,10 @@
 
   .health-diagnosis-modal .modal-header {
     flex: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--wa-touch-h, 44px);
+    align-items: start;
+    gap: var(--wa-space-4, 16px);
     min-height: 68px;
     box-sizing: border-box;
     margin: 0;
@@ -2980,39 +2970,14 @@
   }
 
   .health-diagnosis-modal .modal-header h3 {
-    overflow: hidden;
     margin: 0;
     color: var(--wa-text-strong);
     font-size: 15px;
     line-height: 1.3;
     font-weight: 780;
     letter-spacing: -0.01em;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .health-diagnosis-modal .close-btn {
-    width: 36px;
-    height: 36px;
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    border: 1px solid transparent;
-    border-radius: 10px;
-    color: var(--wa-text-muted);
-    font-size: 21px;
-    line-height: 1;
-  }
-
-  .health-diagnosis-modal .close-btn:hover {
-    border-color: var(--wa-border-soft);
-    background: var(--wa-surface-inset);
-    color: var(--wa-text-strong);
-  }
-
-  .health-diagnosis-modal .close-btn:focus-visible {
-    outline: 3px solid var(--wa-accent-soft);
-    outline-offset: 1px;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
 
   .health-diagnosis-modal .modal-body {
@@ -3584,6 +3549,7 @@
   @media (max-width: 620px) {
     .health-diagnosis-modal .modal-header {
       min-height: 62px;
+      gap: var(--wa-space-3, 12px);
       padding: 12px 12px 11px 14px;
     }
 

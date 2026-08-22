@@ -12,6 +12,7 @@ import (
 	appconfig "well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/deliveryplanning"
+	"well-ambient/internal/readmodel"
 
 	"gorm.io/gorm"
 )
@@ -26,8 +27,17 @@ type releaseMutationRequest struct {
 }
 
 type releasePlanItem struct {
-	Release        db.ReleaseVersion `json:"release"`
-	JiraIssueCount int64             `json:"jira_issue_count"`
+	Release        db.ReleaseVersion            `json:"release"`
+	JiraIssueCount int64                        `json:"jira_issue_count"`
+	Lifecycle      releaseLifecycleCapabilities `json:"lifecycle"`
+}
+
+type releaseLifecycleCapabilities struct {
+	CanPublish        bool   `json:"can_publish"`
+	CanArchive        bool   `json:"can_archive"`
+	CanDiscard        bool   `json:"can_discard"`
+	CanDelete         bool   `json:"can_delete"`
+	DeleteBlockReason string `json:"delete_block_reason,omitempty"`
 }
 
 type releaseJiraLinkRequest struct {
@@ -54,82 +64,138 @@ type bulkReleaseJiraIssueRequest struct {
 	Reason      string   `json:"reason"`
 }
 
+type publishReleaseRequest struct {
+	ReleaseDate string `json:"release_date"`
+	Reason      string `json:"reason"`
+}
+
+type releaseLifecycleRequest struct {
+	Reason      string `json:"reason"`
+	ConfirmName string `json:"confirm_name"`
+}
+
 func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	projectKey := deliveryplanning.NormalizeProjectKey(r.URL.Query().Get("project_key"))
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	if status != "" && !validReleaseStatus(status) {
-		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, or archived")
+		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, archived, or discarded")
 		return
 	}
 
-	var releases []db.ReleaseVersion
-	query := db.DB.WithContext(r.Context()).
-		Order("release_date IS NULL, release_date ASC, name ASC")
-	if projectKey != "" {
-		query = query.Where("project_key = ?", projectKey)
-	}
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	if err := query.Find(&releases).Error; err != nil {
+	position := struct {
+		SortDate time.Time `json:"sort_date"`
+		Name     string    `json:"name"`
+		ID       uint      `json:"id"`
+	}{}
+	var items []releasePlanItem
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "release_facts", Contract: "releases",
+			Scope:  map[string]string{"project_key": projectKey, "status": status, "q": search},
+			Cursor: r.URL.Query().Get("cursor"), Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		const openEndedDate = "9999-12-31T23:59:59Z"
+		query := tx.Order("COALESCE(release_date, '9999-12-31T23:59:59Z') ASC, name ASC, id ASC").Limit(window.Limit + 1)
+		if projectKey != "" {
+			query = query.Where("project_key = ?", projectKey)
+		}
+		if status != "" {
+			query = query.Where("status = ?", status)
+		}
+		if search != "" {
+			like := "%" + search + "%"
+			query = query.Where("LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(project_key) LIKE ? OR LOWER(external_id) LIKE ?", like, like, like, like)
+		}
+		if window.HasCursor {
+			query = query.Where(`COALESCE(release_date, ?) > ?
+				OR (COALESCE(release_date, ?) = ? AND name > ?)
+				OR (COALESCE(release_date, ?) = ? AND name = ? AND id > ?)`,
+				openEndedDate, position.SortDate,
+				openEndedDate, position.SortDate, position.Name,
+				openEndedDate, position.SortDate, position.Name, position.ID)
+		}
+		var releases []db.ReleaseVersion
+		if err := query.Find(&releases).Error; err != nil {
+			return fmt.Errorf("release_query_failed: %w", err)
+		}
+		hasMore := len(releases) > window.Limit
+		if hasMore {
+			releases = releases[:window.Limit]
+		}
+
+		releaseIDs := make([]uint, 0, len(releases))
+		for _, release := range releases {
+			releaseIDs = append(releaseIDs, release.ID)
+		}
+		issueCountsByReleaseID := make(map[uint]int64, len(releaseIDs))
+		activeLinkCountsByReleaseID := make(map[uint]int64, len(releaseIDs))
+		jiraLinkCountsByReleaseID := make(map[uint]int64, len(releaseIDs))
+		if len(releaseIDs) > 0 {
+			type releaseCount struct {
+				ReleaseVersionID uint
+				Count            int64
+			}
+			var counts []releaseCount
+			if err := tx.Model(&db.WorkItemReleaseLink{}).Select("release_version_id, COUNT(*) AS count").
+				Where("release_version_id IN ? AND relation = ? AND active = ? AND is_primary = ?", releaseIDs, deliveryplanning.ReleaseTargetFix, true, true).
+				Group("release_version_id").Scan(&counts).Error; err != nil {
+				return fmt.Errorf("release_issue_count_query_failed: %w", err)
+			}
+			for _, count := range counts {
+				issueCountsByReleaseID[count.ReleaseVersionID] = count.Count
+			}
+			counts = nil
+			if err := tx.Model(&db.WorkItemReleaseLink{}).Select("release_version_id, COUNT(*) AS count").
+				Where("release_version_id IN ? AND active = ?", releaseIDs, true).Group("release_version_id").Scan(&counts).Error; err != nil {
+				return fmt.Errorf("release_active_link_count_query_failed: %w", err)
+			}
+			for _, count := range counts {
+				activeLinkCountsByReleaseID[count.ReleaseVersionID] = count.Count
+			}
+			counts = nil
+			if err := tx.Model(&db.ReleaseJiraLink{}).Select("release_version_id, COUNT(*) AS count").
+				Where("release_version_id IN ?", releaseIDs).Group("release_version_id").Scan(&counts).Error; err != nil {
+				return fmt.Errorf("release_jira_link_count_query_failed: %w", err)
+			}
+			for _, count := range counts {
+				jiraLinkCountsByReleaseID[count.ReleaseVersionID] = count.Count
+			}
+		}
+
+		items = make([]releasePlanItem, 0, len(releases))
+		for _, release := range releases {
+			items = append(items, releasePlanItem{
+				Release: release, JiraIssueCount: issueCountsByReleaseID[release.ID],
+				Lifecycle: releaseLifecycleFor(release, activeLinkCountsByReleaseID[release.ID], jiraLinkCountsByReleaseID[release.ID]),
+			})
+		}
+		last := position
+		if len(releases) > 0 {
+			last.Name = releases[len(releases)-1].Name
+			last.ID = releases[len(releases)-1].ID
+			last.SortDate = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+			if releases[len(releases)-1].ReleaseDate != nil {
+				last.SortDate = releases[len(releases)-1].ReleaseDate.UTC()
+			}
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		writeDeliveryError(w, http.StatusInternalServerError, "release_query_failed", err.Error())
 		return
 	}
 
-	releaseIDs := make([]uint, 0, len(releases))
-	for _, release := range releases {
-		releaseIDs = append(releaseIDs, release.ID)
-	}
-	issueCountsByReleaseID := make(map[uint]int64, len(releaseIDs))
-	if len(releaseIDs) > 0 {
-		var counts []struct {
-			ReleaseVersionID uint
-			Count            int64
-		}
-		if err := db.DB.WithContext(r.Context()).
-			Model(&db.WorkItemReleaseLink{}).
-			Select("release_version_id, COUNT(*) AS count").
-			Where(
-				"release_version_id IN ? AND relation = ? AND active = ? AND is_primary = ?",
-				releaseIDs,
-				deliveryplanning.ReleaseTargetFix,
-				true,
-				true,
-			).
-			Group("release_version_id").
-			Scan(&counts).Error; err != nil {
-			writeDeliveryError(w, http.StatusInternalServerError, "release_issue_count_query_failed", err.Error())
-			return
-		}
-		for _, count := range counts {
-			issueCountsByReleaseID[count.ReleaseVersionID] = count.Count
-		}
-	}
-
-	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	items := make([]releasePlanItem, 0, len(releases))
-	for _, release := range releases {
-		if search != "" {
-			haystack := strings.ToLower(strings.Join([]string{
-				release.Name,
-				release.Description,
-				release.ProjectKey,
-				release.ExternalID,
-			}, " "))
-			if !strings.Contains(haystack, search) {
-				continue
-			}
-		}
-		items = append(items, releasePlanItem{
-			Release:        release,
-			JiraIssueCount: issueCountsByReleaseID[release.ID],
-		})
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items": items,
-		"total": len(items),
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items), "total_is_exact": !page.HasMore, "page": page})
 }
 
 func (s *Server) handleListReleaseJiraIssues(w http.ResponseWriter, r *http.Request) {
@@ -159,19 +225,6 @@ func (s *Server) handleListReleaseJiraIssues(w http.ResponseWriter, r *http.Requ
 		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_jira_issue_scope", "scope must be linked or candidates")
 		return
 	}
-	limit := 100
-	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
-		parsed, parseErr := strconv.Atoi(rawLimit)
-		if parseErr != nil || parsed < 1 {
-			writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_limit", "limit must be a positive integer")
-			return
-		}
-		if parsed > 200 {
-			parsed = 200
-		}
-		limit = parsed
-	}
-
 	type jiraIssueRow struct {
 		WorkItemID         string
 		ExternalKey        string
@@ -182,49 +235,88 @@ func (s *Server) handleListReleaseJiraIssues(w http.ResponseWriter, r *http.Requ
 		ProjectKey         string
 		CurrentReleaseID   uint
 		CurrentReleaseName string
+		LastUpdate         time.Time
 	}
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	position := struct {
+		LastUpdate time.Time `json:"last_update"`
+		TaskID     string    `json:"task_id"`
+	}{}
 	rows := make([]jiraIssueRow, 0)
-	query := db.DB.WithContext(r.Context()).
-		Table("task_telemetries AS tasks").
-		Select(`
-			tasks.task_id AS work_item_id,
-			tasks.external_key,
-			tasks.title,
-			tasks.issue_type,
-			tasks.status,
-			tasks.assignee,
-			tasks.project_key,
-			COALESCE(links.release_version_id, 0) AS current_release_id,
-			COALESCE(current_release.name, '') AS current_release_name
-		`).
-		Joins(`
-			LEFT JOIN work_item_release_links AS links
-				ON links.work_item_id = tasks.task_id
-				AND links.active = ?
-				AND links.relation = ?
-				AND links.is_primary = ?
-		`, true, deliveryplanning.ReleaseTargetFix, true).
-		Joins("LEFT JOIN release_versions AS current_release ON current_release.id = links.release_version_id").
-		Where("tasks.source = ?", "jira").
-		Where("tasks.project_key = ?", deliveryplanning.NormalizeProjectKey(release.ProjectKey)).
-		Where("LOWER(tasks.issue_type) IN ?", []string{"demand", "requirement", "story", "bug", "defect", "缺陷", "故障"}).
-		Order("tasks.last_update DESC, tasks.task_id ASC").
-		Limit(limit)
-	if scope == "linked" {
-		query = query.Where("links.release_version_id = ?", release.ID)
-	} else {
-		query = query.Where("links.release_version_id IS NULL OR links.release_version_id <> ?", release.ID)
-	}
-	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
-		pattern := "%" + strings.ToLower(search) + "%"
-		query = query.Where(
-			"(LOWER(tasks.task_id) LIKE ? OR LOWER(tasks.external_key) LIKE ? OR LOWER(tasks.title) LIKE ?)",
-			pattern,
-			pattern,
-			pattern,
-		)
-	}
-	if err := query.Scan(&rows).Error; err != nil {
+	var page readPageMeta
+	err = db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "task_facts", Contract: "release-jira-issues",
+			Scope: map[string]interface{}{
+				"release_id": release.ID, "project_key": deliveryplanning.NormalizeProjectKey(release.ProjectKey),
+				"scope": scope, "q": search,
+			},
+			Cursor: r.URL.Query().Get("cursor"), Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		query := tx.Table("task_telemetries AS tasks").
+			Select(`
+				tasks.task_id AS work_item_id,
+				tasks.external_key,
+				tasks.title,
+				tasks.issue_type,
+				tasks.status,
+				tasks.assignee,
+				tasks.project_key,
+				tasks.last_update,
+				COALESCE(links.release_version_id, 0) AS current_release_id,
+				COALESCE(current_release.name, '') AS current_release_name
+			`).
+			Joins(`
+				LEFT JOIN work_item_release_links AS links
+					ON links.work_item_id = tasks.task_id
+					AND links.active = ?
+					AND links.relation = ?
+					AND links.is_primary = ?
+			`, true, deliveryplanning.ReleaseTargetFix, true).
+			Joins("LEFT JOIN release_versions AS current_release ON current_release.id = links.release_version_id").
+			Where("tasks.source = ?", "jira").
+			Where("tasks.project_key = ?", deliveryplanning.NormalizeProjectKey(release.ProjectKey)).
+			Where("LOWER(TRIM(tasks.issue_type)) IN ?", []string{"demand", "requirement", "story", "bug", "defect", "缺陷", "故障"}).
+			Order("tasks.last_update DESC, tasks.task_id ASC").
+			Limit(window.Limit + 1)
+		if scope == "linked" {
+			query = query.Where("links.release_version_id = ?", release.ID)
+		} else {
+			query = query.Where("links.release_version_id IS NULL OR links.release_version_id <> ?", release.ID)
+		}
+		if search != "" {
+			pattern := "%" + search + "%"
+			query = query.Where(
+				"(LOWER(tasks.task_id) LIKE ? OR LOWER(tasks.external_key) LIKE ? OR LOWER(tasks.title) LIKE ?)",
+				pattern, pattern, pattern,
+			)
+		}
+		if window.HasCursor {
+			query = query.Where("tasks.last_update < ? OR (tasks.last_update = ? AND tasks.task_id > ?)", position.LastUpdate, position.LastUpdate, position.TaskID)
+		}
+		if err := query.Scan(&rows).Error; err != nil {
+			return err
+		}
+		hasMore := len(rows) > window.Limit
+		if hasMore {
+			rows = rows[:window.Limit]
+		}
+		last := position
+		if len(rows) > 0 {
+			last.LastUpdate = rows[len(rows)-1].LastUpdate
+			last.TaskID = rows[len(rows)-1].WorkItemID
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		writeDeliveryError(w, http.StatusInternalServerError, "jira_issue_query_failed", err.Error())
 		return
 	}
@@ -250,10 +342,8 @@ func (s *Server) handleListReleaseJiraIssues(w http.ResponseWriter, r *http.Requ
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":       items,
-		"total":       len(items),
-		"project_key": deliveryplanning.NormalizeProjectKey(release.ProjectKey),
-		"scope":       scope,
+		"items": items, "total": len(items), "total_is_exact": !page.HasMore,
+		"project_key": deliveryplanning.NormalizeProjectKey(release.ProjectKey), "scope": scope, "page": page,
 	})
 }
 
@@ -292,6 +382,10 @@ func (s *Server) handleBulkAddReleaseJiraIssues(w http.ResponseWriter, r *http.R
 		return
 	} else if !ok {
 		writeDeliveryError(w, http.StatusNotFound, "release_not_found", "release was not found in the current project scope")
+		return
+	}
+	if release.Status != deliveryplanning.ReleasePlanned {
+		writeDeliveryError(w, http.StatusConflict, "release_scope_locked", "published or archived release scope cannot be changed")
 		return
 	}
 
@@ -413,6 +507,10 @@ func (s *Server) handleDeleteReleaseJiraIssue(w http.ResponseWriter, r *http.Req
 		writeDeliveryError(w, http.StatusNotFound, "release_not_found", "release was not found in the current project scope")
 		return
 	}
+	if release.Status != deliveryplanning.ReleasePlanned {
+		writeDeliveryError(w, http.StatusConflict, "release_scope_locked", "published or archived release scope cannot be changed")
+		return
+	}
 
 	var task db.TaskTelemetry
 	if err := db.DB.WithContext(r.Context()).Where("task_id = ?", workItemID).First(&task).Error; err != nil {
@@ -518,15 +616,67 @@ func (s *Server) handleListProjectReleases(w http.ResponseWriter, r *http.Reques
 		writeDeliveryError(w, http.StatusBadRequest, "project_required", "project key is required")
 		return
 	}
-	releases, err := deliveryplanning.NewRepository(db.DB).ListReleases(r.Context(), projectKey)
+	position := struct {
+		SortDate time.Time `json:"sort_date"`
+		Name     string    `json:"name"`
+		ID       uint      `json:"id"`
+	}{}
+	var releases []db.ReleaseVersion
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "release_facts", Contract: "project-releases",
+			Scope: map[string]string{"project_key": projectKey}, Cursor: r.URL.Query().Get("cursor"),
+			Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		const openEndedDate = "9999-12-31T23:59:59Z"
+		query := tx.Where("project_key = ?", projectKey).
+			Order("COALESCE(release_date, '9999-12-31T23:59:59Z') ASC, name ASC, id ASC").
+			Limit(window.Limit + 1)
+		if window.HasCursor {
+			query = query.Where(`COALESCE(release_date, ?) > ?
+				OR (COALESCE(release_date, ?) = ? AND name > ?)
+				OR (COALESCE(release_date, ?) = ? AND name = ? AND id > ?)`,
+				openEndedDate, position.SortDate,
+				openEndedDate, position.SortDate, position.Name,
+				openEndedDate, position.SortDate, position.Name, position.ID)
+		}
+		if err := query.Find(&releases).Error; err != nil {
+			return err
+		}
+		hasMore := len(releases) > window.Limit
+		if hasMore {
+			releases = releases[:window.Limit]
+		}
+		last := position
+		if len(releases) > 0 {
+			last.Name = releases[len(releases)-1].Name
+			last.ID = releases[len(releases)-1].ID
+			last.SortDate = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+			if releases[len(releases)-1].ReleaseDate != nil {
+				last.SortDate = releases[len(releases)-1].ReleaseDate.UTC()
+			}
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
 	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		writeDeliveryError(w, http.StatusInternalServerError, "release_query_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"project_key": projectKey,
-		"items":       releases,
-		"total":       len(releases),
+		"project_key":    projectKey,
+		"items":          releases,
+		"total":          len(releases),
+		"total_is_exact": !page.HasMore,
+		"page":           page,
 	})
 }
 
@@ -647,7 +797,11 @@ func (s *Server) createLocalRelease(w http.ResponseWriter, r *http.Request, scop
 		status = strings.ToLower(strings.TrimSpace(*request.Status))
 	}
 	if !validReleaseStatus(status) {
-		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, or archived")
+		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, archived, or discarded")
+		return
+	}
+	if status != deliveryplanning.ReleasePlanned {
+		writeDeliveryError(w, http.StatusUnprocessableEntity, "release_must_start_planned", "a local release must be created as planned and published through the publish action")
 		return
 	}
 	description := ""
@@ -706,6 +860,14 @@ func (s *Server) handlePatchRelease(w http.ResponseWriter, r *http.Request) {
 	var request releaseMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeDeliveryError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	if release.Status != deliveryplanning.ReleasePlanned && (request.ProjectKey != nil ||
+		request.Name != nil ||
+		request.Description != nil ||
+		request.StartDate != nil ||
+		request.ReleaseDate != nil) {
+		writeDeliveryError(w, http.StatusConflict, "release_scope_locked", "published, archived, or discarded release facts cannot be changed")
 		return
 	}
 	updates := map[string]any{}
@@ -773,11 +935,20 @@ func (s *Server) handlePatchRelease(w http.ResponseWriter, r *http.Request) {
 	if request.Status != nil {
 		nextStatus := strings.ToLower(strings.TrimSpace(*request.Status))
 		if !validReleaseStatus(nextStatus) {
-			writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, or archived")
+			writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, archived, or discarded")
 			return
 		}
-		if !validReleaseStatusTransition(release.Status, nextStatus) {
-			writeDeliveryError(w, http.StatusConflict, "invalid_release_transition", "archived releases cannot be reopened and released releases cannot return to planned")
+		if nextStatus != release.Status {
+			switch nextStatus {
+			case deliveryplanning.ReleaseReleased:
+				writeDeliveryError(w, http.StatusConflict, "use_release_publish_endpoint", "publish the release through the dedicated publish action")
+			case deliveryplanning.ReleaseArchived:
+				writeDeliveryError(w, http.StatusConflict, "use_release_archive_endpoint", "archive the release through the dedicated archive action")
+			case deliveryplanning.ReleaseDiscarded:
+				writeDeliveryError(w, http.StatusConflict, "use_release_discard_endpoint", "discard the release through the dedicated discard action")
+			default:
+				writeDeliveryError(w, http.StatusConflict, "invalid_release_transition", "closed releases cannot be reopened")
+			}
 			return
 		}
 		updates["status"] = nextStatus
@@ -795,6 +966,141 @@ func (s *Server) handlePatchRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, release)
+}
+
+func (s *Server) handlePublishRelease(w http.ResponseWriter, r *http.Request) {
+	releaseID, err := parseReleaseID(r.PathValue("id"))
+	if err != nil {
+		writeDeliveryError(w, http.StatusBadRequest, "invalid_release_id", err.Error())
+		return
+	}
+	var release db.ReleaseVersion
+	if err := db.DB.WithContext(r.Context()).First(&release, releaseID).Error; err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	if ok, err := requestCanAccessReleaseProject(r, release.ProjectKey); err != nil {
+		writeDeliveryError(w, http.StatusInternalServerError, "project_scope_failed", err.Error())
+		return
+	} else if !ok {
+		writeDeliveryError(w, http.StatusNotFound, "release_not_found", "release was not found in the current project scope")
+		return
+	}
+	var request publishReleaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeDeliveryError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	releaseDate, err := time.Parse("2006-01-02", strings.TrimSpace(request.ReleaseDate))
+	if err != nil {
+		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_date", "release date must use YYYY-MM-DD")
+		return
+	}
+	actor := releaseActorFromRequest(r)
+	result, err := deliveryplanning.NewService(db.DB).PublishRelease(r.Context(), deliveryplanning.PublishReleaseCommand{
+		ReleaseID:   releaseID,
+		ReleaseDate: releaseDate,
+		Actor:       actor,
+		Reason:      request.Reason,
+	})
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleArchiveRelease(w http.ResponseWriter, r *http.Request) {
+	s.handleReleaseLifecycleTransition(w, r, "archive")
+}
+
+func (s *Server) handleDiscardRelease(w http.ResponseWriter, r *http.Request) {
+	s.handleReleaseLifecycleTransition(w, r, "discard")
+}
+
+func (s *Server) handleReleaseLifecycleTransition(w http.ResponseWriter, r *http.Request, action string) {
+	releaseID, release, ok := s.releaseForLifecycleAction(w, r)
+	if !ok {
+		return
+	}
+	var request releaseLifecycleRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeDeliveryError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	service := deliveryplanning.NewService(db.DB)
+	command := deliveryplanning.ReleaseLifecycleCommand{
+		ReleaseID: releaseID,
+		Actor:     releaseActorFromRequest(r),
+		Reason:    request.Reason,
+	}
+	var (
+		result deliveryplanning.ReleaseLifecycleResult
+		err    error
+	)
+	if action == "archive" {
+		result, err = service.ArchiveRelease(r.Context(), command)
+	} else {
+		result, err = service.DiscardRelease(r.Context(), command)
+	}
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	_ = release
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
+	releaseID, _, ok := s.releaseForLifecycleAction(w, r)
+	if !ok {
+		return
+	}
+	var request releaseLifecycleRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeDeliveryError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body")
+		return
+	}
+	result, err := deliveryplanning.NewService(db.DB).DeleteRelease(r.Context(), deliveryplanning.DeleteReleaseCommand{
+		ReleaseID:   releaseID,
+		Actor:       releaseActorFromRequest(r),
+		Reason:      request.Reason,
+		ConfirmName: request.ConfirmName,
+	})
+	if err != nil {
+		writeDomainError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) releaseForLifecycleAction(w http.ResponseWriter, r *http.Request) (uint, db.ReleaseVersion, bool) {
+	releaseID, err := parseReleaseID(r.PathValue("id"))
+	if err != nil {
+		writeDeliveryError(w, http.StatusBadRequest, "invalid_release_id", err.Error())
+		return 0, db.ReleaseVersion{}, false
+	}
+	var release db.ReleaseVersion
+	if err := db.DB.WithContext(r.Context()).First(&release, releaseID).Error; err != nil {
+		writeDomainError(w, err)
+		return 0, db.ReleaseVersion{}, false
+	}
+	if ok, err := requestCanAccessReleaseProject(r, release.ProjectKey); err != nil {
+		writeDeliveryError(w, http.StatusInternalServerError, "project_scope_failed", err.Error())
+		return 0, db.ReleaseVersion{}, false
+	} else if !ok {
+		writeDeliveryError(w, http.StatusNotFound, "release_not_found", "release was not found in the current project scope")
+		return 0, db.ReleaseVersion{}, false
+	}
+	return releaseID, release, true
+}
+
+func releaseActorFromRequest(r *http.Request) string {
+	actor := strings.TrimSpace(r.Header.Get("x-authenticated-user-id"))
+	if actor == "" {
+		actor = strings.TrimSpace(r.Header.Get("x-authenticated-user-name"))
+	}
+	return actor
 }
 
 func (s *Server) handlePutReleaseJiraLink(w http.ResponseWriter, r *http.Request) {
@@ -1048,29 +1354,33 @@ func parseReleaseID(value string) (uint, error) {
 
 func validReleaseStatus(value string) bool {
 	switch value {
-	case deliveryplanning.ReleasePlanned, deliveryplanning.ReleaseReleased, deliveryplanning.ReleaseArchived:
+	case deliveryplanning.ReleasePlanned,
+		deliveryplanning.ReleaseReleased,
+		deliveryplanning.ReleaseArchived,
+		deliveryplanning.ReleaseDiscarded:
 		return true
 	default:
 		return false
 	}
 }
 
-func validReleaseStatusTransition(current, next string) bool {
-	current = strings.ToLower(strings.TrimSpace(current))
-	next = strings.ToLower(strings.TrimSpace(next))
-	if current == next {
-		return true
+func releaseLifecycleFor(release db.ReleaseVersion, activeWorkItemLinks, jiraLinks int64) releaseLifecycleCapabilities {
+	local := strings.EqualFold(strings.TrimSpace(release.Source), "local")
+	capabilities := releaseLifecycleCapabilities{
+		CanPublish: local && release.Status == deliveryplanning.ReleasePlanned,
+		CanArchive: local && release.Status == deliveryplanning.ReleaseReleased,
+		CanDiscard: local && release.Status == deliveryplanning.ReleasePlanned,
+		CanDelete:  local && (release.Status == deliveryplanning.ReleasePlanned || release.Status == deliveryplanning.ReleaseDiscarded),
 	}
-	switch current {
-	case deliveryplanning.ReleasePlanned:
-		return next == deliveryplanning.ReleaseReleased || next == deliveryplanning.ReleaseArchived
-	case deliveryplanning.ReleaseReleased:
-		return next == deliveryplanning.ReleaseArchived
-	case deliveryplanning.ReleaseArchived:
-		return false
-	default:
-		return next == deliveryplanning.ReleasePlanned
+	if capabilities.CanDelete && (activeWorkItemLinks > 0 || jiraLinks > 0) {
+		capabilities.CanDelete = false
+		capabilities.DeleteBlockReason = "请先移除已关联的 Jira 事项或 Jira 版本后再删除"
+	} else if !local {
+		capabilities.DeleteBlockReason = "Jira 来源版本只能在来源系统中维护"
+	} else if release.Status == deliveryplanning.ReleaseReleased || release.Status == deliveryplanning.ReleaseArchived {
+		capabilities.DeleteBlockReason = "已发布或已归档版本作为发布事实永久保留"
 	}
+	return capabilities
 }
 
 func writeDeliveryError(w http.ResponseWriter, status int, code, message string) {

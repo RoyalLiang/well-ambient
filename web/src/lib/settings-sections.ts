@@ -2,8 +2,10 @@ export type SettingsSection =
   | 'gitlab'
   | 'feishu'
   | 'jira'
+  | 'performance'
   | 'projects'
   | 'ai'
+  | 'solution_prompts'
   | 'ai_context'
   | 'users'
   | 'matrix'
@@ -45,6 +47,14 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     permissions: ['config:read']
   },
   {
+    id: 'performance',
+    group: '集成设置',
+    label: '绩效计算',
+    summary: '控制 core member 人员绩效的后台静默计算与滚动审计。',
+    domain: '人员绩效治理',
+    permissions: ['config:read']
+  },
+  {
     id: 'projects',
     group: '集成设置',
     label: '项目优先级',
@@ -59,6 +69,14 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     summary: '维护模型供应商、端点、凭证与估算口径。',
     domain: '模型引擎',
     permissions: ['config:read']
+  },
+  {
+    id: 'solution_prompts',
+    group: 'AI 工作台',
+    label: '方案润色规则',
+    summary: '维护方案润色提示词版本、项目覆盖规则与 Jira 方案链接地址。',
+    domain: '方案生成治理',
+    permissions: ['solution_prompt:manage']
   },
   {
     id: 'ai_context',
@@ -106,9 +124,9 @@ export const SETTINGS_SECTION_MAP = Object.fromEntries(
   SETTINGS_SECTION_DEFINITIONS.map((section) => [section.id, section])
 ) as Record<SettingsSection, SettingsSectionDefinition>;
 
-export const SETTINGS_ROUTE_PERMISSIONS = ['config:read', 'ai_context:read', 'users:read'];
+export const SETTINGS_ROUTE_PERMISSIONS = ['config:read', 'solution_prompt:manage', 'ai_context:read', 'users:read'];
 
-export const SETTINGS_FALLBACK_ORDER: SettingsSection[] = ['gitlab', 'ai_context', 'users'];
+export const SETTINGS_FALLBACK_ORDER: SettingsSection[] = ['gitlab', 'solution_prompts', 'ai_context', 'users'];
 
 export function isSettingsSection(value: unknown): value is SettingsSection {
   return typeof value === 'string' && value in SETTINGS_SECTION_MAP;

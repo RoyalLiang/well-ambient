@@ -35,14 +35,13 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
 		return
 	}
-	var allTasks []db.TaskTelemetry
-	// Query all tasks (including done, for generating history auto decisions)
-	if err := db.ApplyTaskProjectScope(db.DB.Model(&db.TaskTelemetry{}), projectKeys).Find(&allTasks).Error; err != nil {
-		http.Error(w, fmt.Sprintf("Failed to query tasks: %v", err), http.StatusInternalServerError)
+	records, err := loadAgendaSummaryRecords(db.DB, projectKeys)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to query agenda summary: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	items := EvaluateActiveTasks(allTasks)
+	items := EvaluateActiveTasks(records.ActiveTasks)
 
 	// Calculate counts from active tasks (status != done)
 	redZoneCount := 0
@@ -55,7 +54,7 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, t := range allTasks {
+	for _, t := range records.ActiveTasks {
 		if strings.ToLower(t.Status) != "done" {
 			if t.IssueType == "bug" {
 				activeBugCount++
@@ -65,14 +64,14 @@ func HandleGetAgendaSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate ambient auto actions flow
-	autoDecisions := GenerateAutonomousDecisions(allTasks)
+	// Generate a bounded recent activity projection from preloaded evidence.
+	autoDecisions := generateAutonomousDecisions(records.AutomaticDecisionTasks)
 
 	// Generate project key to name map from all tasks (both active and done)
 	projectMap := make(map[string]string)
-	for _, t := range allTasks {
-		if t.Repo != "" && t.Repo != "-" {
-			repoStr := strings.TrimSpace(t.Repo)
+	for _, repo := range records.ProjectRepos {
+		if repo != "" && repo != "-" {
+			repoStr := strings.TrimSpace(repo)
 			lastOpenParen := strings.LastIndex(repoStr, "(")
 			lastCloseParen := strings.LastIndex(repoStr, ")")
 			if lastOpenParen > 0 && lastCloseParen > lastOpenParen {

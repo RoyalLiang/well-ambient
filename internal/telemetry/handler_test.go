@@ -309,3 +309,42 @@ func TestProcessWebhookEventPreservesTaskGroupLink(t *testing.T) {
 		t.Fatalf("delivery-planning identity was not preserved: %+v", updated)
 	}
 }
+
+func TestGitPerformanceEvidenceUsesStableFingerprintAndSHAIdempotency(t *testing.T) {
+	conn, err := gorm.Open(sqlite.Open("file:telemetry-performance-evidence?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.AutoMigrate(&db.GitCommitLog{}); err != nil {
+		t.Fatal(err)
+	}
+	firstFingerprint := gitCommitContentFingerprint("Ambient/API", " Fix   parser ", []string{"src/B.go", "src/a.go", "src/a.go"})
+	secondFingerprint := gitCommitContentFingerprint("ambient/api", "fix parser", []string{"src/a.go", "src/B.go"})
+	if firstFingerprint == "" || firstFingerprint != secondFingerprint {
+		t.Fatalf("stable content fingerprints differ: %q != %q", firstFingerprint, secondFingerprint)
+	}
+	if fingerprint := gitCommitContentFingerprint("ambient/api", "fix parser", nil); fingerprint != "" {
+		t.Fatalf("pathless commit fingerprint = %q, want empty quality boundary", fingerprint)
+	}
+	commit := db.GitCommitLog{
+		TaskID: "WA-230", Repo: "ambient/api", Branch: "main", CommitID: "abc230",
+		Message: "fix parser", Author: "Alice", Action: "git_push",
+		DedupeKey:          gitCommitDedupeKey("ambient/api", "abc230", "git_push"),
+		ContentFingerprint: firstFingerprint, TelemetryQuality: "path_message_v1", CreatedAt: time.Now(),
+	}
+	created, err := persistGitPushCommit(conn, commit)
+	if err != nil || !created {
+		t.Fatalf("first commit persist = created %v err %v", created, err)
+	}
+	replayed, err := persistGitPushCommit(conn, commit)
+	if err != nil || replayed {
+		t.Fatalf("same repo/SHA replay = created %v err %v", replayed, err)
+	}
+	var count int64
+	if err := conn.Model(&db.GitCommitLog{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("persisted commit count = %d, want 1", count)
+	}
+}

@@ -31,6 +31,7 @@ func openPlanningTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := conn.AutoMigrate(
 		&db.TaskTelemetry{},
+		&db.GitCommitLog{},
 		&db.ReleaseVersion{},
 		&db.WorkItemReleaseLink{},
 		&db.WorkItemEvent{},
@@ -114,6 +115,50 @@ func TestQueryPlanUsesBoundedQueriesForWorkItemSnapshots(t *testing.T) {
 	}
 	if got := counter.count.Load(); got > 6 {
 		t.Fatalf("QueryPlan executed %d SQL statements for 40 rows; want at most 6 bounded batch queries", got)
+	}
+}
+
+func TestQueryPlanActiveScopeKeepsHistoryOutOfRowsAndInAggregates(t *testing.T) {
+	conn := openPlanningTestDB(t)
+	now := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
+	fixtures := []db.TaskTelemetry{
+		{TaskID: "WA-101", ProjectKey: "WA", IssueType: "requirement", Status: "backlog", Assignee: "Alice", LastUpdate: now},
+		{TaskID: "WA-102", ProjectKey: "WA", IssueType: "bug", Status: "progress", Assignee: "Alice", LastUpdate: now.Add(-time.Minute)},
+		{TaskID: "WA-103", ProjectKey: "WA", IssueType: "requirement", Status: "review", Assignee: "Alice", LastUpdate: now.Add(-2 * time.Minute)},
+	}
+	for index := 0; index < 1000; index++ {
+		fixtures = append(fixtures, db.TaskTelemetry{
+			TaskID: fmt.Sprintf("WA-DONE-%04d", index), ProjectKey: "WA", IssueType: "requirement",
+			Status: "done", Assignee: "Alice", LastUpdate: now.Add(-time.Duration(index+3) * time.Minute),
+		})
+	}
+	if err := conn.CreateInBatches(fixtures, 100).Error; err != nil {
+		t.Fatalf("seed active-scope fixtures: %v", err)
+	}
+
+	snapshot, err := NewService(conn).QueryPlan(context.Background(), PlanQuery{
+		ProjectKeys: []string{"WA"},
+		Assignees:   []string{"Alice"},
+		ActiveOnly:  true,
+		Limit:       500,
+	})
+	if err != nil {
+		t.Fatalf("query active plan: %v", err)
+	}
+	if got := len(snapshot.Items); got != 3 {
+		t.Fatalf("active items = %d, want 3", got)
+	}
+	if snapshot.Total != 3 {
+		t.Fatalf("active total = %d, want 3", snapshot.Total)
+	}
+	if snapshot.Summary.Total != 1003 || snapshot.Summary.Active != 3 || snapshot.Summary.Done != 1000 {
+		t.Fatalf("unexpected aggregate summary: %+v", snapshot.Summary)
+	}
+	if snapshot.Summary.Backlog != 1 || snapshot.Summary.Progress != 1 || snapshot.Summary.Review != 1 {
+		t.Fatalf("unexpected active stage summary: %+v", snapshot.Summary)
+	}
+	if snapshot.Summary.Requirements != 1002 || snapshot.Summary.Bugs != 1 {
+		t.Fatalf("unexpected issue-kind summary: %+v", snapshot.Summary)
 	}
 }
 

@@ -388,10 +388,6 @@
 </script>
 
 <div class="scw-workbench">
-  {#if saveSuccess}
-    <Alert type="success" title="配置已保存" message="Jira 连接与同步范围已更新，版本审计会记录本次变更。" />
-  {/if}
-
   {#if !editing && isConfigured}
     <section class="scw-overview" aria-label="Jira 配置状态">
       <header class="scw-header">
@@ -769,10 +765,6 @@
           {/if}
         {/if}
       </div>
-
-      {#if saveError}
-        <Alert type="error" title="保存失败" message={saveError} />
-      {/if}
 
       <div class="scw-actions">
         <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>

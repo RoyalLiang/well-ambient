@@ -15,6 +15,7 @@
   export let compact = false;
   export let min = '';
   export let max = '';
+  export let shadowless = false;
 
   const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
@@ -221,7 +222,7 @@
   });
 </script>
 
-<div class="date-group" class:has-error={!!error} class:disabled class:compact bind:this={containerEl}>
+<div class="date-group" class:has-error={!!error} class:disabled class:compact class:shadowless bind:this={containerEl}>
   {#if label}
     <label class="date-label" for={id}>
       {label}
@@ -254,6 +255,7 @@
     {#if isOpen && !disabled}
       <div
         class="date-picker-panel"
+        class:shadowless
         class:drop-up={panelPlacement === 'up'}
         bind:this={panelEl}
         style={`--date-panel-max-height: ${panelMaxHeight}px;`}
@@ -380,6 +382,19 @@
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.88),
       0 0 0 3px rgba(0, 143, 150, 0.1);
+  }
+
+  .date-group.shadowless .date-trigger,
+  .date-group.shadowless .date-trigger:hover,
+  .date-group.shadowless .date-trigger:focus,
+  .date-group.shadowless .date-trigger.is-active,
+  .date-picker-panel.shadowless {
+    box-shadow: none;
+  }
+
+  .date-picker-panel.shadowless {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .date-trigger.has-value {

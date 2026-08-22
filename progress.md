@@ -1,4 +1,445 @@
+# Session: 2026-08-19 - 页面与搜索慢加载闭环
+
+# Session: 2026-08-21 - Daily Jira 滚轮跳底与方案发布 URL
+
+- 已加载项目复杂编码/内存/浏览器规则，以及 diagnosing-bugs、planning-with-files 和强制三方 UI 技能。
+- 已冻结 preserve-mode 设计方向和两个独立验收契约；当前处于精确复现阶段，尚未编辑业务代码。
+- 旧浏览器 tab 已失效并按规则换成新 tab；隔离 fixture/Vite 默认绑定被沙箱拒绝，等待受控本机环回启动。
+- 隔离 fixture 与 Vite 已在独立 18192/4177 端口启动；经 fixture 登录进入 Daily Jira，100 行数据、无续页和无刷新干扰的红灯环境已就绪。
+- 真实 CUA 滚轮红灯已捕获：420px 初始滚动正常；再输入 120px 跨过虚拟 overscan 边界后，滚动在 600ms 内自行级联至 4824.5px 底部。首行 52px、总高度恒定，H1 滚动锚定成立，H2/H3 被排除。
+- 发布配置链已核对：保存后运行时配置原位生效；报错不是热更新，而是缺省 URL 只生成相对链接。实施将保留显式配置优先，并使用浏览器 `Origin` 作有限回退。
+- 两次旧版输入 API 与一次 `tab.ax` 能力探测失败均未改变页面；已切换到当前标签支持的 `cua.scroll` 并记录真实输入证据。
+- 后端实现已返回 200 和正确链接；HTTP body 与 Outbox 的原始字符串断言先后被 JSON 的 `\u0026` 标准转义击中，均已改为 JSON 解码后的字段级断言，未改变产品代码。
+- UI 最小修复已落地：只在 `.audit-table-shell` 增加 `overflow-anchor: none`；1024/760/390/1440 四个已登录断点均以 420px+120px 真实滚轮稳定停在 540px，计算样式均为 none，文档 `scrollWidth == clientWidth`。
+- 方案发布已改为“有效显式 `server.public_url` > 合法单值 HTTP(S) Origin > 相对链接并拒绝”；不读取 Host/Forwarded。成功用例返回 200，拒绝用例仍 422，下一步补强草稿/Outbox 副作用断言并跑全量验证。
+- 发布副作用回归已补强并通过：422 时草稿仍为 draft、Outbox=0；200 时生成唯一 pending Outbox，解码后的 link 与响应一致。
+- 最终验证通过：完整 Go（受控 loopback）、Go vet、70/70 前端契约、Svelte/TS 0 errors/86 既有 warnings、生产 build、Impeccable `[]`、Finesse P0=0/目标 findings 为空。
+- 登录态 1440/1024/760/390 四断点的真实滚轮、容器宽度和总高度验证通过；浏览器视口/页签、18192/4177 服务与临时 fixture 已清理，未触碰主服务、主库或外部系统。
+
+---
+
+# Session: 2026-08-21 - 全站千万量级数据访问架构
+
+- 全站矩阵已收敛为 77 GET API、24 个页面/配置状态 + shell、9 个 generation dataset；早期 23 页口径已更正。
+- 后端已接入 contract inventory、opaque scope/generation cursor、limit policy、request-scoped GORM Query/Row/Raw 观测与 query/handler/response budget breach；status 默认只返回汇总，`?read_contracts=full` 才返回 77 条声明。
+- 已迁移 context facts/documents、corpus candidates、execution runs/actions、releases/project releases/release Jira issues；详情候选集最多 100 且给出 continuation，execution action 每 run 最多 20。
+- 用户目录 membership 从 N+1 收敛为固定 2 条 SQL；task activity 与 demand spec 历史均硬限 100，task ID 大小写历史通过 `LOWER(task_id)` 表达式索引消除临时排序。
+- 人员可见性和无配置边界时的历史负责人兜底均硬限 5,000；后者新增 partial covering index，EXPLAIN 无 table scan/临时排序。
+- 前端 `PagedResource` 已覆盖 release/Jira/context/corpus 首波消费者，实现同 scope single-flight、跨 scope abort/stale suppression、稳定快照、续页去重和 409 generation 恢复；新增跨页 UI 契约 2/2、资源层 4/4 通过。
+- 10M/500-sample 隔离基准通过：有界查询和本地 handler warm p95 为 0.103–0.117ms，projection lookup 0.006ms，四条 EXPLAIN 全部命中索引；临时 1.01GB 数据库已自动删除。
+- 架构/矩阵/benchmark/rollout 文档已落盘 `docs/all-page-10m-read-architecture.md`；当前成熟度 17 verified / 32 bounded / 28 pending，新增单调 ratchet 防止回退。
+- 隔离认证浏览器已验证发布列表与两类 Jira 列表真实 cursor 续页、服务端搜索、180ms 慢刷新期间行数和列表矩形完全稳定，以及 1440/1024/760/390 无文档横向溢出；临时浏览器页、4176/18191 服务和 fixture 已清理。
+- 最终 Go 全量回归再次通过；前端契约、check/build、Impeccable `[]`、Finesse P0=0 和 `git diff --check` 通过。
+- 错误恢复：小基准首次因 status/scope 校验数据奇偶性耦合无 tail anchor，修正 seed 分布后 10K/10M 均通过；首次从 `web/` 内运行测试误写 `web/tests/...`，改为 `tests/...` 后通过；用户目录查询数回归首次未 seed user，因此合法地只有 1 条 SQL，增加 3 个用户后稳定证明 2 条 SQL。
+- 用户将范围明确扩展为所有页面、所有数据；已停止把 Daily Jira 局部 benchmark 当作最终架构完成声明。
+- 已加载 `diagnosing-bugs`、`codebase-design`/deepening 与 `planning-with-files`；计划先建立全站页面/接口/查询/索引风险矩阵和可执行红灯，再实现公共深模块与分领域 adapter。
+- 已在计划中冻结目标口径：10M 有界数据库读取 warm p95 <20ms、本地 handler p95 <50ms；生产端到端、冷缓存、并发和迁移回填必须单独验收。
+- 已完成相关历史与领域词汇复核：TaskKanban、Agenda、数据资产和 Daily Jira 已各有局部有界模式；全站方案将抽取稳定页/高水位/请求合并等共同机制，并保留领域 adapter 的权限、过滤和聚合语义。
+- 已复核现有数据资产 ADR 与 Daily Jira 10M 文档；修正规划中的假想存储 adapter，当前测试/基准将直接覆盖同一 SQLite 实现。
+- 已完成第一轮前端可达页与请求扫描：确认至少 7 个一级工作区及多个子页/配置 section；发现共享 Agenda 仍有旁路、`/api/tasks` 与 `/api/schedule` 全量读取、无显式分页目录和多套独立轮询/请求状态实现。下一步把这些调用映射到后端路由与具体 ORM/SQL。
+- 已核对导航定义，固定为 23 个页面/子页面验收单位；开始按实体列表、聚合看板、时间线、详情、低基数字典五类映射后端查询，不用单一分页方案覆盖所有语义。
+- 已映射 server GET 路由和第一批 ORM 终结查询；确认 corpus/execution/solution/performance 等模块仍有无界列表、无界嵌套集合或 N+1，且路由层没有统一数据契约/预算。下一步建立能精确捕获这些形态的全站红灯清单。
+- 已确定公共观察 seam 必须位于 GET route 注册处，才能同时覆盖生产 mux 和现有 handler 测试；红灯会自动检查所有 GET API contract，并对高风险页面补真实数据行为断言。
+- 已新增并运行全站读取 contract 红灯；它稳定失败于公共契约实现不存在，精确覆盖全部 GET API、23 个页面状态与 20 条已知高基数路由。已向用户展示 5 个可证伪假设并继续验证。
+- 已定位主库并用 SQLite 只读模式列出 59 个业务表；一次搜索误包含不存在的 `configs` 目录，已记录并改用精确现存路径，未重复同一错误。
+- 主库只读计数显示绩效 audit/source 事件均已超过 20.5 万行，高于 3.56 万任务；已定位 performance explanation 的 OFFSET 与全量 active-evidence 路径，证明全站优化不能围绕单一任务表设计。
+- 已确认 H2/H4：tasks、schedule、execution、KPI、risk calendar 和 task activity 均存在全量写模型读取、Go 后过滤/聚合、无界嵌套或大 `IN`；这些路径将成为第一迁移波次。
+- 已完成方案、版本、上下文、审计、执行 run 的源码复核：区分了“已有 cap 但无 cursor”和“真实无界/N+1”，纠正 corpus/context documents 的初步判断；风险矩阵开始具备逐路由事实而非正则猜测。
+- 已实现 `internal/readmodel` 公共深模块：contract 验证、路由观察 wrapper、响应字节与 p50/p95/p99 指标、动态 path 匹配、SSE Flush 透传；模块测试通过。下一步登记全部 77 个 GET API 并接入真实 server handler。
+- 77 条 GET API contract、23 页面状态覆盖和高基数分类门禁全部转绿；真实 server handler 已接入 registry，`/api/status` 能显示已观测路由指标。Phase 2 完成，Phase 3 开始迁移 pending 领域 adapter。
+- 已新增共享 CursorCodec 与 limit policy，完成先红后绿的 contract/scope/checksum/tamper/limit 回归；下一步以 context facts/documents、corpus candidates、execution runs、release/solution lists 为首批实体 adapter。
+
+# Session: 2026-08-21 - 全局规则同步与 Daily Jira 自动同步冲突修复
+
+- 已读取项目冷启动规则、复杂编码/内存流程、相关历史记忆与最近 Daily Jira 同步实现摘要。
+- 已启用 diagnosing-bugs、planning-with-files，以及项目强制 Impeccable/design-taste-frontend/finesse-ui 三方门禁；尚未编辑前端业务代码。
+- 已确认脏工作树和 bootstrap 保护行为；下一步建立 FZ-2257 retained payload 冲突的症状级回归，并核对自动 worker 到页面刷新链路。
+- 主数据库只读查询确认 FZ-2257 存量事件、当前任务事实和失败的 inbound checkpoint；未修改数据库。
+- 新增精确回归并看见红灯：同一 history ID/index 与相同 priority 变化，仅 author displayName 漂移即触发用户原始 retained payload conflict。
+- 受控只读 Jira 查询确认 FZ-2257 当前 author displayName 已变化且 priority 业务事实未变；临时 probe 测试文件已清理。
+- 已实现 retained actor replay：只豁免可变作者展示名，其他性能事件业务 payload 仍严格冲突；模块级安全回归和 FZ-2257 adapter 回归已转绿。
+- 自动同步集成回归使用 mock Jira 连跑两次 30 秒 worker 同源链路，第二次作者改名后 inbound state 仍成功且账本仅一条事件；loopback 受控运行通过。
+- UI 三方评审确认无需前端改动：现有按钮为辅助样式，页面已订阅 SSE 并保留可见页轮询兜底。
+- 完整 `go test ./...`、`go vet ./...`、57/57 前端契约、Svelte/TypeScript 0 errors、生产 build、Impeccable `[]` 与 diff hygiene 已通过。
+- canonical bootstrap 已正式执行并保护性确认项目规则存在；全局新增 reflection gate 已同步，项目专属规则未被覆盖。
+- 本轮未重启主服务、未修改主数据库、未向 Jira 写入；交付状态为代码完成、运行态待受控重启。
+- 真实范围只读重放通过：185 个当前 Jira issue 对 205,041 条主库 retained 事件为 0 冲突、0 新证据；临时 probe 已清理。
+
+---
+
+# Session: 2026-08-19 - 页面与搜索慢加载闭环
+
+- **Status:** complete locally；主运行服务需受控重启后生效。
+- 浏览器 15 秒稳定性日志进一步发现 `DecisionDashboard` 为 4 条发布事实轮询完整 `delivery-cockpit`：每轮两次读取约 35,578 条任务，随后 Git log 查询因约 3.5 万个 `IN` 参数报 `too many SQL variables`。
+- 新增轻量 `/api/strongest-brain/releases` 路由并切换 Dashboard；完整驾驶舱/决策快照改为复用一次任务与用户读取，Git log 使用任务表 JOIN 和项目范围条件，不再展开 task ID 列表。专用路由、JOIN SQL 形状、既有驾驶舱/决策中心和前端消费契约定向回归已通过。
+- 已继承前两轮确定性基线：任务页 35,578 条/72 页/33.1MB 默认加载、服务端精确搜索约 43-46ms、Agenda 两个 15 秒调用方，以及 Jira 历史批次风险。
+- 已启用 diagnosing-bugs、planning-with-files 和项目强制 Impeccable/design-taste-frontend/finesse-ui；正在完成三方 product/preserve-mode 评审，尚未修改前端业务代码。
+- 当前保护边界是不删除证据孤儿、不自动启用级联外键、不触发 Jira/LLM/生产写入，并保持 TaskKanban 默认列、Task/Bug 标记和响应式视觉结构不变。
+- 三方 UI 评审已完成并写入计划：共同采用 Phase 41 product preserve-mode，TaskKanban 保持现有层级只改变数据边界，Agenda 使用共享资源与唯一轮询 owner；前端编辑门禁已开放，下一步先建立红灯。
+- 三条红灯已建立并稳定失败：active-scope/聚合字段缺失；35,500 条 Jira 历史生成 710 个 reconciliation JQL；Agenda 共享资源缺失、任务页仍全量分页。失败输出直接对应目标实现缺口。
+- 首轮实现回归发现 aggregate `Select` 污染同一 GORM statement，明细只返回 1 个聚合行；Agenda/任务前端 4/4 与 Jira 定向回归已绿。已按 Self-Improving 复盘把聚合和明细显式拆为独立 GORM session，避免链式 projection 泄漏。
+- 前端相关契约 12/12 通过，仓库本地 svelte-check 为 0 errors/5 个既有 tsconfig warnings；备用 pnpm 的联网/无 TTY 安装失败已绕开且未触碰依赖目录。Jira 项目窗口结果在 merge 前新增本地已知 key 求交，避免性能优化扩大同步范围。
+- Jira 范围保护回归首次编译缺少测试文件的 `errors/gorm` import，产品代码未执行；已补齐最小 import 后按原断言重跑。
+- deliveryplanning 与 server 完整包测试已通过（server 在获批回环环境）；真实库副本新查询为 1,052 行/3 请求/971,732B/105.6ms，精确历史搜索 1 行/1,734B/41.6ms。临时性能探针已从源码移除。
+- 通知读路径已改为活动状态必要字段投影，并移除读取时的 Email 扩展调用；发布事实改走轻量路由，完整驾驶舱复用一次任务/用户快照并用 JOIN 读取 Git 证据。
+- 最终 `go test ./...`、`go vet ./...`、54/54 前端契约、Svelte/TypeScript 0 error、生产构建和两套设计检测通过；Finesse 只报告目标组件原有纯白 P2。
+- 隔离登录态跨过 15 秒轮询后不再出现 3.5 万行扫描、巨型 `IN`、SQLite 变量超限或邮件钩子；1440/760/390px 均无横向溢出。371MB 临时数据库/二进制、临时 pnpm store、服务和浏览器页签已清理，主数据库与外部系统未修改。
+
+---
+
+# Session: 2026-08-14 - 每日 Jira 跳转入口合并
+
+- **Status:** complete locally; not deployed.
+- 完成 Impeccable、design-taste-frontend、finesse-ui 与 UI design system preserve-mode 审查；共同结论是让最具体的 Jira 编号承担唯一深链动作，不改共享 shell、URL 生成、数据或决策流程。
+- 症状级契约先 0/4 红后 4/4 绿；与实时刷新回归合计 6/6。编号按 URL 有无条件渲染为 `a.jira-key.jira-link` 或静态 `strong.jira-key`，独立“在 Jira 打开”操作和 action grid 已删除。
+- 链接保留 `_blank`、`noopener noreferrer` 与明确 `aria-label`，具有 hover/focus/active 状态；手机端维持紧凑视觉胶囊，并通过 44px meta 行扩展命中区域。
+- 登录态宽屏和手机断点均只有 1 个 Jira 链接、0 个独立操作，header/meta 无局部横向溢出，标题宽度比例为 1.0/0.978，console 无 warning/error。
+- 真实点击 `HR-4090` 成功新开 `https://jira.westwell-lab.com/browse/HR-4090` 且 Jira 页标题匹配；验收后关闭页签，没有填写或提交早会决策，也没有 Jira 写入。
+- `pnpm check` 0 errors/83 既有 warnings、生产 build、Impeccable type/layout `[]`、Finesse P0=0 与 diff hygiene 全部通过；截图保存为 `outputs/ui-validation/daily-jira-jira-key-link-{wide,390}.png`。
+
+# Session: 2026-08-14 - 右侧方案预览高度与冗余胶囊清理
+
+- 已分类为既有排期治理产品 UI 的 preserve-mode 布局回归，加载项目 continuation/complex coding 规则、planning-with-files、diagnosing-bugs、Impeccable layout/product、design-taste-frontend、finesse-ui product/redesign 与 UI design system。
+- Design Read 固定为 Phase 41 轻量研发排期检查器，`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`；保护 shell、数据、方案状态机、编辑弹窗和其他检查器 tab。
+- 当前阶段只读定位右侧预览、两个胶囊与高度/滚动所有权；前端编辑门禁尚未开放。
+- 计划文件首次插入因上下文锚点遗漏空行而验证失败，未产生修改；已改为按实际文件头精确插入。
+- 已用登录态 DG-394 建立红灯：inspector 比 `solution-workspace` 多出 42.94px，Markdown 底部距 inspector 86.93px；父 inline 已拉满，子工作区仍由 40/420/30px 固定内容行决定高度。
+- Impeccable 机械布局 detector=`[]`，Tailwind 任意 spacing/z-index 无命中；该空结果不覆盖运行时高度问题。
+- Chrome 首次误用已移除的 `tabs.claim/open` 方法，未操作页面；读取当前能力说明后改用 `chrome.user.claimTab(openTabs 返回对象)` 成功连接登录态页面。
+- 已确认 Markdown 内部预览滚动有效（419/7460），并在滚到正文末尾的真实截图中复核胶囊与剩余空白；后续修复只改变高度分配，不改变正文滚动机制。
+- Impeccable 双评估完成：主观评估定位子工作区固定 420px 与冗余 footer，机械 layout detector=`[]`。三方门禁现已就 hierarchy、owner、desktop/narrow 行为、可访问性和验证范围达成共识，允许进入前端实现。
+- 新增症状级契约后首次运行稳定红灯：9 项中 8 PASS、目标用例因仍存在 `solution-facts/currentSources` 精确失败；反馈环可同时约束胶囊删除、桌面弹性预览、父容器 flex 与 `<=1280px` 自然高度回退。
+- 首次实现后目标行为已满足，但契约把 `.solution-preview-content` 的 CSS 声明顺序写死而产生伪红灯；已改为提取同一 selector block 后分别断言 flex、min-height 与 grid rows，不改变产品代码。
+- 已完成最小实现：删除 `.solution-facts/currentSources`，增加 `.solution-preview-content` 弹性行；父 `.schedule-solution-inline` 仅补 flex column，`<=1280px` 显式恢复自然 420px 高度。
+- 登录态 DG-394 宽屏最终为 inspector→Markdown 底边 `16.55px`、Markdown `488.37px`、正文 `487/7460` 单一滚动；900px 与 390px 均为 420px 正文滚动、胶囊 0、文档横向溢出 0。
+- 定向契约 14/14、`pnpm check` 0 errors/83 warnings、生产 build、Impeccable 全量/layout `[]`、Finesse P0=0 与精确 diff hygiene 通过；未点击保存或发布，未修改业务数据。
+- 已保存宽屏、900px、390px 验收截图到 `outputs/ui-validation/solution-preview-fill-{wide,900,390}.png`。
+
+# Session: 2026-08-14 - 算分面板样式与对齐优化
+
+- **Status:** complete locally.
+- 完成项目冷启动、planning-with-files、Impeccable、design-taste-frontend、finesse-ui、UI design system 与浏览器门禁；四方共同采用 Phase 41 `redesign-preserve`，不修改评分公式、数据、配置、审计或共享 Modal。
+- 静态和登录态基线确认三项问题：四卡主值基线受字号/说明换行影响，页面同时使用 16/18/2px 内容偏移，980px 快照表把多数列压到约 65px 且所有数据左对齐。
+- 组件本地完成固定三行状态卡、132px 等高骨架、16px 内容基线、语义数值/状态/时间对齐、1210px 明确快照列宽与 sticky 人员列；详情表沿用相同数值对齐。
+- 1280px 实测四卡标签/值/说明 Y 基线一致，状态/公式/系数内容起点同为 303px；900px 为 2×2 卡片和单列规则/审计；390px 正文 351px、刷新 44px、文档无横向溢出，快照表独立横滚。
+- 390px 成员详情为 366px 单列 Modal，关闭按钮 44×44；打开详情只读既有快照，不触发重算。
+- 定向契约 4/4、Svelte/TypeScript 0 errors、生产构建、Impeccable `[]`、Finesse P0=0 且零目标 findings 全部通过；现有其他组件 warnings 与 chunk-size warning 未扩大处理。
+- 浏览器验证使用临时数据库副本、禁用集成和清空任务/通知队列的隔离服务；未修改主数据库、评分结果或外部系统。
+
+# Session: 2026-08-13 - 绩效 v5.0 全量落地与解决方案卡片正文修复
+
+- **Status:** in progress.
+- 已加载项目冷启动/连续任务状态，并启用 planning-with-files、domain-modeling、codebase-design、diagnosing-bugs、spreadsheets 及项目强制 Impeccable/design-taste/finesse/browser 流程。
+- 已建立两条独立验收链和计划：v5.0 不缩减为单纯改权重；解决方案卡片不以静态代码猜测替代真实正文红灯。
+- 已确认当前数据缺口：Jira 缺流转历史/priority/severity，Git 缺唯一采集约束和 patch 指纹，正式绩效事实为空；这些将作为 v5.0 源事实层的直接改造对象。
+- UI 三方共同选择 Phase 41 `redesign-preserve`，评分页和解决方案页不改变信息架构、导航、视觉系统或共享交互所有权。
+- 已新增方案正文分支回归并先红后绿：`SolutionWorkspace.svelte` 的有效正文此前错误嵌套在空态分支内，现已增加独立 `{:else}`；目标契约 5/5、`svelte-check` 0 errors。
+- 真实浏览器复验仍得到空的 `需求方案` 区域；DOM 仅一个空注释，而当前源码数据库确认 `NS2-986` 的 `working_revision_id=71`、正文 12197 bytes。说明运行中的旧后端/响应仍没有提供当前源码可映射的 working revision，需在新版服务重启后复验原始路径，暂不关闭该症状。
+- 错误恢复：裸 `node --test` 不支持 `.ts`，已改用 `node --experimental-strip-types --test`；早期 SQLite 查询误用了不存在的方案/项目列，检查实际 schema 后已纠正，未产生写入。
+
+# Session: 2026-08-13 - 绩效 100 分异常修复
+
+- **Status:** complete locally; root service running.
+- 按 diagnosing-bugs 重新核对判定表、真实库与页面，确认 v4.1 的 100 不是正常高分，而是只有 C01 20% 证据时被 `qualifiedWeight` 二次归一放大。
+- 先将历史 Jira C01 满档场景改成红灯：成员参考分预期 20，修复前得到 100；随后把指标分恢复为 1—5、加权贡献固定为 `score × 20 × weight`，成员聚合改为直接累加合格贡献。
+- 量纲修复首次使详情 `point_level` 变成 0，登录态页面即时暴露该回归；测试增加 5 分档断言后再次红灯并修正为 `int(score)`。这是本轮反馈环发现的第二个真实问题。
+- 公式版本升为 v4.2，本地运行配置与示例配置同步。后台真实重算完成 14 位 core member 快照；当前参考分最大 20、100 分记录 0、指标分最大 5、加权贡献最大 20。
+- 旧 v4.1 100 分行按不可变审计要求保留，最近成员投影使用最新 v4.2。登录态列表无当前 100 分，详情实测 C01 为“100% / 5 分档 / 5.00 / 20.00”，浏览器控制台无错误。
+- 定向红绿灯、`internal/performance` 完整测试、配置/接口版本测试通过；前端未改动，既有构建、治理契约、Impeccable 检测和登录态交互继续通过。
+
+# Session: 2026-08-13 - 最近人员评分快照成员去重
+
+- **Status:** complete locally; root service running.
+- 已用同一 core member 跨两个 run 的持久化快照建立红灯，修复前接口稳定返回两行，排除前端重复渲染和不稳定排序。
+- `Module.Explain` 现按倒序扫描，对 canonical core-member identity 只接收第一条；`snapshot_limit` 按不同成员计数，历史扫描继续分批进行。
+- 历史审计没有清理或覆盖：模块回归证明旧快照 ID 仍可解释且数据库行数不变；真实库当前保留 287 条快照和 15 次运行，最新 run 为 14 行/14 位成员。
+- 根目录服务已重启并保持监听 8080；登录态页面验证最近快照 14 行、14 个唯一成员，全部来自 15:39:18 最新运行，成员详情打开后 run ID 与该次运行一致。
+- 定向绩效包回归、完整 `go test ./...`/`go vet ./...`、绩效前端契约 3/3、`web/` 生产构建、Impeccable/Finesse 检测、gofmt 和精确 diff check 均通过。全量测试首次仅因沙箱禁止 `httptest` 绑定回环端口而失败，按权限规范在沙箱外原样重跑后全部通过。
+- 首次从仓库根执行 `pnpm build` 因无 manifest 失败；按 Self-Improving 复核后改在 `web/` 执行并通过。构建只报告仓库既有 Svelte 与 chunk-size 告警，本次未修改前端文件。
+
+# Session: 2026-08-13 - 绩效 v4.1 全员零分修复
+
+- **Status:** complete locally; root service running.
+- 按 diagnosing-bugs 建立真实库反馈环，确认 14 名 core member 不是没有历史 Jira，而是 C01 被错误绑定到 `due_date`；完成或到期口径与按期率口径已拆分。
+- 先补红灯再修复：无 due 的周期完成需求进入 C01、到期任务仍进入 C02、低样本指标可解释但不计入成员聚合、样本达标指标才进入覆盖率与正式发布门槛。
+- 公式版本升为 v4.1；运行时配置响应归一到当前支持版本，本地 `config.yaml` 和 `config.example.yaml` 已对齐 v4.1。调度开关、90 天窗口/审计保留和 core-member guard 保持不变。
+- 列表和详情已明确拆成“参考分 / 正式分 / 证据不足”；详情新增样本资格、可计算/达标数量和逐指标来源。低样本单项分不会再上卷为成员参考分。
+- 根目录服务完成真实重算并保持监听 8080。最新运行生成 14 条快照、8 条非零参考分、6 条 N/A、0 条正式分；17 条生命周期审计与 retention 记录完整。
+- 隔离登录态页面只读验证了 v4.1 规则、最新快照、刘子翔合格/低样本混合详情、姜昊良低样本 N/A、Jira resolved/due 引用和 47/9 项系数过程；没有触发页面重算或业务写入。隔离服务、数据库副本和浏览器 tab 已清理。
+- 最终后端 `go test ./...` 与 `go vet ./...` 通过；前端绩效契约 3/3、`pnpm build`、Impeccable `[]`、Finesse P0=0、gofmt 和精确 diff check 通过。
+- 仓库级 `pnpm check` 仍被本任务外 `SolutionWorkspace.svelte` 的 9 个既有错误阻断；没有修改该脏文件。Browser 控制固定为 1280×720，未声称完成不可执行的 viewport emulation；窄屏规则由共享 Modal 和页面断点源码契约补充验证。
+
+# Session: 2026-08-12 - 代码轨迹完整可滚动浏览
+
+- **Status:** complete locally.
+- 完成强制 Impeccable、design-taste-frontend、finesse-ui 三方评审；共同选择保留现有排期检查器和响应式几何，只修复轨迹数据呈现边界与正文裁切。
+- 建立 3 项红灯源码契约，明确捕获 inline 固定四条切片、跨页面隐藏提示和长正文/MR 链接裁切；修复后 3/3，通过与排期等高测试组合后为 6/6。
+- `CommitTelemetryPanel` 现直接渲染接口返回的全部 `commits`，移除“另有 x 条轨迹”提示，并让 inline 元信息、Jira 正文与 MR 链接完整换行。
+- 静态门禁通过：Svelte 0 errors/80 条既有 warnings，TypeScript、生产构建、Impeccable `[]`、Finesse P0=0、`git diff --check` 均通过。
+- 登录态 Chrome 使用真实 DG-354 验证数据库 5 条、DOM 5 条、COMMENT 5。宽屏轨迹区可滚到底且最后一条可见，左右面板 bottom delta=0；1280/760/390 都完整显示 5 条并使用自然页面滚动，文档横向溢出为 0。
+- 验证截图已保存到 `outputs/ui-validation/schedule-telemetry-complete-wide.png` 与 `outputs/ui-validation/schedule-telemetry-complete-390.png`；未修改业务数据、Jira 或远程环境。
+
+# Session: 2026-08-13 - 任务跟踪卡片底部对齐
+
+- **Status:** complete locally.
+- 加载并应用 diagnosing-bugs、planning-with-files 与项目强制 Impeccable/design-taste-frontend/finesse-ui 门禁；Design Read 为 Phase 41 高密度产品管理台，保留现有视觉和业务流。
+- 复用已登录 Chrome 的独占验证页，在相同宽屏下测量任务表与执行追踪的 shell、根、workbench、表格卡和检查器矩形。
+- 任务表左右卡与 22px shell 底部 inset 完全对齐；执行追踪左卡提前 66.49px、右卡提前 14.99px，红灯稳定复现。
+- 根因定位到 TaskKanban 文件末尾的执行视图专属 cascade；共享 shell 和 FunctionalWorkspace 无需修改。
+- 新增症状级契约，修复前 1/3 通过、2/3 精确失败；随后删除执行视图的根滚动、auto/start、固定 clamp 和 sticky/auto 覆盖，保留完整详情内容并统一检查器内部滚动，修复后 3/3 通过。
+- 症状与相邻排期等高契约合计 6/6；Svelte check 0 errors/81 条既有 warnings，独立 TypeScript 与生产 build 通过，Impeccable layout 检测为空，Finesse 无 P0，精确 diff check 无输出。
+- 登录态宽屏最终测量：执行追踪 workbench/左卡/右卡相对任务根底边差均小于 0.001px，左右差为 0；任务表保持相同结果，表格滚动区仍可容纳 2018px 长内容。
+- 1180/760/390 响应式验收通过：两视图按既有规则自然堆叠，760/390 文档横向溢出均为 0；console 无 error/warn。已保存宽屏与 390 验收截图并结束浏览器会话，未提交业务动作或修改运行数据。
+
 # Progress Log
+
+## 2026-08-19 - 页面与搜索慢加载闭环
+
+- 前端 53/53、生产构建、Svelte 0 errors、TypeScript、`go vet ./...` 和受控回环下 `go test ./... -count=1` 均通过；Impeccable 0 findings，Finesse 无 P0，仅报告本次未触及的 6 处既有纯白色值。
+- 隔离登录态浏览器确认任务页只加载/展示 1,052 条当前工作集，同时保留 35,566 总量聚合；已完成的 `CR-487` 未预载在活动集内，但能由全局搜索直接加载并打开详情。
+- 首次隔离启动因数据库副本的 versioned config 覆盖临时 YAML 而立刻尝试绑定旧 8080，端口占用后退出；清空仅临时副本的 `config_versions` 后，以 Jira/GitLab/飞书/AI/绩效关闭的 127.0.0.1 服务完成验证，未修改主数据库。
+- 浏览器运行进一步发现通知 SSE 的延期提醒读路径每 15 秒逐事项执行邮件扩展钩子并输出海量日志；已停止临时服务，准备加入症状级回归并把该读路径改成必要字段投影、统一活动状态谓词且无发送副作用。
+
+## 2026-08-19 - 议程查询与聚合性能收敛
+
+- 已加载 `diagnosing-bugs` 与 `planning-with-files`，确认本轮仅修改后端数据访问链路，不触发 UI 门禁。
+- 已保留现有大量脏修改并在三个既有计划文件顶部追加独立任务段，未覆盖历史内容。
+- 已建立当前基线：35,578 行全表扫描、34,514 条 Done、至少 34,516 次逐事项证据查询；下一步检查模型/索引/迁移安全并建立红灯。
+- 已验证现库外键关闭且存在 1 条提交、5 条通知孤儿记录；决定不在本轮追加破坏性数据库外键，而使用稳定 `task_id` 关系、批量关联与复合索引。
+- 首次计划回写补丁因误含空路径 hunk 被整体拒绝；确认无部分落盘后改用精确非空补丁。
+- 新增 handler 症状级回归后，默认 Go 环境在标准库/缓存阶段失败，尚未形成有效产品红灯；准备切换工作区 Go 与 `/tmp` 缓存。
+- 使用 `/tmp/well-ambient-gocache` 后红灯进入真实 handler：旧实现返回 250 条自动历史，超过 200 上限；正在合并 SQL 数量断言以同时捕获 N+1。
+- 最终红灯稳定报告 `250 auto decisions / 252 SQL`，同时捕获无界历史和 N+1；Phase 1-2 完成，进入实现。
+- 已新增只读议程仓储：活动事项字段投影、最近 200 条历史、Git/Notification 两个显式 `task_id` 关联预加载、去重项目查询均在同一事务中完成。
+- `GenerateAutonomousDecisions` 已改为批量证据关联，弱语义判断新增纯内存入口；数据库初始化新增活动/历史部分索引及 Git/Notification/Repo 复合索引。
+- 症状级回归已由 `250 events / 252 SQL` 红转绿，当前断言上限为 `200 events / 6 SQL`。
+- 真实库副本的全部查询计划命中新索引，三次活动/历史/项目组合裸 SQL 均小于 10ms；临时 handler 探针测得 22.17ms、595KB、5 SQL、1,064 活动项和 200 历史项。
+- 临时真实性能探针源码已按 diagnosing-bugs 清理，仅保留正式症状级回归。
+- 项目范围回归首次因忽略系统兜底事件而伪红；已改为检查 HIT 事件存在且 NS2 事件不泄漏，保留原业务语义。
+- 全量 Go 测试除 `internal/llm`、`internal/server` 的 sandbox IPv6 loopback 监听限制外均通过；`go vet ./...` 已通过，准备受控重跑原全量测试。
+- 受控环境重跑 `go test ./... -count=1` 全部通过；再次运行 `go vet ./...`、目标文件 `git diff --check` 和临时探针/DEBUG 清理检查均通过。
+- Phase 1-4 完成本地交付；运行中的旧服务需重启后才会执行新查询与 `CREATE INDEX IF NOT EXISTS`，本轮未主动重启或修改主数据库。
+
+---
+
+## 2026-08-14 - 方案生成失败后手动重试
+
+- 已分类为 `coding.complex` + targeted product redesign，加载项目 cold-start/continuation/coding/memory 规则、planning-with-files、diagnosing-bugs，以及强制 Impeccable、design-taste-frontend、finesse-ui 和 UI design system。
+- Design Read 固定为 Phase 41 研发交付方案卡片，`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`；共同方向是失败状态原地恢复，不新增 modal/tab/卡片，不改变 Markdown、版本、发布或 Jira 来源链路。
+- 初步源码定位确认 `failed` 状态直接显示 `last_error`，当前 UI 没有 retry handler；自动重试在第三次失败后终止。下一步先建立后端状态机与前端入口的症状级红灯，再决定最小持久化语义。
+- 初次计划插入因顶部已有更新导致锚点失效，`apply_patch` 验证失败且无部分写入；已按 Self-Improving 规则读取真实文件头并用稳定锚点重新插入。
+- 已新增症状级测试并运行红灯：Go 测试精确失败于专用 retry command/method 不存在；前端契约 8/9，通过项未回归，目标用例精确失败于“重新生成”、pending、API、技术详情和 524 摘要缺失。
+- 三项假设已用源码边界和主库只读样本逐项确认：默认幂等键重放旧失败；旧 polish 路由会先建立 working draft；workspace 轮询正确，问题属于终态投影与专用命令缺失。准备进入最小实现。
+- 后端模块已实现 `RetryFailedPolish`：保留原失败行，新建 attempt=0/queued 替代任务，以失败 job ID 形成幂等链，并拒绝已有 working 或被更新任务越过的旧失败。
+- 新增 `POST /api/solutions/jobs/{id}/retry`，由 `solution:write` 权限保护，首次返回 202、重复返回 200/replayed，并原子返回最新 workspace；模块与 API 定向测试均 PASS。
+- 卡片失败态已加入友好错误摘要、折叠技术详情和统一 primary 重试按钮；提交期间禁用并显示“重新排队中…”，成功后消费响应 workspace 原地更新。移动端按钮为 44px，不增加 modal/tab/新卡片。
+- 前端方案契约已由目标 8/9 红转为 9/9 绿；新增 stale failure 与 existing working 后端保护测试也已 PASS。
+- 首轮完整验证中 solutions、前端 check/build 与 diff hygiene 通过；server 套件被 sandbox 的本地 loopback 限制中断，准备按受控权限原命令重跑。目标组件同时暴露两个无消费者的旧链接 CSS warning，已作为目标卫生清理。
+- 受控权限原样重跑 `internal/server` 完整套件通过；solutions 套件、前端方案契约 9/9、`pnpm check`（0 errors）、生产 build、Impeccable `[]`、Finesse P0=0 和 `git diff --check` 均通过。
+- 使用 127.0.0.1:18189 内存假后端和 4182 独立 Vite 完成认证浏览器验收；首次沙箱监听 EPERM 后按规则受控启动，验收完毕已关闭，不触碰现有 8080/5173/18081 进程。
+- 1440px 默认错误卡只显示友好 524 摘要，技术 JSON 可折叠查看；点击后即时禁用为“重新排队中…”，随后原地进入 queued 并移除重试入口，没有 modal/tab/URL 变化。
+- 390px 实测重试按钮 44px 高、文档无横向溢出，浏览器 console 无 error/warn；临时浏览器 tab 已关闭并重置 viewport。当前任务本地完成，未调用真实 LLM/Jira、未写主数据库、未部署或重启后台。
+
+---
+
+## 2026-08-14 - 绩效 v6.0 数字资产算分收敛
+
+- 已加载项目冷启动规则、历史绩效证据、planning-with-files，以及强制 Impeccable、design-taste-frontend、finesse-ui 三方门禁。
+- Design Read 固定为 Phase 41 高密度产品管理台，`SOUL=4`、`SPECTACLE=2`、`DENSITY=8`；三方共同选择保留页面/Modal 所有权，只收敛一级信息层级。
+- 已确认当前工作树包含大量用户和前序任务修改；本轮只增量修改绩效模块、Jira 必要证据采集、配置解释、目标页面和针对性测试。
+- 下一步完整读取产品 UI 深层规范，核对 Jira parent/issue-link 结构并建立 v6.0 公式、归责和风险扣分红灯。
+- Impeccable product、finesse product/redesign 深层规范已完整读取；UI 保护边界和桌面/移动验证范围已冻结，可以进入源码与测试盘点。
+- codebase-design/deepening 已完成；后端 seam 固定为现有绩效 Module run/explanation interface，新增复杂度只进入模块内部纯计算与本地数据库测试。
+- 源码盘点确认 Jira adapter 尚未采集 parent/issuelinks，当前 B01 只认追加式正式归责；下一步先建立 Jira link、v6 规则数和 Git 只扣不奖的红灯。
+- 已确认 Jira 三条同步路径共享字段应用函数，前端只消费 explanation seam；改造可以保持较小外部 interface。下一步进入测试设计和精确红灯。
+- v6.0 后端已实现：D01/D02/B01 权重为 35/20/45，需求系数删除复杂度/阶段/角色，质量使用 30 天充分暴露分母，Git 重复率和 Commit 密度只形成最多 10 分扣分。
+- Jira client 已采集 parent/issuelinks，历史 JQL 对 core-member 需求与项目内 Bug 使用不同证据范围；唯一来源需求链接归到需求 Done 负责人，多链接保持未归责，修复负责人不自动背负质量损失。
+- explanation API 已派生交付/质量分量并持久化结构化代码风险；配置、示例配置和设置页默认版本同步为 v6.0，历史快照不改写。
+- 前端一级成员表已压缩为参考分、交付、质量、风险和证据状态；详情新增代码风险表，系数公式只展示四个可执行需求系数，公式版本不再作为页面视觉信息显示。
+- 定向 Go 测试通过；服务包首次全量在沙箱内因禁止 `httptest` 绑定回环端口失败，按规范在允许回环监听环境执行目标服务测试后通过。测试夹具曾因复用反序列化对象残留 parent 失败，重置夹具后“多链接不归责”保护转绿。
+- 前端生产构建通过，`pnpm check` 为 0 errors/84 条既有 warnings；契约测试首次误用未安装的 tsx、随后普通 Node 不识别 `.ts`，最终使用 Node 22 `--experimental-strip-types` 运行并 7/7 通过。
+- 服务端旧八指标 explanation 测试已改为精确断言 D01/D02/B01；全量 `go test ./...` 与 `go vet ./...` 通过。
+- Impeccable 对三个绩效前端目标文件检测结果为 `[]`；前端 7/7 契约、Svelte check 0 errors（84 条其他文件既有 warnings）和生产构建通过。
+- 隔离数据库启动完成最终 v6 startup run：14 条快照对应 14 名唯一 core member，可计算参考分 11–71，0 分/100 分/负零审计记录均为 0；6 名样本不足成员以 N/A 展示。
+- 登录态浏览器验证 1280/1024/900/390：一级八列稳定、三项指标和两项代码风险信号可追溯、共享 Modal 内部滚动与关闭正常、页面无文档横向溢出；新会话 console error 为 0。
+- “刷新已保存结果”前后隔离库 run 记录均为 37，证明读取不会触发计算；所有临时页面、前端和后端进程已关闭，现有服务和源数据库未重启、未写入。
+
+## 2026-08-14 - 每日 Jira 跳转入口合并
+
+- 已加载 planning-with-files、Impeccable distill/product、design-taste-frontend、finesse-ui product/redesign 和 UI design system。
+- 三方一致采用 preserve-mode 合并：编号胶囊承担 Jira 深链，独立操作胶囊删除；无 URL 静态 fallback、键盘焦点和新窗口安全属性保留。
+- 已确认最小 owner 为 `DailyJiraAudit.svelte` inspector header；下一步先修改现有症状级契约形成红灯，再编辑生产代码。
+
+## 2026-08-14 - 每日 Jira 右侧标题宽度修复
+
+- 已加载项目冷启动规则、planning-with-files、diagnosing-bugs 及强制 Impeccable/design-taste-frontend/finesse-ui/UI design system 门禁。
+- Design Read 固定为 Phase 41 高密度 Daily Jira 产品检查器，preserve 模式；标题是主事实，Jira 链接是首行次级动作。
+- 两路 Impeccable 只读审计完成：主观审计定位 flex 一维布局与两行信息关系不匹配；机械 detector=`[]`，无 Tailwind 任意 spacing/z-index 命中。
+- 三方已就 hierarchy、组件 owner、桌面/移动行为与验证范围达成一致；只把 header 扁平为 meta/title/action 三个同级元素，并以两列两行 grid 分配空间。
+- 新增标题宽度契约先 3/3 红，实施后 3/3 绿；与既有 Daily Jira 实时刷新测试合计 5/5。
+- 已复用现有 Chrome 登录态页面验证 `FEL2WD-2037`：宽屏标题占 header 100%，760px 堆叠态 98.5%，390px 单列态 97.8%；操作无重叠，文档无横向溢出，console 无 warning/error。
+- `pnpm check` 0 errors/83 既有 warnings、生产构建、Impeccable type/layout `[]`、Finesse P0=0 和精确 diff check 全部通过。
+- 验收截图保存为 `outputs/ui-validation/daily-jira-inspector-title-wide.png` 与 `daily-jira-inspector-title-390.png`；只切换时间分组和选中行，未填写或提交早会决策。
+
+## 2026-08-14 - 方案编辑弹窗扁平化与 Markdown 表头默认隐藏
+
+- 已完成共享 `MarkdownWorkbench`、`SolutionWorkspace`、`Modal`、全部调用方与现有方案契约的源码核对。
+- 已确认最小归属：共享组件提供默认隐藏视觉元信息和可选嵌入态；方案弹窗只消费嵌入态，不修改共享 Modal、保存发布、冲突、权限或 revision/CAS。
+- 已保护现有脏修改：`MarkdownWorkbench.svelte` 的单模式 mode switch 条件和 `Modal.svelte` 的统一关闭按钮改动均属于既有工作，本轮不回退。
+- 两项红灯已建立并转绿，定向方案/同步契约最终 13/13 PASS；`pnpm check` 为 0 errors，生产构建 PASS，Impeccable detect=`[]`，Finesse 高风险样式扫描无新增命中，`git diff --check` 通过。
+- 登录态 DG-394 已验证主预览视觉表头隐藏；编辑弹窗在 1440/900/390 三档直接显示 533 字符正文、无内框/圆角/背景、无文档横向溢出。
+- 390px 双滚动已修复：Modal body `512/512` 不再产生外层滚动，CodeMirror `484/6236` 可独立浏览全部正文；关闭后焦点归还“编辑方案”，console 无 error/warn。
+- 验证前后 DG-394 的 revision/working revision/draft 状态完全一致，未保存、发布或修改业务数据；验收截图已保存至 `outputs/ui-validation/solution-editor-wide.png`、`solution-editor-900.png`、`solution-editor-390.png`。
+
+## 2026-08-14 - 方案编辑弹窗扁平化与 Markdown 表头默认隐藏
+
+- 已分类为既有产品 UI 的 preserve-mode follow-up，加载项目冷启动规则、planning-with-files、Impeccable/product、design-taste-frontend、finesse-ui/product/redesign/anti-cheap/preflight。
+- Design Read 固定为研发排期方案编辑，`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`；三方共同方向为 Modal 单一强容器、Markdown 正文直接显示、视觉表头共享 opt-in。
+- 已记录保护边界：不修改后端、保存/发布/冲突/脏关闭状态机、共享 Modal 关闭几何、Phase 41 tokens 或其他业务调用；下一步核对当前源码和调用方后再编辑前端。
+
+## 2026-08-12 - 全局方案治理中心
+
+- 已加载项目冷启动规则、planning-with-files、domain-modeling、codebase-design，以及强制 Impeccable、design-taste-frontend、finesse-ui 全部相关规则。
+- 已运行 Impeccable 项目上下文识别，确认使用现有 `DESIGN.md`，无独立 `PRODUCT.md`；本次是既有产品页扩展，不触发从零初始化。
+- 三方 UI 评审已完成并写入计划：Phase 41 浅色管理台、列表加右侧检查器、移动端自然堆叠、完整加载/空/错误状态、全部选择器复用共享 `Select`。
+- 已确认当前工作树包含大量用户未提交修改，本任务将只增量修改直接相关文件，不回退或格式化无关内容。
+- 已新增 `solutioncatalog` 深模块与目录/搜索 token/同步任务/两轮比较/标准化提案/标准修订模型；发布事务写入幂等任务，周期 reconciler 负责补偿，目录不复制 Markdown 正文。
+- 已接入权限化目录、详情、项目、标准、校准与提案审核 API；所有查询先应用用户项目偏好，两轮 worker 绑定版本化提示词，模型请求未设置整体 timeout。
+- 已新增全局“方案中心”导航和页面：已发布方案/标准方案双视图、搜索、共享项目 Select、左列表右详情、Markdown 即时只读、相似比较和内联审核；移动端自然堆叠，不新增 modal 或 tab 跳转。
+- 后端完整定向回归 PASS：`internal/config`、`internal/db`、`internal/solutions`、`internal/solutioncatalog`、`internal/server`；EXPLAIN 回归确认候选查询使用 `idx_solution_catalog_token_entry`。
+- 前端 `pnpm check && pnpm build` PASS（0 errors）；目标 Impeccable 检测无发现，`git diff --check` PASS。
+- 隔离认证浏览器已验证列表选择不改 URL/tab、共享 Select、搜索空态、稳定加载、错误重试、接受提案生成标准，以及切换详情滚动归零；1280/1024/760/390 无横向溢出，390 主控件均为 44px，最终 console 无 error/warn。
+- 所有隔离 preview/fixture 服务与浏览器测试 tab 已关闭；未访问真实 Jira、未调用真实 LLM、未重启后端或修改业务数据。新 schema、路由与 reconciler 等待下一次受控重启/部署加载。
+
+---
+
+## 2026-08-12 - 大模型请求取消总超时
+
+- 已加载 diagnosing-bugs 与 planning-with-files；完成统一 LLM 客户端、所有 Generate/Stream 调用方、前端 reader、HTTP Server、context deadline、Provider Files 和 solution lease 扫描。
+- 已向用户展示四项可证伪假设。H1 命中：非流式模型生成有固定 90 秒整体 timeout；H2 本地流式外层未命中；H3 命中 AI 配置探活 8 秒 deadline；H4 的 worker lease 不会终止当前请求。
+- 下一步先修改现有客户端测试形成精确红灯，再移除生成、AI 探活和 Provider Files 上传的任意整体 timeout；保留调用方 context 取消。
+- 红灯已运行并精确失败：`non-stream timeout = 1m30s, want no overall timeout`；没有依赖真实 provider 或等待 90 秒。
+- 统一客户端已收敛为一个 `httpClient()`：默认 `Timeout=0`，`Generate`/`Stream` 共用；调用方 context 仍挂在 `http.NewRequestWithContext` 上。
+- AI 配置探活已由固定 8 秒 context/client 改为继承 HTTP 请求 context；Provider Files 上传客户端也改为 `Timeout=0`，并增加独立契约测试。
+- 定向客户端无超时、流 context 取消和 Files 客户端无超时测试全部 PASS；复扫只剩生成后文件清理 30 秒保护与测试注入的 2 秒客户端，不属于真实模型生成调用。
+- 完整相关回归通过：`internal/llm`、`internal/server`、`internal/solutions`、`internal/telemetry` 全部 PASS；gofmt 与精确 `git diff --check` 无输出。
+- 最终调用方复扫确认所有真实 `providerllm.Client` 均未注入带 timeout 的 HTTP 客户端，也没有模型调用 `WithTimeout/WithDeadline`；前端 reader 无 AbortController/Promise timeout，Go server 无 WriteTimeout。
+- 未调用真实大模型、未修改业务数据，也未重启会触发 Jira/LLM/outbox 的现有后端。修复等待下一次受控重启/部署加载。
+- 最后将模块契约进一步收紧：即使未来注入带 `Timeout` 的自定义 HTTP client，也会复制并归零 timeout，同时保留 Transport 且不修改调用方对象。首版测试误比较函数型接口导致 panic，按 self-improvement 记录后改用可比较 transport 指针；最终完整回归再次 PASS。
+
+---
+
+## 2026-08-12 - Agent 首次方案直用与人工草案边界
+
+- 已启用 diagnosing-bugs、planning-with-files 与强制 UI 门禁；新任务计划已写入，尚未修改生产代码或业务数据。
+- memory quick pass 仅命中共享 `MarkdownWorkbench` 的 live 默认契约，没有命中 Agent/人工草案生命周期历史决定。
+- design-taste 首段读取因输出预算截断，已停止使用该输出并切换为 180 行分段；按规则不把一次性工具偏差写入长期记忆。
+- Self-Improving 完整规则已读取；design-taste 已按 180 行分段无截断读到 EOF，finesse-ui 及 redesign/product 参考也已完整读取。
+- Impeccable product register 与项目 `DESIGN.md` 已复核：本轮必须保留 Phase 41 右侧单一检查器、现有 Markdown 主编辑器与响应式结构，候选分支应通过状态语义收敛而不是新增弹窗、tab 或视觉层。
+- 已查询完整真实 revision/job 链：成功样本均为系统占位 v1 + Agent candidate v2，working 指向占位；没有发现真实人工作者修订。DG-352 在诊断期间也由运行中旧 worker 新增 candidate，证明兼容旧队列是必要范围。
+- 已添加四个模块接口红灯：无人工草案时 seed 不泄漏、Agent 成为唯一可编辑 v1；人工草案存在时不入队；Jira 同步对应验证。默认 Go cache 被 sandbox 拒绝后改到 `/tmp`，红灯精确停在新接口/kind 尚未实现。
+- codebase-design 与 deepening 规则已加载；选择把 seed、人工边界、首次完成推进和旧任务幂等收敛封装进 `solutions.Module`，Jira worker 只调用一个高杠杆接口，不在调用方复制判定。
+- 三方 UI 评审已完成并写入计划：一个 canonical working、就地状态、无 candidate 对照/计数/应用/重新润色；不改右检查器、Markdown 同步与响应式布局。
+- 已实现 `RequestInitialDraft` 深模块：自动来源只创建隐藏 v0 `system_seed`；首次 Agent 完成直接写 `agent_draft/draft` v1 并推进 working。已有 working 时不入队，重复旧任务收敛到当前 working。
+- 已加入无损兼容迁移：旧 `jira-sync` 空占位转为隐藏 seed，最新 Agent candidate 提升为 canonical working；不删除 revision/job/source，保留版本号、压缩、发布与审计链。
+- Jira 同步改为调用单一首次草案接口；人工草案存在时静默跳过。方案 UI 已移除 candidate 对照、计数、应用和“重新润色”，只显示生成状态或 canonical Markdown 主文档。
+- 四条 solutions 生命周期测试、Jira 人工边界测试、方案入口契约 4/4、完整 `internal/solutions`/`internal/server`、Svelte/TypeScript 与生产 build 全部通过。
+- Impeccable targeted detect=`[]`；Finesse P0=0，仅保留两处既有纯白 fallback P2。精确 diff check 与临时端口清理通过。
+- 使用数据库副本和禁用外部集成的隔离服务完成认证浏览器三态验收；验证旧 candidate 直接显示为主方案、人工草案不出现候选/润色、生成中不出现空 editor，以及 dirty Markdown 不被轮询覆盖。隔离副本、二进制、配置和服务已清理。
+- 用户原 Chrome tab 已恢复到 DG-394 深链。当前 8080 仍为旧进程；没有在未授权情况下触发真实 Jira、LLM 或 outbox，兼容迁移等待下一次受控启动。
+
+---
+
+## 2026-08-12 - 方案润色长时间中与即时显示收敛
+
+- 已加载 planning-with-files 和项目本地 Impeccable 完整规则；本任务将使用现有 `task_plan.md/findings.md/progress.md` 持久化诊断事实与三方 UI 共识。
+- 首次合并读取两个大型 UI 技能文件时输出被截断；已记录并改为分块读取，不使用截断版规则作决策。
+- design-taste-frontend 全文共 1206 行，finesse-ui 共 293 行；已改为每段最多 240 行持续读取，直到两个文件 EOF 后才形成三方结论。
+- design-taste-frontend 已分块读到 1206 行 EOF。该技能明确将 dashboard/admin 列为非主场，本轮只采用 redesign-preserve、完整 loading/empty/error 状态、文案自审与响应式保护，不引入营销页视觉语法。
+- finesse-ui 已读到 293 行 EOF，Impeccable product register 和项目 `DESIGN.md` 已读取。Design Read 确认为 Phase 41 研发管理 product surface，`SPECTACLE=1/DENSITY=8`；保留既有单一右检查器、熟悉控件与紧凑信息密度。
+- Finesse redesign-mode 与 product-ui 参考已完整读取；本轮定位为最高杠杆的状态可见性与组件精简，保护路由、信息架构、设计 token、方案 Markdown 数据契约、人工应用 candidate 和编辑同步行为。
+- 快速历史核对命中一条可复用契约：共享 `MarkdownWorkbench` 的 `live` 模式已是默认显示，现有 rollout 也已验证 preview/edit 行为。下一步对照当前方案工作台实现，判断是否只需移除多余 mode prop/文案。
+- 已运行数据库诊断命令，同时输出 job 状态聚合、最近 30 条队列、非 queued 详情、重复 input revision、candidate revision 与有效来源数。DG-394 为纯排队，该反馈环已捕获用户的精确症状。
+- 已确认 worker 的有效并发度为 1：每轮 `for` 最多取 3 条，但每条都会同步等待 LLM 完成后才继续；不是 3 路并行。前端则把 queued/running 折叠为同一文案。
+- 前端定位时误假设 `web/src/services` 存在且一次输出过大；已完成 Self-Improving 复盘，不写入未经用户请求的长期记忆，后续改用真实文件清单与分段读取。
+- 已完成实现前三方评审并写入计划：状态在现有方案检查器内展开，方案主编辑器固定共享组件的 `live` 模式，候选对照保持只读；不修改共享编辑器、页面几何或同步协议。
+- 已定位精确前端根因：`activeJob` 合并 queued/running，按钮统一显示“润色处理中…”，同时调用方把共享编辑器的四种模式重新开放。状态细节在 API model 中已有，不需要新增接口或迁移。
+- 已定位队列放大器：同一 Jira 评论页在循环内按逐条增长的来源 watermark 入队。计划先用“两条 eligible 评论只产生一个含完整 source_refs 的 job”建立红灯，再把入队移到完整对账之后。
+- 红灯已成立：两条方案评论产生 job 1=`source_refs:[1]`、job 2=`[1,2]`；前端契约也精确失败于四模式仍开放。测试环境的首次 loopback 拒绝已按既有受控路径重跑，不混入产品判断。
+- 检查共享编辑器模板后确认：单一 live 模式仍显示一个无意义的模式按钮。本轮将加 `toolbarModes.length > 1` 渲染条件；多模式调用方完全不受影响。
+- 首次组合实现补丁因一个前端 notice 片段顺序不匹配被整体拒绝；已确认没有任何部分落盘，正在按小补丁继续。
+- 后端“对账后单次入队”和前端 job 状态模型已成功落盘；模板补丁因重复空态行已不在当前文件而拒绝，尚未修改 template/shared markup，继续按现状小段处理。
+- 模板与共享编辑器小补丁现已落盘：状态行和按钮使用真实 job 文案；保存/复制不再暴露 Markdown 类型术语；方案固定 live；仅一个模式时不渲染 mode switch。编辑 change/save/CAS/dirty 代码未改。
+- 定向绿灯：Jira 专用作者自愈与同批多评论单次入队 2/2 PASS；方案前端契约 4/4 PASS；gofmt/diff hygiene PASS。
+- 完整 server/solutions 回归、前端 Svelte/TypeScript 检查与生产构建均通过；已移除本轮造成的 `.solution-facts .danger` unused selector，未处理无关既有 warnings。
+- Impeccable 目标文件检测无发现；Finesse P0=0。已加载 Browser 控制规则，准备复用登录态本地页面完成真实 DG-394 与断点验收。
+- 浏览器连接已建立，但当前绑定没有打开的 tab；这是正常清理状态。下一步在同一浏览器中新建本地 5173 页面，不切换浏览器或读取会话存储。
+- 本地 5173 页面已正常打开；in-app browser 显示登录页且无可复用认证。按 Browser 规则，用户未指定浏览器时先尝试已有 Chrome 登录态，再决定是否需要用户介入。
+- Chrome 中存在已登录的 `http://localhost:5173/` 页面，以及 DG-394 Jira 页面；将只认领本地应用 tab 做只读 UI 验证，不操作 Jira tab、不提交任何业务动作。
+- 已认领本地应用并通过深链打开 DG-394。真实 panel 为“等待重试”，候选 0/来源 1；mode selector 与单个即时模式按钮均不存在，保存方案按钮存在。全程只读，未点击润色/保存/发布或访问 Jira tab。
+- 已确认 Chrome 支持临时 viewport override；将按 1440、760、390 三档检查方案检查器可见性、文档横向溢出、状态与即时编辑器，完成后重置默认视口。
+- 三档响应式只读验证均无横向溢出，panel/live 编辑器稳定，模式选择器为 0。补齐窄屏 44px 动作命中区，并修正已过 retry 时间仍显示过期“预计时间”的文案；需重新跑定向前端与浏览器窄屏绿灯。
+- 移动端 HMR 绿灯：实际 CSS viewport 433px 下状态为“等待重试，已到重试时间，正在等待后台队列”，3 个动作均 44px，live=true、mode switch=0、横向溢出=0。首张截图位于列表上方，下一步滚动到右侧方案卡片本体做视觉复核。
+- 已滚动到方案卡片和编辑器本体完成视觉复核：状态不与按钮冲突，标题自然换行，live 语法装饰和 6 行/74 字符状态完整；未进入编辑或触发保存。发现一处上层介绍仍暴露“Markdown 内容”，将改为“方案正文”。
+- 方案检查器上层介绍已改为“查看 Jira 方案评论、方案正文与润色候选”，不再把存储格式作为用户显示类型。
+- 最新只读 DB 复查确认 worker 持续推进；DG-394 的一次执行因 provider 502 失败并进入重试，不再将该状态笼统描述为正在润色。
+- 最终前端回归、检查、构建、Impeccable/Finesse 与 diff hygiene 已通过；准备核对 dirty/untracked 归属、浏览器 console，并释放本轮认领的 tab。
+- 工作树包含大量本轮之前/同会话既有修改；`SolutionWorkspace.svelte` 与 `web/tests/` 仍为未跟踪的新方案功能文件。本轮只做小补丁叠加，没有回退、覆盖或暂存任何用户/既有改动；数据库只读查询之外未手工改写业务数据。
+- 浏览器最终状态为 DG-394 正在润色（22:30 开始）、live=true、mode switch=0、上层“方案正文”文案生效。console 的唯一 error 是分步 HMR 历史记录；最终源码没有 `editorMode` 引用，check/build 已通过。用户原 Chrome tab 保留，临时 in-app tab 已清理。
+
+## 2026-08-12 - 项目级方案提示词缺省日志刷屏
+
+- 已加载 diagnosing-bugs 技能并读取领域 `CONTEXT.md`。当前只构建一条针对 HIT project-scope 缺省的日志红灯，未修改生产查询。
+- 红灯命令已运行：`GOCACHE=/tmp/well-ambient-gocache go test ./internal/solutions -run '^TestProjectPromptMissFallsBackWithoutRecordNotFoundLog$' -count=1`，稳定 FAIL 并捕获与用户完全一致的 HIT SQL；其余环境和 worker 均不是复现必需条件。
+- 生产查询已仅在可选 project-scope 分支改为 `Find + RowsAffected`；全局 prompt 仍使用 `First` 并在真实缺失时返回 `no active solution prompt`。定向红灯与项目优先对照测试已同时 PASS。
+- 完整 `internal/solutions` 与 `internal/server` 套件 PASS；gofmt 无差异，相关 diff check PASS。当前 8080 监听 PID 36200 仍需重启才能加载修复；本轮未触发 Jira 读取、AI 调用或 Jira 写回。
+
+## 2026-08-12 - DG-394 Jira 方案评论静默润色失效
+
+- 已完成第一轮定向探针：H1（专用作者信号未识别）得到直接证据，H2（正文 marker 被丢失）被否定。
+- 额外确认了历史数据自愈缺口：相同快照重放不会更新资格元数据，worker 也会因 `Replayed` 跳过入队。下一步先写两类红灯：专用作者识别，以及相同快照从不合格重判为合格后的幂等入队。
+- 诊断 SQL 先后误用 `enabled` 和 `scene/updated_at`；已完成 Self-Improving 复盘，后续查表前先以实际 schema 校验字段，不把查询失败混入产品根因。
+- 已建立两条可执行红灯：模块测试证明重放后仍是 `eligible=false/marker=''`；server 集成测试在允许临时 loopback 后证明作者改为 `jira公用-解决方案` 仍不会重判、也不会入队。
+- 最小修复已落盘：评论识别支持专用解决方案账号；`ObserveSource` 在不改正文/哈希/快照 ID 的前提下刷新 `marker/eligible`；worker 对每次合格观测幂等请求润色，避免同步瞬时中断后永久丢任务。
+- 定向结果：`TestObserveSourceReplayRefreshesDerivedClassification` 和 `TestJiraSyncReclassifiesDedicatedSolutionAuthorAndQueuesPolish` 均已从 RED 转为 PASS；第三次相同 Jira 同步后 job 总数仍为 1。
+- 完整 `internal/solutions` 与 `internal/server` 回归全部通过。当前本地库中 DG-394 仍是修复前运行态：asset 105 的 working revision 为 0，source 274 仍 `eligible=0`，且无 polish job；这是接下来运行态刷新的精确前置断言。
+- 8080 监听进程 PID 28593 的 cwd 已确认为当前仓库；Jira worker 启动时立即同步，之后每 30 秒重试，solution worker 也会随 server 启动。
+- 运行进程链已精确确认：父进程 PID 28568 为 `go run cmd/server/main.go`，子进程 PID 28593 监听 8080，stdin/stdout/stderr 均连接 `/dev/ttys007`。重载时将只终止这两个已确认进程，并按原命令从当前仓库启动。
+- solution worker 启动时立即处理，之后每 5 秒扫描；任务成功后会持久化 candidate revision 并广播需求更新。
+- 已安全终止仅属于当前仓库的旧后端 PID 28568/28593。原命令重启因“Jira 私有内容发送至外部 AI + 可能 Jira outbox 写回”需要明确授权而被审核拒绝；当前 8080 新进程尚未启动，未尝试任何规避方案。
+
+## 2026-08-12 - 全局弹窗关闭按钮安全区优化完成
+
+- 已加载项目冷启动路由、复杂编码/内存/工具/交付规则、planning-with-files、diagnosing-bugs，以及强制 Impeccable、design-taste-frontend、finesse-ui 三方门禁。
+- 已运行 Impeccable context，确认 `PRODUCT.md` 缺失但 `DESIGN.md` 存在；本次是现有产品 UI 的 scoped refinement，不触发从零 init。
+- 已检查用户截图原图、Phase 41 设计契约、共享 Modal 历史约束、工作树状态和第一轮 modal close 源码清单。
+- 已建立红灯目标：捕获长标题/多行标题与关闭按钮 44×44 命中区相交或安全间距不足；尚未编辑任何前端文件。
+- Impeccable 要求的隔离主观布局评估和机械 detector 预扫描已并行启动；等待合并结果后记录三方共识再实施。
+- 已连接应用内浏览器并检查现有页面；当前没有可复用的打开页面或登录态 tab。下一步先探测本地已运行端口，若无现成服务则使用项目允许的安全本地验证路径，不绕过认证。
+- 首次端口探测因误用 zsh 只读变量 `status` 提前失败，已按 planning/self-improvement 规则记录；改用非保留变量并增加 IPv6 探测。
+- Chrome 中存在已登录的 `http://localhost:5173/` 页面并已认领；首次全量 DOM 快照因页面 evaluate 超时，准备改用更轻量的目标读取。
+- 轻量可见 DOM 成功确认截图中的 NS2-2047 弹窗仍处于打开状态；locator 几何已把侵入量化为按钮约 20.7×34px、标题/按钮相交、安全间距约 0px，形成可重复红灯。
+- 隔离机械 detector 预扫描完成：9 个 modal 目标 layout findings=0，证明源码检测器是下限，不能替代运行时几何；等待隔离主观布局评估完成后合并三方共识。
+- 隔离主观布局评估完成；已将 Impeccable、design-taste-frontend、finesse-ui 的共享方向、分歧解决、组件所有权、响应式规则和几何验收写入计划。前端编辑门禁现已满足，进入实现。
+- 已将 18 个弹窗/抽屉入口迁移到共享 44px 关闭按钮与标题安全列；`pnpm -C web check` 为 0 error，80 条均为既有告警。
+- 新增源码契约回归；首次用默认 `node --test` 运行被 Node 22 的 `.ts` 加载限制阻断，已确认该运行时提供 `--experimental-strip-types`，下一次使用该受支持参数执行。
+- 已重新打开真实 NS2-2047 详情并完成桌面几何采样；焦点验证第一次选用了 Chrome locator 不支持的 `.focus()`，几何结果已保留，后续改走受支持的键盘/DOM CUA 交互。
+- NS2-2047 已在桌面、中宽和移动宽度通过 44px、16/12px gap、零相交、零文档横向溢出验证，并保存三张截图；关闭动作生效。进入其它页面级实现抽样。
+- Demand 页面级“新需求”弹窗已在桌面和移动宽度通过 44px、16/12px gap、零相交和零横向溢出；仅打开后关闭，未填写或提交任何数据。
+- Health、Settings、DecisionEventCenter、CommitTelemetry 五类页面级实现完成桌面/移动几何抽样，均为 44px、零相交、零文档横向溢出。代码轨迹 X 额外暴露顶栏层级覆盖；最终由 workspace portal action 同步真实可视四边到 fixed inset，并已通过桌面与移动长页面复验。
+- 代码轨迹最终复验通过：桌面/移动 X 均命中自身并成功关闭，抽屉从真实工作区顶边开始、保持视口内高度；最终 Chrome error/warning 日志均为空。
+- 最终 `pnpm -C web check`、7 项前端测试、生产构建、精确 diff check、Impeccable 完整/布局检测和 Finesse P0 门禁全部通过；三张 NS2 长标题截图和一张 Settings 移动截图保存在 `outputs/ui-validation/`。
+
+
+## 2026-08-12 - 需求方案资产、自动润色与压缩保存完成
+
+- 新增方案资产深模块、数据库迁移、CAS/不可变版本、来源快照、gzip/哈希、润色任务、提示词版本、Jira 幂等 outbox 和回收 worker lease。
+- Jira 同步增加评论分页与方案标记识别；Agent 通过版本绑定提示词与来源生成候选，平台安全边界始终追加且不可由超管提示词移除。
+- 新增方案读写/发布权限和仅全局超管可用的提示词管理权限；提示词保存、启用进入审计日志。
+- 需求详情新增稳定方案链接、Markdown 工作台、候选对照/应用、发布/fork 和冲突恢复；配置中心新增提示词版本治理与公开链接配置。
+- 隔离认证浏览器完成桌面/平板/手机验收，验证 97% 压缩、并发 dirty 保护、深链、候选、发布、提示词 v2 和公开地址同步；未访问真实 Jira/AI 或项目数据库。
+- Go 回归、TypeScript/Svelte 检查、同步单测、生产构建、Impeccable 检测和 diff hygiene 通过。现有 Svelte warning 为 80 条、0 error。
+
 
 ## Session: 2026-07-20 - Task Project/Owner Multi-Select And Surface Rhythm
 
@@ -2241,3 +2682,452 @@
 - Full Go tests, frontend check/build, detector gates, whitespace checks, and authenticated browser validation passed. The live panel advanced from PUSH 3 to PUSH 4 without manual refresh and rendered both repositories at desktop, tablet, and mobile widths without overflow.
 - Production/runtime evidence still shows no `crane_manager` webhook delivery. No external GitLab mutation or deployment was performed; webhook installation/status remains the required environment follow-up.
 - **Status:** local repair and validation complete
+
+# 2026-08-01 - Governed data asset architecture
+
+- Committed the complete pre-existing worktree as `ecd1aaf feat: consolidate delivery planning and admin workflows` before starting new architecture work.
+- Loaded project continuity, coding, memory, delivery, domain-modeling, codebase-design, and file-planning rules.
+- Started the backend-only architecture phase; no frontend or external-system write is in scope.
+- Initial audit confirms the repository already has a strong Work Item audit stream but lacks a unified governed ledger, immutable report/analysis artifacts, hot/cold data separation, and bounded cross-source cursor queries.
+- Fixed the module direction at six operations: append, bounded timeline, event detail, seal snapshot, snapshot detail, and latest scoped snapshot. SQLite remains the real local adapter and tests cross the same module interface.
+- Added the domain vocabulary, accepted ADR, and architecture document covering fact layers, time semantics, hot/cold storage, cursor watermarks, idempotency, evidence snapshots, migration, and future partition readiness.
+- Added additive database models for event metadata/payloads and snapshot metadata/payloads/evidence, explicit composite indexes, and SQLite update/delete triggers.
+- Added the initial `internal/dataassets.Module` implementation with normalized append, full-fingerprint idempotency, gzip thresholding, hash-checked detail reads, stable cursor timelines, and immutable evidence snapshots.
+- `gofmt` and `go test ./internal/dataassets ./internal/db -count=1` pass; module behavior tests are the next step.
+- Added interface-level tests for replay/conflict, compression/integrity, stable late-event pagination, snapshot evidence/versioning, immutable raw-SQL guards, index plans, and a 12,000-row bounded metadata set.
+- Added protected read-only event/snapshot endpoints under the new `data_asset:read` permission. Timeline responses expose only metadata; detail requests explicitly retrieve governed payloads.
+- Integrated Work Item planning/reconcile audit events into the ledger in the same transaction and proved an injected asset failure rolls back the task mutation and both audit streams.
+- Targeted module/database/delivery-planning tests and the new server handler tests pass.
+- Initial 25,000-row benchmark measured roughly 1.07 ms/op for a 100-row page on the local Apple M4 Pro before changing the benchmark to a genuinely deep keyset cursor; the deep-cursor result remains to be recorded.
+- Added cursor-batched historical WorkItemEvent backfill plus `cmd/data-assets-migrate`. Dry-run is read-only; apply mode requires a pre-migration backup and is idempotent on replay.
+- Added 1,201-event backfill coverage, including dry-run, apply, replay, and resume-from-ID behavior.
+- Final deep-keyset benchmark at approximately row 20,000 of 25,000 rows measured `1,897,392 ns/op` for a 100-row page on the local Apple M4 Pro; the query remains metadata-only and OFFSET-free.
+- `go test ./cmd/data-assets-migrate ./internal/dataassets ./internal/db ./internal/deliveryplanning -count=1`, focused data-asset server tests, `go vet`, and `git diff --check` pass.
+- Full `go test ./...` advanced through all other packages but the existing LLM and GitLab webhook suites require local `httptest` listeners; the sandbox denied those binds and both automatic escalation reviews timed out. This is recorded as an environment validation gap, not a passing result.
+- No frontend, production database, external integration, destructive retention, or migration apply action was performed.
+- **Status:** local governed data-asset foundation complete; deployment dry-run/apply remains explicit follow-up
+
+# 2026-08-01 - Governed data asset review, dry-run and isolated commit
+
+- Completed independent standards and specification review; all identified P1 correctness/safety findings were resolved before commit.
+- Hardened immutable inserts, deterministic replay inspection, snapshot temporal/watermark validation, WAL-consistent backup, conflict-aware dry-run, malformed JSON evidence preservation, release metadata capture, explicit actor classification, and covering indexes.
+- Targeted tests, focused server tests, vet, whitespace validation, query-plan checks, and an independently exported staged-index test run all passed.
+- The deep keyset benchmark returned `1,979,583 ns/op`, `245316 B/op`, and `6568 allocs/op` for a 100-row page near row 20,000 of 25,000 rows.
+- Read-only assessment of `well-ambient.db` reported 7 scanned, 7 would append, 0 conflicts; SHA-256 remained `fb4918f33eabc3435d847bed2faa5d69adb0e9bb1aae39e7be23cf69b0848849`.
+- Created isolated architecture commit `bd2df59 feat: add governed data asset ledger`. Concurrent completion-flow, frontend, runtime-status, and database changes remain untouched and uncommitted.
+- **Status:** reviewed, read-only assessed, and committed locally; production apply not run
+
+# 2026-08-02 - Daily Jira automatic refresh after Jira sync
+
+- Reproduced the stale-page path and ruled out response caching: Jira sync persisted fresh `TaskTelemetry`, but the worker emitted no update event and Daily Jira did not subscribe to the existing SSE-derived telemetry event.
+- Added change-aware, post-batch telemetry broadcasts to Jira synchronization. An unchanged follow-up sync emits no duplicate event.
+- Added a debounced Daily Jira event subscriber with in-flight coalescing and teardown cleanup, preserving current filters and selection.
+- Added deterministic backend and frontend regressions for changed/unchanged syncs, burst events, in-flight events, and unsubscribe behavior.
+- Targeted and related Go tests, `go vet`, frontend tests, `pnpm check`, `pnpm build`, Impeccable/Finesse gates, and diff hygiene passed.
+- Isolated real-component browser validation confirmed automatic fact updates while retaining the selected issue at desktop, 760px, and 390px with zero horizontal overflow and no console errors.
+- Existing localhost service, real Jira, and the project database were not modified during browser validation.
+- **Status:** complete locally; not deployed
+
+# 2026-08-02 - Daily Jira source activity time correction
+
+- Reproduced the user-visible clustering with two existing Jira rows whose source `updated` timestamps differed but whose local sync timestamps were identical.
+- Added `TaskTelemetry.SourceUpdatedAt` as a separate source-fact timestamp; local `LastUpdate` keeps its existing mutation/concurrency semantics.
+- Jira ordinary and keep-alive synchronization now populate and advance the source timestamp only from valid Jira `fields.updated` values.
+- Daily Jira projects `SourceUpdatedAt` as recent activity and falls back to legacy `LastUpdate` until the next synchronization backfills old rows.
+- The exact red regression turned green; the related Jira/Daily Jira set, complete server package, database package, full Go suite, vet, and diff hygiene passed.
+- No frontend files, real Jira, or the project database were modified for this correction.
+- **Status:** complete locally; not deployed
+# 2026-08-12 版本发布闭环与筛选胶囊工具条
+
+- 已加载项目 UI 门禁、Impeccable layout、design-taste-frontend、finesse product/redesign/preflight 与 diagnosing-bugs；任务计划已记录共同方向、分歧、组件归属、响应式和验证范围。
+- 已启动两份隔离布局评审；机械扫描完成且 detector 为零未解决项，视觉评审仍在收敛。
+- 已建立发布闭环红灯：专用 `POST /api/releases/{id}/publish` 缺失时返回 404。
+- 已实现领域发布服务、专用权限路由、状态与资产事件原子写、幂等重试，以及最强大脑 `delivery-cockpit.releases` 发布事实投影。
+- 已关闭通用 PATCH planned -> released 的绕过路径，并要求本地版本创建从 planned 开始。
+- 定向 Go 回归已由红转绿：`TestPublishReleasePersistsEvidenceAndMakesItVisibleToStrongestBrain`、发布前置条件、版本状态不重开和版本计划列表均通过。
+- 下一步：完成视觉评审合并，实施版本页发布交互、筛选胶囊与最强大脑可见表面，再跑全量静态/浏览器验证。
+
+## 2026-08-12 版本发布闭环最终进展
+
+- 完成领域发布服务、专用路由、原子资产证据、幂等重试、状态/范围锁定和最强大脑发布事实投影。
+- 完成版本页内联发布确认、发布后只读、即时刷新，以及最强大脑最近发布事实条。
+- 完成“现有版本与 Jira 事项”整行胶囊工具条和桌面/平板/移动端响应式布局；受影响的容器、卡片、控件、portal 浮层和 modal 均无阴影，焦点仍使用清晰 outline。
+- `go test ./... -count=1`、`go vet ./...`、`pnpm check`、`pnpm build`、Impeccable、Finesse 与 `git diff --check` 通过。
+- 登录态隔离浏览器完成发布前确认、实际发布、发布后只读、最强大脑即时可见、`1440px`/`900px`/`390px` 响应式、零阴影、无横向溢出和空控制台验证。
+- 未连接真实 Jira、未修改项目数据库、未部署或重启生产服务。
+- **Status:** complete locally; not deployed
+# 2026-08-12 - Solution asset implementation started
+
+- Loaded project cold-start rules, codebase-design, planning-with-files, and the mandatory Impeccable/design-taste-frontend/finesse-ui gate.
+- Recorded a three-way product-UI direction: preserve the Phase 41 demand-detail drawer, use one authoritative Markdown document, show Agent output as a candidate, and require human Diff/apply before changing a draft.
+- Audited the existing versioned demand specs, Markdown workbench, Jira comment adapters, AI streaming path, permissions, and gzip data-asset codec.
+- Protected the dirty worktree by starting an independent `internal/solutions` module and limiting future shared-file edits to additive migration/routes/permission wiring and the existing demand-detail mount point.
+- **Current:** implementing additive solution schema, compression, CAS, immutable revisions, source references, polish jobs, prompt versions, and Jira outbox.
+
+## 2026-08-12 - Personnel performance brain implementation started
+
+- Loaded the planning-with-files, codebase-design, and domain-modeling instructions for this backend-only change.
+- Fixed the module boundary: silent background runner plus one run-once seam; no frontend trigger and no reuse of project-health scoring.
+- Chosen persistence semantics: append-only run/snapshot/audit records, fixed input watermark and formula version, with configurable transactional retention defaulting to 90 days.
+- Protected the dirty worktree by avoiding the existing frontend and planning additive backend files plus the smallest necessary config, migration, and server-lifecycle wiring.
+- Implemented the domain vocabulary, additive schema, scorer evidence contract, runner lifecycle, and temporary-database regressions.
+- First full Go run found an SQLite polling lock in the new runner test and sandbox-denied local listeners in existing LLM/server tests; logged both in `.learnings/ERRORS.md` and began targeted correction.
+- Repeated-package verification exposed shared in-memory SQLite state leaking across `go test -count`; assigned every test invocation its own database identity in addition to single-connection serialization.
+- Stabilized the runner regression and passed it ten consecutive times; race detection also passed (with a non-failing macOS linker warning).
+- Passed the complete Go suite with local-listener permission, plus `go vet ./...`, gofmt and `git diff --check`.
+- Did not open, migrate, or write the existing `well-ambient.db`; no frontend, deployment, or service restart was performed.
+- **Status:** complete locally; existing deployment configs must opt in with `performance_brain.enabled: true`.
+
+## 2026-08-12 - Personnel performance next stage started
+
+- Activated planning-with-files and codebase-design for the deeper evidence and runner work.
+- Activated the mandatory Impeccable, design-taste-frontend, and finesse-ui review gate before any frontend edit.
+- Added a requirement-complete plan covering formal evidence, runner hardening, super-admin read authorization, calculation explanation, responsive browser validation, and final completion audit.
+- **Current:** reading the full UI skill instructions, then auditing authoritative backend and frontend state before selecting the implementation seam.
+
+## 2026-08-12 - Personnel performance evidence and runner core
+
+- Added an append-only, revisioned formal evidence ledger with explicit observe/void actions, source identity, payload hash and actor audit.
+- Wired C04/C05/C06/C10 to formal evidence only while preserving the fix-contribution versus defect-responsibility boundary.
+- Extended retention to evidence revisions and added bounded SQLite busy retries plus in-memory runner status for read-only diagnostics.
+- Added a module-owned calculation explanation read model; opening or refreshing it cannot trigger a calculation.
+- Fixed the isolated performance test migration after the first focused run exposed the newly added table omission.
+- **Current:** verify the backend core, then add super-admin-only handlers and regressions.
+
+## 2026-08-12 - Personnel performance backend next phase verified
+
+- Added super-admin-only read and evidence-ingest endpoints; both authorization paths are server-enforced and covered by member-versus-superadmin tests.
+- Focused regressions pass for append-only evidence revisions and voids, complete ten-metric formal scoring, evidence retention, bounded SQLite contention retry, read-only explanation behavior, and evidence API audit without a calculation trigger.
+- The existing project database was not opened or migrated; all verification used package memory databases and the shared isolated server-test database.
+- A first plan checkpoint patch used wording from an earlier draft and missed the current task-plan context; no product file changed, and this checkpoint uses the actual task section.
+- **Current:** implement the reviewed Phase 41 calculation explanation subview and role-filtered navigation.
+
+## 2026-08-12 - Personnel performance calculation guide implemented
+
+- Added the superadmin-only KPI child navigation and guarded the client handler in addition to the backend authorization boundary.
+- Implemented a read-only Phase 41 page with stable background refresh, complete loading/error/empty states, runtime facts, formulas, ten-metric table, evidence and retention inspector, factor matrix, and recent persisted snapshots.
+- `pnpm check` passes with zero errors and the same 80 pre-existing warnings in unrelated files.
+- Impeccable detection found one side-accent anti-pattern in the first pass; replaced it with a full hairline boundary and queued a clean rerun.
+- **Current:** complete design detection and backend/frontend build validation before authenticated browser checks.
+
+## 2026-08-12 - Personnel performance authenticated browser validation
+
+- Isolated superadmin session confirmed the KPI child menu, calculation explanation hierarchy, all ten metric rows, all six factor groups, read-only notice, background status, evidence ledger, retention policy, and empty snapshot state.
+- After isolated evidence and task fixtures, startup and scheduled runs produced append-only formal Alice snapshots at 97.70 / A, 100% evidence coverage, 7 effective samples, and a 1 / 1 demand-to-Bug count.
+- Clicking “刷新已保存结果” left the run count at 6 before and after, proving the page reads persisted state without triggering calculation.
+- During a simulated API outage, the page retained two previously loaded snapshots and showed a recovery warning; after restart, the warning cleared and the next persisted snapshot appeared atomically.
+- At 1440x900, 900x900, and 390x844, document overflow was zero; the main/inspector layout changed from two columns to one, metric tables scrolled internally, and the mobile refresh control measured 44px.
+- Measured text contrast was 18.06:1 for the main heading and 11.59:1 for the responsibility note; a fresh successful page session had no console warnings or errors.
+- Non-superadmin role hid the calculation submenu. Runtime membership removal caused a 403 refresh to remove the snapshot table immediately, and the App role guard returned the user to a non-sensitive view after role refresh.
+- Impeccable detection is clean (`[]`); focused backend tests, `pnpm check`, and production build pass.
+- Full `go test ./... -count=1`, `go vet ./...`, performance race detection, `pnpm check`, `pnpm build`, Impeccable detection, and diff hygiene all passed. The frontend checks retain 80 pre-existing unrelated warnings and the existing bundle-size advisory, with zero errors.
+- Final requirement audit confirmed that fix contribution is not used as defect responsibility, reads never call `RunOnce`, evidence revisions and score/audit history follow the configured retention window, and both APIs remain server-authorized for global superadmins.
+- Added the formal-performance-evidence term to the domain context and completed the implementation plan. The real Jira/CI producers and deployment config remain an environment integration step; no production service, real Jira, or existing project database was touched.
+- **Status:** complete locally; not deployed
+# 2026-08-12 排期治理轨迹卡片高度对齐
+
+- 已按 `coding.complex` 启动新任务，保护当前大量未提交用户改动，尚未编辑任何前端文件。
+- 已加载项目路由、Impeccable、diagnosing-bugs、planning-with-files、design-taste-frontend、finesse-ui、Chrome 与 well-ambient 管理台验证约束。
+- Impeccable 识别为 product register 的 layout 修复；已按其要求隔离发起布局判断与机械预扫描，两项均为只读。
+- 已把截图症状转成可证伪验收：宽屏左右外框 top/bottom 对齐，右侧内容主体独立滚动，窄屏堆叠恢复自然高度且无文档级横向溢出。
+- 已连接本地应用的现有浏览器控制面；接下来优先认领现有登录态标签页，不启动重复服务或重新登录。
+- Chrome 登录态已复用并命中 HR-4202 代码轨迹状态；浏览器复现不需要任何点击或写入，后续只做视口覆盖与只读矩形/滚动测量。
+- 已在用户截图同尺寸 2382×1100 获得红灯：右检查器计算为 `align-self:start`，底边比工作台主网格少约 185.69px；诊断继续锁定真实左卡矩形和最终 CSS cascade。
+- 已停止控制被用户切换的原 Chrome 标签页，创建同一认证会话下的独占验证页并成功进入排期治理；后续几何不会再与用户当前操作争用。
+- 两份隔离审查均已返回：视觉评估与机械 cascade 扫描独立指向 `DemandKanban.svelte` 文件末尾的 `align-items:start`、`align-self:start; height:auto` 覆盖，不建议修改 `CommitTelemetryPanel`。
+- 已在独占登录页连续两次运行几何断言，稳定获得 123.4636px 底边/高度差红灯，同时确认左右 top 对齐和现有内层滚动归属。
+- 已读取最终 CSS cascade 与 DOM 结构；三方会审的共享方向、分歧、组件归属、宽屏/堆叠响应式契约已在计划中记录，满足实现前门禁。
+- 已新增 `web/tests/schedule-inspector-height-contract.test.ts`，先观察宽屏共享行断言失败，再把 `DemandKanban.svelte` 最终契约恢复为桌面 stretch/100%，并为 <=1280px 明确保留 start/auto。
+- 目标测试 3/3 通过；宽屏 HR-4202 代码轨迹运行时连续两次几何断言全绿，原 123.46px 底边差变为 0，滚动所有者未改变。
+- 并行静态门禁全部通过：6 项前端回归、Svelte/TypeScript、构建、Impeccable、Finesse P0 与 diff hygiene。
+- 已保存并视觉复核宽屏结果 `outputs/ui-validation/schedule-inspector-height-wide.png`；卡片底边对齐，轨迹条目仍按内容自然排列。
+- 宽屏排期设置页签也完成 0px 几何对齐，表单 body 保持独立滚动。
+- 1280×900 已确认单列堆叠和 inspector 自然高度生效，无水平溢出；接下来补测 workspace 纵向滚动所有者并覆盖 760/390。
+- 1280 的滚动归属在 `.demand-dashboard`，760 则切换为 document 自然滚动；两者均无水平溢出，桌面等高没有泄漏到堆叠态。
+- 760 的代码轨迹与 390×844 的排期设置/代码轨迹均已完成登录态验证：窄屏由 document 自然滚动，左右卡宽一致，两个页签内容完整且无水平溢出。
+- 已保存并人工复核 `schedule-inspector-height-390.png` 与 `schedule-inspector-height-390-trace.png`；最终浏览器控制台无 warning/error，视口已恢复，验证标签页已释放。
+- **Status:** complete locally; not deployed
+# 2026-08-12 代码轨迹完整可滚动浏览
+
+- 已加载 diagnosing-bugs、planning-with-files 及项目强制 Impeccable/design-taste-frontend/finesse-ui 门禁。
+- 已完成三方实现前评审：完整轨迹留在当前页签，宽屏单一正文滚动，窄屏自然流；不改外框等高、数据接口或轨迹业务语义。
+- **Current:** 建立能直接捕获固定条数切片和隐藏提示的红灯回归。
+- 已新增 `web/tests/schedule-telemetry-completeness-contract.test.ts`；修改产品代码前运行结果为 0/2，准确复现用户指出的隐藏提示和固定四条切片。
+- 已向用户列出四项可证伪假设；当前 Phase 2 核对接口是否还有第二层限制，并检查正文 line-clamp 与滚动归属。
+- 已确认后端 `/api/tasks/commits` 无条数限制并返回全部倒序记录；宽屏 `.schedule-telemetry-inline` 已是唯一滚动区，窄屏已有自然流契约。
+- Phase 2 完成；最小产品改动限定为 `CommitTelemetryPanel.svelte` 的完整列表渲染、提示删除与 inline 正文解除裁切。
+- 已完成最小产品修复；`schedule-telemetry-completeness-contract.test.ts` 由 0/3 转为 3/3。
+- **Current:** 运行 Svelte/TypeScript、生产构建、设计检测与 diff hygiene，然后进入登录态浏览器完整条数/滚动验证。
+- 组合回归首次运行 8/9；失败来自既有高度测试对 selector 顺序的脆弱假设，当前源码新增合法的 `.schedule-solution-inline` 同级页签。已调整为行为归属断言，未修改产品滚动规则。
+# 2026-08-12 DG-394 静默方案润色失效
+
+- 已加载 diagnosing-bugs 与 planning-with-files，建立逐跳证据链和阶段计划。
+- 已确认当前任务优先诊断后台链路；在证据表明前端返回错误前不修改 UI。
+- 下一步：执行 DG-394 数据库/API 红灯，收集任务状态与最近后台日志。
+- Phase 1 完成：DG-394 资产与 current 来源存在，但来源不 eligible，且任务/候选均不存在；红灯命令退出 1。
+- 已向用户给出 4 个可证伪假设并按现有证据排序；进入真实正文、判定器和自动入队边界检查。
+
+## 2026-08-13 人员绩效 Core Member、配置开关与成员详情
+
+- 完成 core-member fail-closed 聚合边界、用户目录别名归并、在线 `Reconfigure` 启停、受治理配置面板、只读快照详情接口和共享 Modal 多维呈现。
+- 登录态首轮验证发现运行中的旧后端仍返回不含 ID 的历史全员快照；已把说明列表也收紧为当前 core member，旧数据继续保留作审计但不展示。
+- 新增跨 100 条历史分页边界回归并通过；绩效 Go 包与配置/Modal 前端契约均已通过。
+- 最终本地服务启动轮次完成；配置入口、14 名 core member、详情多维数据、桌面/移动几何、44px 关闭控件、Escape 与焦点恢复均已在登录态浏览器通过。
+- 最终 Go 绩效/服务端回归、生产构建、前端 6 项契约、Impeccable 检测和目标差异卫生均通过；构建输出仅保留其他现有页面的警告。
+- **Status:** complete locally; local development service running, not deployed
+
+## 2026-08-13 人员绩效 Jira 历史证据为零
+
+- 已启用 diagnosing-bugs 与 planning-with-files，建立当前真实数据库的只读红灯。
+- 红灯稳定输出 `snapshots_with_jira_items_but_zero_available_metrics=14`，退出码 1。
+- 已完成数据链最小化：历史 Jira 事项已归集，但完成/计划/估算与执行验收证据未入库；活跃 JQL 又排除了 done 历史。
+- 已向用户给出 5 个排序假设并完成代码/数据对照；主因确认，进入先测试后修复阶段。
+- 三个目标回归均已先红：评分断言得到 nil，历史 JQL/同步函数尚不存在。
+- 已实现历史完成 JQL、Jira 完成/计划/估算字段适配和 C01 Jira resolution 降级证据；三个红灯全部转绿。
+- 完整相关 Go 包测试与 vet 通过。
+- 已补充重新打开事项不得复用旧完成证据及历史同步幂等回归，均先红后绿；相关三个 Go 包全量测试与 vet 通过。
+- 本地新版服务已启动，真实 Jira 历史同步返回 234 条已解决事项并在 13:14:06 追加 schedule 快照。
+- 原始数据库红灯由 14 降为 0；最新 14 名 core member 均有非零试算分，C01 共含 92 条 Jira resolution 引用。
+- 登录态浏览器已确认列表非零、梁志远详情可追溯到 12 条历史 Jira 完成引用和逐事项计算系数；正式分仍受 80% 覆盖门槛保护。
+- **Status:** complete locally; updated development service running on port 8080
+
+## 2026-08-13 按判定表 v4.0 重实现并重算
+
+- 已加载 spreadsheet、diagnosing-bugs、planning-with-files、自我改进及项目强制三方 UI 技能；修正了 design-taste-frontend 的实际路径后重新完整读取。
+- 已锁定判定表中的权重、阈值、逐指标样本、覆盖率、暴露期、等级和系数；当前正在把这些规则固化为测试与单一后端规则模型。
+- 已确认首个必须消除的红灯：只查询 Jira Done 会让 C01 缺少到期未完成事项分母，单个完成项因此得到 100 试算分。
+- 已完成项目冷启动升级、领域词汇、Phase 41 设计契约和三方 product-register 参考加载；UI 门禁结论已写入计划，前端编辑门禁现已打开。
+- 已定位并加载工作区内置 `@oai/artifact-tool` 2.8.43，准备对源工作簿做当前轮次的精确 range/formula 复核。
+- v4.0 规则、系数和 C01 到期分母红灯已建立并转绿；单个 Jira Done 现在保留来源但不能越过 C01 最低 3 样本形成 100 试算分。
+- 第一轮全包回归准确暴露 3 个旧契约：旧测试期待单样本可用、全局样本替代逐指标样本、旧 Bug 系数。已把正式评分夹具扩为满足每个 v4.0 指标最低样本与 30 天暴露期的真实结构。
+- 已加入发布方式、回退影响、责任系数和趋势/信任风险/杠杆原因码的追加式证据字段；正式评分夹具已覆盖 13 条事项/发布系数明细。目标测试仅剩夹具计数同步，服务端 `httptest` 仍需按既有学习使用本机回环权限运行。
+- **Current:** 完成项目/表格上下文加载，建立 v4.0 红灯测试和历史到期事项查询契约。
+# 2026-08-14 scoring panel alignment polish
+
+- Restored project cold-start rules and classified the task as complex preserve-mode product UI refinement.
+- Activated planning-with-files and the mandatory UI review gate; target component discovery and browser redline are next.
+
+# 2026-08-13 scorecard v4 closeout
+
+- Fixed the SettingsPanel performance configuration shape and replaced its legacy v1 fallback values.
+- Locked the runtime scoring contract to workbook v4 defaults so an older database config cannot silently change newly published score semantics.
+- Cleaned the new evidence-label mapping before the next Svelte validation pass.
+- Verified the focused frontend governance contract (3/3) with Node's TypeScript stripping mode.
+- Added audited base/adjustment de-duplication with a regression fixture.
+- Full Go validation found one legacy rollback API fixture without the newly mandatory v4 release method; the fixture now carries the explicit audited factor and strict validation is retained.
+- Restarted the root service with `go run cmd/server/main.go`; it loaded database config version 21, synchronized 246 resolved-or-due Jira issues, and persisted a completed v4 startup run for exactly 14 core members.
+- Queried the persisted v4 snapshots and audits: all formal scores are N/A, trial scores are 20-45 where calculable, C01 includes both due and resolved references, and the full run/snapshot/retention audit set exists.
+- Authenticated desktop, tablet, and mobile validation passed: the list shows formal `N/A`, the member dialog separates trial score from formal score, Jira references include both `resolved` and `due`, focus returns after Escape, and document overflow remains zero.
+- Source inspection confirmed the apparent duplicate “等级” entry was overlapping `sed` output rather than duplicated UI markup; no source change was needed.
+- Impeccable exact-target detection returned `[]`; Finesse reported no P0 finding. The single target P2 is the intentional white glyph on the blue information marker, retained for contrast.
+
+# 2026-08-13 scorecard v5 closeout
+
+- Implemented the complete v5.0 scoring contract: three dimensions, eight executable metrics, fixed-weight aggregation, shadow/formal publication modes, configurable dimension/source switches, and core-member-only calculation.
+- Added governed Jira changelog ingestion and immutable source-event storage; synchronized 4,774 historical events for 860 work items and recalculated a 14-member v5.0 startup run without duplicate members or 100-point snapshots.
+- Added demand/project coefficient evidence, responsibility-separated bug attribution and fix-cycle segments, recurring-defect evidence, Git SHA de-duplication, stable fingerprints, and raw numerator/denominator/unit projections.
+- Updated the calculation guide, member detail dialog, settings configuration, example YAML, runtime explanation, audit output, and the v5.0 executable workbook.
+- Fixed the solution workspace loaded-content branch and added a regression contract; authenticated browser validation confirmed the solution body on wide and 390px layouts.
+- Validation passed: `go test ./... -count=1`, `go vet ./...`, 24/24 frontend contracts, `pnpm check`, `pnpm build`, Impeccable target detection, browser console/interaction checks, workbook formula scan, and `git diff --check`.
+- Cleaned temporary validation sources and stopped validation servers. The repository remains deliberately dirty with the user's broader in-progress work preserved.
+
+# 2026-08-13 solution preview and edit dialog
+
+- Loaded the project UI gate and completed the Impeccable, design-taste-frontend, and finesse-ui preserve-mode review.
+- Recorded the agreed hierarchy, ownership, responsive contract, dirty-state safety, validation scope, and skill disagreements in `task_plan.md` before frontend edits.
+- Audited `SolutionWorkspace.svelte`, `MarkdownWorkbench.svelte`, the shared `Modal.svelte`, Phase 41 tokens, solution CAS APIs, existing editor reconciliation, and prior solution-governance memory.
+- Added focused static contracts for default preview, a single edit-dialog entry, dialog-contained save/publish, removed visible version copy, dirty-close protection, and retained CAS fields.
+- Focused contract run is intentionally red (5 pass, 2 fail) against the old implementation; implementation is the next phase.
+- Reworked `SolutionWorkspace.svelte` so the persisted Markdown renders in preview mode while a single “编辑方案” action opens the shared wide Modal with a live editor.
+- Moved save and publish into the Modal, added save-before-publish orchestration, automatic governed draft creation for published content, and inline dirty-close confirmation without a native confirm dialog.
+- Removed visible revision numbering/history and changed remote-update copy while retaining the backend revision, working revision ID, CAS request fields, immutable history, and reconciliation behavior.
+- First green attempt exposed two contract-only mismatches: an obsolete assertion forbade `availableModes`, and the new dialog assertion expected static button text despite loading-state expressions. Removed the unnecessary mode props and tightened the contract around the wired handlers and stable labels.
+- Focused solution entry contracts now pass 7/7.
+- `pnpm check` initially failed on Svelte named-slot placement; the footer is now a direct Modal child and the condition lives inside the slot. The error is resolved and recorded in `.learnings/ERRORS.md`.
+- Full frontend contracts pass 26/26. `pnpm check` passes with zero errors and 81 warnings in four unrelated existing files; the edited `SolutionWorkspace.svelte` contributes no warning.
+- Production build passes; only the existing large-chunk advisory remains.
+- Impeccable target detection returned `[]`. Finesse found two P2 pure-white fallbacks in the target button styles; replaced them with the existing tinted Phase 41 surface/ink fallbacks before the final detector pass.
+- Built an isolated validation server from a copied database with Jira, AI, and performance calculation disabled; reused the existing Go module cache after the first empty-cache build failed under restricted networking.
+- Authenticated browser validation passed for DG-352 on desktop and 390×844: default preview, one edit entry, shared edit Modal, dialog-contained save/publish, mobile footer geometry, and no visible version copy.
+- Dirty-close validation passed: editing enabled Save, the close action presented continue/discard choices, discard destroyed the Modal, and the test text did not persist. Browser console contained no warnings or errors.
+- Final validation passed: 26/26 frontend contracts, `pnpm check` with zero errors, production build, final Impeccable/Finesse detectors, and diff hygiene. Temporary browser tab, backend process, build artifacts, and copied database were cleaned up.
+- **Status:** complete locally; not deployed
+
+# 2026-08-14 release lifecycle and inspector layout
+
+- Completed the mandatory Impeccable, design-taste-frontend, finesse-ui, and UI design-system review before frontend edits; recorded hierarchy, ownership, responsive behavior, destructive-action semantics, and validation scope in `task_plan.md`.
+- Added red API regressions that initially reproduced missing discard/archive routes as 404 and missing release DELETE as 405.
+- Implemented audited archive, discard, and protected soft-delete lifecycle actions, dedicated permission routes, discarded status filtering, idempotent transition replay, and server-projected lifecycle capabilities.
+- Replaced the split project Select/action rows with one aligned control grid; added lifecycle management and shared inline confirmation states with reason, exact-name delete confirmation, loading protection, Toast feedback, and focus restoration.
+- Corrected the first 420px container-query attempt after authenticated desktop geometry proved it still stacked at a 397px inspector; the final breakpoint is viewport-based at 430px.
+- Validation passed: focused lifecycle tests, full `internal/server` tests, `internal/deliveryplanning` tests, `pnpm --dir web check` with zero errors, production build, both UI detectors, `git diff --check`, and authenticated 1440/760/390 browser geometry/interaction checks with zero console errors.
+- Existing repository-wide frontend warnings and Vite large-chunk advisory remain outside the target; no remote deployment or production mutation was performed.
+- **Status:** complete locally; local running backend was not restarted by this task.
+# Session: 2026-08-14 - 度量洞察卡片流与空白修复
+
+- **Status:** complete locally; not deployed.
+- 完成 Impeccable、design-taste-frontend 与 finesse-ui 三方 preserve-mode 评审；根因是同一 Grid 行被右侧长 inspector 撑高，而系数卡片位于 Grid 之后，并非 margin 或卡片固定高度。
+- 已将“需求与 Bug 计算系数”移入左侧 `.guide-main`，保持指标区到系数区 16px 连续内容节奏；系数网格按容器自动分列，980px 以下 inspector 自然下置。
+- 浏览器复核发现旧服务快照缺少 v6 `delivery_score/quality_score` 时会调用 `undefined.toFixed`；建立回归后将字段声明为可选并在显示层回退为 `N/A`，没有改动后台评分或数据。
+- 定向契约 6/6、`pnpm check` 与生产构建通过；Impeccable layout=`[]`，Finesse 目标文件无 findings。登录态宽/中/窄断点无页面级横向溢出，新 Chrome 页签 warning/error 为 0。
+
+# Session: 2026-08-15 - Jira 完成状态与评论入站同步
+
+- **Status:** Phase 1 in progress.
+- 已加载项目 cold-start 规则、复杂编码预设、tool routing、`diagnosing-bugs` 与 `planning-with-files`；确认必须先建症状级反馈环。
+- 已检查工作树并记录保护边界：保留所有既有修改；真实 Jira 与主数据库只读，测试使用隔离依赖。
+- 下一步：读取 CONTEXT/相关 ADR、Jira 同步代码、定向测试、运行配置与 DL-4309 当前落库状态，构造红灯命令。
+- 已通过现有登录态只读核验 DL-4309：Jira 为 Done，评论 533697 在约 22:41 创建；未点击编辑、工作流、评论或删除入口。
+- 已只读核对主数据库：状态与评论最终在约 22:45 落库，说明需要修的是同步延迟/运行调度与变更后刷新通知，而非单条数据回填。
+- 错误：PATH 中无 `curl`，首次本地 HTTP 探测未执行；下一步使用 `/usr/bin/curl` 并检查服务启动时间/相关页面订阅。
+- 只读进程检查确认服务从 20:19 运行至本轮检查中途退出；没有可读日志句柄，未执行重启或进程控制。
+- 代码检索确认刷新消费者不统一：Daily Jira/活动面板可事件刷新，TaskKanban 仍依赖 60 秒轮询，Demand/Decision 依赖 15 秒轮询；下一步在后端建立评论变更广播红灯，并验证 Done 退出主 JQL 后的 keep-alive 契约。
+- 新增 `TestJiraSyncBroadcastsWhenOnlyJiraCommentChanges`，使用 DL-4309/533697 形状的 httptest + 隔离 DB；确认评论落库后没有 telemetry 广播，定向命令稳定红。
+- 首次夹具因 `CompletedAt` 时间种错而使任务字段变化、错误通过；已修正为真实 resolution 时间并记录，避免把旁路字段广播误当评论广播。
+- 安全读取真实配置确认：custom JQL 明确排除 Done，且范围横跨约 40 项目/15 人；未打印凭据。当前无 Jira 入站同步水位表，为旧 Done 更新的可靠补采和可观察性留下缺口。
+- 数据量量化：1,012 个 Jira 事项、497 活跃、431 个 14 天内 Done、84 个旧 Done；当前最坏周期约 1,425 次串行评论请求。采用深模块 seam，把去重、增量补采、评论水位和每事项通知隐藏在单次 reconcile 内。
+- 新增并运行三条定向红灯：评论广播缺失、稳定事项两轮评论请求 4 次、旧 Done 重开/评论完全漏采；Phase 2 完成，进入深模块实现。
+- 实现加法 `JiraInboundSyncState`/`JiraIssueSyncState`、评论 current 投影、主/补偿查询合并去重、updated 水位重叠、按最新更新时间处理和逐事项广播；三条定向回归已转绿。
+- 全部 Jira server 回归与 `internal/telemetry` 套件通过。实现中一次花括号遗漏被 gofmt 精确捕获并已修复。
+- 后端补充回归现已覆盖失败不推进水位、远端评论删除、最新事项不被无关慢事项阻塞；六条本次症状级测试均通过。
+- 已进入强制前端三方评审：完成 Impeccable 项目设计上下文和 finesse-ui product register 主规则读取，正在完成 design-taste 与产品/改版/交付检查参考后，再记录共同实现边界并编辑 Svelte。
+- 自检：一次计划文件补丁因跨文件复用错误锚点被拒绝且未产生修改；后续先读取每个目标文件的独立尾部，再构造追加补丁。
+- design-taste-frontend 全文已完成读取；已确认它对本任务只提供 preserve-mode 与 no-CLS/no-jitter 检查，不是产品看板的视觉系统。下一步完成 finesse 产品/改版/反廉价/交付参考，再落计划门禁结论。
+- finesse-ui 的 product、redesign、anti-cheap、preflight 参考已完整读取；三方门禁结论已写入 `task_plan.md`，前端编辑门禁开放。
+- 路径自检：首次检索误把实际位于 `web/tests/` 的 `daily-jira-refresh.test.ts` 写成 `web/src/lib/`，`rg` 报缺失但其余结果仍可读；已改为先用 `rg --files` 解析真实路径。
+- 已逐段检查 Task/Demand/Decision/Daily Jira 的加载、轮询和 cleanup；确认使用最小加法接入，避免覆盖这些文件中现有的大批用户修改。
+- 新增通用 `telemetry-refresh` 红测并确认正确失败于模块不存在；实现后 5 条通用契约转绿，既有 Daily Jira 2 条契约继续通过。
+- 静态检查首次发现 Daily 兼容层使用 `.ts` 扩展不符合当前 tsconfig；已保留用户原有兼容模块不变，让四个生产页面直接接入通用模块，避免修改全局 TypeScript 解析策略。
+- 四个页面现已直接接入共享 `telemetry-refresh`，轮询兜底保留；7/7 刷新契约通过，`pnpm --dir web check` 为 0 error，86 条 warning 均来自既有文件区域。
+- `/api/status` 的 Jira 入站状态红测已从缺字段转绿：现在区分 disabled/pending/syncing/healthy/error/stale/unavailable，暴露安全的时间和计数，但不泄漏具体错误文本。
+- 补偿 JQL 新增边界回归并通过：项目范围、主查询去重、50-key 有界分批、5 分钟 inclusive overlap 和未来时钟水位钳制均已锁定。
+- 继续审计通知链发现 SSE 32 条缓冲满时会静默丢 task ID；下一步建立 burst 红灯并用每客户端去重待发集消除丢事件窗口。
+- SSE burst 红灯已从缺少保留机制转绿：每个客户端现在把缓冲外 task ID 放入去重待发集，写出一个缓冲事件后按 key 稳定顺序排空，断开时一并清理；不再用扩大固定 buffer 掩盖丢失。
+- 空 Jira 范围红灯已转绿：启用但无同步范围时保存可见失败，不再留下永久 syncing 幻象，也不推进成功水位。
+- 完整 `internal/server` 与 `internal/telemetry` 回归通过；全部 45 条前端契约通过，其中本次新增 9 条刷新/消费契约。
+- 仓库全量 `go test ./...` 与 `go vet ./...` 通过；生产前端构建通过，仅保留已有 Svelte warning 与大 chunk advisory。
+- UI 检测：Impeccable 对四个目标组件返回 `[]`；Finesse 仅命中 Task/Demand 旧 CSS 的纯白 P2，本次没有修改对应样式或可见文案。
+- 隔离浏览器服务首次启动发现复制库中的版本化配置会覆盖临时 YAML，进程在端口权限失败前短暂进入 worker 启动；未获得端口审批且未继续绕过。仅临时副本已清除版本配置与待执行 outbox，主库/真实 Jira 未修改；浏览器验证改用无外部连接的前端夹具或已有登录态。
+- 无外连 Service Worker 夹具完成了真实构建产物的登录态端到端验证：DL-4309 从“进行中”切换为“已完成”后约 635ms 更新列表、指标与详情，`/api/work-items` 只重取 1 次，浏览器 console 为空。
+- 完成态与进行中态下任务表矩形均为 `x=293, y=500.28125, width=1168, height=104.96875`，证明事件刷新没有引发布局抖动；1920×813 截图已人工检查层级、对齐、溢出和状态一致性。
+- Demand、Decision 与 Daily Jira 的隔离浏览器事件注入分别触发既有投影接口；通用 5 条调度器契约覆盖事件合并、in-flight 补刷、无关任务过滤、隐藏页恢复和失败后重试，4 个消费者契约确认保留轮询兜底。
+- 最终回归：`GOCACHE=/tmp/well-ambient-gocache go test ./... -count=1`、`GOCACHE=/tmp/well-ambient-gocache go vet ./...`、45/45 前端契约、`pnpm --dir web check`、生产构建、`git diff --check` 全部通过；check 仍有 86 条既有 warning，构建仍有既有大 chunk 提示。
+- 临时预览、Service Worker、认证 localStorage、复制数据库和调试文件均已清理；正式 `web/dist` 已重新构建。真实 Jira 与主数据库全程只读，现有服务未重启，修复需按正常流程部署/重启后才生效。
+
+# Session: 2026-08-15 - 证据链筛选输入空白回归
+
+- **Status:** Phase 1 in progress.
+- 已加载 diagnosing-bugs、planning-with-files 与强制 UI 三方门禁资料；当前只建立症状反馈环，尚未编辑前端源码。
+- 已确认现有后端 8080、前端 5173 均在运行，下一步复用登录态打开证据链页面并实测单字符输入造成的空白。
+- Browser 当前没有遗留页签，打开 5173 后显示登录页；下一步解析本地测试账号来源并完成只读登录复现。
+- 已修正登录检索命令且确认无公开默认凭据；正在核对 `/api/login` 测试契约，目标仍是获得可控登录态而不是触碰真实凭据。
+- 已确认开发登录存在数据库写入副作用，主动放弃在主服务上登录；下一步构造隔离数据库后端并在其上复现。
+- 进程命令只读检查因权限被拒绝；该信息不是复现必需条件，已转向配置模板与隔离数据库路径，不申请扩大权限。
+- 已确定隔离启动方法：编译后从 `/tmp` 运行、复制主库、清除副本版本配置、只使用全外联禁用 YAML，并复用构建产物验证真实页面。
+- 已确认需清空副本 `config_versions`，且后端不是可直接依赖的静态站点；下一步核对 Vite 代理变量后启动独立前后端端口。
+- 隔离后端 18080 与前端 5174 已启动；两次沙箱端口 EPERM 均按规则改为受控授权启动，下一步执行 dev 登录并进入证据链页面红灯复现。
+- Browser 已在 5174 完成本地临时登录并加载管理台；下一步点击证据链，定位筛选输入与空白的可自动判定信号。
+- 已进入证据链并完成第一次真实输入实验：`N` 只做正常本地筛选，没有空白。下一步逐键采样零结果/连续输入和控制台，最小化触发条件。
+- 红灯已复现：`N` 先本地筛出 2 项，随后延迟刷新把整个证据工作台替换为空数据分支，连筛选输入框一起卸载。Phase 1 完成，进入根因假设与调用缝核对。
+- 首轮源码证据确认顶层 empty 分支所有权错误：它基于过滤后数组而非源数据；下一步建立目标组件回归，先锁住“零结果仍保留筛选/表格”，并精确复测是否还有异步覆盖。
+- 已确认无现成证据链筛选测试；准备按仓库 `node:test` 约定新增定向红灯。生产前端编辑前仍需先把本任务的三方 UI 评审结论写入计划。
+- 保证零匹配词在 80ms 内稳定复现输入框卸载，已排除需要异步请求才能触发的假设；三方 UI 评审完成并记录，前端编辑门禁开放，下一步先加红测。
+- 新增 `project-health-filter-contract.test.ts`；首次裸 `node --test` 被 Node 22 的 `.ts` 扩展加载限制阻断，断言尚未运行，已查到仓库标准参数 `--experimental-strip-types`。
+- 定向回归按正确运行器参数先 1/3 红、修复后 3/3 绿；真实浏览器保证零匹配已从“筛选框卸载、0 行”变为“筛选框与表格保持、上下文空行可恢复”。
+- 连续中英文、退格、清空与健康筛选零命中都未再空白；清空后的全量计数受当前健康状态筛选影响，正在读取实际激活状态后补做独立恢复断言。
+- 真实键盘清空已验证恢复全量 36/36、37 行且焦点保留；下一步跑宽/窄断点、console、检查/构建和 UI 检测器。
+- 已确认浏览器封装不枚举 viewport/console 方法，避免盲猜私有接口；继续用已知语义交互与截图能力验证目标状态，并以未改 CSS 约束响应式范围。
+- 显式刷新下稳定快照验证通过；尝试切换 390px 时确认当前 Browser API 不提供 `setViewportSize`，未改变页面，已记录且不重复。
+- 48/48 契约、0-error check、生产构建和 Impeccable 检测通过；Finesse 仅有目标文件旧 CSS 的 3 个既有 P2。最后补齐零结果决策条的准确文案后重跑定向与差异卫生。
+- 零结果决策条语义已通过先红后绿回归补齐，浏览器零结果与清空恢复均复核通过；正在执行最终全量验证和清理。
+- 最终 48/48、0-error check、生产构建、两套检测器和 diff hygiene 均完成；进入隔离后端/Vite、临时数据库与浏览器页签清理。
+- **Status:** complete locally; not deployed.
+- 隔离服务已停止、端口已释放、Email hook 已确认仅为日志 stub、临时 DB/二进制/配置已永久清除；验证页签已释放到 about:blank。
+
+# Session: 2026-08-16 - Jira 同步协程与间隔复核
+
+- **Status:** Phase 1 in progress.
+- 已加载项目规则、diagnosing-bugs 与 planning-with-files，并恢复既有 DL-4309 修复证据；下一步从当前代码和定向测试确认 goroutine 所有权及各层间隔。
+- 已确认 `Server.Start -> go startJiraSyncWorker -> immediate runCycle + 30s ticker`；正在补齐配置化、失败重试、SSE keep-alive 与前端兜底间隔证据。
+- 已补齐 Jira HTTP `10s` 超时、SSE `15s` heartbeat 与前端事件合并 `120ms`；下一步读取各页面轮询兜底和健康状态阈值，并运行定向回归。
+- 已确认任务/需求/决策页兜底轮询分别为 `60s/15s/15s`，Daily Jira 为事件驱动且无周期轮询；准备核对状态 stale 阈值后运行症状级 Jira 回归。
+- 状态接口以 `10m` 未成功或单轮未结束判定 stale；首次 Go 回归仅因沙箱禁止 httptest 监听而中止，已按 self-improving/3-strike 规则记录并切换为受控权限重跑，不重复原方式。
+- 受控权限下 Go 症状级回归全部通过，前端调度器与消费者回归 7/7 通过。
+- 本机 8080 状态探测连接失败，未擅自启动服务或连接真实 Jira；**Status:** current-source verification complete, runtime activation unverified.
+
+# Session: 2026-08-16 - Daily Jira 属性变更滞留与水位日志修复
+
+- **Status:** Phase 1 in progress.
+- 已加载 diagnosing-bugs 与 planning-with-files；下一步先从 1068 行和 Daily Jira 候选调用缝建立两个红灯。
+- 已定位 1068 为预期缺水位探测日志，并从主库确认更深层异常：最近全周期失败、1004 项全量处理、681 项写放大、成功水位为零。下一步验证是哪一字段反复变化及失败类别。
+- 已确认周期错误来自绩效源事件不可变 payload 冲突；Daily Jira 服务端无缓存。准备建立“recent LastUpdate + Jira Done”后仍被候选返回的最小回归，同时审计性能事件失败是否应阻断核心同步水位。
+- 新增 `TestJiraSyncCompletionOverridesRecentLocalProjectionAndRemovesDailyJiraCandidate` 并运行；它稳定红于 `status = progress, want done`，同时捕获用户看到的 1068 日志。Phase 1/2 完成，进入先红后绿修复。
+- 新增水位日志红灯并确认准确失败于 1068 `record not found`；一次绩效样本查询因表名假设错误失败，已记录并改为从 schema 解析实际表名。
+- 已从真实保留事件确认 payload schema drift：当前多出的 `parent_work_item_id` 造成 hash 冲突，而评分关联使用 TaskTelemetry。下一步加入 schema 稳定性红灯后实施三处最小修复。
+- 已量化 schema 混存为 198/1117 条带新字段；确定不能原地改历史或全量删除字段，将以 typed conflict + legacy replay 兼容旧不可变事件。
+- 三个后端红灯经 status authority、静默水位查询和 legacy snapshot replay 修复后已转绿。
+- 主库实证出现“后端已更新、页面可能仍旧”的独立路径；确认 Daily Jira 没有轮询兜底。进入强制三方 UI 评审后再补前端恢复能力。
+- Impeccable context/product register 与现有 token 已读；结论是不触碰视觉层级，只补可见页轮询、单飞/稳定替换和销毁清理。正在读取其余两方门禁。
+- design-taste-frontend 主规则正在完整分段读取；已确定该产品表格只适用 preserve-mode，不执行营销页默认。
+# 2026-08-16 Daily Jira 同步滞留修复
+
+- 建立并跑通 4 个后端症状回归：完成态移出 Daily Jira、首次评论水位无 `record not found`、旧绩效快照兼容、较新的 Jira 负责人修改胜出。
+- 修复 Jira 源状态采纳、负责人 freshness、GORM 水位探测噪声、不可变绩效快照 schema 演进；新增 typed conflict sentinel，非兼容冲突仍严格报错。
+- 完成强制三方 UI 审查后，为 Daily Jira 增加 30 秒可见页兜底，保留 SSE 即时刷新与现有单飞队列；契约回归 3/3 通过，Impeccable detector 0 findings。
+- `go test ./...` 全仓通过；`pnpm --dir web check` 0 error（既有 warnings）；`pnpm --dir web build` 成功。
+- 登录态 Chrome 验证目标事项已从列表消失、console 0 error、2133px/421px 无横向溢出。
+- 旧本地后端父子进程已按 PID 受控停止；新进程启动审批连续两次超时，未绕过权限。当前 8080 无监听，下一动作：在项目根目录运行 `go run cmd/server/main.go`，随后等待一个 30 秒周期确认 `/api/status` 的 `jira_sync.state=healthy`。
+# 2026-08-19 页面与搜索数据加载变慢深层诊断
+
+- 已加载项目冷启动规则、review/planning 路由、`diagnosing-bugs`、`planning-with-files` 与浏览器控制技能。
+- 当前阶段：Phase 1，定位可复用的本地运行实例并建立只读性能基线。
+- 已复用 Chrome 登录态完成真实决策看板首载与全局搜索；发现搜索会先进入任务表并加载 35,566 条全量数据，下一步用稳定完成标记重测时间并定位对应 API。
+- 已定位前端放大链：全局搜索建议仅取 8 条，但跳转后任务表串行取尽全部分页并一次性渲染；现进入 Phase 2，检查后端每页查询、总数统计和数据库索引是否进一步放大。
+- 已运行只读真实服务层探针：全量路径约 3.04s/72 页/33.1MB JSON，精确搜索约 43ms/1.6KB；下一步复跑确定稳定性，并检查渲染行数和刷新触发频率。
+- 三次探针均约 3.0–3.1s，且发现 60 秒轮询与每个 telemetry 事件都会重跑全量路径；继续检查负责人维度、目录成本和最近变更，区分主因与放大因素。
+- 已确认 490 个负责人带来额外多轮全表计算；SSE 全量刷新是当前未提交的新放大因素，基础全量加载在 HEAD 已存在。下一步验证数据规模/状态分布是否是触发性能拐点的变化。
+- 已完成 HEAD/current 差分与 active-only 对照：历史 687 条时算法快，当前 35,566 条且 97% Done 后退化；非 Done 对照仅约 35ms。首要因果链已成立，继续量化 SQL 次数和前端渲染边界。
+- 已追到数据增长来源：绩效历史 Jira 同步把历史样本写入 TaskKanban 共用的 `task_telemetries`，并用同步时间刷新 LastUpdate。当前阶段进入根因确认与修复边界整理。
+- 已发现第二条全站放大链：30 秒 Jira worker 无界读取全部本地 Jira key，keep-alive 过滤函数未接入 reconciliation 构造，理论上每周期可形成约 708 个 50-key 查询；一次已观测周期约 20 秒。
+- 已确认测试缝隙与运行态连续占用：old Done helper 未进入生产 JQL 构造测试；新同步轮次在上一轮完成约 9 秒后又开始。
+- 已排除全局 HTTP 停顿：syncing 时状态接口仍约 1ms；任务链路无 gzip，但压缩不足以修复全量编排和 DOM。根因证据已完整，进入交付整理。
+- 诊断完成：确认“绩效历史样本污染运营目录 → 35,566 条全量任务加载/渲染 → 高频轮询/SSE/Jira reconciliation 重复放大”的完整因果链。
+- 已清理临时 Go 探针与 HEAD 数据库副本；仅保留本次规划/发现/进度和 warm-memory checkpoint，没有修改业务代码、主数据库或运行服务。
+
+# 2026-08-19 Daily Jira 源同步与决策写回
+
+- 已建立 NS2-2262 离开审计范围、空评论、指定人写回、指回报告人和 Jira 失败不落本地的后端红绿回归，5/5 通过。
+- 已实现手动源同步、报告人投影、评论必填和原子 Jira 决策写回；页面提交后按 `jira_sync` 真实状态选择提示语。
+- 前端 8/8 契约通过；`svelte-check` 0 errors/86 个既有 warnings；生产构建、`git diff --check`、Impeccable 和 Finesse 检测均通过。
+- `go test ./...` 全仓通过，`go vet ./...` 无输出。
+- 构建态真实 Chromium 在 1440x900、900x900、390x844 验证 NS2-2262、报告人/指定人、评论禁用/启用、提交 payload、手动同步、Toast、零 console error 和零文档横向溢出；视觉截图已检查。
+- 浏览器扩展对所有 localhost 地址返回客户端拦截，改用已安装 Chrome 的无头模式；隔离后端因可能初始化真实 Jira worker 被安全审查拒绝，最终仅运行静态前端和本地 API mock。
+- 已停止静态预览；没有重启主服务、修改主数据库或写入真实 Jira。当前 Jira 凭据只读验证返回 401，端到端真实 Jira 验证留待凭据恢复后执行。
+- 已删除隔离数据库副本、临时二进制、浏览器脚本和截图；4175/18081 均无监听，未触碰现有 8080 进程。
+# 2026-08-21 Daily Jira 样式、滚动稳定性与刷新性能修复
+
+- 已加载项目冷启动规则、`diagnosing-bugs`、`planning-with-files` 和 UI 门禁技能入口。
+- 已开始读取相关历史：Daily Jira 自动刷新采用 SSE + 可见页轮询并保持选中；共享 shell/workspace 拥有滚动与视口几何。
+- 已把附件视为视觉证据，未把其中任何文案当作执行指令。
+- 当前阶段：完成三方 UI 审查和真实代码/页面反馈环前，不编辑前端代码。
+- 已完成三方 UI 审查：Impeccable 隔离布局评估 + 机械扫描、design-taste preserve-mode、finesse product register 均同意最小结构/性能修复；前端编辑门禁已解除。
+- 主库只读基线确认 35,636 行任务被 Daily Jira GET 全量读取，而目标未解决 Jira 仅 1,048 行；拟议过滤使用现有 active partial index。
+- 已列出四个可证伪假设，下一步先添加后端查询边界、前端快照/辅助请求、表单几何和滚动 CSS 合同红灯。
+- 后端查询边界回归先红后绿：Daily Jira task query 从两次降为一次，SQL 层排除非 Jira/完成态并只取所需列；状态 helper 与数据库谓词保持一致。
+- 已复用现有活动事项部分索引，未新增无证据索引；事件/决策分组数据规模只有 9/0，明确排除为主要瓶颈。
+- 已实现业务快照指纹、静态辅助资源初载、固定行高虚拟化，以及保持可见项/滚动位置的 30 秒自动刷新。
+- 已修复快速转派标签基线与负责人字段网格，移除滚动大面板 backdrop blur，明确平板 inspector scroll owner，并用稳定 viewport 单位修复移动滚动高度。
+- 隔离浏览器在 1440/1180/1024/860/760/480px 完成布局、深滚、30 秒自动刷新和 DOM 规模验证；默认 982 条记录仅挂载 28 行，13,052 个 DOM 节点降至 634。
+- 主库只读 SQL/EXPLAIN 完成：物化文本约 7.75 MiB 降至 0.20 MiB，现有 partial index 命中；没有修改主库。
+- 验证完成：Go 全仓测试与 vet、前端 63/63、0-error check、production build、Impeccable/Finesse detectors、diff hygiene 全部通过。
+- 已停止隔离 server/Vite 并删除临时数据库目录；**Status:** complete locally, main runtime activation remains unverified until the normal service is restarted.
+- 文档/状态收口后再次运行定向回归：后端 2/2、Daily Jira 快照/布局性能契约 6/6 通过；JSON 与 diff hygiene 复核通过。
+- 用户接受交付前盲点并要求把全桶响应升级到千万量级毫秒读取；已进入同一任务的架构扩展，不重复反思门禁。
+- 已加载 `codebase-design`、`planning-with-files` 和强制三方 UI 门禁，记录 deep-module seam、10M 可测目标及 preserve-mode 保护规则；当前 Phase 1 审计接口与索引归属。
+- Phase 1 发现：当前 GET 仍是全桶、全事件 `IN` 和浏览器全量数组；SQLite 已具备 FTS5，任务写入口分散，决定采用数据库触发器维护归一化读投影，并用 generation cursor 明确拒绝跨写入的失效深页。
+- 第一组 4 个 read-module 回归按预期红，但同时发现 Go 驱动无 FTS5；已停止依赖 CLI 能力，改为 capability-detected optional FTS + 默认 B-tree prefix adapter，并把运行时 search mode 纳入可观察接口。
+- 已完成 `internal/dailyjira` deep module、v3 migration、计数投影、后台自然日 rollover、100 行上限与 generation-bound row-value keyset cursor；无关 TaskTelemetry 字段更新不再使 cursor 失效。
+- 已把 handler 改为只读取一页并对最多 100 个 task IDs 做 indexed Top-N event/reminder enrichment；前端改为服务端搜索、游标增量加载、虚拟窗口和同代多页原子刷新。
+- 最终 10M disposable benchmark：首页面/cursor 页面 p95 为 0.824/0.845ms，选择性 key/title 搜索 p95 为 0.367/0.525ms，mid/tail raw seek p95 为 0.115/0.112ms；临时 6.25GB 数据库已删除。
+- 全量 Go 测试与 vet、optional FTS build-tag suite、64/64 前端测试、0-error Svelte check、production build、Impeccable/Finesse detectors 与 targeted diff hygiene 全部通过。
+- 登录态隔离浏览器完成 100→200→260 分页、真实 generation 变化、30 秒深滚自动刷新和搜索确认；滚动位置/高度/面板几何无变化且无错误。下一步只剩按正常流程迁移/重启主服务并采集生产 HTTP 与锁等待指标。

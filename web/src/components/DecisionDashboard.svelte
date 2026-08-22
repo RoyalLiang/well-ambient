@@ -15,10 +15,14 @@
   } from '../lib/admin-console/contract';
   import Alert from './shared/Alert.svelte';
   import DatePicker from './shared/DatePicker.svelte';
+  import IssueTypeMark from './shared/IssueTypeMark.svelte';
   import Modal from './shared/Modal.svelte';
   import MultiSelect from './shared/MultiSelect.svelte';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import Select from './shared/Select.svelte';
   import { showToast } from '../lib/toast';
+  import { refreshAgendaSummary, subscribeAgendaSummary } from '../lib/agenda-summary';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import {
     fetchDeliveryDirectory,
     type DeliveryAssigneeOption,
@@ -105,14 +109,49 @@
     source: AgendaItem;
   }
 
+  interface StrongestBrainReleaseFact {
+    id: number;
+    project_key: string;
+    name: string;
+    status: string;
+    release_date: string;
+    work_item_count: number;
+    completed_count: number;
+    open_count: number;
+    evidence_refs: string[];
+  }
+
+  const agendaDefaultColumnKeys = ['task_id', 'title', 'owner', 'risk', 'due', 'status'];
   const agendaColumns: AdminTableColumn[] = [
     { key: 'task_id', label: '事项', width: '132px' },
     { key: 'title', label: '标题', width: '34%' },
+    { key: 'project', label: '项目', width: '140px' },
+    { key: 'type', label: '类型', width: '88px' },
     { key: 'owner', label: '负责人', width: '112px' },
     { key: 'risk', label: '风险', width: '96px' },
+    { key: 'risk_type', label: '风险原因', width: '128px' },
     { key: 'due', label: '计划日', width: '116px' },
+    { key: 'repo', label: '仓库', width: '140px' },
+    { key: 'branch', label: '分支', width: '152px' },
+    { key: 'stale', label: '静默时长', width: '104px' },
+    { key: 'activity', label: '最近活动', width: '116px' },
     { key: 'status', label: '状态', width: '96px' }
   ];
+  const agendaColumnMinWidths: Record<string, number> = {
+    task_id: 132,
+    title: 260,
+    project: 140,
+    type: 88,
+    owner: 112,
+    risk: 96,
+    risk_type: 128,
+    due: 116,
+    repo: 140,
+    branch: 152,
+    stale: 104,
+    activity: 116,
+    status: 96
+  };
   const configurableAgendaColumnOptions = agendaColumns
     .filter((column) => column.key !== 'task_id')
     .map((column) => ({ value: column.key, label: column.label }));
@@ -122,6 +161,10 @@
   let loading = true;
   let configReady = false;
   let errorMsg = '';
+  let releaseFacts: StrongestBrainReleaseFact[] = [];
+  let releasedVersionCount = 0;
+  let releaseFactsLoading = true;
+  let releaseFactsError = '';
 
   let selectedItem: AgendaItem | null = null;
   let decisionLoading = false;
@@ -132,7 +175,7 @@
   let operator = '';
   let localDecisions: LocalDecision[] = [];
   let adminMetrics: AdminMetric[] = [];
-  let visibleAgendaColumnKeys = agendaColumns.map((column) => column.key);
+  let visibleAgendaColumnKeys = [...agendaDefaultColumnKeys];
   let columnPreferenceSaving = false;
   let columnPreferenceError = '';
   let columnPreferenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -148,7 +191,10 @@
   let handledTimelineDrawerRequest = timelineDrawerRequest;
   let publishedTimelineSummaryKey = '';
   let timelineDrawerEl: HTMLElement;
-  let timelineDrawerCloseButton: HTMLButtonElement;
+  let timelineDrawerCloseButton: OverlayCloseButton;
+
+  $: latestReleaseFact = releaseFacts[0] || null;
+  $: remainingReleasedCount = Math.max(0, releasedVersionCount - (latestReleaseFact ? 1 : 0));
 
   let coreMembers = new Set<string>();
   let deliveryAssignees: DeliveryAssigneeOption[] = [];
@@ -261,6 +307,10 @@
   }
   $: agendaRows = filteredItems.map(adaptAgendaRow);
   $: visibleAgendaColumns = agendaColumns.filter((column) => visibleAgendaColumnKeys.includes(column.key));
+  $: agendaTableMinWidth = `${Math.max(760, 36 + visibleAgendaColumns.reduce(
+    (width, column) => width + (agendaColumnMinWidths[column.key] || 112),
+    0
+  ))}px`;
   $: configurableVisibleAgendaColumnKeys = visibleAgendaColumnKeys.filter((key) => key !== 'task_id');
   $: inspectorRecord = selectedItem ? adaptInspectorRecord(selectedItem) : null;
   $: currentDueDate = selectedItem?.due_date ? formatAdminDate(selectedItem.due_date) : '';
@@ -456,32 +506,44 @@
     }
   }
 
-  async function fetchAgenda() {
-    loading = true;
-    errorMsg = '';
+  function applyAgendaSummary(data: Record<string, unknown>) {
+    const nextAgendaItems = Array.isArray(data.agenda_items) ? data.agenda_items as AgendaItem[] : [];
+    const nextAutoDecisions = Array.isArray(data.auto_decisions) ? data.auto_decisions as AutoDecision[] : [];
+    const visible = nextAgendaItems.filter((item) => isVisibleAgendaItem(item));
+
+    agendaItems = nextAgendaItems;
+    autoDecisions = nextAutoDecisions;
+
+    if (visible.length > 0 && !selectedItem) {
+      selectItem(visible[0]);
+    } else if (selectedItem) {
+      const updated = visible.find((item) => item.task_id === selectedItem?.task_id);
+      selectedItem = updated || visible[0] || null;
+      if (selectedItem) syncInterventionDraft(selectedItem);
+    }
+  }
+
+  async function fetchAgenda(force = true) {
     try {
-      const res = await fetch('/api/agenda/summary');
-      if (!res.ok) throw new Error('加载决策看板数据失败');
-      const data = await res.json();
+      await refreshAgendaSummary({ force });
+    } catch {
+      // The shared resource publishes the error while keeping the last good snapshot visible.
+    }
+  }
 
-      const nextAgendaItems: AgendaItem[] = Array.isArray(data.agenda_items) ? data.agenda_items : [];
-      const nextAutoDecisions: AutoDecision[] = Array.isArray(data.auto_decisions) ? data.auto_decisions : [];
-      const visible = nextAgendaItems.filter((item) => isVisibleAgendaItem(item));
-
-      agendaItems = nextAgendaItems;
-      autoDecisions = nextAutoDecisions;
-
-      if (visible.length > 0 && !selectedItem) {
-        selectItem(visible[0]);
-      } else if (selectedItem) {
-        const updated = visible.find((item) => item.task_id === selectedItem?.task_id);
-        selectedItem = updated || visible[0] || null;
-        if (selectedItem) syncInterventionDraft(selectedItem);
-      }
-    } catch (err: any) {
-      errorMsg = err.message || '网络连接异常';
+  async function fetchReleaseFacts() {
+    releaseFactsLoading = true;
+    releaseFactsError = '';
+    try {
+      const response = await fetch('/api/strongest-brain/releases');
+      if (!response.ok) throw new Error('加载版本发布事实失败');
+      const summary = await response.json();
+      releasedVersionCount = Number(summary.released) || 0;
+      releaseFacts = Array.isArray(summary.recent) ? summary.recent : [];
+    } catch (error: any) {
+      releaseFactsError = error?.message || '版本发布事实暂不可用';
     } finally {
-      loading = false;
+      releaseFactsLoading = false;
     }
   }
 
@@ -495,7 +557,7 @@
       const next = agendaColumns
         .map((column) => column.key)
         .filter((key) => configured.includes(key) && known.has(key));
-      visibleAgendaColumnKeys = next.includes('task_id') ? next : agendaColumns.map((column) => column.key);
+      visibleAgendaColumnKeys = next.includes('task_id') ? next : [...agendaDefaultColumnKeys];
     } catch (error: any) {
       columnPreferenceError = error?.message || '显示列配置暂不可用';
     }
@@ -692,10 +754,16 @@
       cells: {
         task_id: item.task_id,
         title: item.title || '-',
+        project: getAgendaProjectLabel(item) || '-',
+        type: getIssueTypeLabel(item.issue_type),
         priority: getIssueTypeLabel(item.issue_type),
         owner: item.assignee || '-',
         risk: getRiskLevelLabel(item.risk_level),
+        risk_type: getRiskTypeLabel(item.risk_type),
         due: formatAdminDate(item.due_date),
+        repo: item.repo || '-',
+        branch: item.telemetry_snippet?.branch || '-',
+        activity: formatAdminDate(item.telemetry_snippet?.last_update),
         status: getStatusDisplay(item.status),
         stale: getStaleText(item)
       }
@@ -976,27 +1044,43 @@
     let disposed = false;
     let interval: ReturnType<typeof setInterval> | null = null;
     const handleProjectPreferencesUpdated = () => {
-      void fetchAgenda();
+      void fetchAgenda(true);
+      void fetchReleaseFacts();
     };
+    const handleReleasePublished = () => void fetchReleaseFacts();
+    const unsubscribeAgenda = subscribeAgendaSummary((agendaState) => {
+      loading = agendaState.loading && !agendaState.data;
+      errorMsg = agendaState.error;
+      if (agendaState.data) applyAgendaSummary(agendaState.data);
+    });
 
     const bootstrapDashboard = async () => {
-      await Promise.all([fetchConfig(), fetchDecisionTableColumns()]);
+      await Promise.all([fetchConfig(), fetchDecisionTableColumns(), fetchReleaseFacts()]);
       if (disposed) return;
-      await fetchAgenda();
+      await fetchAgenda(false);
       if (disposed) return;
       interval = setInterval(() => {
-        fetchAgenda();
+        void fetchReleaseFacts();
       }, 15000);
     };
 
     bootstrapDashboard();
     window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+    window.addEventListener('well-ambient:release-published', handleReleasePublished);
+    const unsubscribeTelemetryUpdates = subscribeTelemetryUpdates(
+      window,
+      () => fetchAgenda(true),
+      { visibilityTarget: document }
+    );
 
     return () => {
       disposed = true;
       if (interval) clearInterval(interval);
       if (columnPreferenceTimer) clearTimeout(columnPreferenceTimer);
       window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+      window.removeEventListener('well-ambient:release-published', handleReleasePublished);
+      unsubscribeAgenda();
+      unsubscribeTelemetryUpdates();
       dispatch('timelineSummary', null);
     };
   });
@@ -1089,6 +1173,7 @@
               placeholder="全部负责人"
               searchPlaceholder="搜索负责人"
               compact={true}
+              shadowless={true}
             />
           </div>
           <div class="toolbar-select project-select">
@@ -1098,6 +1183,7 @@
               placeholder="全部项目"
               searchPlaceholder="搜索项目名"
               compact={true}
+              shadowless={true}
             />
           </div>
           <div class="toolbar-select column-select">
@@ -1110,6 +1196,7 @@
               ariaLabel="配置事项列表显示列"
               summaryMode={true}
               overlay={true}
+              shadowless={true}
               compact={true}
               on:change={handleAgendaColumnsChange}
             />
@@ -1117,7 +1204,7 @@
               {columnPreferenceSaving ? '正在保存显示列' : columnPreferenceError}
             </span>
           </div>
-          <button class="wa-admin-action secondary" type="button" on:click={fetchAgenda} disabled={loading}>
+          <button class="wa-admin-action secondary" type="button" on:click={() => fetchAgenda(true)} disabled={loading}>
             刷新
           </button>
         </div>
@@ -1128,7 +1215,7 @@
       {/if}
 
       <div class="wa-admin-table-shell decision-table-shell">
-        <table class="wa-admin-table">
+        <table class="wa-admin-table" style:min-width={agendaTableMinWidth}>
           <thead>
             <tr>
               <th class="select-col" aria-label="选择"></th>
@@ -1173,14 +1260,7 @@
                       {#if column.key === 'task_id'}
                         {@const jiraUrl = getJiraUrl(row.id)}
                         <div class="issue-id-cell">
-                          <span
-                            class="issue-type-mark"
-                            class:bug={isBugIssueType(row.source.issue_type)}
-                            aria-label={isBugIssueType(row.source.issue_type) ? 'Bug' : 'Task'}
-                            title={isBugIssueType(row.source.issue_type) ? 'Bug' : 'Task'}
-                          >
-                            <span aria-hidden="true">{isBugIssueType(row.source.issue_type) ? 'B' : 'T'}</span>
-                          </span>
+                          <IssueTypeMark issueType={row.source.issue_type} />
                           {#if jiraUrl}
                             <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
                               {row.cells.task_id}
@@ -1217,6 +1297,7 @@
       title={inspectorRecord.title}
       size="wide"
       closeLabel="关闭需求详情"
+      shadowless={true}
       on:close={closeDetailDrawer}
     >
       <div class="requirement-drawer-body requirement-modal-body">
@@ -1284,6 +1365,7 @@
                 placeholder="选择负责人"
                 searchPlaceholder="搜索负责人"
                 compact={true}
+                shadowless={true}
               />
             </div>
             <div class="form-field">
@@ -1292,6 +1374,7 @@
                 value={newDueDate}
                 placeholder="选择新的截止日"
                 compact={true}
+                shadowless={true}
                 on:change={handleDueDateChange}
               />
             </div>
@@ -1342,13 +1425,11 @@
           </div>
           <div class="timeline-drawer-actions">
             <strong class="timeline-drawer-count">{decisionTimelineEvents.length} 条</strong>
-            <button
-              type="button"
-              class="timeline-drawer-close"
-              aria-label="关闭事件记录"
+            <OverlayCloseButton
+              label="关闭事件记录"
               bind:this={timelineDrawerCloseButton}
               on:click={closeTimelineDrawer}
-            >×</button>
+            />
           </div>
         </header>
 
@@ -2020,25 +2101,6 @@
     gap: 7px;
   }
 
-  .issue-type-mark {
-    width: 22px;
-    height: 22px;
-    display: grid;
-    flex: none;
-    place-items: center;
-    border: 1px solid rgba(43, 105, 179, 0.24);
-    border-radius: 6px;
-    background: rgba(43, 105, 179, 0.08);
-    color: #2b69b3;
-    font: 800 10px/1 var(--wa-font-mono);
-  }
-
-  .issue-type-mark.bug {
-    border-color: rgba(201, 71, 60, 0.25);
-    background: rgba(201, 71, 60, 0.08);
-    color: var(--wa-danger, #c9473c);
-  }
-
   .title-stack {
     display: grid;
     gap: 2px;
@@ -2374,9 +2436,9 @@
 
   .timeline-drawer-header {
     min-height: 112px;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: flex-start;
-    justify-content: space-between;
     gap: var(--wa-space-4);
     padding: 20px 22px;
     border-bottom: 1px solid var(--wa-border-soft);
@@ -2426,30 +2488,6 @@
     font-family: var(--wa-font-mono);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .timeline-drawer-close {
-    width: 38px;
-    height: 38px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--wa-border-soft);
-    border-radius: var(--wa-radius-md);
-    background: var(--wa-surface-inset);
-    color: var(--wa-text-main);
-    font: inherit;
-    font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .timeline-drawer-close:hover,
-  .timeline-drawer-close:focus-visible {
-    outline: none;
-    border-color: var(--wa-accent);
-    background: var(--wa-row-hover);
-    color: var(--wa-accent-strong);
   }
 
   .timeline-drawer-body {
@@ -2805,7 +2843,12 @@
     --decision-radius-panel: var(--wa-radius-lg, 14px);
     --decision-radius-card: var(--wa-radius-sm, 8px);
     --decision-radius-control: var(--wa-radius-pill, 999px);
-    grid-template-rows: 116px minmax(0, 1fr);
+    --wa-shadow-sm: none;
+    --wa-shadow-md: none;
+    --wa-shadow-glass: none;
+    --wa-shadow-panel: none;
+    --wa-shadow-glow: none;
+    grid-template-rows: 116px auto minmax(0, 1fr);
     background: transparent;
   }
 
@@ -2823,7 +2866,7 @@
     border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
     border-radius: var(--decision-radius-panel);
     background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
-    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    box-shadow: none;
     -webkit-backdrop-filter: blur(16px) saturate(128%);
     backdrop-filter: blur(16px) saturate(128%);
   }
@@ -2887,7 +2930,7 @@
     border-color: rgba(1, 139, 141, 0.24);
     background: var(--wa-accent-soft, rgba(0, 143, 150, 0.1));
     color: var(--wa-accent-strong, #006f76);
-    box-shadow: inset 0 0 0 1px rgba(1, 139, 141, 0.08);
+    box-shadow: none;
     transform: none;
   }
 
@@ -2902,7 +2945,7 @@
     border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
     border-radius: var(--decision-radius-panel);
     background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
-    box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
+    box-shadow: none;
     -webkit-backdrop-filter: blur(16px) saturate(128%);
     backdrop-filter: blur(16px) saturate(128%);
   }
@@ -2932,9 +2975,105 @@
     background: var(--decision-row-bg);
   }
 
+  .release-fact-strip {
+    min-width: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-bottom: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    padding: 7px 12px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .release-fact-label,
+  .release-fact-main {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .release-fact-label {
+    flex: 0 0 180px;
+  }
+
+  .release-fact-label strong,
+  .release-fact-main strong {
+    overflow: hidden;
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .release-fact-label span,
+  .release-fact-main span,
+  .release-fact-state,
+  .release-fact-scope,
+  .release-fact-evidence,
+  .release-fact-more {
+    color: var(--wa-text-muted, #667789);
+    font-size: 9px;
+  }
+
+  .release-fact-main {
+    flex: 1 1 220px;
+  }
+
+  .release-fact-scope {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .release-fact-scope span + span,
+  .release-fact-evidence,
+  .release-fact-more {
+    border-left: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    padding-left: 10px;
+  }
+
+  .release-fact-evidence,
+  .release-fact-more {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .release-fact-state {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .release-fact-state.is-error {
+    color: var(--wa-danger, #c9473c);
+  }
+
+  .decision-admin :global(.btn),
+  .decision-admin :global(.select-trigger),
+  .decision-admin :global(.multi-select-trigger),
+  .decision-admin :global(.date-trigger),
+  .decision-admin .stage-chip,
+  .decision-admin .timeline-drawer {
+    box-shadow: none !important;
+  }
+
+  .decision-admin :global(*) {
+    box-shadow: none !important;
+  }
+
+  .decision-admin :global(:focus-visible) {
+    outline: 2px solid rgba(0, 143, 150, 0.24);
+    outline-offset: 2px;
+  }
+
   @media (max-width: 640px) {
     .decision-admin {
-      grid-template-rows: 212px minmax(0, 1fr);
+      grid-template-rows: 212px auto minmax(0, 1fr);
     }
 
     .decision-summary-panel {
@@ -2953,6 +3092,36 @@
 
     .decision-table-section {
       padding: 12px 12px 0;
+    }
+
+    .release-fact-strip {
+      min-height: 64px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 5px 12px;
+      padding: 9px 10px;
+    }
+
+    .release-fact-label {
+      flex: 1 1 100%;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .release-fact-main {
+      flex: 1 1 160px;
+    }
+
+    .release-fact-scope {
+      flex: 1 1 100%;
+      order: 3;
+      white-space: normal;
+    }
+
+    .release-fact-evidence,
+    .release-fact-more {
+      padding-left: 8px;
     }
   }
 

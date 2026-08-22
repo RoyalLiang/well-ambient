@@ -26,9 +26,10 @@ const (
 	PlanningDone         = "done"
 	PlanningArchived     = "archived"
 
-	ReleasePlanned  = "planned"
-	ReleaseReleased = "released"
-	ReleaseArchived = "archived"
+	ReleasePlanned   = "planned"
+	ReleaseReleased  = "released"
+	ReleaseArchived  = "archived"
+	ReleaseDiscarded = "discarded"
 )
 
 type DomainError struct {
@@ -149,20 +150,36 @@ type WorkItemSnapshot struct {
 
 type PlanQuery struct {
 	ProjectKeys   []string
+	Assignees     []string
 	ReleaseID     uint
 	Kinds         []string
 	Statuses      []string
 	PlanningState []string
 	Search        string
+	ActiveOnly    bool
 	Limit         int
 	Offset        int
 }
 
+type PlanSummary struct {
+	Total        int64 `json:"total"`
+	Active       int64 `json:"active"`
+	Done         int64 `json:"done"`
+	Backlog      int64 `json:"backlog"`
+	Progress     int64 `json:"progress"`
+	Review       int64 `json:"review"`
+	Requirements int64 `json:"requirements"`
+	Bugs         int64 `json:"bugs"`
+	Planned      int64 `json:"planned"`
+	Unplanned    int64 `json:"unplanned"`
+}
+
 type PlanSnapshot struct {
-	Items  []WorkItemSnapshot `json:"items"`
-	Total  int64              `json:"total"`
-	Limit  int                `json:"limit"`
-	Offset int                `json:"offset"`
+	Items   []WorkItemSnapshot `json:"items"`
+	Total   int64              `json:"total"`
+	Limit   int                `json:"limit"`
+	Offset  int                `json:"offset"`
+	Summary PlanSummary        `json:"summary"`
 }
 
 type PlanningCommand struct {

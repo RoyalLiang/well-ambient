@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy, tick } from 'svelte';
   import DemandKanban from './DemandKanban.svelte';
   import Alert from './shared/Alert.svelte';
   import Button from './shared/Button.svelte';
@@ -8,6 +9,7 @@
   import Select from './shared/Select.svelte';
   import { showToast } from '../lib/toast';
   import { fetchDeliveryDirectory } from '../lib/delivery-directory';
+  import { PagedResource } from '../lib/paged-resource';
 
   export let currentUserPermissions: string[] = [];
   export let currentUserName = '';
@@ -22,7 +24,7 @@
     external_id: string;
     name: string;
     description: string;
-    status: 'planned' | 'released' | 'archived';
+    status: 'planned' | 'released' | 'archived' | 'discarded';
     start_date: string | null;
     release_date: string | null;
     source_url: string;
@@ -32,7 +34,26 @@
   interface ReleasePlanItem {
     release: ReleaseVersion;
     jira_issue_count: number;
+    lifecycle?: ReleaseLifecycleCapabilities;
   }
+
+  const releaseResource = new PagedResource<ReleasePlanItem>({
+    endpoint: releaseEndpoint,
+    itemKey: item => item.release.id,
+    pageSize: 50,
+    requestInit: () => ({ headers: authHeaders() }),
+    errorMessage: '版本事实加载失败'
+  });
+
+  interface ReleaseLifecycleCapabilities {
+    can_publish: boolean;
+    can_archive: boolean;
+    can_discard: boolean;
+    can_delete: boolean;
+    delete_block_reason?: string;
+  }
+
+  type LifecycleAction = 'archive' | 'discard' | 'delete';
 
   interface JiraIssue {
     work_item_id: string;
@@ -48,6 +69,27 @@
     current_release_name?: string;
   }
 
+  let jiraResourceReleaseID = 0;
+  let jiraResourceSearch = '';
+  const linkedJiraResource = new PagedResource<JiraIssue>({
+    endpoint: () => `/api/releases/${jiraResourceReleaseID}/jira-issues?scope=linked`,
+    itemKey: item => item.work_item_id,
+    pageSize: 100,
+    requestInit: () => ({ headers: authHeaders() }),
+    errorMessage: '已关联 Jira 事项加载失败'
+  });
+  const candidateJiraResource = new PagedResource<JiraIssue>({
+    endpoint: () => {
+      const params = new URLSearchParams({ scope: 'candidates' });
+      if (jiraResourceSearch) params.set('q', jiraResourceSearch);
+      return `/api/releases/${jiraResourceReleaseID}/jira-issues?${params.toString()}`;
+    },
+    itemKey: item => item.work_item_id,
+    pageSize: 100,
+    requestInit: () => ({ headers: authHeaders() }),
+    errorMessage: 'Jira 事项候选加载失败'
+  });
+
   interface ProjectConfig {
     project_key: string;
     project_name: string;
@@ -57,9 +99,9 @@
     { value: '', label: '全部状态' },
     { value: 'planned', label: '计划中' },
     { value: 'released', label: '已发布' },
-    { value: 'archived', label: '已归档' }
+    { value: 'archived', label: '已归档' },
+    { value: 'discarded', label: '已废弃' }
   ];
-  const releaseStatusOptions = statusOptions.filter((option) => option.value);
 
   let items: ReleasePlanItem[] = [];
   let projects: ProjectConfig[] = [];
@@ -68,6 +110,8 @@
   let statusFilter = '';
   let search = '';
   let loading = false;
+  let loadingMore = false;
+  let hasMoreReleases = false;
   let loadedOnce = false;
   let loadError = '';
 
@@ -78,6 +122,10 @@
   let jiraCandidates: JiraIssue[] = [];
   let selectedJiraIssueIDs: string[] = [];
   let jiraIssuesLoading = false;
+  let linkedJiraLoadingMore = false;
+  let candidateJiraLoadingMore = false;
+  let hasMoreLinkedJiraIssues = false;
+  let hasMoreJiraCandidates = false;
   let jiraSearching = false;
   let jiraSearchError = '';
   let linkingJiraIssues = false;
@@ -86,27 +134,30 @@
   let createName = '';
   let createDescription = '';
   let createProject = '';
-  let createStatus = 'planned';
   let createStartDate = '';
   let createReleaseDate = '';
   let createError = '';
   let creatingRelease = false;
+  let publishConfirming = false;
+  let publishReleaseDate = '';
+  let publishReason = '';
+  let publishError = '';
+  let publishingRelease = false;
+  let lifecycleAction: LifecycleAction | '' = '';
+  let lifecycleReason = '';
+  let lifecycleConfirmName = '';
+  let lifecycleError = '';
+  let applyingLifecycleAction = false;
+  let lifecycleReturnFocus: HTMLElement | null = null;
+  let releaseFilterTimer: ReturnType<typeof setTimeout> | null = null;
 
   $: canManageReleases = currentUserPermissions.includes('release:manage');
   $: selectedItem = items.find((item) => item.release.id === selectedID) || null;
+  $: selectedLifecycle = selectedItem ? lifecycleCapabilities(selectedItem) : null;
+  $: selectedReleaseEditable = selectedItem?.release.status === 'planned';
   $: normalizedSearch = search.trim().toLowerCase();
-  $: visibleItems = items.filter((item) => {
-    const release = item.release;
-    const projectMatches = !projectFilter || release.project_key === projectFilter;
-    const statusMatches = !statusFilter || release.status === statusFilter;
-    const searchMatches = !normalizedSearch || [
-      release.name,
-      release.description,
-      release.project_key,
-      release.external_id
-    ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch);
-    return projectMatches && statusMatches && searchMatches;
-  });
+  $: hasActiveFilters = Boolean(normalizedSearch || projectFilter || statusFilter);
+  $: visibleItems = items;
   $: metrics = {
     total: visibleItems.length,
     unbound: visibleItems.filter((item) => !item.release.project_key).length,
@@ -141,6 +192,33 @@
     };
   }
 
+  function releaseEndpoint(): string {
+    const params = new URLSearchParams();
+    if (projectFilter) params.set('project_key', projectFilter);
+    if (statusFilter) params.set('status', statusFilter);
+    if (normalizedSearch) params.set('q', normalizedSearch);
+    const query = params.toString();
+    return query ? `/api/releases?${query}` : '/api/releases';
+  }
+
+  function scheduleReleaseFilterRefresh() {
+    if (releaseFilterTimer) clearTimeout(releaseFilterTimer);
+    releaseFilterTimer = setTimeout(() => {
+      releaseFilterTimer = null;
+      void loadVersions(false);
+    }, 250);
+  }
+
+  function applyProjectFilter(value: string) {
+    projectFilter = value;
+    void loadVersions(false);
+  }
+
+  function applyStatusFilter(value: string) {
+    statusFilter = value;
+    void loadVersions(false);
+  }
+
   function normalizeProject(project: ProjectConfig): ProjectConfig {
     return {
       ...project,
@@ -151,7 +229,21 @@
   function statusLabel(status: string): string {
     if (status === 'released') return '已发布';
     if (status === 'archived') return '已归档';
+    if (status === 'discarded') return '已废弃';
     return '计划中';
+  }
+
+  function lifecycleCapabilities(item: ReleasePlanItem): ReleaseLifecycleCapabilities {
+    if (item.lifecycle) return item.lifecycle;
+    const local = item.release.source === 'local';
+    const deletableStatus = item.release.status === 'planned' || item.release.status === 'discarded';
+    return {
+      can_publish: local && item.release.status === 'planned',
+      can_archive: local && item.release.status === 'released',
+      can_discard: local && item.release.status === 'planned',
+      can_delete: local && deletableStatus && item.jira_issue_count === 0,
+      delete_block_reason: item.jira_issue_count > 0 ? '请先移除已关联的 Jira 事项后再删除' : ''
+    };
   }
 
   function formatDate(value: string | null): string {
@@ -163,7 +255,13 @@
 
   function formatWindow(release: ReleaseVersion): string {
     if (!release.start_date && !release.release_date) return '未设置';
-    return `${formatDate(release.start_date)} — ${formatDate(release.release_date)}`;
+    return `${formatDate(release.start_date)} 至 ${formatDate(release.release_date)}`;
+  }
+
+  function todayValue(): string {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60_000;
+    return new Date(now.getTime() - offset).toISOString().slice(0, 10);
   }
 
   function projectLabel(projectKey: string): string {
@@ -177,7 +275,21 @@
     linkedJiraIssues = [];
     jiraCandidates = [];
     selectedJiraIssueIDs = [];
+    hasMoreLinkedJiraIssues = false;
+    hasMoreJiraCandidates = false;
     jiraSearchError = '';
+    publishConfirming = false;
+    publishReleaseDate = '';
+    publishReason = '';
+    publishError = '';
+    clearLifecycleConfirmation();
+  }
+
+  function clearLifecycleConfirmation() {
+    lifecycleAction = '';
+    lifecycleReason = '';
+    lifecycleConfirmName = '';
+    lifecycleError = '';
   }
 
   function selectRelease(id: number) {
@@ -190,10 +302,20 @@
     createName = '';
     createDescription = '';
     createProject = '';
-    createStatus = 'planned';
     createStartDate = '';
     createReleaseDate = '';
     createError = '';
+  }
+
+  function clearFilters() {
+    search = '';
+    projectFilter = '';
+    statusFilter = '';
+    if (releaseFilterTimer) {
+      clearTimeout(releaseFilterTimer);
+      releaseFilterTimer = null;
+    }
+    void loadVersions(false);
   }
 
   function openCreateRelease() {
@@ -245,7 +367,6 @@
         body: JSON.stringify({
           name,
           description: createDescription.trim(),
-          status: createStatus,
           ...(createProject ? { project_key: createProject } : {}),
           ...(createStartDate ? { start_date: createStartDate } : {}),
           ...(createReleaseDate ? { release_date: createReleaseDate } : {})
@@ -266,20 +387,193 @@
     }
   }
 
+  function publishErrorMessage(payload: any): string {
+    const code = payload?.error || payload?.code;
+    if (code === 'release_project_required') return '发布前请先绑定所属项目。';
+    if (code === 'external_release_read_only') return 'Jira 导入版本需在来源系统中发布。';
+    if (code === 'invalid_release_transition') return '只有计划中的本地版本可以发布。';
+    if (code === 'release_state_conflict') return '版本状态已发生变化，请刷新后重试。';
+    if (code === 'reason_required') return '请填写本次发布说明。';
+    return payload?.message || '版本发布失败';
+  }
+
+  function openPublishConfirmation() {
+    if (!selectedItem || !canManageReleases || selectedItem.release.source !== 'local' || selectedItem.release.status !== 'planned') return;
+    if (!selectedItem.release.project_key) {
+      showToast('发布前请先绑定所属项目。', { type: 'error', title: '暂不能发布' });
+      return;
+    }
+    publishReleaseDate = selectedItem.release.release_date?.slice(0, 10) || todayValue();
+    publishReason = '发布范围与日期已人工确认';
+    publishError = '';
+    publishConfirming = true;
+  }
+
+  function cancelPublishConfirmation() {
+    if (publishingRelease) return;
+    publishConfirming = false;
+    publishError = '';
+  }
+
+  async function publishRelease() {
+    if (!selectedItem || publishingRelease) return;
+    if (!publishReleaseDate) {
+      publishError = '请选择实际发布日期。';
+      return;
+    }
+    if (!publishReason.trim()) {
+      publishError = '请填写本次发布说明。';
+      return;
+    }
+    const releaseID = selectedItem.release.id;
+    const releaseName = selectedItem.release.name;
+    publishingRelease = true;
+    publishError = '';
+    try {
+      const response = await fetch(`/api/releases/${releaseID}/publish`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          release_date: publishReleaseDate,
+          reason: publishReason.trim()
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(publishErrorMessage(payload));
+      publishConfirming = false;
+      showToast(`版本“${releaseName}”已发布，发布事实已进入交付决策看板。`, {
+        title: payload?.replayed ? '版本发布事实已确认' : '版本已发布'
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('well-ambient:release-published', { detail: { releaseID } }));
+      }
+      await loadVersions(true);
+    } catch (error: any) {
+      publishError = error?.message || '版本发布失败';
+    } finally {
+      publishingRelease = false;
+    }
+  }
+
+  function lifecycleActionTitle(action: LifecycleAction): string {
+    if (action === 'archive') return '归档版本';
+    if (action === 'discard') return '废弃版本';
+    return '删除版本';
+  }
+
+  function lifecycleActionDescription(action: LifecycleAction): string {
+    if (action === 'archive') return '归档后版本继续作为历史发布事实保留，项目与 Jira 范围保持只读。';
+    if (action === 'discard') return '废弃用于终止尚未发布的版本计划；关联事实仍会保留，且不能继续编辑。';
+    return '删除只移除空的本地版本目录项；审计记录仍会保留，操作不能从页面恢复。';
+  }
+
+  function lifecycleErrorMessage(payload: any, action: LifecycleAction): string {
+    const code = payload?.error || payload?.code;
+    if (code === 'reason_required') return `请填写${lifecycleActionTitle(action)}原因。`;
+    if (code === 'release_delete_confirmation_mismatch') return '输入的版本名称与当前版本不一致。';
+    if (code === 'release_delete_blocked') return '请先移除版本关联的 Jira 事项或 Jira 版本。';
+    if (code === 'release_delete_forbidden') return '已发布或已归档版本作为发布事实永久保留，不能删除。';
+    if (code === 'external_release_read_only') return 'Jira 来源版本只能在来源系统中维护。';
+    if (code === 'invalid_release_transition') return '版本状态已变化，请刷新后重试。';
+    if (code === 'release_state_conflict') return '版本状态已发生并发变化，请刷新后重试。';
+    return payload?.message || `${lifecycleActionTitle(action)}失败`;
+  }
+
+  function openLifecycleConfirmation(action: LifecycleAction, event: MouseEvent) {
+    if (!selectedItem || !selectedLifecycle || !canManageReleases || applyingLifecycleAction) return;
+    if (action === 'archive' && !selectedLifecycle.can_archive) return;
+    if (action === 'discard' && !selectedLifecycle.can_discard) return;
+    if (action === 'delete' && !selectedLifecycle.can_delete) return;
+    lifecycleReturnFocus = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    lifecycleAction = action;
+    lifecycleReason = '';
+    lifecycleConfirmName = '';
+    lifecycleError = '';
+  }
+
+  async function cancelLifecycleConfirmation() {
+    if (applyingLifecycleAction) return;
+    const returnFocus = lifecycleReturnFocus;
+    clearLifecycleConfirmation();
+    await tick();
+    returnFocus?.focus();
+  }
+
+  async function applyLifecycleAction() {
+    if (!selectedItem || !lifecycleAction || applyingLifecycleAction) return;
+    const action = lifecycleAction;
+    const reason = lifecycleReason.trim();
+    if (!reason) {
+      lifecycleError = `请填写${lifecycleActionTitle(action)}原因。`;
+      return;
+    }
+    if (action === 'delete' && lifecycleConfirmName.trim() !== selectedItem.release.name) {
+      lifecycleError = '请输入完整且一致的版本名称。';
+      return;
+    }
+
+    const releaseID = selectedItem.release.id;
+    const releaseName = selectedItem.release.name;
+    applyingLifecycleAction = true;
+    lifecycleError = '';
+    try {
+      const endpoint = action === 'delete'
+        ? `/api/releases/${releaseID}`
+        : `/api/releases/${releaseID}/${action}`;
+      const response = await fetch(endpoint, {
+        method: action === 'delete' ? 'DELETE' : 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          reason,
+          ...(action === 'delete' ? { confirm_name: lifecycleConfirmName.trim() } : {})
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(lifecycleErrorMessage(payload, action));
+
+      clearLifecycleConfirmation();
+      const title = action === 'archive' ? '版本已归档' : action === 'discard' ? '版本已废弃' : '版本已删除';
+      const message = action === 'archive'
+        ? `版本“${releaseName}”已归档并保留历史发布事实。`
+        : action === 'discard'
+          ? `版本“${releaseName}”已废弃，后续不再接受范围调整。`
+          : `版本“${releaseName}”已从版本目录移除，审计记录仍保留。`;
+      showToast(message, { title });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('well-ambient:release-lifecycle-changed', {
+          detail: { releaseID, action }
+        }));
+      }
+      if (action === 'delete') selectedID = 0;
+      await loadVersions(action !== 'delete');
+    } catch (error: any) {
+      lifecycleError = error?.message || `${lifecycleActionTitle(action)}失败`;
+      showToast(lifecycleError, { type: 'error', title: `无法${lifecycleActionTitle(action)}` });
+    } finally {
+      applyingLifecycleAction = false;
+    }
+  }
+
   async function loadVersions(preserveSelection = true) {
     loading = true;
     loadError = '';
     try {
-      const [releaseResponse, directory] = await Promise.all([
-        fetch('/api/releases', { headers: authHeaders() }),
+      let [releaseState, directory] = await Promise.all([
+        releaseResource.refresh(),
         fetchDeliveryDirectory()
       ]);
-      const releasePayload = await releaseResponse.json().catch(() => ({}));
-      if (!releaseResponse.ok) {
-        throw new Error(releasePayload?.message || '版本事实加载失败');
+      if (releaseState.error) {
+        throw new Error(releaseState.error);
       }
-      const nextItems = Array.isArray(releasePayload.items) ? releasePayload.items : [];
+      if (preserveSelection && selectedID && !releaseState.items.some(item => item.release.id === selectedID)) {
+        while (releaseState.page?.has_more && releaseState.page?.next_cursor) {
+          releaseState = await releaseResource.loadMore();
+          if (releaseState.error || releaseState.items.some(item => item.release.id === selectedID)) break;
+        }
+      }
+      const nextItems = releaseState.items;
       items = nextItems;
+      hasMoreReleases = Boolean(releaseState.page?.has_more && releaseState.page?.next_cursor);
       projects = directory.projects.map((project) => normalizeProject(project));
 
       const nextSelectedID = preserveSelection && nextItems.some((item: ReleasePlanItem) => item.release.id === selectedID)
@@ -296,8 +590,24 @@
     }
   }
 
+  async function loadMoreVersions() {
+    if (loadingMore || !hasMoreReleases) return;
+    loadingMore = true;
+    loadError = '';
+    try {
+      const state = await releaseResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      items = state.items;
+      hasMoreReleases = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (error: any) {
+      loadError = error?.message || '更多版本事实加载失败';
+    } finally {
+      loadingMore = false;
+    }
+  }
+
   async function saveProjectBinding() {
-    if (!selectedItem || !canManageReleases || savingProject) return;
+    if (!selectedItem || !canManageReleases || !selectedReleaseEditable || savingProject) return;
     savingProject = true;
     try {
       const response = await fetch(`/api/releases/${selectedItem.release.id}`, {
@@ -327,25 +637,27 @@
       linkedJiraIssues = [];
       jiraCandidates = [];
       selectedJiraIssueIDs = [];
+      hasMoreLinkedJiraIssues = false;
+      hasMoreJiraCandidates = false;
       return;
     }
     const releaseID = release.id;
     jiraIssuesLoading = true;
     jiraSearchError = '';
+    jiraResourceReleaseID = releaseID;
+    jiraResourceSearch = searchTerm.trim();
     try {
-      const candidateParams = new URLSearchParams({ scope: 'candidates', limit: '100' });
-      if (searchTerm.trim()) candidateParams.set('q', searchTerm.trim());
-      const [linkedResponse, candidateResponse] = await Promise.all([
-        fetch(`/api/releases/${releaseID}/jira-issues?scope=linked&limit=200`, { headers: authHeaders() }),
-        fetch(`/api/releases/${releaseID}/jira-issues?${candidateParams.toString()}`, { headers: authHeaders() })
+      const [linkedState, candidateState] = await Promise.all([
+        linkedJiraResource.refresh(),
+        candidateJiraResource.refresh()
       ]);
-      const linkedPayload = await linkedResponse.json().catch(() => ({}));
-      const candidatePayload = await candidateResponse.json().catch(() => ({}));
-      if (!linkedResponse.ok) throw new Error(linkedPayload?.message || '已关联 Jira 事项加载失败');
-      if (!candidateResponse.ok) throw new Error(candidatePayload?.message || 'Jira 事项候选加载失败');
+      if (linkedState.error) throw new Error(linkedState.error);
+      if (candidateState.error) throw new Error(candidateState.error);
       if (selectedID !== releaseID) return;
-      linkedJiraIssues = Array.isArray(linkedPayload.items) ? linkedPayload.items : [];
-      jiraCandidates = Array.isArray(candidatePayload.items) ? candidatePayload.items : [];
+      linkedJiraIssues = linkedState.items;
+      jiraCandidates = candidateState.items;
+      hasMoreLinkedJiraIssues = Boolean(linkedState.page?.has_more && linkedState.page?.next_cursor);
+      hasMoreJiraCandidates = Boolean(candidateState.page?.has_more && candidateState.page?.next_cursor);
       selectedJiraIssueIDs = selectedJiraIssueIDs.filter((id) =>
         jiraCandidates.some((candidate) => candidate.work_item_id === id && !candidate.current_release_id)
       );
@@ -357,15 +669,45 @@
     }
   }
 
+  async function loadMoreLinkedJiraIssues() {
+    if (linkedJiraLoadingMore || !hasMoreLinkedJiraIssues) return;
+    linkedJiraLoadingMore = true;
+    try {
+      const state = await linkedJiraResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      linkedJiraIssues = state.items;
+      hasMoreLinkedJiraIssues = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (error: any) {
+      jiraSearchError = error?.message || '更多已关联 Jira 事项加载失败';
+    } finally {
+      linkedJiraLoadingMore = false;
+    }
+  }
+
+  async function loadMoreJiraCandidates() {
+    if (candidateJiraLoadingMore || !hasMoreJiraCandidates) return;
+    candidateJiraLoadingMore = true;
+    try {
+      const state = await candidateJiraResource.loadMore();
+      if (state.error) throw new Error(state.error);
+      jiraCandidates = state.items;
+      hasMoreJiraCandidates = Boolean(state.page?.has_more && state.page?.next_cursor);
+    } catch (error: any) {
+      jiraSearchError = error?.message || '更多 Jira 事项候选加载失败';
+    } finally {
+      candidateJiraLoadingMore = false;
+    }
+  }
+
   async function searchJiraIssues() {
-    if (!selectedItem?.release.project_key || jiraSearching) return;
+    if (!selectedItem?.release.project_key || !selectedReleaseEditable || jiraSearching) return;
     jiraSearching = true;
     await loadSelectedReleaseJiraIssues(jiraSearch);
     jiraSearching = false;
   }
 
   async function linkSelectedJiraIssues() {
-    if (!selectedItem || !canManageReleases || linkingJiraIssues || selectedJiraIssueIDs.length === 0) return;
+    if (!selectedItem || !canManageReleases || !selectedReleaseEditable || linkingJiraIssues || selectedJiraIssueIDs.length === 0) return;
     linkingJiraIssues = true;
     const count = selectedJiraIssueIDs.length;
     try {
@@ -395,7 +737,7 @@
   }
 
   async function removeJiraIssue(issue: JiraIssue) {
-    if (!selectedItem || !canManageReleases || removingJiraIssueID) return;
+    if (!selectedItem || !canManageReleases || !selectedReleaseEditable || removingJiraIssueID) return;
     removingJiraIssueID = issue.work_item_id;
     try {
       const response = await fetch(
@@ -428,6 +770,13 @@
   $: if (activeDemandView === 'releases' && !loadedOnce && !loading) {
     void loadVersions(false);
   }
+
+  onDestroy(() => {
+    if (releaseFilterTimer) clearTimeout(releaseFilterTimer);
+    releaseResource.dispose();
+    linkedJiraResource.dispose();
+    candidateJiraResource.dispose();
+  });
 </script>
 
 {#if activeDemandView !== 'releases'}
@@ -439,37 +788,43 @@
     activeDemandView={activeDemandView === 'board' ? 'board' : 'schedule'}
   />
 {:else}
-  <section class="release-plan" aria-label="版本计划">
-    <header class="plan-toolbar">
+  <section class="release-plan" class:has-feedback={!!loadError} aria-label="版本计划">
+    <header class="plan-toolbar wa-admin-toolbar">
       <div class="toolbar-heading">
-        <span>Release catalog</span>
         <strong>现有版本与 Jira 事项</strong>
       </div>
-      <div class="toolbar-filters">
+      <div class="toolbar-filter-group" role="group" aria-label="版本筛选">
         <label class="search-field">
           <span class="sr-only">搜索版本</span>
-          <input bind:value={search} type="search" placeholder="搜索版本或项目" aria-label="搜索版本" />
+          <input bind:value={search} on:input={scheduleReleaseFilterRefresh} type="search" placeholder="搜索版本或项目" aria-label="搜索版本" />
         </label>
         <Select
           value={projectFilter}
           options={projectOptions}
           compact={true}
           clearable={true}
+          shadowless={true}
           ariaLabel="筛选项目"
-          on:change={(event) => projectFilter = event.detail}
+          on:change={(event) => applyProjectFilter(event.detail)}
         />
         <Select
           value={statusFilter}
           options={statusOptions}
           compact={true}
           searchable={false}
+          shadowless={true}
           ariaLabel="筛选版本状态"
-          on:change={(event) => statusFilter = event.detail}
+          on:change={(event) => applyStatusFilter(event.detail)}
         />
+        {#if hasActiveFilters}
+          <Button variant="ghost" size="small" on:click={clearFilters}>重置</Button>
+        {/if}
+      </div>
+      <div class="toolbar-actions">
+        <Button variant="secondary" size="small" on:click={() => loadVersions(true)} disabled={loading}>刷新</Button>
         {#if canManageReleases}
           <Button variant="primary" size="small" on:click={openCreateRelease}>创建版本</Button>
         {/if}
-        <Button variant="secondary" size="small" on:click={() => loadVersions(true)} disabled={loading}>刷新</Button>
       </div>
     </header>
 
@@ -489,7 +844,6 @@
         <header>
           <div>
             <strong>版本事实</strong>
-            <span>{visibleItems.length} 个版本</span>
           </div>
           <span>版本关联 Jira 事项，不创建或修改 Jira 版本</span>
         </header>
@@ -506,7 +860,7 @@
               </tr>
             </thead>
             <tbody>
-              {#if loading}
+              {#if loading && items.length === 0}
                 <tr><td colspan="6" class="empty-row">正在加载现有版本…</td></tr>
               {:else if visibleItems.length === 0}
                 <tr>
@@ -542,6 +896,15 @@
                     <td>{item.release.source === 'jira' ? 'Jira 导入' : '本地版本'}</td>
                   </tr>
                 {/each}
+                {#if hasMoreReleases}
+                  <tr class="load-more-row">
+                    <td colspan="6">
+                      <button type="button" on:click={loadMoreVersions} disabled={loadingMore}>
+                        {loadingMore ? '正在加载更多版本' : '加载更多版本'}
+                      </button>
+                    </td>
+                  </tr>
+                {/if}
               {/if}
             </tbody>
           </table>
@@ -556,12 +919,106 @@
               <strong>{selectedItem.release.name}</strong>
               <small>{statusLabel(selectedItem.release.status)} · {formatWindow(selectedItem.release)}</small>
             </div>
-            <span class="status status-{selectedItem.release.status}">{statusLabel(selectedItem.release.status)}</span>
+            <div class="inspector-header-actions">
+              <span class="status status-{selectedItem.release.status}">{statusLabel(selectedItem.release.status)}</span>
+              {#if canManageReleases && selectedItem.release.source === 'local' && selectedItem.release.status === 'planned'}
+                <Button variant="primary" size="small" on:click={openPublishConfirmation}>发布版本</Button>
+              {:else if canManageReleases && selectedLifecycle?.can_archive}
+                <Button variant="secondary" size="small" on:click={(event) => openLifecycleConfirmation('archive', event)}>归档版本</Button>
+              {/if}
+            </div>
           </header>
 
           <div class="inspector-body">
+            {#if publishConfirming}
+              <section class="publish-confirmation" aria-labelledby="publish-release-title">
+                <div class="publish-confirmation-heading">
+                  <div>
+                    <h3 id="publish-release-title">确认发布版本</h3>
+                    <p>发布后将锁定项目与 Jira 范围，并写入可追溯的发布事实。</p>
+                  </div>
+                  <button type="button" aria-label="取消发布确认" disabled={publishingRelease} on:click={cancelPublishConfirmation}>×</button>
+                </div>
+                <DatePicker
+                  id="publish-release-date"
+                  label="实际发布日期"
+                  value={publishReleaseDate}
+                  required={true}
+                  clearable={false}
+                  shadowless={true}
+                  on:change={(event) => publishReleaseDate = event.detail}
+                />
+                <label class="publish-reason-field">
+                  <span>发布说明 <em>*</em></span>
+                  <textarea bind:value={publishReason} rows="3" maxlength="500" aria-required="true"></textarea>
+                </label>
+                {#if publishError}
+                  <Alert type="error" message={publishError} />
+                {/if}
+                <div class="section-actions publish-actions">
+                  <Button variant="secondary" size="small" disabled={publishingRelease} on:click={cancelPublishConfirmation}>取消</Button>
+                  <Button variant="primary" size="small" loading={publishingRelease} on:click={publishRelease}>确认发布</Button>
+                </div>
+              </section>
+            {/if}
+
+            {#if lifecycleAction}
+              <section
+                class="lifecycle-confirmation"
+                class:danger={lifecycleAction === 'delete'}
+                aria-labelledby="lifecycle-action-title"
+                aria-describedby="lifecycle-action-description"
+              >
+                <div class="lifecycle-confirmation-heading">
+                  <div>
+                    <h3 id="lifecycle-action-title">确认{lifecycleActionTitle(lifecycleAction)}</h3>
+                    <p id="lifecycle-action-description">{lifecycleActionDescription(lifecycleAction)}</p>
+                  </div>
+                  <span class="lifecycle-release-name">{selectedItem.release.name}</span>
+                </div>
+                <label class="lifecycle-field">
+                  <span>操作原因 <em>*</em></span>
+                  <textarea
+                    bind:value={lifecycleReason}
+                    rows="3"
+                    maxlength="500"
+                    aria-required="true"
+                    placeholder={`说明为什么要${lifecycleActionTitle(lifecycleAction)}`}
+                  ></textarea>
+                </label>
+                {#if lifecycleAction === 'delete'}
+                  <label class="lifecycle-field">
+                    <span>输入版本名称以确认 <em>*</em></span>
+                    <input
+                      bind:value={lifecycleConfirmName}
+                      type="text"
+                      autocomplete="off"
+                      aria-required="true"
+                      placeholder={selectedItem.release.name}
+                    />
+                  </label>
+                {/if}
+                {#if lifecycleError}
+                  <Alert type="error" message={lifecycleError} />
+                {/if}
+                <div class="section-actions lifecycle-confirmation-actions">
+                  <Button variant="secondary" size="small" disabled={applyingLifecycleAction} on:click={cancelLifecycleConfirmation}>取消</Button>
+                  <Button
+                    variant={lifecycleAction === 'delete' ? 'danger' : 'primary'}
+                    size="small"
+                    loading={applyingLifecycleAction}
+                    on:click={applyLifecycleAction}
+                  >确认{lifecycleActionTitle(lifecycleAction)}</Button>
+                </div>
+              </section>
+            {/if}
+
             {#if !canManageReleases}
               <Alert type="info" message="当前账号只有查看权限，项目与 Jira 事项关联不可编辑。" />
+            {:else if selectedItem.release.status !== 'planned'}
+              <Alert type="info" message="已发布、已归档或已废弃版本的项目与 Jira 范围保持只读。" />
+            {:else if selectedItem.release.source !== 'local'}
+              <Alert type="info" message="Jira 导入版本需在来源系统中维护发布状态。" />
             {/if}
 
             <section class="inspector-section" aria-labelledby="project-binding-title">
@@ -574,25 +1031,27 @@
                   {projectLabel(selectedItem.release.project_key)}
                 </span>
               </div>
-              <Select
-                id="release-project"
-                label="所属项目"
-                value={draftProject}
-                options={bindingProjectOptions}
-                clearable={true}
-                disabled={!canManageReleases}
-                placeholder="暂不绑定项目"
-                searchPlaceholder="搜索项目"
-                on:change={(event) => draftProject = event.detail}
-              />
-              <div class="section-actions">
+              <div class="project-binding-controls">
+                <Select
+                  id="release-project"
+                  label="所属项目"
+                  value={draftProject}
+                  options={bindingProjectOptions}
+                  compact={true}
+                  clearable={true}
+                  disabled={!canManageReleases || !selectedReleaseEditable}
+                  shadowless={true}
+                  placeholder="暂不绑定项目"
+                  searchPlaceholder="搜索项目"
+                  on:change={(event) => draftProject = event.detail}
+                />
                 <Button
                   variant="secondary"
-                  size="small"
+                  size="medium"
                   loading={savingProject}
-                  disabled={!canManageReleases || draftProject === selectedItem.release.project_key}
+                  disabled={!canManageReleases || !selectedReleaseEditable || draftProject === selectedItem.release.project_key}
                   on:click={saveProjectBinding}
-                >保存项目绑定</Button>
+                >保存绑定</Button>
               </div>
             </section>
 
@@ -620,7 +1079,7 @@
                     <input
                       bind:value={jiraSearch}
                       type="search"
-                      disabled={!canManageReleases}
+                      disabled={!canManageReleases || !selectedReleaseEditable}
                       placeholder="输入 Jira 编号或标题"
                       on:keydown={handleJiraSearchKeydown}
                     />
@@ -628,7 +1087,7 @@
                       variant="secondary"
                       size="small"
                       loading={jiraSearching}
-                      disabled={!canManageReleases}
+                      disabled={!canManageReleases || !selectedReleaseEditable}
                       on:click={searchJiraIssues}
                     >搜索</Button>
                   </div>
@@ -639,7 +1098,7 @@
                   label="批量选择"
                   values={selectedJiraIssueIDs}
                   options={jiraCandidateOptions}
-                  disabled={!canManageReleases || jiraIssuesLoading}
+                  disabled={!canManageReleases || !selectedReleaseEditable || jiraIssuesLoading}
                   placeholder={jiraIssuesLoading ? '正在加载 Jira 事项…' : '选择要纳入当前版本的 Jira 事项'}
                   searchPlaceholder="在当前候选中筛选"
                   emptyText={jiraSearch ? '没有匹配的 Jira 事项' : '当前项目没有可关联的 Jira 事项'}
@@ -647,14 +1106,20 @@
                   showClear={true}
                   summaryMode={true}
                   overlay={true}
+                  shadowless={true}
                   on:change={(event) => selectedJiraIssueIDs = event.detail}
                 />
+                {#if hasMoreJiraCandidates}
+                  <div class="section-actions">
+                    <Button variant="ghost" size="small" loading={candidateJiraLoadingMore} on:click={loadMoreJiraCandidates}>加载更多候选</Button>
+                  </div>
+                {/if}
                 <div class="section-actions">
                   <Button
                     variant="primary"
                     size="small"
                     loading={linkingJiraIssues}
-                    disabled={!canManageReleases || selectedJiraIssueIDs.length === 0}
+                    disabled={!canManageReleases || !selectedReleaseEditable || selectedJiraIssueIDs.length === 0}
                     on:click={linkSelectedJiraIssues}
                   >批量关联 {selectedJiraIssueIDs.length ? `(${selectedJiraIssueIDs.length})` : ''}</Button>
                 </div>
@@ -683,7 +1148,7 @@
                         {#if issue.jira_url}
                           <a href={issue.jira_url} target="_blank" rel="noopener noreferrer">打开 ↗</a>
                         {/if}
-                        {#if canManageReleases}
+                        {#if canManageReleases && selectedReleaseEditable}
                           <button
                             type="button"
                             disabled={!!removingJiraIssueID}
@@ -694,10 +1159,40 @@
                     </div>
                   {/each}
                 </div>
+                {#if hasMoreLinkedJiraIssues}
+                  <div class="section-actions">
+                    <Button variant="ghost" size="small" loading={linkedJiraLoadingMore} on:click={loadMoreLinkedJiraIssues}>加载更多已关联事项</Button>
+                  </div>
+                {/if}
               {:else}
                 <div class="jira-empty">当前版本尚未关联 Jira 事项。</div>
               {/if}
             </section>
+
+            {#if canManageReleases && selectedItem.release.source === 'local' && (selectedLifecycle?.can_discard || selectedItem.release.status === 'planned' || selectedItem.release.status === 'discarded')}
+              <section class="inspector-section release-management" aria-labelledby="release-management-title">
+                <div class="section-heading">
+                  <div>
+                    <h3 id="release-management-title">版本管理</h3>
+                    <p>废弃会关闭计划；删除只允许无关联的计划中或已废弃版本。</p>
+                  </div>
+                </div>
+                <div class="release-management-actions">
+                  {#if selectedLifecycle?.can_discard}
+                    <Button variant="secondary" size="small" on:click={(event) => openLifecycleConfirmation('discard', event)}>废弃版本</Button>
+                  {/if}
+                  <Button
+                    variant="danger"
+                    size="small"
+                    disabled={!selectedLifecycle?.can_delete}
+                    on:click={(event) => openLifecycleConfirmation('delete', event)}
+                  >删除版本</Button>
+                </div>
+                {#if !selectedLifecycle?.can_delete && selectedLifecycle?.delete_block_reason}
+                  <p class="delete-block-reason">{selectedLifecycle.delete_block_reason}</p>
+                {/if}
+              </section>
+            {/if}
           </div>
         {:else}
           <div class="inspector-empty">
@@ -713,6 +1208,7 @@
     show={showCreateReleaseModal}
     title="创建版本"
     closeLabel="关闭创建版本弹窗"
+    shadowless={true}
     on:close={closeCreateRelease}
   >
     <form class="create-release-form" on:submit|preventDefault={createRelease}>
@@ -737,7 +1233,7 @@
         ></textarea>
       </label>
 
-      <div class="create-release-grid">
+      <div class="create-release-grid single">
         <Select
           id="create-release-project"
           label="所属项目"
@@ -745,18 +1241,10 @@
           options={bindingProjectOptions}
           clearable={true}
           compact={true}
+          shadowless={true}
           placeholder="暂不绑定项目"
           searchPlaceholder="搜索项目"
           on:change={(event) => createProject = event.detail}
-        />
-        <Select
-          id="create-release-status"
-          label="版本状态"
-          value={createStatus}
-          options={releaseStatusOptions}
-          searchable={false}
-          compact={true}
-          on:change={(event) => createStatus = event.detail}
         />
       </div>
 
@@ -767,6 +1255,7 @@
           value={createStartDate}
           max={createReleaseDate}
           compact={true}
+          shadowless={true}
           placeholder="选择开始日期"
           on:change={(event) => createStartDate = event.detail}
         />
@@ -776,12 +1265,13 @@
           value={createReleaseDate}
           min={createStartDate}
           compact={true}
+          shadowless={true}
           placeholder="选择发布日期"
           on:change={(event) => createReleaseDate = event.detail}
         />
       </div>
 
-      <p class="create-release-note">创建后会生成独立的本地版本事实；项目可稍后绑定，Jira 事项可在右侧面板中批量关联。</p>
+      <p class="create-release-note">新版本从计划中开始；绑定项目并核对 Jira 范围后，可在右侧检查器中发布。</p>
 
       {#if createError}
         <Alert type="error" message={createError} />
@@ -802,17 +1292,47 @@
 
 <style>
   .release-plan {
+    --wa-shadow-sm: none;
+    --wa-shadow-md: none;
+    --wa-shadow-peer: none;
+    --wa-shadow-glass: none;
+    --wa-shadow-panel: none;
+    --wa-shadow-glow: none;
     width: 100%;
     height: 100%;
     min-height: 0;
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     gap: 10px;
     color: var(--wa-text-main, #293847);
   }
 
+  .release-plan.has-feedback {
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+  }
+
+  .release-plan :global(.btn),
+  .release-plan :global(.select-trigger),
+  .release-plan :global(.multi-select-trigger),
+  .release-plan :global(.date-trigger) {
+    box-shadow: none !important;
+  }
+
+  .release-plan :global(*) {
+    box-shadow: none !important;
+  }
+
+  .release-plan :global(.btn:focus-visible),
+  .release-plan :global(.select-trigger:focus-within),
+  .release-plan :global(.multi-select-trigger:focus-within),
+  .release-plan :global(.date-trigger:focus-visible) {
+    outline: 2px solid rgba(0, 143, 150, 0.22);
+    outline-offset: 2px;
+  }
+
   .plan-toolbar,
-  .toolbar-filters,
+  .toolbar-filter-group,
+  .toolbar-actions,
   .release-list > header,
   .release-inspector > header,
   .section-heading,
@@ -824,20 +1344,26 @@
   }
 
   .plan-toolbar {
-    min-height: 52px;
-    justify-content: space-between;
-    gap: 16px;
-    border-bottom: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
-    padding: 4px 2px 10px;
+    min-width: 0;
+    min-height: 58px;
+    display: grid;
+    grid-template-columns: minmax(188px, auto) minmax(0, 1fr) auto;
+    gap: 14px;
+    border: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: var(--wa-radius-xl, 18px);
+    padding: 10px 14px;
+    background: var(--wa-surface-flat, #fbfdfe);
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .toolbar-heading {
     min-width: 0;
     display: grid;
-    gap: 2px;
+    gap: 3px;
   }
 
-  .toolbar-heading span,
   .release-inspector header span {
     color: var(--wa-text-muted, #667789);
     font-size: 9px;
@@ -851,8 +1377,20 @@
     font-size: 15px;
   }
 
-  .toolbar-filters {
-    min-width: min(100%, 760px);
+  .toolbar-heading small {
+    color: var(--wa-text-muted, #667789);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .toolbar-filter-group {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) minmax(132px, 168px) minmax(132px, 168px) auto;
+    gap: 8px;
+  }
+
+  .toolbar-actions {
     justify-content: flex-end;
     gap: 8px;
   }
@@ -862,11 +1400,11 @@
     flex: 1 1 280px;
   }
 
-  .toolbar-filters :global(.select-group) {
-    width: 168px;
+  .toolbar-filter-group :global(.select-group) {
+    width: 100%;
   }
 
-  .toolbar-filters input,
+  .toolbar-filter-group input,
   .jira-search-field input {
     box-sizing: border-box;
     width: 100%;
@@ -881,10 +1419,11 @@
     outline: none;
   }
 
-  .toolbar-filters input:focus,
+  .toolbar-filter-group input:focus,
   .jira-search-field input:focus {
     border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
-    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+    outline: 2px solid rgba(0, 143, 150, 0.16);
+    outline-offset: 1px;
   }
 
   .plan-feedback {
@@ -979,6 +1518,12 @@
     scrollbar-gutter: stable;
   }
 
+  .load-more-row td { padding: 0; text-align: center; }
+  .load-more-row button { width: 100%; min-height: 44px; border: 0; background: var(--wa-surface-panel, #fbfdff); color: var(--wa-accent-strong, #006f76); font: 760 11px/1 var(--wa-font-sans, sans-serif); cursor: pointer; }
+  .load-more-row button:hover { background: var(--wa-row-hover, #f2f8fb); }
+  .load-more-row button:focus-visible { outline: 2px solid var(--wa-border-focus, rgba(1, 139, 141, .86)); outline-offset: -2px; }
+  .load-more-row button:disabled { cursor: progress; opacity: .62; }
+
   table {
     width: 100%;
     border-collapse: collapse;
@@ -1018,10 +1563,6 @@
   tbody tr:hover,
   tbody tr.selected {
     background: rgba(0, 143, 150, 0.055);
-  }
-
-  tbody tr.selected {
-    box-shadow: inset 3px 0 0 var(--wa-accent, #008f96);
   }
 
   .version-link {
@@ -1103,6 +1644,11 @@
     color: #2f7854;
   }
 
+  .status-discarded {
+    background: rgba(188, 112, 41, 0.1);
+    color: #9a5d24;
+  }
+
   .empty-row {
     height: 160px;
     color: var(--wa-text-muted, #667789);
@@ -1127,6 +1673,14 @@
     min-width: 0;
     display: grid;
     gap: 3px;
+  }
+
+  .inspector-header-actions {
+    flex: none;
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px !important;
   }
 
   .release-inspector header strong {
@@ -1163,7 +1717,217 @@
     border-bottom: 0;
   }
 
+  .publish-confirmation {
+    display: grid;
+    gap: 11px;
+    border: 1px solid rgba(0, 143, 150, 0.24);
+    border-radius: var(--wa-radius-lg, 14px);
+    padding: 12px;
+    background: rgba(0, 143, 150, 0.045);
+    box-shadow: none;
+  }
+
+  .lifecycle-confirmation {
+    display: grid;
+    gap: 12px;
+    border: 1px solid rgba(188, 112, 41, 0.24);
+    border-radius: var(--wa-radius-lg, 14px);
+    padding: 12px;
+    background: rgba(188, 112, 41, 0.045);
+  }
+
+  .lifecycle-confirmation.danger {
+    border-color: rgba(221, 75, 62, 0.24);
+    background: rgba(221, 75, 62, 0.045);
+  }
+
+  .lifecycle-confirmation-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .lifecycle-confirmation-heading > div {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .lifecycle-confirmation h3,
+  .lifecycle-confirmation p {
+    margin: 0;
+  }
+
+  .lifecycle-confirmation h3 {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 12px;
+  }
+
+  .lifecycle-confirmation p {
+    color: var(--wa-text-muted, #667789);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .lifecycle-release-name {
+    max-width: 42%;
+    overflow: hidden;
+    border-radius: 999px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--wa-text-main, #293847) !important;
+    font-size: 10px !important;
+    letter-spacing: 0 !important;
+    text-overflow: ellipsis;
+    text-transform: none !important;
+    white-space: nowrap;
+  }
+
+  .lifecycle-field {
+    display: grid;
+    gap: 8px;
+  }
+
+  .lifecycle-field > span {
+    color: var(--wa-text-muted, #667789);
+    font-size: 12px;
+    font-weight: 740;
+  }
+
+  .lifecycle-field em {
+    color: var(--wa-danger, #dd4b3e);
+    font-style: normal;
+  }
+
+  .lifecycle-field textarea,
+  .lifecycle-field input {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.2));
+    border-radius: var(--wa-radius-md, 7px);
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--wa-text-main, #293847);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .lifecycle-field textarea {
+    min-height: 72px;
+    resize: vertical;
+  }
+
+  .lifecycle-field input {
+    min-height: 38px;
+  }
+
+  .lifecycle-field textarea:focus,
+  .lifecycle-field input:focus {
+    border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
+    outline: 2px solid rgba(0, 143, 150, 0.16);
+    outline-offset: 1px;
+  }
+
+  .lifecycle-confirmation-actions {
+    gap: 8px;
+  }
+
+  .publish-confirmation-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .publish-confirmation-heading > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .publish-confirmation h3,
+  .publish-confirmation p {
+    margin: 0;
+  }
+
+  .publish-confirmation h3 {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 12px;
+  }
+
+  .publish-confirmation p {
+    color: var(--wa-text-muted, #667789);
+    font-size: 9px;
+    line-height: 1.45;
+  }
+
+  .publish-confirmation-heading > button {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: var(--wa-radius-md, 7px);
+    padding: 0;
+    background: transparent;
+    color: var(--wa-text-muted, #667789);
+    font: inherit;
+    font-size: 18px;
+    cursor: pointer;
+  }
+
+  .publish-confirmation-heading > button:focus-visible {
+    outline: 2px solid rgba(0, 143, 150, 0.22);
+    outline-offset: 2px;
+  }
+
+  .publish-reason-field {
+    display: grid;
+    gap: 7px;
+  }
+
+  .publish-reason-field > span {
+    color: var(--wa-text-muted, #667789);
+    font-size: 12px;
+    font-weight: 740;
+  }
+
+  .publish-reason-field em {
+    color: var(--wa-danger, #dd4b3e);
+    font-style: normal;
+  }
+
+  .publish-reason-field textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 72px;
+    border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.2));
+    border-radius: var(--wa-radius-md, 7px);
+    padding: 9px 10px;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--wa-text-main, #293847);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.45;
+    resize: vertical;
+  }
+
+  .publish-reason-field textarea:focus {
+    border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
+    outline: 2px solid rgba(0, 143, 150, 0.16);
+    outline-offset: 1px;
+  }
+
+  .publish-actions {
+    gap: 8px;
+  }
+
   .section-heading {
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px;
   }
@@ -1188,6 +1952,41 @@
 
   .section-actions {
     justify-content: flex-end;
+  }
+
+  .project-binding-controls {
+    --wa-control-h: 38px;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: end;
+    gap: 8px;
+  }
+
+  .project-binding-controls :global(.select-group) {
+    min-width: 0;
+  }
+
+  .release-management {
+    gap: 12px;
+    border-bottom: 0;
+    padding-top: 8px;
+    padding-bottom: 0;
+  }
+
+  .release-management-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .delete-block-reason {
+    margin: 0;
+    color: var(--wa-text-muted, #667789);
+    font-size: 10px;
+    line-height: 1.45;
+    text-align: right;
   }
 
   .linked-state {
@@ -1379,7 +2178,8 @@
   .create-release-field textarea:focus {
     border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
     background: var(--wa-surface-flat, #fbfdff);
-    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
+    outline: 2px solid rgba(0, 143, 150, 0.16);
+    outline-offset: 1px;
   }
 
   .create-release-grid {
@@ -1387,6 +2187,10 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+  }
+
+  .create-release-grid.single {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .create-release-note {
@@ -1422,35 +2226,86 @@
       grid-template-columns: minmax(0, 1fr);
     }
 
+    .plan-toolbar {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .toolbar-filter-group {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+
+    .toolbar-actions {
+      grid-column: 2;
+      grid-row: 1;
+    }
+
     .release-list {
       min-height: 460px;
     }
 
     .release-inspector {
-      min-height: 620px;
+      min-height: 0;
     }
   }
 
   @media (max-width: 760px) {
     .plan-toolbar {
+      grid-template-columns: minmax(0, 1fr);
       align-items: stretch;
-      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
     }
 
-    .toolbar-filters {
+    .toolbar-filter-group {
+      grid-column: 1;
+      grid-row: auto;
       min-width: 0;
       display: grid;
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-areas:
+        "search search"
+        "project status"
+        "reset reset";
+    }
+
+    .search-field {
+      grid-area: search;
+    }
+
+    .toolbar-filter-group :global(.select-group):first-of-type {
+      grid-area: project;
+    }
+
+    .toolbar-filter-group :global(.select-group):nth-of-type(2) {
+      grid-area: status;
+    }
+
+    .toolbar-filter-group :global(.btn) {
+      grid-area: reset;
+    }
+
+    .toolbar-actions {
+      grid-column: 1;
+      grid-row: auto;
+      justify-content: stretch;
     }
 
     .search-field,
-    .toolbar-filters :global(.select-group) {
+    .toolbar-filter-group :global(.select-group) {
       width: 100%;
       min-width: 0;
     }
 
-    .toolbar-filters input {
+    .toolbar-filter-group input,
+    .toolbar-filter-group :global(.select-trigger),
+    .toolbar-filter-group :global(.btn),
+    .toolbar-actions :global(.btn) {
       min-height: 44px;
+    }
+
+    .toolbar-actions :global(.btn) {
+      flex: 1 1 0;
     }
 
     .plan-metrics {
@@ -1479,8 +2334,36 @@
       min-width: 820px;
     }
 
-    .release-inspector {
-      min-height: 680px;
+    .release-inspector > header {
+      align-items: flex-start;
+    }
+
+    .inspector-header-actions {
+      align-items: flex-end;
+      flex-direction: column;
+    }
+
+    .publish-confirmation {
+      --wa-control-h: 44px;
+    }
+
+    .publish-confirmation-heading > button {
+      width: 44px;
+      height: 44px;
+    }
+
+    .project-binding-controls,
+    .lifecycle-confirmation {
+      --wa-control-h: 44px;
+    }
+
+    .project-binding-controls :global(.select-trigger),
+    .project-binding-controls :global(.btn),
+    .inspector-header-actions :global(.btn),
+    .lifecycle-confirmation-actions :global(.btn),
+    .release-management-actions :global(.btn),
+    .lifecycle-field input {
+      min-height: 44px;
     }
 
     .jira-search-field > div {
@@ -1502,6 +2385,63 @@
     .create-release-actions :global(.btn) {
       flex: 1 1 0;
       min-height: 44px;
+    }
+  }
+
+  @media (max-width: 430px) {
+    .toolbar-filter-group {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "search"
+        "project"
+        "status"
+        "reset";
+    }
+  }
+
+  @media (max-width: 430px) {
+    .release-inspector > header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .inspector-header-actions {
+      width: 100%;
+      align-items: stretch;
+    }
+
+    .inspector-header-actions :global(.btn) {
+      width: 100%;
+    }
+
+    .section-heading,
+    .lifecycle-confirmation-heading {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+
+    .lifecycle-release-name {
+      max-width: 100%;
+    }
+
+    .project-binding-controls {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .project-binding-controls :global(.btn),
+    .lifecycle-confirmation-actions :global(.btn),
+    .release-management-actions :global(.btn) {
+      width: 100%;
+    }
+
+    .lifecycle-confirmation-actions,
+    .release-management-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .delete-block-reason {
+      text-align: left;
     }
   }
 </style>

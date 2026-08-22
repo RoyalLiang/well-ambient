@@ -1,24 +1,29 @@
 package db
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // ReleaseVersion is an independently-owned local release catalog entry.
 // It may remain unbound until commitment; project binding and Jira association
 // do not replace its stable Source and ExternalID identity.
 type ReleaseVersion struct {
-	ID          uint       `gorm:"primaryKey;index:idx_release_catalog,priority:4" json:"id"`
-	ProjectKey  string     `gorm:"uniqueIndex:idx_release_identity,priority:1;index;index:idx_release_catalog,priority:1;size:64;not null;column:project_key" json:"project_key"`
-	Source      string     `gorm:"uniqueIndex:idx_release_identity,priority:2;index;size:32;not null" json:"source"`
-	ExternalID  string     `gorm:"uniqueIndex:idx_release_identity,priority:3;size:160;not null;column:external_id" json:"external_id"`
-	Name        string     `gorm:"size:255;not null" json:"name"`
-	Description string     `gorm:"type:text" json:"description"`
-	Status      string     `gorm:"index;index:idx_release_catalog,priority:2;size:32;not null;default:planned" json:"status"`
-	StartDate   *time.Time `json:"start_date"`
-	ReleaseDate *time.Time `gorm:"index:idx_release_catalog,priority:3" json:"release_date"`
-	SourceURL   string     `gorm:"size:1024;column:source_url" json:"source_url"`
-	SyncedAt    *time.Time `gorm:"index;column:synced_at" json:"synced_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID          uint           `gorm:"primaryKey;index:idx_release_catalog,priority:4" json:"id"`
+	ProjectKey  string         `gorm:"uniqueIndex:idx_release_identity,priority:1;index;index:idx_release_catalog,priority:1;size:64;not null;column:project_key" json:"project_key"`
+	Source      string         `gorm:"uniqueIndex:idx_release_identity,priority:2;index;size:32;not null" json:"source"`
+	ExternalID  string         `gorm:"uniqueIndex:idx_release_identity,priority:3;size:160;not null;column:external_id" json:"external_id"`
+	Name        string         `gorm:"size:255;not null" json:"name"`
+	Description string         `gorm:"type:text" json:"description"`
+	Status      string         `gorm:"index;index:idx_release_catalog,priority:2;size:32;not null;default:planned" json:"status"`
+	StartDate   *time.Time     `json:"start_date"`
+	ReleaseDate *time.Time     `gorm:"index:idx_release_catalog,priority:3" json:"release_date"`
+	SourceURL   string         `gorm:"size:1024;column:source_url" json:"source_url"`
+	SyncedAt    *time.Time     `gorm:"index;column:synced_at" json:"synced_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index:idx_release_deleted_at;column:deleted_at" json:"-"`
 }
 
 // ReleaseJiraLink attaches one local release fact to one Jira release version.

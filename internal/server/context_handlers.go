@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	"well-ambient/internal/readmodel"
 
 	"gorm.io/gorm"
 )
@@ -93,13 +95,48 @@ func (s *Server) handleListContextFacts(w http.ResponseWriter, r *http.Request) 
 	}
 
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	query := db.DB.Order("updated_at desc, id desc")
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-
+	position := struct {
+		UpdatedAt time.Time `json:"updated_at"`
+		ID        uint      `json:"id"`
+	}{}
 	var facts []db.ContextFact
-	if err := query.Find(&facts).Error; err != nil {
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "context_facts", Contract: "context-facts",
+			Scope: map[string]string{"status": status}, Cursor: r.URL.Query().Get("cursor"),
+			Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		query := tx.Order("updated_at desc, id desc").Limit(window.Limit + 1)
+		if status != "" {
+			query = query.Where("status = ?", status)
+		}
+		if window.HasCursor {
+			query = query.Where("updated_at < ? OR (updated_at = ? AND id < ?)", position.UpdatedAt, position.UpdatedAt, position.ID)
+		}
+		if err := query.Find(&facts).Error; err != nil {
+			return err
+		}
+		hasMore := len(facts) > window.Limit
+		if hasMore {
+			facts = facts[:window.Limit]
+		}
+		last := position
+		if len(facts) > 0 {
+			last.UpdatedAt = facts[len(facts)-1].UpdatedAt
+			last.ID = facts[len(facts)-1].ID
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to query context facts: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -107,6 +144,7 @@ func (s *Server) handleListContextFacts(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"facts": facts,
+		"page":  page,
 	})
 }
 

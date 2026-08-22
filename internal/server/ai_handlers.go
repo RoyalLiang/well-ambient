@@ -870,7 +870,7 @@ func createDeconstructArchive(tx *gorm.DB, inputText string, demandID string, ta
 }
 
 // testAIConnection dry-runs connection to LLM API
-func testAIConnection(cfg *config.AIConfig) (bool, string, string) {
+func testAIConnection(ctx context.Context, cfg *config.AIConfig) (bool, string, string) {
 	if cfg.BaseURL == "" || cfg.APIToken == "" {
 		return false, "AI API Base URL and API Token are required", ""
 	}
@@ -879,12 +879,7 @@ func testAIConnection(cfg *config.AIConfig) (bool, string, string) {
 	if modelName == "" {
 		modelName = "gpt-4o"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	client := providerllm.Client{
-		Config:     *cfg,
-		HTTPClient: &http.Client{Timeout: 8 * time.Second},
-	}
+	client := providerllm.Client{Config: *cfg}
 	log.Printf("[AI Connection Test] Outgoing HTTP POST to: %s", cfg.GetRealAPIURL())
 	log.Printf("[AI Connection Test] Target Model: %s, Protocol Mode: %s", modelName, cfg.Protocol())
 	output, err := client.Generate(ctx, providerllm.Request{

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { refreshAgendaSummary, subscribeAgendaSummary } from '../lib/agenda-summary';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
 
   export let openRequest = 0;
 
@@ -66,7 +68,7 @@
   let gitlabBaseUrl = '';
   let drawerOpen = false;
   let drawerEl: HTMLElement;
-  let closeButton: HTMLButtonElement;
+  let closeButton: OverlayCloseButton;
   let handledOpenRequest = openRequest;
   let publishedSummaryKey = '';
   let refreshing = false;
@@ -253,14 +255,11 @@
     refreshing = true;
     try {
       const [agendaResult, manualResult] = await Promise.allSettled([
-        fetch('/api/agenda/summary'),
+        refreshAgendaSummary(),
         fetch('/api/strongest-brain/override-audit?limit=200')
       ]);
 
-      if (agendaResult.status === 'fulfilled' && agendaResult.value.ok) {
-        const data = await agendaResult.value.json();
-        automaticEvents = Array.isArray(data?.auto_decisions) ? data.auto_decisions : [];
-      }
+      void agendaResult;
       if (manualResult.status === 'fulfilled' && manualResult.value.ok) {
         const data = await manualResult.value.json();
         manualEvents = Array.isArray(data?.items) ? data.items : [];
@@ -340,6 +339,13 @@
 
   onMount(() => {
     let disposed = false;
+    const unsubscribeAgenda = subscribeAgendaSummary((agendaState) => {
+      if (agendaState.data) {
+        automaticEvents = Array.isArray(agendaState.data.auto_decisions)
+          ? agendaState.data.auto_decisions as unknown as AutomaticEvent[]
+          : [];
+      }
+    });
     const bootstrap = async () => {
       await loadConfiguration();
       if (!disposed) await refreshEvents();
@@ -352,6 +358,7 @@
 
     return () => {
       disposed = true;
+      unsubscribeAgenda();
       window.clearInterval(interval);
       window.removeEventListener('decision-events-updated', handleUpdate);
       dispatch('summary', null);
@@ -379,7 +386,7 @@
         </div>
         <div class="timeline-drawer-actions">
           <strong class="timeline-drawer-count">{timelineEvents.length} 条</strong>
-          <button type="button" class="timeline-drawer-close" aria-label="关闭事件记录" bind:this={closeButton} on:click={closeDrawer}>×</button>
+          <OverlayCloseButton label="关闭事件记录" bind:this={closeButton} on:click={closeDrawer} />
         </div>
       </header>
 
@@ -476,9 +483,9 @@
 
   .timeline-drawer-header {
     min-height: 112px;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: flex-start;
-    justify-content: space-between;
     gap: var(--wa-space-4);
     padding: 20px 22px;
     border-bottom: 1px solid var(--wa-border-soft);
@@ -527,30 +534,6 @@
     font-family: var(--wa-font-mono);
     font-size: 11px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .timeline-drawer-close {
-    width: 38px;
-    height: 38px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--wa-border-soft);
-    border-radius: var(--wa-radius-md);
-    background: var(--wa-surface-inset);
-    color: var(--wa-text-main);
-    font: inherit;
-    font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-  }
-
-  .timeline-drawer-close:hover,
-  .timeline-drawer-close:focus-visible {
-    outline: none;
-    border-color: var(--wa-accent);
-    background: var(--wa-row-hover);
-    color: var(--wa-accent-strong);
   }
 
   .timeline-drawer-body {
@@ -745,10 +728,4 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .timeline-drawer-close {
-      scroll-behavior: auto;
-      transition: none;
-    }
-  }
 </style>

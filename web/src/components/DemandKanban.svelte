@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import { slide } from 'svelte/transition';
   import type { AdminInspectorRecord, AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS, formatAdminDate, toneForRisk, toneForStatus } from '../lib/admin-console/contract';
@@ -13,6 +14,8 @@
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
   import Deconstructor from './Deconstructor.svelte';
   import DemandDeliveryControl from './DemandDeliveryControl.svelte';
+  import SolutionWorkspace from './SolutionWorkspace.svelte';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import Select from './shared/Select.svelte';
 
   type DemandView = 'board' | 'schedule';
@@ -53,6 +56,7 @@
 
   type ScheduleRiskFilter = 'attention' | 'all' | 'overdue' | 'due_soon' | 'stale' | 'unscheduled' | 'safe' | 'done';
   type ScheduleSortMode = 'risk' | 'due' | 'owner';
+  type ScheduleInspectorMode = 'schedule' | 'telemetry' | 'solution';
   type EstimateSource = '' | 'ai_deconstruct' | 'manual_adjusted';
 
   interface ScheduleSummary {
@@ -368,7 +372,7 @@
   let scheduleProjectFilter = 'all';
   let scheduleProjectSearchText = '';
   let selectedScheduleDemandId = '';
-  let scheduleInspectorMode: 'schedule' | 'telemetry' = 'schedule';
+  let scheduleInspectorMode: ScheduleInspectorMode = 'schedule';
   let scheduleDraftDemandId = '';
   let scheduleSaveLoading = false;
   let scheduleSaveError = '';
@@ -773,7 +777,11 @@
   let showDemandDetailsModal = false;
   let showDeconstructorModal = false;
   let selectedDemand: Demand | null = null;
+  let solutionDemand: Demand | null = null;
   let detailDemand: Demand | null = null;
+  const linkedDemandID = new URLSearchParams(window.location.search).get('demand')?.trim() || '';
+  const linkedSolutionRequested = new URLSearchParams(window.location.search).get('solution') === '1';
+  let linkedDemandOpened = false;
   let deconstructorTitle = '';
   let deconstructorDescription = '';
   let deconstructorDemandId = '';
@@ -783,9 +791,9 @@
   let companionHostHeight = 560;
   let manualModalScrollLocked = false;
   let detailDrawerEl: HTMLElement;
-  let detailCloseButton: HTMLButtonElement;
+  let detailCloseButton: OverlayCloseButton;
   let detailReturnFocus: HTMLElement | null = null;
-  let deconstructorCloseButton: HTMLButtonElement;
+  let deconstructorCloseButton: OverlayCloseButton;
   let deconstructorReturnFocus: HTMLElement | null = null;
 
   function portalToConsole(node: HTMLElement, enabled = true) {
@@ -1224,6 +1232,17 @@
     scheduleDraftDemandId = '';
     scheduleSaveError = '';
   }
+  $: solutionDemand = selectedScheduleItem
+    ? selectedDemand?.task_id === selectedScheduleItem.demand_id
+      ? selectedDemand
+      : ({
+          ...selectedScheduleItem,
+          task_id: selectedScheduleItem.demand_id,
+          demand_id: selectedScheduleItem.demand_id,
+          last_commit: selectedScheduleItem.last_update,
+          task_created_at: selectedScheduleItem.created_at
+        } as Demand)
+    : null;
   $: if (!newAssignee && createAssigneeOptions.length > 0) {
     newAssignee = createAssigneeOptions[0];
   }
@@ -1616,6 +1635,7 @@
       }));
       scheduleSummary = data.summary || createEmptyScheduleSummary();
       scheduleGeneratedAt = data.generated_at || '';
+      void openLinkedDemandIfReady();
       fetchRiskCalendar();
     } catch (err: any) {
       scheduleErrorMsg = err.message || '获取排期表失败';
@@ -1682,6 +1702,7 @@
       allSubTasks = (legacyTasks || []).filter((task: any) =>
         task.status !== 'archived' && !workItemTypes.has((task.issue_type || '').toLowerCase().trim())
       );
+      void openLinkedDemandIfReady();
     } catch (err: any) {
       if (requestSeq !== flowRequestSeq) return;
       errorMsg = err.message || '获取需求失败';
@@ -1850,14 +1871,14 @@
     activeDatePicker = null;
   }
 
-  function selectScheduleItem(item: ScheduleItem, mode: 'schedule' | 'telemetry' = 'schedule') {
+  function selectScheduleItem(item: ScheduleItem, mode: ScheduleInspectorMode = 'schedule') {
     selectedScheduleDemandId = item.demand_id;
     scheduleInspectorMode = mode;
     if (scheduleDraftDemandId !== item.demand_id) loadScheduleEditor(item);
   }
 
   function handleScheduleInspectorTabKey(event: KeyboardEvent) {
-    const tabs: Array<'schedule' | 'telemetry'> = ['schedule', 'telemetry'];
+    const tabs: ScheduleInspectorMode[] = ['schedule', 'telemetry'];
     const tablist = (event.currentTarget as HTMLElement | null)?.closest('[role="tablist"]');
     let nextIndex = tabs.indexOf(scheduleInspectorMode);
     if (event.key === 'ArrowRight') nextIndex = (nextIndex + 1) % tabs.length;
@@ -1899,6 +1920,23 @@
     showDemandDetailsModal = true;
     await tick();
     detailCloseButton?.focus();
+  }
+
+  async function openLinkedDemandIfReady() {
+    if (linkedDemandOpened || !linkedDemandID) return;
+    if (linkedSolutionRequested && activeDemandView === 'schedule') {
+      const linkedScheduleItem = scheduleItems.find((item) => item.demand_id === linkedDemandID);
+      if (!linkedScheduleItem) return;
+      linkedDemandOpened = true;
+      selectScheduleItem(linkedScheduleItem, hasPermission('solution:read') ? 'solution' : 'schedule');
+      await tick();
+      document.getElementById('demand-solution')?.scrollIntoView({ block: 'start' });
+      return;
+    }
+    const linkedDemand = demands.find((item) => item.task_id === linkedDemandID);
+    if (!linkedDemand) return;
+    linkedDemandOpened = true;
+    await openDemandDetails(linkedDemand);
   }
 
   function handleDemandCardKeydown(event: KeyboardEvent, demand: Demand) {
@@ -2248,6 +2286,14 @@
 
   onMount(() => {
     isMounted = true;
+    if (activeDemandView === 'schedule' && linkedSolutionRequested && linkedDemandID) {
+      scheduleRiskFilter = 'all';
+      scheduleAssigneeFilter = 'all';
+      scheduleProjectFilter = 'all';
+      scheduleTypeFilter = 'all';
+      scheduleSearchInput = linkedDemandID;
+      scheduleSearch = linkedDemandID;
+    }
     fetchDemands();
     fetchUsers();
     fetchDemandOptions();
@@ -2266,6 +2312,11 @@
     };
     window.addEventListener('config-updated', handleConfigUpdated);
     window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+    const unsubscribeTelemetryUpdates = subscribeTelemetryUpdates(
+      window,
+      refreshDemandWorkspace,
+      { visibilityTarget: document }
+    );
 
     // Poll updates every 15 seconds
     const interval = setInterval(() => {
@@ -2280,6 +2331,7 @@
       window.removeEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
       window.removeEventListener('config-updated', handleConfigUpdated);
       window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+      unsubscribeTelemetryUpdates();
     };
   });
 
@@ -2560,7 +2612,7 @@
                     {#each scheduleTableColumns as column}
                       <col style="width: {column.width || 'auto'}" />
                     {/each}
-                    <col style="width: 7%" />
+                    <col style="width: 10%" />
                   </colgroup>
                   <thead>
                     <tr>
@@ -2638,6 +2690,13 @@
                         </td>
                         <td class="align-center action-col">
                           <div class="schedule-actions-cell">
+                            {#if hasPermission('solution:read')}
+                              <button
+                                class="schedule-row-action wa-admin-action secondary is-solution font-mono"
+                                aria-label={`在右侧查看 ${item.demand_id} 的解决方案`}
+                                on:click|stopPropagation={() => selectScheduleItem(item, 'solution')}
+                              >方案</button>
+                            {/if}
                             <button
                               class="schedule-row-action wa-admin-action secondary is-telemetry font-mono"
                               aria-label={`在右侧查看 ${item.demand_id} 的代码轨迹`}
@@ -2669,7 +2728,9 @@
             {@const riskSection = scheduleInspectorRecord.sections.find((section) => section.title === '风险说明')}
             <div class="schedule-inspector-head">
               <div class="inspector-title-row">
-                <span class="wa-admin-pill {ADMIN_TONE_CLASS[scheduleInspectorRecord.tone || 'neutral']}">{scheduleInspectorRecord.status}</span>
+                <span class="wa-admin-pill {scheduleInspectorMode === 'solution' ? ADMIN_TONE_CLASS.info : ADMIN_TONE_CLASS[scheduleInspectorRecord.tone || 'neutral']}">
+                  {scheduleInspectorMode === 'solution' ? '解决方案' : scheduleInspectorRecord.status}
+                </span>
                 {#if getJiraIssueUrl(scheduleInspectorRecord.id)}
                   <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(scheduleInspectorRecord.id)} target="_blank" rel="noopener noreferrer">
                     {scheduleInspectorRecord.id}
@@ -2679,39 +2740,58 @@
                 {/if}
               </div>
               <h3>{scheduleInspectorRecord.title}</h3>
-              <p>{descriptionSection?.body}</p>
+              <p>{scheduleInspectorMode === 'solution' ? '查看 Jira 方案评论与当前方案正文。' : descriptionSection?.body}</p>
             </div>
 
-            <div class="schedule-inspector-tabs" role="tablist" aria-label="右侧需求工作区">
-              <button
-                id="schedule-inspector-tab-schedule"
-                type="button"
-                role="tab"
-                aria-selected={scheduleInspectorMode === 'schedule'}
-                aria-controls="schedule-inspector-panel-schedule"
-                tabindex={scheduleInspectorMode === 'schedule' ? 0 : -1}
-                class:active={scheduleInspectorMode === 'schedule'}
-                on:click={() => scheduleInspectorMode = 'schedule'}
-                on:keydown={handleScheduleInspectorTabKey}
-              >
-                排期设置
-              </button>
-              <button
-                id="schedule-inspector-tab-telemetry"
-                type="button"
-                role="tab"
-                aria-selected={scheduleInspectorMode === 'telemetry'}
-                aria-controls="schedule-inspector-panel-telemetry"
-                tabindex={scheduleInspectorMode === 'telemetry' ? 0 : -1}
-                class:active={scheduleInspectorMode === 'telemetry'}
-                on:click={() => scheduleInspectorMode = 'telemetry'}
-                on:keydown={handleScheduleInspectorTabKey}
-              >
-                代码轨迹
-              </button>
-            </div>
+            {#if scheduleInspectorMode !== 'solution'}
+              <div class="schedule-inspector-tabs" role="tablist" aria-label="右侧需求工作区">
+                <button
+                  id="schedule-inspector-tab-schedule"
+                  type="button"
+                  role="tab"
+                  aria-selected={scheduleInspectorMode === 'schedule'}
+                  aria-controls="schedule-inspector-panel-schedule"
+                  tabindex={scheduleInspectorMode === 'schedule' ? 0 : -1}
+                  class:active={scheduleInspectorMode === 'schedule'}
+                  on:click={() => scheduleInspectorMode = 'schedule'}
+                  on:keydown={handleScheduleInspectorTabKey}
+                >
+                  排期设置
+                </button>
+                <button
+                  id="schedule-inspector-tab-telemetry"
+                  type="button"
+                  role="tab"
+                  aria-selected={scheduleInspectorMode === 'telemetry'}
+                  aria-controls="schedule-inspector-panel-telemetry"
+                  tabindex={scheduleInspectorMode === 'telemetry' ? 0 : -1}
+                  class:active={scheduleInspectorMode === 'telemetry'}
+                  on:click={() => scheduleInspectorMode = 'telemetry'}
+                  on:keydown={handleScheduleInspectorTabKey}
+                >
+                  代码轨迹
+                </button>
+              </div>
+            {/if}
 
-            {#if scheduleInspectorMode === 'telemetry'}
+            {#if scheduleInspectorMode === 'solution'}
+              <div
+                id="schedule-inspector-panel-solution"
+                class="schedule-solution-inline"
+                role="region"
+                aria-label="需求解决方案"
+                tabindex="0"
+              >
+                {#if solutionDemand}
+                  <SolutionWorkspace demand={solutionDemand} {currentUserPermissions} />
+                {:else}
+                  <div class="schedule-inspector-empty">
+                    <strong>暂无解决方案</strong>
+                    <p>当前未选择需求。</p>
+                  </div>
+                {/if}
+              </div>
+            {:else if scheduleInspectorMode === 'telemetry'}
               <div
                 id="schedule-inspector-panel-telemetry"
                 class="schedule-telemetry-inline"
@@ -3293,7 +3373,7 @@
       <div class="modal-content demand-create-modal glass-panel" bind:clientHeight={companionHostHeight}>
         <div class="modal-header">
           <h3>📋 录入新产品需求</h3>
-          <button class="close-btn" on:click={closeCreateDemandModal} aria-label="关闭新需求弹窗">&times;</button>
+          <OverlayCloseButton label="关闭新需求弹窗" on:click={closeCreateDemandModal} />
         </div>
         
         <div class="form-body">
@@ -3437,7 +3517,7 @@
       <div class="modal-content schedule-modal" bind:clientHeight={companionHostHeight} on:click|stopPropagation={handleScheduleModalClick}>
         <div class="modal-header">
           <h3>{selectedDemand.issue_type === 'bug' ? '缺陷' : '需求'}开发排期与指派 · #{selectedDemand.task_id}</h3>
-          <button class="close-btn" on:click={closeScheduleModal} aria-label="关闭排期弹窗">&times;</button>
+          <OverlayCloseButton label="关闭排期弹窗" on:click={closeScheduleModal} />
         </div>
 
         <div class="form-body">
@@ -3609,7 +3689,7 @@
             <span>排期治理 / 流转看板</span>
             <h3 id="demand-detail-drawer-title">需求详情</h3>
           </div>
-          <button type="button" class="close-btn" bind:this={detailCloseButton} on:click={() => closeDemandDetails()} aria-label="关闭需求详情抽屉">&times;</button>
+          <OverlayCloseButton label="关闭需求详情抽屉" bind:this={detailCloseButton} on:click={() => closeDemandDetails()} />
         </div>
 
         <div class="detail-body">
@@ -3728,7 +3808,7 @@
             <span class="deconstructor-context">AI 解构工作台</span>
             <h3 id="deconstructor-modal-title">{deconstructorContextLabel}</h3>
           </div>
-          <button class="close-btn" bind:this={deconstructorCloseButton} on:click={() => closeDeconstructorWorkspace()} aria-label="关闭 AI 解构工作台">&times;</button>
+          <OverlayCloseButton label="关闭 AI 解构工作台" bind:this={deconstructorCloseButton} on:click={() => closeDeconstructorWorkspace()} />
         </div>
         <div class="deconstructor-modal-body">
           <Deconstructor
@@ -3753,7 +3833,7 @@
             <div class="confirm-kicker font-mono">{confirmType === 'delete' ? 'IRREVERSIBLE ACTION' : 'FLOW CONTROL'}</div>
             <h3>{confirmTitle}</h3>
           </div>
-          <button class="close-btn confirm-close" on:click={() => showConfirmModal = false} aria-label="关闭确认弹窗">&times;</button>
+          <OverlayCloseButton label="关闭确认弹窗" on:click={() => showConfirmModal = false} />
         </div>
         <div class="confirm-body">
           <div class="confirm-id-row">
@@ -5296,19 +5376,6 @@
     color: #f8fafc;
   }
 
-  .close-btn {
-    background: transparent;
-    border: none;
-    color: #64748b;
-    font-size: 1.5rem;
-    cursor: pointer;
-    line-height: 1;
-  }
-
-  .close-btn:hover {
-    color: #f1f5f9;
-  }
-
   .form-body {
     display: flex;
     flex-direction: column;
@@ -6299,10 +6366,6 @@
     font-size: 0.62rem;
     font-weight: 800;
     letter-spacing: 0.08em;
-  }
-
-  .confirm-close {
-    margin-top: -4px;
   }
 
   .confirm-body {
@@ -8377,16 +8440,6 @@
     color: var(--schedule-strong);
   }
 
-  .close-btn,
-  .confirm-close {
-    color: var(--schedule-muted);
-  }
-
-  .close-btn:hover,
-  .confirm-close:hover {
-    color: var(--schedule-accent-strong);
-  }
-
   .form-group label,
   .confirm-kicker,
   .confirm-id-label {
@@ -8850,6 +8903,10 @@
 
   .modal-header,
   .confirm-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--wa-touch-h, 44px);
+    align-items: start;
+    gap: var(--wa-space-4, 16px);
     padding: 18px 22px 14px;
     border-bottom: 1px solid rgba(121, 139, 159, 0.14);
     border-radius: 19px 19px 0 0;
@@ -8870,25 +8927,13 @@
 
   .modal-header h3,
   .confirm-header h3 {
+    min-width: 0;
     color: var(--schedule-strong);
     font-size: 1rem;
     line-height: 1.3;
     letter-spacing: 0;
-  }
-
-  .close-btn,
-  .confirm-close {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    background: rgba(102, 119, 137, 0.08);
-    color: var(--schedule-muted);
-  }
-
-  .close-btn:hover,
-  .confirm-close:hover {
-    background: rgba(0, 143, 150, 0.1);
-    color: var(--schedule-accent-strong, #006f76);
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
 
   .form-body,
@@ -9057,6 +9102,11 @@
   }
 
   @media (max-width: 760px) {
+    .modal-header,
+    .confirm-header {
+      gap: var(--wa-space-3, 12px);
+    }
+
     .modal-backdrop {
       padding: 14px;
       align-items: stretch;
@@ -11360,16 +11410,17 @@
     }
   }
 
-  /* Final schedule inspector contract: table-first master/detail, content-owned height. */
+  /* Final schedule inspector contract: shared desktop row height, content-owned scrolling. */
   .schedule-dashboard .schedule-main-grid {
     grid-template-columns: minmax(580px, 1fr) clamp(420px, 34vw, 560px);
-    align-items: start;
+    align-items: stretch;
   }
 
   .schedule-dashboard .schedule-inspector-panel.wa-admin-inspector {
-    align-self: start;
+    align-self: stretch;
     width: 100%;
-    height: auto;
+    height: 100%;
+    min-height: 0;
     max-height: 100%;
     overflow: hidden;
   }
@@ -11405,7 +11456,8 @@
   }
 
   .schedule-editor-body,
-  .schedule-telemetry-inline {
+  .schedule-telemetry-inline,
+  .schedule-solution-inline {
     min-height: 0;
     flex: 1 1 auto;
     overflow: auto;
@@ -11413,8 +11465,14 @@
     overscroll-behavior: contain;
   }
 
+  .schedule-solution-inline {
+    display: flex;
+    flex-direction: column;
+  }
+
   .schedule-editor-body:focus-visible,
-  .schedule-telemetry-inline:focus-visible {
+  .schedule-telemetry-inline:focus-visible,
+  .schedule-solution-inline:focus-visible {
     outline: 2px solid rgba(0, 143, 150, 0.3);
     outline-offset: -2px;
   }
@@ -11607,6 +11665,7 @@
     }
 
     .schedule-dashboard .schedule-inspector-panel.wa-admin-inspector {
+      align-self: start;
       width: 100%;
       height: auto;
       max-height: none;
@@ -11614,7 +11673,8 @@
     }
 
     .schedule-editor-body,
-    .schedule-telemetry-inline {
+    .schedule-telemetry-inline,
+    .schedule-solution-inline {
       overflow: visible;
     }
   }
@@ -11622,7 +11682,8 @@
   @media (max-width: 760px) {
     .schedule-dashboard .schedule-inspector-head,
     .schedule-editor-body,
-    .schedule-telemetry-inline {
+    .schedule-telemetry-inline,
+    .schedule-solution-inline {
       padding: var(--wa-space-3, 12px);
     }
 

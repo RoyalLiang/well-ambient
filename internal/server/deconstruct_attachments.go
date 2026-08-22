@@ -334,7 +334,7 @@ func (s *Server) uploadAttachmentsToProvider(ctx context.Context, attachments []
 	if err != nil {
 		return nil, "", requestError(http.StatusBadRequest, "无法定位 LLM Files API: %v", err)
 	}
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := providerFilesHTTPClient()
 	fileIDs := make([]string, 0, len(attachments))
 	for _, attachment := range attachments {
 		fileID, uploadErr := s.uploadAttachmentToProvider(ctx, client, filesURL, attachment)
@@ -345,6 +345,13 @@ func (s *Server) uploadAttachmentsToProvider(ctx context.Context, attachments []
 		fileIDs = append(fileIDs, fileID)
 	}
 	return fileIDs, filesURL, nil
+}
+
+func providerFilesHTTPClient() *http.Client {
+	// Uploads are part of the LLM request pipeline and may legitimately take
+	// longer than an arbitrary wall-clock limit. The caller context remains the
+	// cancellation boundary when the browser disconnects.
+	return &http.Client{}
 }
 
 func (s *Server) deleteProviderFiles(ctx context.Context, client *http.Client, filesURL string, fileIDs []string) {

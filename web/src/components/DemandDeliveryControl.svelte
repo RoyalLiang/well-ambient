@@ -752,7 +752,7 @@
           <p>可以先让 AI 识别意图并解构，也可以直接建立人工草案。</p>
           {#if canWrite}
             <div class="delivery-actions">
-              <button class="primary" disabled={!!actionLoading} on:click={() => createDraft(true)}>{actionLoading === 'ai-draft' ? 'AI 分析中…' : 'AI 生成规格草案'}</button>
+              <button class="primary" disabled={!!actionLoading} on:click={() => createDraft(true)}>{actionLoading === 'ai-draft' ? 'AI 分析中…' : '生成AI草案'}</button>
               <button disabled={!!actionLoading} on:click={() => createDraft(false)}>建立人工草案</button>
             </div>
           {/if}

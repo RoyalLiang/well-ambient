@@ -4,6 +4,7 @@
   import TextInput from '../shared/TextInput.svelte';
   import Alert from '../shared/Alert.svelte';
   import Select from '../shared/Select.svelte';
+  import { showToast } from '../../lib/toast';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
   import { fetchDeliveryDirectory } from '../../lib/delivery-directory';
 
@@ -40,7 +41,6 @@
   let projects: ProjectConfig[] = [];
   let loading = false;
   let errorMsg = '';
-  let successMsg = '';
   let saving = false;
 
   // Form states
@@ -121,7 +121,6 @@
     formBaseScore = '60.0';
     formBaseScoreWeightPercent = '10';
     errorMsg = '';
-    successMsg = '';
     resetSettingsWorkspaceScroll();
   }
 
@@ -149,7 +148,6 @@
     formBaseScore = String(project.base_score !== undefined ? project.base_score : 60.0);
     formBaseScoreWeightPercent = String(project.base_score_weight !== undefined ? Math.round(project.base_score_weight * 100) : 10);
     errorMsg = '';
-    successMsg = '';
     resetSettingsWorkspaceScroll();
   }
 
@@ -167,7 +165,6 @@
 
     saving = true;
     errorMsg = '';
-    successMsg = '';
     const token = localStorage.getItem('jwt_token');
 
     const parsedBaseScore = Number.parseFloat(formBaseScore);
@@ -198,16 +195,17 @@
         throw new Error(text || '保存失败');
       }
 
-      successMsg = editingProject ? '修改项目配置成功' : '新增项目配置成功';
+      const successMessage = editingProject ? '项目配置已更新。' : '项目配置已创建。';
       isEditing = false;
       editingProject = null;
       await fetchProjects();
+      showToast(successMessage, { title: '保存成功' });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('project-config-updated'));
       }
     } catch (err: any) {
-      errorMsg = err.message || '保存项目配置发生错误';
+      showToast(err.message || '保存项目配置发生错误', { type: 'error', title: '保存失败' });
     } finally {
       saving = false;
     }
@@ -231,10 +229,6 @@
   {#if errorMsg}
     <Alert type="error" message={errorMsg} closable={true} on:close={() => errorMsg = ''} />
   {/if}
-  {#if successMsg}
-    <Alert type="success" message={successMsg} closable={true} on:close={() => successMsg = ''} />
-  {/if}
-
   {#if !isEditing}
     <section class="scw-overview" aria-label="项目优先级配置">
       <header class="scw-header">

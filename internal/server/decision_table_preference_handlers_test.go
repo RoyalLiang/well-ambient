@@ -88,3 +88,28 @@ func TestDecisionTablePreferenceRequiresTaskIDColumn(t *testing.T) {
 		t.Fatalf("missing task_id status = %d, body=%s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestDecisionTablePreferenceAllowsExtendedAgendaColumnsInStableOrder(t *testing.T) {
+	columns, err := canonicalDecisionAgendaColumns([]string{
+		"activity",
+		"task_id",
+		"branch",
+		"project",
+		"type",
+		"repo",
+		"risk_type",
+		"stale",
+		"status",
+	})
+	if err != nil {
+		t.Fatalf("canonical extended columns: %v", err)
+	}
+	const expected = "task_id,project,type,risk_type,repo,branch,stale,activity,status"
+	if actual := strings.Join(columns, ","); actual != expected {
+		t.Fatalf("extended columns = %q, want %q", actual, expected)
+	}
+
+	if actual := strings.Join(decisionAgendaDefaultColumns, ","); actual != "task_id,title,owner,risk,due,status" {
+		t.Fatalf("default columns changed unexpectedly: %q", actual)
+	}
+}

@@ -2,12 +2,16 @@ package telemetry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +20,8 @@ import (
 	"well-ambient/internal/delivery"
 	"well-ambient/internal/kanban"
 	providerllm "well-ambient/internal/llm"
+
+	"gorm.io/gorm"
 )
 
 type GitLabUser struct {
@@ -32,9 +38,13 @@ type PushHookPayload struct {
 		WebURL string `json:"web_url"`
 	} `json:"project"`
 	Commits []struct {
-		ID      string `json:"id"`
-		Message string `json:"message"`
-		Author  struct {
+		ID        string   `json:"id"`
+		Message   string   `json:"message"`
+		Timestamp string   `json:"timestamp"`
+		Added     []string `json:"added"`
+		Modified  []string `json:"modified"`
+		Removed   []string `json:"removed"`
+		Author    struct {
 			Name string `json:"name"`
 		} `json:"author"`
 	} `json:"commits"`
@@ -185,7 +195,22 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 					Action:    "git_push",
 					CreatedAt: time.Now(),
 				}
-				if err := db.DB.Create(&commitLog).Error; err != nil {
+				paths := append(append(append([]string(nil), c.Added...), c.Modified...), c.Removed...)
+				commitLog.DedupeKey = gitCommitDedupeKey(repoName, c.ID, commitLog.Action)
+				if *cfg.PerformanceBrain.Normalized().GitDedupeEnabled {
+					commitLog.ContentFingerprint = gitCommitContentFingerprint(repoName, cMsg, paths)
+				}
+				if commitLog.ContentFingerprint == "" {
+					commitLog.TelemetryQuality = "insufficient_paths"
+				} else {
+					commitLog.TelemetryQuality = "path_message_v1"
+					var duplicate db.GitCommitLog
+					if err := db.DB.Where("repo = ? AND author = ? AND action = ? AND content_fingerprint = ? AND commit_id <> ?", repoName, commitLog.Author, "git_push", commitLog.ContentFingerprint, c.ID).
+						Order("created_at ASC, id ASC").First(&duplicate).Error; err == nil {
+						commitLog.DuplicateOfCommit = duplicate.CommitID
+					}
+				}
+				if _, err := persistGitPushCommit(db.DB, commitLog); err != nil {
 					log.Printf("Failed to save GitCommitLog: %v", err)
 				}
 			}
@@ -492,6 +517,60 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 	SyncStatusToJira(cfg, telemetry.TaskID, telemetry.Status)
 
 	return nil
+}
+
+func gitCommitDedupeKey(repo, commitID, action string) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + ":" + strings.ToLower(strings.TrimSpace(action)) + ":" + strings.ToLower(strings.TrimSpace(commitID))
+}
+
+func gitCommitContentFingerprint(repo, message string, paths []string) string {
+	normalizedPaths := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = strings.ToLower(strings.TrimSpace(path))
+		if path == "" {
+			continue
+		}
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		normalizedPaths = append(normalizedPaths, path)
+	}
+	if len(normalizedPaths) == 0 {
+		return ""
+	}
+	sort.Strings(normalizedPaths)
+	normalizedMessage := strings.ToLower(strings.Join(strings.Fields(message), " "))
+	digest := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(repo)) + "\n" + normalizedMessage + "\n" + strings.Join(normalizedPaths, "\n")))
+	return hex.EncodeToString(digest[:])
+}
+
+func persistGitPushCommit(conn *gorm.DB, commit db.GitCommitLog) (bool, error) {
+	if conn == nil {
+		return false, errors.New("database is not initialized")
+	}
+	if strings.TrimSpace(commit.CommitID) == "" {
+		return true, conn.Create(&commit).Error
+	}
+	var existing db.GitCommitLog
+	err := conn.Where("repo = ? AND commit_id = ? AND action = ?", commit.Repo, commit.CommitID, commit.Action).First(&existing).Error
+	if err == nil {
+		return false, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	if err := conn.Create(&commit).Error; err != nil {
+		// The partial unique index is the final idempotency boundary when two
+		// webhook deliveries race after the initial read.
+		lookupErr := conn.Where("repo = ? AND commit_id = ? AND action = ?", commit.Repo, commit.CommitID, commit.Action).First(&existing).Error
+		if lookupErr == nil {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func resolveCanonicalTaskID(taskID string) string {

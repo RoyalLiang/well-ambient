@@ -21,18 +21,26 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 	return fn(request)
 }
 
-func TestDefaultHTTPClientTimeouts(t *testing.T) {
+func TestDefaultHTTPClientHasNoOverallTimeout(t *testing.T) {
 	client := Client{}
-	if got := client.httpClient(false).Timeout; got != defaultRequestTimeout {
-		t.Fatalf("non-stream timeout = %s, want %s", got, defaultRequestTimeout)
-	}
-	if got := client.httpClient(true).Timeout; got != 0 {
-		t.Fatalf("stream timeout = %s, want no overall timeout", got)
+	if got := client.httpClient().Timeout; got != 0 {
+		t.Fatalf("non-stream timeout = %s, want no overall timeout", got)
 	}
 
-	custom := &http.Client{Timeout: 2 * time.Second}
-	if got := (Client{HTTPClient: custom}).httpClient(true); got != custom {
-		t.Fatal("custom HTTP client was not preserved")
+	transport := &http.Transport{}
+	custom := &http.Client{Timeout: 2 * time.Second, Transport: transport}
+	got := (Client{HTTPClient: custom}).httpClient()
+	if got == custom {
+		t.Fatal("custom HTTP client must be copied before clearing its timeout")
+	}
+	if got.Timeout != 0 {
+		t.Fatalf("custom timeout = %s, want no overall timeout", got.Timeout)
+	}
+	if got.Transport != custom.Transport {
+		t.Fatal("custom HTTP transport was not preserved")
+	}
+	if custom.Timeout != 2*time.Second {
+		t.Fatalf("caller-owned client was mutated: timeout = %s", custom.Timeout)
 	}
 }
 

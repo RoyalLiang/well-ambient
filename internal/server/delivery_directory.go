@@ -122,6 +122,8 @@ func (s *Server) deliveryAssigneeOptions(visibility coreMemberVisibility, users 
 		if err := db.DB.Model(&db.TaskTelemetry{}).
 			Distinct("assignee").
 			Where("TRIM(assignee) <> ''").
+			Order("assignee ASC").
+			Limit(5000).
 			Pluck("assignee", &owners).Error; err == nil {
 			for _, owner := range owners {
 				identity := directory.resolve(owner)

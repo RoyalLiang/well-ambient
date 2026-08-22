@@ -4,10 +4,13 @@
   import Button from './shared/Button.svelte';
   import Select from './shared/Select.svelte';
   import { showToast } from '../lib/toast';
+  import { dailyJiraSnapshotFingerprint } from '../lib/daily-jira-snapshot';
   import { fetchDeliveryDirectory, type DeliveryAssigneeOption } from '../lib/delivery-directory';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
 
   type DailyJiraBucketKey = 'today' | 'three_day' | 'seven_day';
   type DailyJiraDecision = 'follow_up' | 'escalate' | 'reassign';
+  type AssigneeMode = 'reporter' | 'specified';
 
   interface DecisionEvent {
     id: number;
@@ -25,6 +28,7 @@
     title: string;
     project: string;
     assignee: string;
+    reporter: string;
     status: string;
     issue_type: string;
     task_created_at: string;
@@ -57,6 +61,15 @@
     items: DailyJiraItem[];
   }
 
+  interface DailyJiraPageMeta {
+    bucket: DailyJiraBucketKey;
+    limit: number;
+    generation: number;
+    search_mode: string;
+    next_cursor?: string;
+    has_more: boolean;
+  }
+
   interface DailyJiraAuditResponse {
     generated_at: string;
     summary: {
@@ -69,6 +82,7 @@
     assignees: string[];
     recent_watch_count: number;
     unclassified_count: number;
+    page: DailyJiraPageMeta;
   }
 
   interface SelectOption {
@@ -92,6 +106,10 @@
     { value: 'escalate', label: '升级协同', meta: '跨团队介入 · 4 小时后复核' },
     { value: 'reassign', label: '快速转派', meta: '更新负责人 · 24 小时后复核' }
   ];
+  const virtualRowHeight = 52;
+  const virtualOverscan = 8;
+  const virtualLoadAheadRows = 12;
+  const auditPageLimit = 100;
 
   let audit: DailyJiraAuditResponse | null = null;
   let jiraBaseUrl = '';
@@ -99,20 +117,38 @@
   let selectedTaskID = '';
   let searchText = '';
   let selectedDecision: DailyJiraDecision = 'follow_up';
+  let assigneeMode: AssigneeMode = 'specified';
   let newAssignee = '';
   let decisionNote = '';
   let loading = true;
   let refreshing = false;
+  let loadingMore = false;
+  let refreshQueued = false;
   let submitting = false;
   let error = '';
   let hasInitializedBucket = false;
+  let auditFingerprint = '';
+  let lastCheckedAt = '';
+  let auxiliaryResourcesLoaded = false;
+  let loadedSearch = '';
+  let searchTimer: number | undefined;
+  let pageStates: Partial<Record<DailyJiraBucketKey, DailyJiraPageMeta>> = {};
   let deliveryAssignees: DeliveryAssigneeOption[] = [];
+  let tableShell: HTMLDivElement;
+  let tableScrollTop = 0;
+  let tableViewportHeight = 600;
 
   $: canWrite = currentUserPermissions.includes('demands:write');
   $: buckets = audit?.buckets || [];
   $: activeBucket = buckets.find((bucket) => bucket.key === activeBucketKey) || buckets[0];
   $: normalizedSearch = searchText.trim().toLocaleLowerCase('zh-CN');
-  $: filteredItems = filterItems(activeBucket?.items || [], normalizedSearch);
+  $: filteredItems = activeBucket?.items || [];
+  $: virtualStart = Math.max(0, Math.floor(tableScrollTop / virtualRowHeight) - virtualOverscan);
+  $: virtualWindowSize = Math.ceil(tableViewportHeight / virtualRowHeight) + virtualOverscan * 2;
+  $: virtualEnd = Math.min(filteredItems.length, virtualStart + virtualWindowSize);
+  $: visibleItems = filteredItems.slice(virtualStart, virtualEnd);
+  $: topSpacerHeight = virtualStart * virtualRowHeight;
+  $: bottomSpacerHeight = (filteredItems.length - virtualEnd) * virtualRowHeight;
   $: allItems = buckets.flatMap((bucket) => bucket.items);
   $: selectedItem = allItems.find((item) => item.task_id === selectedTaskID) || null;
   $: assigneeOptions = [
@@ -125,34 +161,157 @@
       meta: option.department || ''
     }))
   ];
+  $: reporterAvailable = Boolean(selectedItem?.reporter && selectedItem.reporter !== selectedItem.assignee);
+  $: assigneeModeOptions = [
+    ...(reporterAvailable
+      ? [{ value: 'reporter', label: '指回报告人', meta: selectedItem?.reporter || '' }]
+      : []),
+    { value: 'specified', label: '指定负责人', meta: '从研发成员目录选择' }
+  ];
+  $: decisionSubmitDisabled = !decisionNote.trim()
+    || (selectedDecision === 'reassign' && (
+      (assigneeMode === 'reporter' && !reporterAvailable)
+      || (assigneeMode === 'specified' && (!newAssignee || newAssignee === selectedItem?.assignee))
+    ));
+  $: decisionSubmitLabel = selectedDecision !== 'reassign'
+    ? '评论并记录结论'
+    : assigneeMode === 'reporter'
+      ? '评论并指回报告人'
+      : '评论并更新 Jira';
   $: if (!loading && audit && activeBucket && !filteredItems.some((item) => item.task_id === selectedTaskID)) {
     selectItem(filteredItems[0] || null);
-  }
-
-  function filterItems(items: DailyJiraItem[], query: string) {
-    if (!query) return items;
-    return items.filter((item) => [
-      item.task_id,
-      item.title,
-      item.project,
-      item.assignee,
-      item.status
-    ].some((value) => String(value || '').toLocaleLowerCase('zh-CN').includes(query)));
   }
 
   function selectItem(item: DailyJiraItem | null) {
     selectedTaskID = item?.task_id || '';
     newAssignee = item?.assignee || '';
     selectedDecision = 'follow_up';
+    assigneeMode = item?.reporter && item.reporter !== item.assignee ? 'reporter' : 'specified';
     decisionNote = '';
     error = '';
   }
 
   function selectBucket(key: DailyJiraBucketKey) {
     activeBucketKey = key;
+    resetTableWindow();
     const bucket = buckets.find((item) => item.key === key);
-    const nextItems = filterItems(bucket?.items || [], normalizedSearch);
-    selectItem(nextItems[0] || null);
+    selectItem(bucket?.items[0] || null);
+    if (!pageStates[key] || loadedSearch !== normalizedSearch) {
+      void loadAudit(false, false, false, key);
+    }
+  }
+
+  function updateTableViewport() {
+    tableViewportHeight = tableShell?.clientHeight || 600;
+  }
+
+  function resetTableWindow() {
+    tableScrollTop = 0;
+    if (tableShell) tableShell.scrollTop = 0;
+  }
+
+  function handleTableScroll(event: Event) {
+    const target = event.currentTarget as HTMLDivElement;
+    tableScrollTop = target.scrollTop;
+    tableViewportHeight = target.clientHeight || tableViewportHeight;
+    const remainingScroll = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (remainingScroll <= virtualRowHeight * virtualLoadAheadRows) {
+      void loadNextPage();
+    }
+  }
+
+  function handleSearchInput() {
+    resetTableWindow();
+    if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      searchTimer = undefined;
+      pageStates = {};
+      loadedSearch = normalizedSearch;
+      if (audit) {
+        audit = {
+          ...audit,
+          buckets: audit.buckets.map((bucket) => ({ ...bucket, items: [] }))
+        };
+      }
+      selectItem(null);
+      void loadAudit(false, false, false, activeBucketKey);
+    }, 220);
+  }
+
+  function buildAuditURL(bucket: DailyJiraBucketKey, search: string, cursor = '') {
+    const params = new URLSearchParams();
+    params.set('bucket', bucket);
+    params.set('limit', String(auditPageLimit));
+    if (search) params.set('search', search);
+    if (cursor) params.set('cursor', cursor);
+    return `/api/decision/daily-jira?${params.toString()}`;
+  }
+
+  function mergeItems(current: DailyJiraItem[], incoming: DailyJiraItem[]) {
+    const byTaskID = new Map<string, DailyJiraItem>();
+    for (const item of current) byTaskID.set(item.task_id, item);
+    for (const item of incoming) byTaskID.set(item.task_id, item);
+    return Array.from(byTaskID.values());
+  }
+
+  function mergeAuditPage(
+    nextAudit: DailyJiraAuditResponse,
+    bucketKey: DailyJiraBucketKey,
+    append: boolean
+  ) {
+    const currentBuckets = new Map((audit?.buckets || []).map((bucket) => [bucket.key, bucket]));
+    const nextBuckets = nextAudit.buckets.map((bucket) => {
+      const currentItems = currentBuckets.get(bucket.key)?.items || [];
+      if (bucket.key !== bucketKey) {
+        return { ...bucket, items: loadedSearch === normalizedSearch ? currentItems : [] };
+      }
+      if (append) {
+        return { ...bucket, items: mergeItems(currentItems, bucket.items) };
+      }
+      return bucket;
+    });
+    return { ...nextAudit, buckets: nextBuckets };
+  }
+
+  async function loadStableAuditSegment(
+    firstPage: DailyJiraAuditResponse,
+    bucketKey: DailyJiraBucketKey,
+    search: string,
+    targetItemCount: number
+  ) {
+    const firstBucket = firstPage.buckets.find((bucket) => bucket.key === bucketKey);
+    let items = [...(firstBucket?.items || [])];
+    let latestPage = firstPage;
+
+    while (items.length < targetItemCount && latestPage.page.has_more && latestPage.page.next_cursor) {
+      const response = await fetch(
+        buildAuditURL(bucketKey, search, latestPage.page.next_cursor),
+        { cache: 'no-store' }
+      );
+      if (response.status === 409) {
+        refreshQueued = true;
+        return null;
+      }
+      if (!response.ok) {
+        const message = (await response.text()).trim();
+        throw new Error(message || `刷新已加载的 Jira 分页失败 (${response.status})`);
+      }
+      const nextPage = await response.json() as DailyJiraAuditResponse;
+      if (nextPage.page.generation !== firstPage.page.generation) {
+        refreshQueued = true;
+        return null;
+      }
+      const nextBucket = nextPage.buckets.find((bucket) => bucket.key === bucketKey);
+      items = mergeItems(items, nextBucket?.items || []);
+      latestPage = nextPage;
+    }
+
+    return {
+      ...latestPage,
+      buckets: latestPage.buckets.map((bucket) => (
+        bucket.key === bucketKey ? { ...bucket, items } : bucket
+      ))
+    };
   }
 
   function handleRowKeydown(event: KeyboardEvent, item: DailyJiraItem) {
@@ -161,52 +320,103 @@
     selectItem(item);
   }
 
-  async function loadAudit(initial = false, announce = false) {
-    if (!initial && refreshing) return;
+  async function loadAudit(
+    initial = false,
+    announce = false,
+    syncSource = false,
+    requestedBucket: DailyJiraBucketKey = activeBucketKey
+  ) {
+    if (!initial && (loading || refreshing)) {
+      refreshQueued = true;
+      return;
+    }
+    const requestSearch = normalizedSearch;
     if (initial) loading = true;
     else refreshing = true;
     error = '';
 
     try {
-      const [auditResponse, linkResponse, directory] = await Promise.all([
-        fetch('/api/decision/daily-jira', { cache: 'no-store' }),
-        fetch('/api/jira/link-config', { cache: 'no-store' }),
-        fetchDeliveryDirectory().catch((directoryError) => {
-          console.error('Failed to fetch shared delivery directory for Daily Jira:', directoryError);
-          return null;
-        })
+      if (syncSource) {
+        const syncResponse = await fetch('/api/decision/daily-jira/sync', { method: 'POST' });
+        if (!syncResponse.ok) {
+          const message = (await syncResponse.text()).trim();
+          throw new Error(message || `Jira 同步失败 (${syncResponse.status})`);
+        }
+      }
+      const shouldLoadAuxiliaryResources = initial || !auxiliaryResourcesLoaded;
+      const [auditResponse, [linkResponse, directory]] = await Promise.all([
+        fetch(buildAuditURL(requestedBucket, requestSearch), { cache: 'no-store' }),
+        shouldLoadAuxiliaryResources
+          ? Promise.all([
+              fetch('/api/jira/link-config', { cache: 'no-store' }).catch((linkError) => {
+                console.error('Failed to fetch Jira link config for Daily Jira:', linkError);
+                return null;
+              }),
+              fetchDeliveryDirectory().catch((directoryError) => {
+                console.error('Failed to fetch shared delivery directory for Daily Jira:', directoryError);
+                return null;
+              })
+            ])
+          : Promise.resolve([null, null] as const)
       ]);
       if (!auditResponse.ok) {
         const message = (await auditResponse.text()).trim();
         throw new Error(message || `加载失败 (${auditResponse.status})`);
       }
 
-      const nextAudit = await auditResponse.json() as DailyJiraAuditResponse;
-      const previousSelectedTaskID = selectedTaskID;
-      audit = nextAudit;
+      let nextAudit = await auditResponse.json() as DailyJiraAuditResponse;
+      if (requestSearch !== normalizedSearch) return;
+      lastCheckedAt = nextAudit.generated_at;
       if (directory) deliveryAssignees = directory.assignees;
 
-      if (linkResponse.ok) {
+      if (linkResponse?.ok) {
         const linkConfig = await linkResponse.json();
         jiraBaseUrl = String(linkConfig?.base_url || '').replace(/\/+$/, '');
       }
+      if (shouldLoadAuxiliaryResources && linkResponse && directory) auxiliaryResourcesLoaded = true;
 
-      if (!hasInitializedBucket) {
-        activeBucketKey = (['seven_day', 'three_day', 'today'] as DailyJiraBucketKey[])
-          .find((key) => nextAudit.buckets.find((bucket) => bucket.key === key)?.count) || 'today';
-        hasInitializedBucket = true;
+      const loadedItemCount = loadedSearch === requestSearch
+        ? audit?.buckets.find((bucket) => bucket.key === requestedBucket)?.items.length || 0
+        : 0;
+      if (!initial && loadedItemCount > auditPageLimit) {
+        const stableSegment = await loadStableAuditSegment(
+          nextAudit,
+          requestedBucket,
+          requestSearch,
+          loadedItemCount
+        );
+        if (!stableSegment) return;
+        nextAudit = stableSegment;
       }
 
-      const nextBucket = nextAudit.buckets.find((bucket) => bucket.key === activeBucketKey) || nextAudit.buckets[0];
-      const preservedItem = nextBucket?.items.find((item) => item.task_id === previousSelectedTaskID);
-      if (preservedItem) {
-        selectedTaskID = preservedItem.task_id;
-        newAssignee = preservedItem.assignee;
+      const candidateAudit = mergeAuditPage(nextAudit, requestedBucket, false);
+      const nextAuditFingerprint = dailyJiraSnapshotFingerprint(candidateAudit);
+      if (!audit || nextAuditFingerprint !== auditFingerprint) {
+        const previousSelectedTaskID = selectedTaskID;
+        loadedSearch = requestSearch;
+        audit = candidateAudit;
+        pageStates = { ...pageStates, [requestedBucket]: nextAudit.page };
+        auditFingerprint = nextAuditFingerprint;
+
+        if (!hasInitializedBucket) {
+          activeBucketKey = (['seven_day', 'three_day', 'today'] as DailyJiraBucketKey[])
+            .find((key) => nextAudit.buckets.find((bucket) => bucket.key === key)?.count) || 'today';
+          hasInitializedBucket = true;
+        }
+
+        const nextBucket = audit.buckets.find((bucket) => bucket.key === activeBucketKey) || audit.buckets[0];
+        const preservedItem = nextBucket?.items.find((item) => item.task_id === previousSelectedTaskID);
+        if (preservedItem) {
+          selectedTaskID = preservedItem.task_id;
+          if (selectedDecision !== 'reassign') newAssignee = preservedItem.assignee;
+        } else {
+          selectItem(nextBucket?.items[0] || null);
+        }
       } else {
-        selectItem(nextBucket?.items[0] || null);
+        pageStates = { ...pageStates, [requestedBucket]: nextAudit.page };
       }
       if (announce) {
-        showToast(`每日 Jira 已更新，共 ${nextAudit.summary.total} 项。`, {
+        showToast(`${syncSource ? 'Jira 与每日列表' : '每日 Jira'}已更新，共 ${nextAudit.summary.total} 项。`, {
           type: 'success',
           title: '刷新完成'
         });
@@ -223,6 +433,53 @@
     } finally {
       loading = false;
       refreshing = false;
+      if (refreshQueued) {
+        refreshQueued = false;
+        void loadAudit(false);
+      } else if (hasInitializedBucket && !pageStates[activeBucketKey]) {
+        void loadAudit(false, false, false, activeBucketKey);
+      }
+    }
+  }
+
+  async function loadNextPage() {
+    const requestedBucket = activeBucketKey;
+    const requestSearch = normalizedSearch;
+    const pageState = pageStates[requestedBucket];
+    if (loading || refreshing || loadingMore || !pageState?.has_more || !pageState.next_cursor) return;
+
+    loadingMore = true;
+    try {
+      const response = await fetch(
+        buildAuditURL(requestedBucket, requestSearch, pageState.next_cursor),
+        { cache: 'no-store' }
+      );
+      if (response.status === 409) {
+        pageStates = { ...pageStates, [requestedBucket]: undefined };
+        await loadAudit(false, false, false, requestedBucket);
+        return;
+      }
+      if (!response.ok) {
+        const message = (await response.text()).trim();
+        throw new Error(message || `加载下一页失败 (${response.status})`);
+      }
+      const nextAudit = await response.json() as DailyJiraAuditResponse;
+      if (requestedBucket !== activeBucketKey || requestSearch !== normalizedSearch) return;
+
+      const previousSelectedTaskID = selectedTaskID;
+      audit = mergeAuditPage(nextAudit, requestedBucket, true);
+      pageStates = { ...pageStates, [requestedBucket]: nextAudit.page };
+      auditFingerprint = dailyJiraSnapshotFingerprint(audit);
+      lastCheckedAt = nextAudit.generated_at;
+      const preservedItem = audit.buckets
+        .find((bucket) => bucket.key === requestedBucket)?.items
+        .find((item) => item.task_id === previousSelectedTaskID);
+      if (preservedItem && selectedDecision !== 'reassign') newAssignee = preservedItem.assignee;
+    } catch (loadError) {
+      console.error('Failed to load next Daily Jira page:', loadError);
+      error = loadError instanceof Error ? loadError.message : '加载更多 Jira 事项时出错';
+    } finally {
+      loadingMore = false;
     }
   }
 
@@ -230,12 +487,21 @@
     if (!selectedItem || !canWrite || submitting) return;
     error = '';
 
+    if (!decisionNote.trim()) {
+      error = '请填写决策评论后再提交';
+      return;
+    }
+
     if (selectedDecision === 'reassign') {
-      if (!newAssignee) {
+      if (assigneeMode === 'reporter' && !reporterAvailable) {
+        error = '当前事项没有可指回的报告人';
+        return;
+      }
+      if (assigneeMode === 'specified' && !newAssignee) {
         error = '请选择新的负责人';
         return;
       }
-      if (newAssignee === selectedItem.assignee) {
+      if (assigneeMode === 'specified' && newAssignee === selectedItem.assignee) {
         error = '新的负责人需要与当前负责人不同';
         return;
       }
@@ -249,7 +515,8 @@
         body: JSON.stringify({
           task_id: selectedItem.task_id,
           decision: selectedDecision,
-          assignee: selectedDecision === 'reassign' ? newAssignee : '',
+          assignee_mode: selectedDecision === 'reassign' ? assigneeMode : '',
+          assignee: selectedDecision === 'reassign' && assigneeMode === 'specified' ? newAssignee : '',
           note: decisionNote.trim()
         })
       });
@@ -258,14 +525,20 @@
         throw new Error(message || `提交失败 (${response.status})`);
       }
 
+      const result = (await response.json()) as { jira_sync?: string };
       const completedDecision = selectedDecision;
-      const completedAssignee = newAssignee;
+      const completedAssignee = assigneeMode === 'reporter' ? selectedItem.reporter : newAssignee;
       decisionNote = '';
-      const successMessage = completedDecision === 'reassign'
-        ? `已转派给 ${completedAssignee}，正在同步 Jira；24 小时后提醒复核。`
-        : completedDecision === 'escalate'
-          ? '已记录升级协同结论；4 小时后提醒复核。'
-          : '已记录继续跟进结论；24 小时后提醒复核。';
+      const jiraWasUpdated = result.jira_sync === 'completed';
+      const successMessage = jiraWasUpdated
+        ? completedDecision === 'reassign'
+          ? `已添加 Jira 评论并转派给 ${completedAssignee}；24 小时后提醒复核。`
+          : completedDecision === 'escalate'
+            ? '已同步 Jira 评论并记录升级协同；4 小时后提醒复核。'
+            : '已同步 Jira 评论并记录继续跟进；24 小时后提醒复核。'
+        : completedDecision === 'reassign'
+          ? `已记录转派给 ${completedAssignee} 的本地决策；当前未启用 Jira 同步。`
+          : '已记录本地决策；当前未启用 Jira 同步。';
       await loadAudit(false);
       selectedDecision = 'follow_up';
       showToast(successMessage, {
@@ -385,12 +658,31 @@
   }
 
   onMount(() => {
-    loadAudit(true);
+    void loadAudit(true);
+    const tableResizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(updateTableViewport);
+    if (tableShell) tableResizeObserver?.observe(tableShell);
+    updateTableViewport();
+    const unsubscribeJiraUpdates = subscribeTelemetryUpdates(
+      window,
+      () => loadAudit(false),
+      { visibilityTarget: document }
+    );
     const handleProjectPreferencesUpdated = () => {
       void loadAudit(false);
     };
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadAudit(false);
+      }
+    }, 30000);
     window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
     return () => {
+      tableResizeObserver?.disconnect();
+      window.clearInterval(refreshInterval);
+      if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+      unsubscribeJiraUpdates();
       window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
     };
   });
@@ -399,7 +691,7 @@
 <div
   class="daily-jira"
   class:has-feedback={Boolean(error || audit?.unclassified_count)}
-  aria-busy={loading || refreshing}
+  aria-busy={loading || refreshing || loadingMore}
 >
   {#if error || audit?.unclassified_count}
     <div class="feedback-stack" aria-live="polite">
@@ -439,20 +731,34 @@
         <div class="table-actions">
           <label class="search-field">
             <span class="sr-only">搜索 Jira 审计事项</span>
-            <input type="search" bind:value={searchText} placeholder="搜索编号、标题、项目、负责人" />
+            <input type="search" bind:value={searchText} on:input={handleSearchInput} placeholder="搜索编号、标题、项目、负责人" />
           </label>
-          <Button variant="secondary" size="small" loading={refreshing} on:click={() => loadAudit(false, true)}>刷新</Button>
+          <Button variant="secondary" size="small" loading={refreshing} on:click={() => loadAudit(false, true, true)}>同步 Jira</Button>
         </div>
         <div class="table-meta">
           <span><strong>{activeBucket?.label || '待审事项'}</strong> · {filteredItems.length} / {activeBucket?.count || 0} 项</span>
-          {#if audit}
-            <small>更新于 {formatDateTime(audit.generated_at)}</small>
+          {#if loadingMore}
+            <small>正在加载更多</small>
+          {:else if audit}
+            <small>检查于 {formatDateTime(lastCheckedAt || audit.generated_at)}</small>
           {/if}
         </div>
       </div>
 
-      <div id="daily-jira-table-content" class="wa-admin-table-shell audit-table-shell" role="tabpanel" aria-label={activeBucket?.label || 'Jira 审计事项'}>
-        <table class="wa-admin-table audit-table" role="grid" aria-label={`${activeBucket?.label || '待审事项'} Jira 列表`}>
+      <div
+        id="daily-jira-table-content"
+        class="wa-admin-table-shell audit-table-shell"
+        role="tabpanel"
+        aria-label={activeBucket?.label || 'Jira 审计事项'}
+        bind:this={tableShell}
+        on:scroll={handleTableScroll}
+      >
+        <table
+          class="wa-admin-table audit-table"
+          role="grid"
+          aria-rowcount={(normalizedSearch ? filteredItems.length : activeBucket?.count || filteredItems.length) + 1}
+          aria-label={`${activeBucket?.label || '待审事项'} Jira 列表`}
+        >
           <thead>
             <tr>
               <th>时效</th>
@@ -480,16 +786,22 @@
                 <td colspan="6">
                   <div class="table-empty">
                     <strong>{normalizedSearch ? '没有匹配的 Jira 事项' : '这个时效范围没有未解决 Jira'}</strong>
-                    <span>{normalizedSearch ? '清除搜索词后查看当前审计范围。' : '可切换其他时效范围，或刷新同步结果。'}</span>
+                    <span>{normalizedSearch ? '清除搜索词后查看当前审计范围。' : '可切换其他时效范围，或同步 Jira 获取最新结果。'}</span>
                   </div>
                 </td>
               </tr>
             {:else}
-              {#each filteredItems as item}
+              {#if topSpacerHeight > 0}
+                <tr class="virtual-spacer" aria-hidden="true">
+                  <td colspan="6" style={`height: ${topSpacerHeight}px;`}></td>
+                </tr>
+              {/if}
+              {#each visibleItems as item, visibleIndex}
                 {@const timing = getTimingState(item)}
                 <tr
                   class:selected={selectedTaskID === item.task_id}
                   aria-selected={selectedTaskID === item.task_id}
+                  aria-rowindex={virtualStart + visibleIndex + 2}
                   tabindex="0"
                   on:click={() => selectItem(item)}
                   on:keydown={(event) => handleRowKeydown(event, item)}
@@ -520,6 +832,11 @@
                   <td>{formatDateTime(item.last_update)}</td>
                 </tr>
               {/each}
+              {#if bottomSpacerHeight > 0}
+                <tr class="virtual-spacer" aria-hidden="true">
+                  <td colspan="6" style={`height: ${bottomSpacerHeight}px;`}></td>
+                </tr>
+              {/if}
             {/if}
           </tbody>
         </table>
@@ -530,21 +847,27 @@
       {#if selectedItem}
         {@const selectedTiming = getTimingState(selectedItem)}
         <header class="inspector-header">
-          <div class="inspector-identity">
-            <div class="inspector-meta-line">
-              <span class="issue-kind">{formatIssueType(selectedItem.issue_type)}</span>
+          <div class="inspector-meta-line">
+            <span class="issue-kind">{formatIssueType(selectedItem.issue_type)}</span>
+            {#if getJiraUrl(selectedItem.task_id)}
+              <a
+                class="jira-key jira-link"
+                href={getJiraUrl(selectedItem.task_id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`在 Jira 中打开 ${selectedItem.task_id}`}
+              >{selectedItem.task_id}</a>
+            {:else}
               <strong class="jira-key">{selectedItem.task_id}</strong>
-              <span class="timing-chip timing-{selectedTiming.tone}">{selectedTiming.label}</span>
-            </div>
-            <h3>{selectedItem.title}</h3>
+            {/if}
+            <span class="timing-chip timing-{selectedTiming.tone}">{selectedTiming.label}</span>
           </div>
-          {#if getJiraUrl(selectedItem.task_id)}
-            <a href={getJiraUrl(selectedItem.task_id)} target="_blank" rel="noopener noreferrer">在 Jira 打开</a>
-          {/if}
+          <h3>{selectedItem.title}</h3>
         </header>
 
         <dl class="fact-list">
           <div><dt>负责人</dt><dd>{selectedItem.assignee || '未指派'}</dd></div>
+          <div><dt>报告人</dt><dd>{selectedItem.reporter || '未同步'}</dd></div>
           <div><dt>当前状态</dt><dd>{formatStatus(selectedItem.status)}</dd></div>
           <div><dt>创建时间</dt><dd>{formatDate(selectedItem.task_created_at)}</dd></div>
           <div><dt>截止日期</dt><dd class:danger={selectedItem.overdue}>{formatDate(selectedItem.due_date)}</dd></div>
@@ -582,7 +905,7 @@
           {#if canWrite}
             <Select
               id="daily-jira-decision"
-              label="处置结论"
+              label="决策动作"
               bind:value={selectedDecision}
               options={decisionOptions}
               searchable={false}
@@ -590,22 +913,43 @@
             />
             {#if selectedDecision === 'reassign'}
               <Select
-                id="daily-jira-assignee"
-                label="新的负责人"
-                bind:value={newAssignee}
-                options={assigneeOptions}
-                placeholder="搜索负责人"
-                searchPlaceholder="输入姓名"
-                emptyText="没有可用负责人"
+                id="daily-jira-assignee-mode"
+                label="负责人去向"
+                bind:value={assigneeMode}
+                options={assigneeModeOptions}
+                searchable={false}
                 compact={true}
               />
             {/if}
+            {#if selectedDecision === 'reassign' && assigneeMode === 'specified'}
+              <div class="assignee-field">
+                <Select
+                  id="daily-jira-assignee"
+                  label="新的负责人"
+                  bind:value={newAssignee}
+                  options={assigneeOptions}
+                  placeholder="搜索负责人"
+                  searchPlaceholder="输入姓名"
+                  emptyText="没有可用负责人"
+                  compact={true}
+                />
+              </div>
+            {/if}
             <label class="note-field" for="daily-jira-note">
-              <span>决策依据或下一步</span>
-              <textarea id="daily-jira-note" bind:value={decisionNote} maxlength="500" placeholder="例如：今天 15:00 前同步阻塞原因"></textarea>
+              <span>决策评论 <b aria-hidden="true">必填</b></span>
+              <textarea
+                id="daily-jira-note"
+                bind:value={decisionNote}
+                maxlength="500"
+                required
+                aria-required="true"
+                aria-describedby="daily-jira-note-help"
+                placeholder="填写判断依据、补充要求或下一步"
+              ></textarea>
+              <small id="daily-jira-note-help">提交后将同步为该事项的 Jira 评论。</small>
             </label>
-            <Button loading={submitting} disabled={selectedDecision === 'reassign' && (!newAssignee || newAssignee === selectedItem.assignee)} on:click={submitDecision}>
-              {selectedDecision === 'reassign' ? '确认转派' : '记录结论'}
+            <Button loading={submitting} disabled={decisionSubmitDisabled} on:click={submitDecision}>
+              {decisionSubmitLabel}
             </Button>
           {:else}
             <p class="read-only-note">当前账号可查看审计结果，但没有分派或记录决策的权限。</p>
@@ -843,8 +1187,6 @@
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.88),
       0 16px 42px rgba(30, 46, 64, 0.085);
-    backdrop-filter: blur(16px) saturate(124%);
-    -webkit-backdrop-filter: blur(16px) saturate(124%);
   }
 
   .audit-table-panel {
@@ -949,6 +1291,19 @@
     background: var(--wa-surface-flat, #fbfdff);
     cursor: pointer;
     transition: background 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .audit-table tbody tr.virtual-spacer {
+    background: transparent;
+    cursor: default;
+    pointer-events: none;
+    transition: none;
+  }
+
+  .audit-table tbody tr.virtual-spacer td {
+    height: auto;
+    padding: 0;
+    border: 0;
   }
 
   .audit-table tbody tr:hover,
@@ -1146,7 +1501,6 @@
     color: var(--wa-text-main, #293847);
   }
 
-  .inspector-header a,
   .jira-key {
     flex: 0 0 auto;
     color: var(--wa-accent-strong, #006f76);
@@ -1154,16 +1508,6 @@
     font-weight: 780;
     text-decoration: none;
     white-space: nowrap;
-  }
-
-  .inspector-header a:hover {
-    text-decoration: underline;
-  }
-
-  .inspector-header a:focus-visible {
-    outline: 2px solid var(--wa-accent, #008f96);
-    outline-offset: 3px;
-    border-radius: 3px;
   }
 
   .fact-list {
@@ -1290,6 +1634,11 @@
     min-width: 0;
   }
 
+  .decision-form > .assignee-field {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
   .section-heading {
     display: flex;
     align-items: baseline;
@@ -1314,6 +1663,26 @@
     color: var(--wa-text-main, #293847);
     font-size: 0.72rem;
     font-weight: 700;
+  }
+
+  .note-field span {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .note-field b {
+    color: var(--wa-danger, #c6382f);
+    font-size: 0.66rem;
+    font-weight: 750;
+  }
+
+  .note-field small {
+    color: var(--wa-text-muted, #667789);
+    font-size: 0.66rem;
+    font-weight: 500;
+    line-height: 1.4;
   }
 
   .note-field textarea {
@@ -1590,6 +1959,10 @@
     .decision-history {
       padding-block: 12px;
     }
+
+    .decision-form :global(.select-trigger) {
+      min-height: var(--wa-touch-h, 44px);
+    }
   }
 
   @media (max-width: 520px) {
@@ -1685,8 +2058,6 @@
     border-radius: var(--daily-radius-panel);
     background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
     box-shadow: var(--wa-shadow-glass, inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 6px 14px rgba(30, 52, 68, 0.085));
-    -webkit-backdrop-filter: blur(16px) saturate(128%);
-    backdrop-filter: blur(16px) saturate(128%);
   }
 
   .age-tabs {
@@ -1717,6 +2088,7 @@
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+    overflow-anchor: none;
   }
 
   .audit-table th {
@@ -1780,21 +2152,26 @@
     scrollbar-gutter: stable;
   }
 
+  /* Final Daily Jira inspector header contract:
+     the linked Jira key stays within metadata; the primary title owns the full second row. */
   .inspector-header {
     min-height: 92px;
     height: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "meta"
+      "title";
+    align-content: start;
     align-items: flex-start;
+    justify-content: stretch;
+    gap: 8px 16px;
     overflow: visible;
     padding-bottom: 16px;
   }
 
-  .inspector-identity {
-    min-width: 0;
-    display: grid;
-    gap: 8px;
-  }
-
   .inspector-meta-line {
+    grid-area: meta;
     min-width: 0;
     display: flex;
     align-items: center;
@@ -1804,6 +2181,8 @@
   }
 
   .inspector-header h3 {
+    grid-area: title;
+    width: 100%;
     margin-top: 0;
     display: block;
     overflow: visible;
@@ -1839,6 +2218,34 @@
     font-family: var(--wa-font-mono, monospace);
   }
 
+  .jira-link {
+    position: relative;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .jira-link::after {
+    content: '';
+    position: absolute;
+    inset-block: -10px;
+    inset-inline: 0;
+  }
+
+  .jira-link:hover {
+    border-color: rgba(37, 107, 216, 0.46);
+    background: rgba(37, 107, 216, 0.13);
+    text-decoration: none;
+  }
+
+  .jira-link:focus-visible {
+    outline: 2px solid var(--wa-accent, #008f96);
+    outline-offset: 2px;
+  }
+
+  .jira-link:active {
+    transform: translateY(1px);
+  }
+
   .timing-chip.timing-overdue {
     border-color: rgba(221, 75, 62, 0.2);
     background: var(--wa-danger-soft);
@@ -1855,22 +2262,6 @@
     border-color: rgba(4, 150, 111, 0.2);
     background: var(--wa-success-soft);
     color: var(--wa-success);
-  }
-
-  .inspector-header a {
-    min-height: 34px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 11px;
-    border: 1px solid rgba(0, 143, 150, 0.2);
-    border-radius: var(--wa-radius-pill, 999px);
-    background: var(--wa-accent-soft);
-    text-decoration: none;
-  }
-
-  .inspector-header a:hover {
-    background: rgba(0, 143, 150, 0.14);
-    text-decoration: none;
   }
 
   .fact-list {
@@ -1916,8 +2307,16 @@
     }
 
     .audit-inspector {
+      grid-template-columns: 1fr;
       grid-template-rows: none;
-      overflow: visible;
+      grid-template-areas:
+        "header"
+        "facts"
+        "state"
+        "form"
+        "history";
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
   }
 
@@ -1934,7 +2333,7 @@
     }
 
     .audit-table-panel {
-      height: min(560px, 62dvh);
+      height: clamp(420px, 62svh, 560px);
       min-height: 420px;
       padding: 12px 12px 0;
     }
@@ -1981,6 +2380,21 @@
         "state"
         "form"
         "history";
+    }
+
+    .decision-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .inspector-header {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "meta"
+        "title";
+    }
+
+    .inspector-meta-line {
+      min-height: 44px;
     }
 
     .fact-list {

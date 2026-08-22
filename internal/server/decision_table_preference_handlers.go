@@ -12,6 +12,21 @@ import (
 const decisionAgendaTableKey = "decision_agenda"
 
 var decisionAgendaDefaultColumns = []string{"task_id", "title", "owner", "risk", "due", "status"}
+var decisionAgendaAllowedColumns = []string{
+	"task_id",
+	"title",
+	"project",
+	"type",
+	"owner",
+	"risk",
+	"risk_type",
+	"due",
+	"repo",
+	"branch",
+	"stale",
+	"activity",
+	"status",
+}
 
 type decisionTableColumnPreferenceResponse struct {
 	VisibleColumns []string `json:"visible_columns"`
@@ -23,8 +38,8 @@ type updateDecisionTableColumnPreferenceRequest struct {
 
 func canonicalDecisionAgendaColumns(columns []string) ([]string, error) {
 	requested := make(map[string]struct{}, len(columns))
-	allowed := make(map[string]struct{}, len(decisionAgendaDefaultColumns))
-	for _, column := range decisionAgendaDefaultColumns {
+	allowed := make(map[string]struct{}, len(decisionAgendaAllowedColumns))
+	for _, column := range decisionAgendaAllowedColumns {
 		allowed[column] = struct{}{}
 	}
 	for _, column := range columns {
@@ -38,7 +53,7 @@ func canonicalDecisionAgendaColumns(columns []string) ([]string, error) {
 		return nil, fmt.Errorf("task_id column is required")
 	}
 	result := make([]string, 0, len(requested))
-	for _, column := range decisionAgendaDefaultColumns {
+	for _, column := range decisionAgendaAllowedColumns {
 		if _, exists := requested[column]; exists {
 			result = append(result, column)
 		}

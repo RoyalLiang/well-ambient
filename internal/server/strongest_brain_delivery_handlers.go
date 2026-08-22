@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,10 +21,31 @@ type StrongestBrainDeliveryCockpitResponse struct {
 	Exceptions      StrongestBrainDeliveryExceptions    `json:"exceptions"`
 	WeeklyDecisions StrongestBrainWeeklyDecisionSummary `json:"weekly_decisions"`
 	Schedule        StrongestBrainDeliverySchedule      `json:"schedule"`
+	Releases        StrongestBrainReleaseSummary        `json:"releases"`
 	AITrace         StrongestBrainAITraceSummary        `json:"ai_trace"`
 	Override        StrongestBrainOverrideSummary       `json:"override"`
 	Authorization   StrongestBrainAuthorizationSummary  `json:"authorization"`
 	EntryPoints     []StrongestBrainEntryPoint          `json:"entry_points"`
+}
+
+type StrongestBrainReleaseSummary struct {
+	Total    int                         `json:"total"`
+	Planned  int                         `json:"planned"`
+	Released int                         `json:"released"`
+	Archived int                         `json:"archived"`
+	Recent   []StrongestBrainReleaseFact `json:"recent"`
+}
+
+type StrongestBrainReleaseFact struct {
+	ID             uint     `json:"id"`
+	ProjectKey     string   `json:"project_key"`
+	Name           string   `json:"name"`
+	Status         string   `json:"status"`
+	ReleaseDate    string   `json:"release_date"`
+	WorkItemCount  int64    `json:"work_item_count"`
+	CompletedCount int64    `json:"completed_count"`
+	OpenCount      int64    `json:"open_count"`
+	EvidenceRefs   []string `json:"evidence_refs"`
 }
 
 type StrongestBrainDeliveryHealth struct {
@@ -208,14 +230,9 @@ func (s *Server) handleGetStrongestBrainDeliveryCockpit(w http.ResponseWriter, r
 		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
 		return
 	}
-	schedule, err := buildStrongestBrainScheduleSnapshot(now, projectKeys)
+	schedule, execution, logs, err := buildStrongestBrainDeliverySnapshots(now, projectKeys)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to build schedule snapshot: %v", err), http.StatusInternalServerError)
-		return
-	}
-	execution, logs, err := buildStrongestBrainExecutionSnapshot(now, projectKeys)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to build execution snapshot: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to build delivery snapshots: %v", err), http.StatusInternalServerError)
 		return
 	}
 	riskCalendar := buildScheduleRiskCalendarResponse(schedule, now)
@@ -226,6 +243,11 @@ func (s *Server) handleGetStrongestBrainDeliveryCockpit(w http.ResponseWriter, r
 	weekly := buildStrongestBrainDeliveryWeeklyDecisions(decisionItems, now)
 	override := buildStrongestBrainOverrideSummary(8, now, projectKeys)
 	authorization := buildStrongestBrainAuthorizationSummary(now)
+	releases, err := buildStrongestBrainReleaseSummary(r.Context(), projectKeys)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to build release facts: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	response := StrongestBrainDeliveryCockpitResponse{
 		GeneratedAt:     formatDateTime(now),
@@ -235,6 +257,7 @@ func (s *Server) handleGetStrongestBrainDeliveryCockpit(w http.ResponseWriter, r
 		Exceptions:      exceptions,
 		WeeklyDecisions: weekly,
 		Schedule:        buildStrongestBrainDeliverySchedule(schedule, riskCalendar),
+		Releases:        releases,
 		AITrace:         aiTrace,
 		Override:        override,
 		Authorization:   authorization,
@@ -243,6 +266,150 @@ func (s *Server) handleGetStrongestBrainDeliveryCockpit(w http.ResponseWriter, r
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleGetStrongestBrainReleases(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if db.DB == nil {
+		http.Error(w, "Database not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	projectKeys, err := requestProjectPreferenceKeys(r)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to apply project preferences: %v", err), http.StatusInternalServerError)
+		return
+	}
+	summary, err := buildStrongestBrainReleaseSummary(r.Context(), projectKeys)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to build release facts: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
+}
+
+func buildStrongestBrainReleaseSummary(ctx context.Context, projectKeys []string) (StrongestBrainReleaseSummary, error) {
+	query := db.DB.WithContext(ctx).Model(&db.ReleaseVersion{})
+	if len(projectKeys) > 0 {
+		normalized := make([]string, 0, len(projectKeys))
+		for _, projectKey := range projectKeys {
+			if projectKey = strings.ToUpper(strings.TrimSpace(projectKey)); projectKey != "" {
+				normalized = append(normalized, projectKey)
+			}
+		}
+		if len(normalized) == 0 {
+			return StrongestBrainReleaseSummary{Recent: []StrongestBrainReleaseFact{}}, nil
+		}
+		query = query.Where("UPPER(project_key) IN ?", normalized)
+	}
+	var releases []db.ReleaseVersion
+	if err := query.
+		Order("CASE WHEN release_date IS NULL THEN 1 ELSE 0 END, release_date DESC, updated_at DESC, id DESC").
+		Find(&releases).Error; err != nil {
+		return StrongestBrainReleaseSummary{}, err
+	}
+
+	summary := StrongestBrainReleaseSummary{Total: len(releases), Recent: []StrongestBrainReleaseFact{}}
+	releasedIDs := make([]uint, 0, len(releases))
+	for _, release := range releases {
+		switch strings.ToLower(strings.TrimSpace(release.Status)) {
+		case "planned":
+			summary.Planned++
+		case "released":
+			summary.Released++
+			releasedIDs = append(releasedIDs, release.ID)
+		case "archived":
+			summary.Archived++
+		}
+	}
+	if len(releasedIDs) == 0 {
+		return summary, nil
+	}
+
+	type releaseScopeCount struct {
+		ReleaseVersionID uint
+		WorkItemCount    int64
+		CompletedCount   int64
+	}
+	var scopeCounts []releaseScopeCount
+	if err := db.DB.WithContext(ctx).
+		Table("work_item_release_links AS links").
+		Select(`
+			links.release_version_id,
+			COUNT(*) AS work_item_count,
+			SUM(CASE WHEN LOWER(TRIM(tasks.status)) = 'done' THEN 1 ELSE 0 END) AS completed_count
+		`).
+		Joins("JOIN task_telemetries AS tasks ON tasks.task_id = links.work_item_id").
+		Where(
+			"links.release_version_id IN ? AND links.active = ? AND links.relation = ? AND links.is_primary = ?",
+			releasedIDs,
+			true,
+			"target_fix",
+			true,
+		).
+		Group("links.release_version_id").
+		Scan(&scopeCounts).Error; err != nil {
+		return StrongestBrainReleaseSummary{}, err
+	}
+	countsByReleaseID := make(map[uint]releaseScopeCount, len(scopeCounts))
+	for _, count := range scopeCounts {
+		countsByReleaseID[count.ReleaseVersionID] = count
+	}
+
+	type releaseEvidence struct {
+		SubjectID string
+		EventID   uint
+	}
+	var evidenceRows []releaseEvidence
+	subjectIDs := make([]string, 0, len(releasedIDs))
+	for _, releaseID := range releasedIDs {
+		subjectIDs = append(subjectIDs, strconv.FormatUint(uint64(releaseID), 10))
+	}
+	if err := db.DB.WithContext(ctx).
+		Model(&db.DataAssetEvent{}).
+		Select("subject_id, MAX(id) AS event_id").
+		Where("subject_type = ? AND event_type = ? AND subject_id IN ?", "release_version", "release_version_published", subjectIDs).
+		Group("subject_id").
+		Scan(&evidenceRows).Error; err != nil {
+		return StrongestBrainReleaseSummary{}, err
+	}
+	evidenceBySubjectID := make(map[string]uint, len(evidenceRows))
+	for _, evidence := range evidenceRows {
+		evidenceBySubjectID[evidence.SubjectID] = evidence.EventID
+	}
+
+	for _, release := range releases {
+		if !strings.EqualFold(strings.TrimSpace(release.Status), "released") {
+			continue
+		}
+		count := countsByReleaseID[release.ID]
+		fact := StrongestBrainReleaseFact{
+			ID:             release.ID,
+			ProjectKey:     release.ProjectKey,
+			Name:           release.Name,
+			Status:         release.Status,
+			WorkItemCount:  count.WorkItemCount,
+			CompletedCount: count.CompletedCount,
+			OpenCount:      count.WorkItemCount - count.CompletedCount,
+			EvidenceRefs:   []string{},
+		}
+		if release.ReleaseDate != nil {
+			fact.ReleaseDate = release.ReleaseDate.Format("2006-01-02")
+		}
+		if eventID := evidenceBySubjectID[strconv.FormatUint(uint64(release.ID), 10)]; eventID > 0 {
+			fact.EvidenceRefs = []string{fmt.Sprintf("data_asset_event:%d", eventID)}
+		}
+		summary.Recent = append(summary.Recent, fact)
+		if len(summary.Recent) == 4 {
+			break
+		}
+	}
+	return summary, nil
 }
 
 func (s *Server) handleGetStrongestBrainAITraces(w http.ResponseWriter, r *http.Request) {

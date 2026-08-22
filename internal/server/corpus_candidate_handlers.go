@@ -2,12 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"well-ambient/internal/db"
+	"well-ambient/internal/readmodel"
 
 	"gorm.io/gorm"
 )
@@ -63,58 +66,107 @@ type corpusCandidateImpactDTO struct {
 
 func (s *Server) handleListCorpusCandidates(w http.ResponseWriter, r *http.Request) {
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
-	query := db.DB.Order("created_at desc, id desc").Limit(200)
+	statuses := make([]string, 0, 3)
 	switch status {
 	case "", "review_queue":
-		query = query.Where("status IN ?", []string{"pending", "impact_review"})
+		status = "review_queue"
+		statuses = []string{"pending", "impact_review"}
 	case "all":
 	default:
-		statuses := make([]string, 0, 3)
 		for _, value := range strings.Split(status, ",") {
 			value = strings.TrimSpace(value)
 			if value != "" {
 				statuses = append(statuses, value)
 			}
 		}
+	}
+	documentID := uint(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("document_id")); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			http.Error(w, "document_id must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		documentID = uint(parsed)
+	}
+	position := struct {
+		CreatedAt time.Time `json:"created_at"`
+		ID        uint      `json:"id"`
+	}{}
+	var items []corpusCandidateListItem
+	var page readPageMeta
+	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
+			Dataset: "context_corpus", Contract: "corpus-candidates",
+			Scope: map[string]any{"status": status, "statuses": statuses, "document_id": documentID}, Cursor: r.URL.Query().Get("cursor"),
+			Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
+		}, &position)
+		if err != nil {
+			return err
+		}
+		query := tx.Order("created_at desc, id desc").Limit(window.Limit + 1)
 		if len(statuses) > 0 {
 			query = query.Where("status IN ?", statuses)
 		}
-	}
-	var candidates []db.CorpusCandidate
-	if err := query.Find(&candidates).Error; err != nil {
+		if documentID > 0 {
+			query = query.Where("context_document_id = ?", documentID)
+		}
+		if window.HasCursor {
+			query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", position.CreatedAt, position.CreatedAt, position.ID)
+		}
+		var candidates []db.CorpusCandidate
+		if err := query.Find(&candidates).Error; err != nil {
+			return err
+		}
+		hasMore := len(candidates) > window.Limit
+		if hasMore {
+			candidates = candidates[:window.Limit]
+		}
+		documentIDs := make([]uint, 0, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.ContextDocumentID > 0 {
+				documentIDs = append(documentIDs, candidate.ContextDocumentID)
+			}
+		}
+		var documents []db.ContextDocument
+		if len(documentIDs) > 0 {
+			if err := tx.Select("id", "title", "original_name", "version", "content_hash", "ingestion_status").
+				Where("id IN ?", documentIDs).Find(&documents).Error; err != nil {
+				return err
+			}
+		}
+		documentByID := make(map[uint]db.ContextDocument, len(documents))
+		for _, document := range documents {
+			documentByID[document.ID] = document
+		}
+		items = make([]corpusCandidateListItem, 0, len(candidates))
+		for _, candidate := range candidates {
+			item := corpusCandidateListItem{CorpusCandidate: candidate}
+			if document, ok := documentByID[candidate.ContextDocumentID]; ok {
+				item.SourceDocument = &corpusCandidateDocumentRef{
+					ID: document.ID, Title: document.Title, OriginalName: document.OriginalName,
+					Version: document.Version, ContentHash: document.ContentHash, IngestionStatus: document.IngestionStatus,
+				}
+			}
+			items = append(items, item)
+		}
+		last := position
+		if len(candidates) > 0 {
+			last.CreatedAt = candidates[len(candidates)-1].CreatedAt
+			last.ID = candidates[len(candidates)-1].ID
+		}
+		page, err = buildReadPageMeta(window, hasMore, last)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, readmodel.ErrStaleCursor) || errors.Is(err, readmodel.ErrCursorScope) || errors.Is(err, readmodel.ErrInvalidCursor) || strings.Contains(err.Error(), "limit") {
+			writeReadPageError(w, err)
+			return
+		}
 		http.Error(w, "failed to list corpus candidates", http.StatusInternalServerError)
 		return
 	}
-	documentIDs := make([]uint, 0, len(candidates))
-	for _, candidate := range candidates {
-		if candidate.ContextDocumentID > 0 {
-			documentIDs = append(documentIDs, candidate.ContextDocumentID)
-		}
-	}
-	var documents []db.ContextDocument
-	if len(documentIDs) > 0 {
-		_ = db.DB.Where("id IN ?", documentIDs).Find(&documents).Error
-	}
-	documentByID := make(map[uint]db.ContextDocument, len(documents))
-	for _, document := range documents {
-		documentByID[document.ID] = document
-	}
-	items := make([]corpusCandidateListItem, 0, len(candidates))
-	for _, candidate := range candidates {
-		item := corpusCandidateListItem{CorpusCandidate: candidate}
-		if document, ok := documentByID[candidate.ContextDocumentID]; ok {
-			item.SourceDocument = &corpusCandidateDocumentRef{
-				ID:              document.ID,
-				Title:           document.Title,
-				OriginalName:    document.OriginalName,
-				Version:         document.Version,
-				ContentHash:     document.ContentHash,
-				IngestionStatus: document.IngestionStatus,
-			}
-		}
-		items = append(items, item)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"items": items, "page": page})
 }
 
 func (s *Server) handleReviewCorpusCandidate(w http.ResponseWriter, r *http.Request) {

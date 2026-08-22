@@ -309,10 +309,6 @@
 </script>
 
 <div class="scw-workbench">
-  {#if saveSuccess}
-    <Alert type="success" title="配置已保存" message="飞书凭证、机器人和多维表格设置已更新，版本审计会记录本次变更。" />
-  {/if}
-
   {#if !editing && isConfigured}
     <section class="scw-overview" aria-label="飞书配置状态">
       <header class="scw-header">
@@ -620,10 +616,6 @@
           </span>
         </div>
       </div>
-
-      {#if saveError}
-        <Alert type="error" title="保存失败" message={saveError} />
-      {/if}
 
       <div class="scw-actions">
         <Button variant="ghost" on:click={prevStep} disabled={saving}>上一步</Button>

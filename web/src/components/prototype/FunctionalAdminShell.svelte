@@ -33,6 +33,7 @@
     label: string;
     subtitle: string;
     permissions: string[];
+	roles?: string[];
   }
 
   interface GlobalSearchResult {
@@ -47,6 +48,7 @@
   type ScheduleView = 'board' | 'schedule' | 'releases' | 'projects';
   type TaskView = 'status' | 'execution';
   type DecisionView = 'agenda' | 'daily_jira';
+	type KPIView = 'overview' | 'calculation';
 
   const decisionSubnav: NavSubItem[] = [
     { section: 'agenda', group: '决策看板', label: '决策事项', subtitle: '议程与调停', permissions: ['decision:read'] },
@@ -65,6 +67,11 @@
     { section: 'execution', group: '任务跟踪', label: '执行追踪', subtitle: '代码与 MR', permissions: ['dashboard:read'] }
   ];
 
+	const kpiSubnav: NavSubItem[] = [
+		{ section: 'overview', group: '度量洞察', label: '度量概览', subtitle: '绩效事实', permissions: ['kpi:read'] },
+		{ section: 'calculation', group: '度量洞察', label: '计算说明', subtitle: '口径与审计', permissions: ['kpi:read'], roles: ['super_admin'] }
+	];
+
   const settingsSubnav: NavSubItem[] = SETTINGS_SECTION_DEFINITIONS.map((section) => ({
     section: section.id,
     group: section.group,
@@ -76,9 +83,10 @@
   const navItems: NavItem[] = [
     { route: 'decision', label: '决策看板', subtitle: '会议与阻塞', icon: 'grid', tone: 'blue', children: decisionSubnav },
     { route: 'schedule', label: '排期治理', subtitle: '需求与风险', icon: 'calendar', tone: 'green', children: scheduleSubnav },
+    { route: 'solutions', label: '方案中心', subtitle: '方案与标准', icon: 'library', tone: 'blue' },
     { route: 'evidence', label: '证据链', subtitle: '健康与解构', icon: 'network', tone: 'amber' },
     { route: 'tasks', label: '任务跟踪', subtitle: '执行闭环', icon: 'checklist', tone: 'rose', children: taskSubnav },
-    { route: 'kpi', label: '度量洞察', subtitle: '绩效事实', icon: 'analytics', tone: 'violet' },
+    { route: 'kpi', label: '度量洞察', subtitle: '绩效事实', icon: 'analytics', tone: 'violet', children: kpiSubnav },
     { route: 'settings', label: '配置中心', subtitle: '规则与用户', icon: 'settings', tone: 'slate', children: settingsSubnav }
   ];
 
@@ -87,6 +95,7 @@
   export let activeSettingsSection = 'gitlab';
   export let activeScheduleView: ScheduleView = 'schedule';
   export let activeTaskView: TaskView = 'status';
+	export let activeKPIView: KPIView = 'overview';
   export let availableRoutes: string[] = [];
   export let currentUserName = '';
   export let currentUserEmail = '';
@@ -103,6 +112,7 @@
   export let onSettingsNavigate: (section: string) => void = () => {};
   export let onScheduleNavigate: (view: ScheduleView) => void = () => {};
   export let onTaskNavigate: (view: TaskView) => void = () => {};
+	export let onKPINavigate: (view: KPIView) => void = () => {};
   export let onLogout: () => void = () => {};
   export let onClearAlerts: () => void | Promise<void> = () => {};
   export let onDismissAlert: (alert: ConsoleAlert) => void | Promise<void> = () => {};
@@ -128,7 +138,7 @@
 
   $: visibleNav = navItems.filter((item) => availableRoutes.includes(item.route));
   $: activeItem = navItems.find((item) => item.route === activeRoute) || visibleNav[0] || navItems[0];
-  $: workspaceKey = `${activeRoute}:${activeRoute === 'decision' ? activeDecisionView : activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'tasks' ? activeTaskView : activeRoute === 'settings' ? activeSettingsSection : ''}`;
+  $: workspaceKey = `${activeRoute}:${activeRoute === 'decision' ? activeDecisionView : activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'tasks' ? activeTaskView : activeRoute === 'kpi' ? activeKPIView : activeRoute === 'settings' ? activeSettingsSection : ''}`;
   $: displayName = currentUserName || currentUserEmail || 'well user';
   $: avatarMark = displayName.slice(0, 1).toUpperCase();
   $: roleLabel = currentUserRole === 'super_admin'
@@ -186,7 +196,8 @@
   }
 
   function canAccessSubItem(item: NavSubItem) {
-    return item.permissions.some((permission) => currentUserPermissions.includes(permission));
+		const roleAllowed = !item.roles || item.roles.includes(currentUserRole);
+		return roleAllowed && item.permissions.some((permission) => currentUserPermissions.includes(permission));
   }
 
   function visibleChildren(item: NavItem) {
@@ -205,6 +216,7 @@
     if (route === 'settings') return activeSettingsSection === section;
     if (route === 'schedule') return activeScheduleView === section;
     if (route === 'tasks') return activeTaskView === section;
+		if (route === 'kpi') return activeKPIView === section;
     return false;
   }
 
@@ -226,6 +238,11 @@
       showAlerts = false;
       showProfile = false;
       mobileRailOpen = false;
+		} else if (route === 'kpi' && (section === 'overview' || section === 'calculation')) {
+			onKPINavigate(section);
+			showAlerts = false;
+			showProfile = false;
+			mobileRailOpen = false;
     }
   }
 
@@ -368,6 +385,7 @@
       globalSearchResults = [];
       globalSearchError = '';
       showGlobalSearchResults = false;
+      window.dispatchEvent(new CustomEvent('well-ambient:global-search-clear'));
       return;
     }
     globalSearchTimer = setTimeout(runGlobalSearch, 220);
@@ -653,7 +671,7 @@
       <div
         class="workspace-frame"
         class:flow-frame={activeRoute === 'schedule' && (activeScheduleView === 'board' || activeScheduleView === 'projects')}
-        class:viewport-fit-frame={['decision', 'schedule', 'evidence', 'tasks'].includes(activeRoute)}
+        class:viewport-fit-frame={['decision', 'schedule', 'solutions', 'evidence', 'tasks'].includes(activeRoute)}
         bind:this={workspaceFrameEl}
       >
         <slot />

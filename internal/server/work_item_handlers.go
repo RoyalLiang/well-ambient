@@ -48,11 +48,13 @@ func (s *Server) handleListWorkItems(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	snapshot, err := deliveryplanning.NewService(db.DB).QueryPlan(r.Context(), deliveryplanning.PlanQuery{
 		ProjectKeys:   projectKeys,
+		Assignees:     queryFilterValues(r, "assignee"),
 		ReleaseID:     uint(releaseID),
 		Kinds:         queryFilterValues(r, "kind"),
 		Statuses:      queryFilterValues(r, "status"),
 		PlanningState: queryFilterValues(r, "planning_state"),
 		Search:        r.URL.Query().Get("search"),
+		ActiveOnly:    strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("active")), "true"),
 		Limit:         limit,
 		Offset:        offset,
 	})

@@ -291,6 +291,42 @@
   grid-column: 1 / -1;
 }
 
+.scw-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 28px;
+  margin-top: 18px;
+  border-top: 1px solid var(--scw-line);
+}
+
+.scw-feature-row {
+  min-width: 0;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--scw-line);
+}
+
+.scw-feature-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.scw-feature-row strong {
+  color: var(--scw-strong);
+  font-size: 13px;
+}
+
+.scw-feature-row span {
+  color: var(--scw-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .scw-section,
 .scw-info,
 .scw-credential,
@@ -923,6 +959,7 @@
   }
 
   .scw-read-grid,
+	.scw-feature-grid,
   .scw-summary-grid,
   .scw-form-grid,
   .scw-score-grid,

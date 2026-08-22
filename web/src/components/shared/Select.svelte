@@ -26,6 +26,7 @@
   export let clearable = false;
   export let compact = false;
   export let ariaLabel = '';
+  export let shadowless = false;
 
   let isOpen = false;
   let searchText = '';
@@ -209,6 +210,7 @@
   class:has-error={!!error}
   class:disabled
   class:compact
+  class:shadowless
   bind:this={selectContainer}
   on:focusout={handleFocusOut}
 >
@@ -295,6 +297,7 @@
       <div
         id={listboxId}
         class="select-dropdown"
+        class:shadowless
         class:drop-up={dropdownPlacement === 'up'}
         class:is-positioned={dropdownPositioned}
         bind:this={dropdownEl}
@@ -423,6 +426,20 @@
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.88),
       0 0 0 3px rgba(0, 143, 150, 0.1);
+  }
+
+  .select-group.shadowless .select-trigger,
+  .select-group.shadowless .select-trigger:hover,
+  .select-group.shadowless .select-trigger:focus-within,
+  .select-group.shadowless .select-trigger:focus,
+  .select-group.shadowless .select-trigger.is-active,
+  .select-dropdown.shadowless {
+    box-shadow: none;
+  }
+
+  .select-dropdown.shadowless {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .select-input-shell {

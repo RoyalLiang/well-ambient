@@ -1,3 +1,225 @@
+## [ERR-20260814-007] chrome-console-api-assumption
+
+**Logged**: 2026-08-14T17:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+The final browser pass assumed the claimed Chrome tab exposed a `console.find` helper even though this plugin session only advertised viewport control.
+
+### Error
+```text
+Cannot read properties of undefined (reading 'find')
+Capability is not available: console
+```
+
+### Resolution
+- **Resolved**: 2026-08-14T17:21:00+08:00
+- **Notes**: Queried `chrome.capabilities.list()` and limited the final browser assertions to the available viewport, DOM, geometry, and screenshot evidence. Future Chrome sessions must not assume a console capability that is not advertised.
+
+---
+
+## [ERR-20260821-004] daily-jira-trigger-template-argument-mismatch
+
+**Logged**: 2026-08-21T19:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: database-migration
+
+### Summary
+The Daily Jira update-trigger template added a fifth `%s` placeholder for the projection insert but initially passed only four arguments.
+
+### Error
+```text
+internal/dailyjira/migration.go:253:3: fmt.Sprintf format %s reads arg #5, but call has 4 args
+```
+
+### Suggested Fix
+After changing generated SQL templates, run `gofmt` and the focused package test immediately so Go's format-string vet check validates placeholder parity before broader testing.
+
+### Resolution
+- Passed `insertEntry` as the fifth template argument.
+- Re-ran the focused Daily Jira migration and read-model tests.
+
+---
+
+## [ERR-20260814-001] spreadsheet-formula-description-text
+
+**Logged**: 2026-08-14T10:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+Two formula-description cells beginning with `=` were interpreted as executable formulas and produced `#NAME?` during workbook verification.
+
+### Error
+```text
+责任划分定级!C40 = #NAME?
+责任划分定级!C41 = #NAME?
+```
+
+### Context
+- Added a responsibility-grading sheet to the existing technical-team assessment workbook.
+- The cells were intended to display human-readable formula descriptions, not calculate values.
+
+### Suggested Fix
+Prefix literal formula-description strings with a single quote before writing them as values, and keep the final formula-error scan mandatory.
+
+### Metadata
+- Reproducible: yes
+- Related Files: outputs/019fdb47-81b1-7940-9f2d-5098adb30344/研发考核标准-责任划分定级版.xlsx
+
+### Resolution
+- **Resolved**: 2026-08-14T10:31:00+08:00
+- **Notes**: Updated the builder to write the two descriptions as literal text and reran validation.
+
+---
+
+## [ERR-20260814-008] browser-locator-focus-api-mismatch
+
+**Logged**: 2026-08-14T11:13:01+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The browser validation attempted an unsupported `locator.focus()` method while checking the Daily Jira link focus state.
+
+### Error
+```text
+dailyAuthTab.playwright.locator(...).focus is not a function
+dailyAuthTab.playwright.screenshot is not a function
+```
+
+### Context
+- The authenticated page and Jira link were already available and valid; only the assumed browser-client locator method was unsupported.
+- No external Jira navigation, form input, or business write occurred.
+
+### Suggested Fix
+Use the browser client's supported keyboard interaction for focus movement, or prove focus styling through the source contract without invoking an unsupported locator method. Capture images with `tab.screenshot(...)`, not `tab.playwright.screenshot(...)`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-08-14T11:13:01+08:00
+- **Notes**: Stopped retrying the unsupported focus method, retained source-contract focus verification, and used `tab.screenshot(...)` for runtime images while continuing DOM, geometry, and link-attribute checks.
+
+---
+
+## [ERR-20260814-005] viewport-resize-with-locked-modal-scroll
+
+**Logged**: 2026-08-14T16:13:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+Resizing from the mobile breakpoint while the modal held a body scroll lock preserved the mobile page offset, so the desktop workspace-scoped dialog was sampled offscreen and one reopen wait timed out.
+
+### Error
+```text
+Playwright selector deadline exceeded while waiting for the 900px dialog after a coordinate scroll targeted the outer page.
+```
+
+### Resolution
+- **Resolved**: 2026-08-14T16:15:00+08:00
+- **Notes**: Closed the dialog before each viewport change, reopened from the semantic Edit button, and validated each breakpoint as an independent user state.
+
+---
+
+## [ERR-20260814-004] hmr-closed-modal-before-geometry-sample
+
+**Logged**: 2026-08-14T16:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+The first post-HMR geometry sample assumed the previously open dialog still existed and passed a missing workbench node to `getComputedStyle`.
+
+### Error
+```text
+TypeError: getComputedStyle expects an Element
+```
+
+### Resolution
+- **Resolved**: 2026-08-14T16:06:00+08:00
+- **Notes**: Checked dialog presence after HMR, confirmed the app had cleanly reset to preview, then reopened the draft editor before sampling.
+
+---
+
+## [ERR-20260814-003] unmatched-zsh-config-glob
+
+**Logged**: 2026-08-14T15:53:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A read-only config scan used an unmatched `.env*` glob under zsh, which aborted that scan segment.
+
+### Error
+```text
+zsh: no matches found: .env*
+```
+
+### Resolution
+- **Resolved**: 2026-08-14T15:54:00+08:00
+- **Notes**: Used the live process open-file list and a read-only SQLite query instead; future optional globs should be expanded with `rg --files` first. A later literal `rg` pattern containing backticks repeated the same shell-interpolation class, so literal search patterns must also be single-quoted.
+
+---
+
+## [ERR-20260814-002] markdown-header-contract-overfit
+
+**Logged**: 2026-08-14T15:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first green run failed because the new source contract required an inline template expression even though the component correctly computed the same condition reactively.
+
+### Error
+```text
+Expected `{#if showToolbar && (showDocumentMeta || toolbarModes.length > 1)}` but the implementation used `showWorkbenchToolbar`.
+```
+
+### Resolution
+- **Resolved**: 2026-08-14T15:36:00+08:00
+- **Notes**: Assert the reactive behavior boundary and its template use separately, avoiding an implementation-shape false negative. The same overfit class recurred when a layout contract fixed CSS declaration order; it was corrected by extracting the selector block and asserting each required property independently.
+
+### Metadata
+- Recurrence-Count: 2
+- Last-Seen: 2026-08-14
+
+---
+
+## [ERR-20260814-001] local-service-probe-address-and-query-quoting
+
+**Logged**: 2026-08-14T10:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The initial local UI probe assumed an IPv4-reachable listener and left a URL query string unquoted in zsh.
+
+### Error
+```text
+curl: (7) Failed to connect to 127.0.0.1 port 5173
+zsh: no matches found: http://127.0.0.1:8080/api/performance/explanation?snapshot_limit=1
+```
+
+### Resolution
+- Treat `lsof` listener presence and HTTP reachability as separate checks.
+- Quote URLs containing query parameters and use the authenticated in-app browser for the required UI validation surface.
+
+---
+
 ## [ERR-20260721-023] frontend-validation-run-from-repository-root
 
 **Logged**: 2026-07-21T15:24:00+08:00
@@ -29,6 +251,469 @@ Run frontend package commands with `workdir=/Users/eddie/Workspace/well-ambient/
 ### Resolution
 - **Resolved**: 2026-07-21T15:25:00+08:00
 - **Notes**: Re-ran both commands from `web/`.
+
+---
+
+## [ERR-20260813-006] legacy-evidence-api-fixture
+
+**Logged**: 2026-08-13T16:12:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+The full server suite found an older rollback-evidence API fixture that did not supply the v4-required release method.
+
+### Error
+```text
+append evidence = 422: release_method must match v4 full, canary, or hotfix
+```
+
+### Resolution
+- **Resolved**: 2026-08-13T16:13:00+08:00
+- **Notes**: Added the scorecard-defined full-release fact to the fixture; product validation remains strict.
+
+---
+
+## [ERR-20260813-005] v4-closeout-compile-types
+
+**Logged**: 2026-08-13T16:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+The first post-gofmt compile caught one stale import and a `json.RawMessage` passed directly to `strings.Contains` in the new de-duplication assertion.
+
+### Error
+```text
+internal/performance/module_test.go: cannot use json.RawMessage as string
+internal/performance/types.go: "strings" imported and not used
+```
+
+### Resolution
+- **Resolved**: 2026-08-13T16:06:00+08:00
+- **Notes**: Removed the stale import and made the test's raw JSON conversion explicit.
+
+---
+
+## [ERR-20260813-008] browser-evaluate-fetch-unavailable
+
+**Logged**: 2026-08-13T14:36:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The browser read-only evaluation sandbox did not expose `fetch` while checking the final performance API state.
+
+### Error
+```text
+TypeError: fetch is not a function
+```
+
+### Context
+- The application page itself continued to fetch and render the same endpoint normally.
+- No product API request failed.
+
+### Suggested Fix
+Use the page-rendered DOM state or the browser network capability instead of assuming native `fetch` exists inside the evaluation sandbox.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/PerformanceCalculationGuide.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T14:36:00+08:00
+- **Notes**: Reloaded the app and verified the final 12:53:47 startup run through the rendered calculation status.
+
+---
+
+## [ERR-20260813-007] performance-snapshot-locator-not-unique
+
+**Logged**: 2026-08-13T14:27:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+An authenticated browser click used only the member name, but append-only scoring correctly exposed the same member in two calculation runs.
+
+### Error
+```text
+strict mode violation: member detail locator resolved to 2 elements
+```
+
+### Context
+- Read-only interaction with recent immutable performance snapshots.
+- The duplicate accessible name represented distinct run timestamps, not a duplicated row bug.
+
+### Suggested Fix
+Select the latest matching snapshot explicitly or scope the locator to its run row.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/PerformanceCalculationGuide.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T14:27:00+08:00
+- **Notes**: Selected the first, newest snapshot and completed the detail validation.
+
+---
+
+## [ERR-20260813-006] in-app-browser-localhost-client-block
+
+**Logged**: 2026-08-13T14:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The in-app browser client blocked navigation to the local development origin even though the application was already available in Chrome.
+
+### Error
+```text
+Localhost navigation was blocked by the in-app browser client.
+```
+
+### Context
+- Authenticated validation of the local personnel-performance page at `http://localhost:5173/`.
+- No product request or data mutation failed.
+
+### Suggested Fix
+Use the connected Chrome capability for local authenticated development when the in-app browser client rejects localhost.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/PerformanceCalculationGuide.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T14:05:00+08:00
+- **Notes**: Switched to the already authenticated Chrome session without reading or entering credentials.
+
+---
+
+## [ERR-20260813-005] frontend-check-preexisting-nullability
+
+**Logged**: 2026-08-13T13:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The full frontend type gate is blocked by nine pre-existing nullability errors in an unrelated solution workspace component.
+
+### Error
+```text
+SolutionWorkspace.svelte: 'workspace' is possibly 'null'
+svelte-check found 9 errors and 91 warnings in 6 files
+```
+
+### Context
+- The changed performance files produced no type errors.
+- Three new scroll-region accessibility warnings were identified for immediate cleanup.
+
+### Suggested Fix
+Keep unrelated dirty work untouched, remove warnings introduced by this task, then validate production build and target diagnostics separately.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SolutionWorkspace.svelte, web/src/components/PerformanceCalculationGuide.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T13:35:00+08:00
+- **Notes**: Scoped validation to task-owned files and recorded the repository-wide gate as pre-existing.
+
+---
+
+## [ERR-20260813-004] go-test-httptest-port-sandbox
+
+**Logged**: 2026-08-13T13:15:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The full server test package could not bind an `httptest` loopback port inside the restricted sandbox.
+
+### Error
+```text
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Context
+- `internal/performance` completed successfully.
+- `internal/server` reached an unrelated GitLab webhook test that creates a local HTTP test server.
+
+### Suggested Fix
+Rerun the same read-only Go test command with managed local-network test permission.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_handlers_gitlab_webhook_test.go
+
+### Resolution
+- **Resolved**: 2026-08-13T13:15:00+08:00
+- **Notes**: Escalated the unchanged test command for loopback-only test execution.
+
+---
+
+## [ERR-20260813-003] findings-context-mismatch
+
+**Logged**: 2026-08-13T13:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+An `apply_patch` append used a summarized sentence that did not exactly match the current findings file.
+
+### Error
+```text
+apply_patch verification failed: Failed to find expected lines
+```
+
+### Context
+- Attempted to append task findings using a context line reconstructed from the compacted turn summary.
+- No product file was changed.
+
+### Suggested Fix
+Read the bounded file tail after compaction and patch against the exact current heading or append at EOF.
+
+### Metadata
+- Reproducible: yes
+- Related Files: findings.md, progress.md
+- Recurrence-Count: 2
+- Last-Seen: 2026-08-13T14:18:00+08:00
+
+### Resolution
+- **Resolved**: 2026-08-13T13:05:00+08:00
+- **Notes**: Re-read each target file independently and applied bounded patches against exact live content.
+
+---
+
+## [ERR-20260813-001] browser-readonly-evaluate-parsefloat
+
+**Logged**: 2026-08-13T09:38:52+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The browser read-only evaluation environment did not expose `parseFloat` as a callable global while measuring the task-tracking bottom inset.
+
+### Error
+```text
+TypeError: parseFloat is not a function
+```
+
+### Context
+- Operation: authenticated Chrome geometry measurement after the TaskKanban height fix.
+- The failure occurred only in the validation script; it did not affect application code, data, or browser state.
+
+### Suggested Fix
+Use direct numeric conversion from computed CSS values in browser read-only evaluations instead of relying on `parseFloat`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T09:38:52+08:00
+- **Notes**: Replaced the parsing helper in the next measurement with direct numeric conversion.
+
+---
+
+## [ERR-20260813-002] browser-responsive-selector-assumption
+
+**Logged**: 2026-08-13T09:40:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first 760px geometry script assumed the desktop execution workbench selector would always exist and passed a missing node to `getComputedStyle`.
+
+### Error
+```text
+TypeError: getComputedStyle expects an Element
+```
+
+### Context
+- Operation: authenticated Chrome responsive validation at the 760px breakpoint.
+- The script failed before any business action; it only changed the browser viewport.
+
+### Suggested Fix
+Inspect the breakpoint DOM first and make geometry helpers return null for missing optional containers.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/TaskKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T09:40:00+08:00
+- **Notes**: Switched the responsive check to null-safe discovery before measuring the active layout.
+
+---
+
+## [ERR-20260812-007] llm-timeout-client-transport-comparison
+
+**Logged**: 2026-08-12T23:25:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first custom-client timeout regression compared an interface containing a function-valued RoundTripper, which is not comparable in Go.
+
+### Error
+```text
+panic: runtime error: comparing uncomparable type llm.roundTripFunc
+```
+
+### Context
+- Command: `GOCACHE=/tmp/well-ambient-gocache go test ./internal/llm -count=1`
+- The product client had already cleared the injected overall timeout correctly; only the transport-preservation assertion panicked.
+
+### Suggested Fix
+Use a pointer-valued `*http.Transport` when an interface identity comparison is required; function-valued adapters should only be invoked, not compared.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/llm/client_test.go
+
+### Resolution
+- **Resolved**: 2026-08-12T23:26:00+08:00
+- **Notes**: Replaced the function-valued transport fixture with a comparable transport pointer before rerunning the regression.
+
+---
+
+## [ERR-20260812-005] performance-browser-snapshot-locator
+
+**Logged**: 2026-08-12T19:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: browser-validation
+
+### Summary
+Two browser assertions assumed a unique formal snapshot row while the silent runner was actively appending snapshots.
+
+### Error
+```text
+Playwright selector deadline exceeded
+strict mode violation: row locator resolved to 2 elements
+```
+
+### Context
+- The first assertion ran immediately after restarting the isolated server with newly seeded evidence.
+- By the clean-session assertion, two scheduled snapshots for Alice existed, so a role/name locator was no longer unique.
+
+### Suggested Fix
+Inspect the page after an unexpected wait, then treat append-only snapshot tables as ordered collections: assert the count and inspect the first latest row instead of assuming one row forever.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/PerformanceCalculationGuide.svelte, internal/performance/module.go
+
+### Resolution
+- **Resolved**: 2026-08-12T19:47:00+08:00
+- **Notes**: Confirmed formal snapshot generation, read the newest row, and preserved the append-only expectation in the validation evidence.
+
+---
+
+## [ERR-20260812-004] performance-plan-checkpoint-context
+
+**Logged**: 2026-08-12T19:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+A combined progress checkpoint assumed task-plan wording from a draft summary instead of matching the current persisted section.
+
+### Error
+```text
+apply_patch verification failed: Failed to find expected lines in task_plan.md
+```
+
+### Context
+- The product and test files were not touched by the failed patch.
+- The task plan contains several adjacent August 12 workstreams, so exact section text matters.
+
+### Suggested Fix
+Use `rg -n -C` to locate the task-specific heading and patch only the exact current checklist wording.
+
+### Metadata
+- Reproducible: yes
+- Related Files: task_plan.md, progress.md
+
+### Resolution
+- **Resolved**: 2026-08-12T19:21:00+08:00
+- **Notes**: Located the personnel-performance section and applied a scoped checkpoint.
+
+---
+
+## [ERR-20260812-003] performance-evidence-test-migration
+
+**Logged**: 2026-08-12T19:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first focused test after adding the formal evidence ledger migrated the production schema but omitted the new table from the package's isolated in-memory test database.
+
+### Error
+```text
+no such table: performance_evidence_facts
+```
+
+### Context
+- Command: `GOCACHE=/tmp/well-ambient-gocache go test ./internal/performance ./internal/config`
+- The failure happened when the scorer read active formal evidence and when retention deleted expired evidence.
+
+### Suggested Fix
+Treat the package test migration list as part of the schema seam and add every new performance-owned table to both production AutoMigrate and the isolated test helper in the same patch.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/db/db.go, internal/performance/module_test.go
+
+### Resolution
+- **Resolved**: 2026-08-12T19:11:00+08:00
+- **Notes**: Added `PerformanceEvidenceFact` to the in-memory migration before rerunning focused tests.
+
+---
+
+## [ERR-20260812-002] stale-performance-workbook-path
+
+**Logged**: 2026-08-12T14:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+The workbook reader targeted a superseded output filename and failed before importing the current assessment standard.
+
+### Error
+```text
+ENOENT: no such file or directory, open '.../技术团队成员考核标准-v1.xlsx'
+```
+
+### Context
+- Attempted a read-only inspection for concrete assessment items.
+- The current output file is `研发考核标准.xlsx` in the same output directory.
+
+### Suggested Fix
+Resolve the newest intended workbook from the output directory before generating a reader script, and keep the filename in one script constant.
+
+### Metadata
+- Reproducible: yes
+- Related Files: outputs/019fdb47-81b1-7940-9f2d-5098adb30344/研发考核标准.xlsx
+
+### Resolution
+- **Resolved**: 2026-08-12T14:11:00+08:00
+- **Notes**: Located the current workbook by modification time and switched the reader input to it.
 
 ---
 
@@ -1269,12 +1954,12 @@ Rerun the exact server test command with managed loopback escalation after the f
 ### Metadata
 - Reproducible: yes
 - Related Files: internal/server/config_handlers_gitlab_webhook_test.go
-- Recurrence-Count: 2
-- Last-Seen: 2026-07-18
+- Recurrence-Count: 3
+- Last-Seen: 2026-08-12
 
 ### Resolution
 - **Resolved**: 2026-07-18T14:44:00+08:00
-- **Notes**: The complete `internal/server` suite passed under managed loopback approval.
+- **Notes**: The complete `internal/server` suite passes under managed loopback approval; the 2026-08-12 solution-catalog run hit the same environment boundary after focused sandbox-safe tests passed.
 
 ---
 
@@ -3560,3 +4245,488 @@ Normalize list-shaped API payloads at the client boundary with `Array.isArray(pa
 ### Resolution
 - **Resolved**: 2026-07-31T23:28:00+08:00
 - **Notes**: Added array normalization and repeated frontend check/build plus clean authenticated route validation.
+
+---
+
+## [ERR-20260812-001] teams-v2-module-path
+
+**Logged**: 2026-08-12T12:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+The first scorecard-skill read used root-level module paths even though `SKILL.md` routes them through `modules/`.
+
+### Error
+```text
+sed: /Users/eddie/.codex/skills/teams-v2/core-lite.md: No such file or directory
+```
+
+### Context
+- Attempted to load the teams-v2 cold-start files before mapping the executable performance workbook to the current system.
+- The entrypoint itself was read successfully and showed the correct relative locations.
+
+### Suggested Fix
+Resolve every referenced path relative to the directory containing `SKILL.md`; use `modules/core-lite.md`, `modules/route-presets.md`, and `modules/scorecard-lite.md`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: /Users/eddie/.codex/skills/teams-v2/SKILL.md
+
+### Resolution
+- **Resolved**: 2026-08-12T12:06:00+08:00
+- **Notes**: Reloaded the cold-start files from their documented `modules/` locations and continued the repository-backed audit.
+
+---
+
+## [ERR-20260812-002] performance-full-go-test
+
+**Logged**: 2026-08-12T18:02:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The first full Go run mixed sandbox-blocked `httptest` listeners with a new SQLite polling test that could observe a transient table lock.
+
+### Error
+```text
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+database table is locked: performance_score_runs
+```
+
+### Context
+- Command: `GOCACHE=/tmp/well-ambient-go-build go test ./... -count=1`
+- The listener failures come from existing LLM/server tests under the restricted sandbox.
+- The SQLite lock came from the new background-runner test polling while its worker transaction was writing.
+
+### Suggested Fix
+Serialize the in-memory SQLite test connection, give every repeated test invocation a unique shared-cache DSN, rerun the new package repeatedly, then rerun the full suite with the existing local-listener permission needed by repository tests.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/performance/module_test.go, internal/llm/client_test.go, internal/server/config_handlers_gitlab_webhook_test.go
+
+### Resolution
+- **Resolved**: 2026-08-12T18:05:00+08:00
+- **Notes**: Serialized each in-memory SQLite test database, added a unique DSN per repeated invocation, passed the performance package ten consecutive times, and reran the full suite with local-listener permission.
+
+---
+
+## [ERR-20260812-006] performance-cleanup-port-check
+
+**Logged**: 2026-08-12T18:43:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first isolated-runtime cleanup check passed two TCP inclusion filters with the same `LISTEN` state to one `lsof` invocation, which this `lsof` version rejects.
+
+### Error
+```text
+lsof: duplicate TCP inclusion: LISTEN
+```
+
+### Context
+- The performance backend and Vite sessions had already received Ctrl-C.
+- This was a read-only verification command and did not affect implementation or runtime data.
+
+### Suggested Fix
+Check each explicit port in a separate `lsof -iTCP:<port> -sTCP:LISTEN` invocation.
+
+### Metadata
+- Reproducible: yes
+- Related Files: none
+
+### Resolution
+- **Resolved**: 2026-08-12T18:43:00+08:00
+- **Notes**: Rechecked ports 18083 and 4178 independently; neither had a listener.
+
+---
+
+## [ERR-20260812-007] solution-catalog-sqlite-datetime-aggregate
+
+**Logged**: 2026-08-12T23:56:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+SQLite returns `MAX(datetime-column)` as a string, so scanning the catalog project aggregate directly into `time.Time` failed.
+
+### Error
+```text
+sql: Scan error on column index 2, name "last_synced": unsupported Scan, storing driver.Value type string into type *time.Time
+```
+
+### Context
+- Command: focused solution catalog and handler Go tests.
+- The failure was isolated to `ListProjects`; catalog projection, search scope, detail scope, comparison, and standardization tests had passed.
+
+### Suggested Fix
+Aggregate `unixepoch(synced_at)` into an integer and convert it explicitly with `time.Unix` at the module boundary.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/solutioncatalog/query.go, internal/server/solution_catalog_handlers_test.go
+
+### Resolution
+- **Resolved**: 2026-08-12T23:57:00+08:00
+- **Notes**: Replaced the driver-dependent datetime aggregate scan with Unix seconds plus explicit UTC conversion and retained the handler regression.
+
+---
+## [ERR-20260813-001] performance-runtime-process-inspection
+
+**Logged**: 2026-08-13T12:25:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The restricted shell blocked `ps` and loopback `curl` while diagnosing the live performance runner.
+
+### Error
+```text
+zsh: operation not permitted: ps
+curl: (7) Failed to connect to 127.0.0.1 port 8080
+```
+
+### Context
+- Read-only inspection of the already-running local development process and `/health` endpoint.
+- `lsof` independently confirmed PID 9978 was listening on port 8080.
+
+### Suggested Fix
+Repeat the same read-only process and loopback probes with the managed local-runtime permission.
+
+### Metadata
+- Reproducible: yes
+- Related Files: cmd/server/main.go, internal/server/server.go
+
+### Resolution
+- **Resolved**: 2026-08-13T12:25:00+08:00
+- **Notes**: Continued with an explicitly approved read-only local-runtime probe.
+
+---
+
+## [ERR-20260813-002] zsh-empty-vite-glob
+
+**Logged**: 2026-08-13T12:25:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+An optional Vite-config search used a shell glob that had no matches under zsh.
+
+### Error
+```text
+zsh: no matches found: vite.config.*
+```
+
+### Context
+- Read-only search for the frontend proxy target.
+- No product command or file mutation failed.
+
+### Suggested Fix
+Resolve candidates with `rg --files` first and pass only existing paths to `rg`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/package.json
+
+### Resolution
+- **Resolved**: 2026-08-13T12:25:00+08:00
+- **Notes**: Replaced the glob with an `rg --files` candidate lookup.
+
+---
+
+## [ERR-20260813-003] overbroad-config-example-read
+
+**Logged**: 2026-08-13T15:05:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+A configuration inspection printed unrelated sensitive integration fields because the requested line range extended beyond the performance block.
+
+### Error
+```text
+The read-only command used a broad line range instead of selecting only performance_brain keys.
+```
+
+### Context
+- The task only required v4.0 performance configuration defaults.
+- No credential was modified, copied into source, memory, or the response.
+
+### Suggested Fix
+For configuration containing possible credentials, use `rg` with exact safe key names or a structured parser that emits an allowlist; never print a broad line range.
+
+### Metadata
+- Reproducible: yes
+- Related Files: config.yaml, config.example.yaml
+
+### Resolution
+- **Resolved**: 2026-08-13T15:05:00+08:00
+- **Notes**: Stopped broad configuration reads and restricted subsequent checks to the performance key allowlist.
+
+---
+
+## [ERR-20260813-004] unavailable-tsx-test-runner
+
+**Logged**: 2026-08-13T15:32:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The focused frontend contract test was first invoked through `pnpm exec tsx`, but this workspace does not install `tsx`.
+
+### Error
+```text
+Command "tsx" not found
+```
+
+### Context
+- The target is a Node test file that only uses syntax supported by the repository's current Node runtime.
+- The failed runner prevented the chained Svelte check from starting.
+
+### Suggested Fix
+Use Node 22's explicit TypeScript stripping flag with the native test runner, and run type/Svelte checks as separate commands so one runner error cannot hide later validation.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/tests/performance-governance-contract.test.ts, web/package.json
+
+### Resolution
+- **Resolved**: 2026-08-13T15:32:00+08:00
+- **Notes**: Verified `node --experimental-strip-types --test tests/performance-governance-contract.test.ts`; all three focused contracts pass. Plain `node --test` is insufficient for `.ts` in this runtime.
+
+---
+
+## [ERR-20260813-005] sandbox-httptest-loopback
+
+**Logged**: 2026-08-13T14:56:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: testing
+
+### Summary
+The combined backend regression was first run in the restricted sandbox, where an unrelated server test could not bind an ephemeral localhost port.
+
+### Error
+```text
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Context
+- `internal/performance` and `internal/config` had already passed in the same invocation.
+- The failure occurred in `TestEnsureGitLabWebhooksUpdatesExistingHook`, before the server suite could complete.
+
+### Suggested Fix
+When a repository server suite contains `httptest.NewServer`, rerun the exact test command with narrowly approved local-loopback permission after the sandbox failure.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/server/config_handlers_gitlab_webhook_test.go
+
+### Resolution
+- **Resolved**: 2026-08-13T14:57:00+08:00
+- **Notes**: Reran the unchanged command with local-loopback permission; performance, config, and server suites all passed.
+
+---
+
+## [ERR-20260813-006] browser-validation-api-assumptions
+
+**Logged**: 2026-08-13T15:18:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Browser validation initially assumed a unique historical snapshot, a scriptable `window.resizeTo`, and an array-shaped tab-finalization argument.
+
+### Error
+```text
+strict mode violation: getByRole('button', { name: '查看 刘子翔 的评分详情' }) resolved to 2 elements
+TypeError: window.resizeTo is not a function
+browser.tabs.finalize expects an options object
+```
+
+### Context
+- The persisted snapshot table intentionally shows more than one run, so member labels repeat.
+- The in-app browser viewport is fixed and does not expose `window.resizeTo`.
+- Browser cleanup uses `tabs.finalize({})`.
+
+### Suggested Fix
+Scope member detail checks to the first/latest row, measure the actual browser viewport, verify narrow-screen rules statically when viewport emulation is unavailable, and finalize with an options object.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/PerformanceCalculationGuide.svelte, web/src/components/shared/Modal.svelte
+
+### Resolution
+- **Resolved**: 2026-08-13T15:18:00+08:00
+- **Notes**: Validated the latest snapshots at the available 1280x720 viewport, checked the shared mobile rules, and finalized both in-app and claimed Chrome tabs.
+
+---
+
+## [ERR-20260813-007] performance-run-query-schema-assumption
+
+**Logged**: 2026-08-13T15:19:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The first read-only audit query assumed a `started_at` column that the run table does not contain.
+
+### Error
+```text
+no such column: started_at
+```
+
+### Context
+The persisted run table uses `created_at` for start time and `completed_at` for completion time.
+
+### Suggested Fix
+Inspect `.schema` before composing an ad hoc SQLite evidence query.
+
+### Metadata
+- Reproducible: yes
+- Related Files: internal/performance/models.go
+
+### Resolution
+- **Resolved**: 2026-08-13T15:19:00+08:00
+- **Notes**: Re-ran the evidence query with `created_at`; the latest v4.1 run, 14 snapshots, and all audit event counts were confirmed.
+
+---
+
+## [ERR-20260813-008] unrelated-svelte-check-errors
+
+**Logged**: 2026-08-13T15:20:00+08:00
+**Priority**: medium
+**Status**: unresolved
+**Area**: frontend
+
+### Summary
+The repository-wide Svelte check remains blocked by pre-existing nullable-value errors outside the personnel-performance surface.
+
+### Error
+```text
+SolutionWorkspace.svelte: 9 errors and repository-wide existing warnings
+```
+
+### Context
+- The affected performance components build successfully.
+- The focused performance governance contract passes.
+- The unrelated dirty file was not changed as part of this fix.
+
+### Suggested Fix
+Repair the `SolutionWorkspace.svelte` nullable-value errors in a separately scoped task, then rerun the repository-wide checker.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SolutionWorkspace.svelte
+
+---
+
+## [ERR-20260813-009] conditional-named-slot-placement
+
+**Logged**: 2026-08-13T23:55:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Svelte rejected the solution editor footer because the named slot element was nested inside an `{#if}` block instead of being a direct child of `Modal`.
+
+### Error
+```text
+Element with a slot='...' attribute must be a child of a component or a descendant of a custom element
+SolutionWorkspace.svelte:363:12
+```
+
+### Context
+- Command: `pnpm check`
+- The editor Modal conditionally rendered both its body and `slot="footer"` under `workspace?.working`.
+- Existing repository warnings are unrelated; this new error is local to the edited component.
+
+### Suggested Fix
+Keep the named footer slot as a direct `Modal` child and move the workspace condition inside the slotted element.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SolutionWorkspace.svelte
+
+### Resolution
+- **Resolved**: 2026-08-14T00:02:00+08:00
+- **Notes**: Moved the footer slot to be a direct `Modal` child and nested the workspace condition inside it; `pnpm check` returned zero errors.
+
+---
+
+## [ERR-20260813-010] empty-temporary-go-module-cache
+
+**Logged**: 2026-08-13T23:54:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The isolated browser-validation server build pointed both Go caches at new empty temporary directories, forcing a dependency download that the restricted network could not complete.
+
+### Error
+```text
+dial tcp: lookup goproxy.cn: no such host
+```
+
+### Context
+- The temporary build only needed an isolated build cache; the machine already had the required module versions in its standard module cache.
+- No application source or dependency version was at fault.
+
+### Suggested Fix
+Keep `GOCACHE` isolated for generated build artifacts, but reuse the existing read-only `GOMODCACHE` when all pinned modules are already present.
+
+### Metadata
+- Reproducible: yes
+- Related Files: go.mod
+
+### Resolution
+- **Resolved**: 2026-08-13T23:55:00+08:00
+- **Notes**: Rebuilt with the temporary `GOCACHE` and the existing module cache; the validation server compiled successfully without network access.
+
+---
+## [ERR-20260814-006] chrome-tabs-claim-api-mismatch
+
+**Logged**: 2026-08-14T17:10:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The browser validation attempted an unsupported `chrome.tabs.claim` method when reconnecting to an existing user tab.
+
+### Error
+```text
+chrome.tabs.claim is not a function
+chrome.tabs.open is not a function
+```
+
+### Context
+- The Chrome binding and logged-in localhost tab were visible, but the current browser-client API does not expose `tabs.claim`.
+- No page navigation, input, save, publish, or business mutation occurred.
+
+### Suggested Fix
+Use the documented supported tab-opening or user-tab connection path for this browser-client version; do not retry `tabs.claim`.
+
+### Metadata
+- Reproducible: yes
+- Related Files: none
+
+### Resolution
+- **Resolved**: 2026-08-14T17:16:00+08:00
+- **Notes**: Read the current browser-client API, named the session, passed the exact fresh `openTabs()` object to `chrome.user.claimTab(...)`, and connected successfully. Current methods are `browser.user.claimTab(...)` and `browser.tabs.new()`.
+
+---

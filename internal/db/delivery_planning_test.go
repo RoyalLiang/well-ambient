@@ -23,7 +23,7 @@ func TestDeliveryPlanningSchemaAutoMigrateAndReleaseIdentity(t *testing.T) {
 		t.Fatalf("auto migrate: %v", err)
 	}
 
-	for _, column := range []string{"project_key", "source", "external_key", "parent_work_item_id", "revision", "planning_state"} {
+	for _, column := range []string{"project_key", "source", "external_key", "parent_work_item_id", "revision", "planning_state", "source_updated_at"} {
 		if !conn.Migrator().HasColumn(&TaskTelemetry{}, column) {
 			t.Fatalf("expected task telemetry column %q", column)
 		}

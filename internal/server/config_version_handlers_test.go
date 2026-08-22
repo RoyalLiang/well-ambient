@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,73 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	legacyJSON, err := json.Marshal(map[string]any{
+		"server": map[string]any{"host": "127.0.0.1", "port": 9100},
+		"jira":   map[string]any{"enabled": true, "base_url": "https://jira.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy config: %v", err)
+	}
+	if err := gormDB.Create(&db.ConfigVersion{
+		Version: 1, Source: "legacy", ConfigJSON: string(legacyJSON),
+	}).Error; err != nil {
+		t.Fatalf("seed legacy config: %v", err)
+	}
+
+	fileConfig := config.Config{
+		Server: config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		PerformanceBrain: config.PerformanceBrainConfig{
+			Enabled: true, IntervalMinutes: 37, RetentionDays: 91,
+		},
+	}
+	if err := BootstrapVersionedConfig(&fileConfig); err != nil {
+		t.Fatalf("bootstrap config: %v", err)
+	}
+
+	if fileConfig.Server.Port != 9100 || fileConfig.Jira.BaseURL != "https://jira.example.com" {
+		t.Fatalf("stored configuration did not remain authoritative: %#v", fileConfig)
+	}
+	if !fileConfig.PerformanceBrain.Enabled || fileConfig.PerformanceBrain.IntervalMinutes != 37 || fileConfig.PerformanceBrain.RetentionDays != 91 {
+		t.Fatalf("new file-only performance section was discarded: %#v", fileConfig.PerformanceBrain)
+	}
+}
+
+func TestRestoreVersionedConfigKeepsArchivedTopLevelSectionAuthoritative(t *testing.T) {
+	archivedJSON, err := json.Marshal(config.Config{
+		PerformanceBrain: config.PerformanceBrainConfig{
+			Enabled: false, IntervalMinutes: 15, RetentionDays: 30,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal archived config: %v", err)
+	}
+
+	restored, err := restoreVersionedConfig(config.Config{
+		PerformanceBrain: config.PerformanceBrainConfig{
+			Enabled: true, IntervalMinutes: 60, RetentionDays: 90,
+		},
+	}, string(archivedJSON))
+	if err != nil {
+		t.Fatalf("restore config: %v", err)
+	}
+
+	if restored.PerformanceBrain.Enabled || restored.PerformanceBrain.IntervalMinutes != 15 || restored.PerformanceBrain.RetentionDays != 30 {
+		t.Fatalf("archived performance section lost precedence: %#v", restored.PerformanceBrain)
+	}
+}
 
 func TestHandleSaveConfigRejectsInvalidJiraVersionSourceBeforeApply(t *testing.T) {
 	current := &config.Config{}

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import Modal from './shared/Modal.svelte';
+  import IssueTypeMark from './shared/IssueTypeMark.svelte';
   import Select from './shared/Select.svelte';
   import MultiSelect from './shared/MultiSelect.svelte';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
   import { showToast } from '../lib/toast';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import {
     fetchDeliveryDirectory,
     type DeliveryAssigneeOption,
@@ -172,6 +174,30 @@
     total: number;
     limit: number;
     offset: number;
+    summary?: WorkItemSummary;
+  }
+
+  interface WorkItemSummary {
+    total: number;
+    active: number;
+    done: number;
+    backlog: number;
+    progress: number;
+    review: number;
+    requirements: number;
+    bugs: number;
+    planned: number;
+    unplanned: number;
+  }
+
+  interface WorkItemCompletionResponse {
+    snapshot: WorkItemSnapshot;
+    evidence: {
+      commit_count: number;
+      merged_mr_count: number;
+      repositories: string[];
+      latest_at?: string;
+    };
   }
 
   const executionRiskFilters: Array<{ value: ExecutionRiskFilter; label: string }> = [
@@ -219,9 +245,27 @@
     };
   }
 
+  function emptyWorkItemSummary(): WorkItemSummary {
+    return {
+      total: 0,
+      active: 0,
+      done: 0,
+      backlog: 0,
+      progress: 0,
+      review: 0,
+      requirements: 0,
+      bugs: 0,
+      planned: 0,
+      unplanned: 0
+    };
+  }
+
   let workItemTasks: Task[] = [];
+  let selectedSearchTask: Task | null = null;
   $: allTasks = currentView === 'status'
-    ? workItemTasks
+    ? (selectedSearchTask && !workItemTasks.some(task => task.id === selectedSearchTask?.id)
+        ? [selectedSearchTask, ...workItemTasks]
+        : workItemTasks)
     : executionItems.map(mapExecutionTask);
   let parentWorkItemsByGroup = new Map<string, { id: string; title: string }>();
   let selectedProjects: string[] = [];
@@ -260,11 +304,13 @@
 
   let intervalId: any;
   let taskRequestSequence = 0;
+  let taskRequestController: AbortController | null = null;
+  let taskScopeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let executionRequestSequence = 0;
   let loading = true;
   let taskRefreshing = false;
-  let taskRequestInFlight = false;
   let taskDataLoaded = false;
+  let workItemSummary = emptyWorkItemSummary();
   let taskLastRefreshedAt = '';
   let errorMsg = '';
 
@@ -353,21 +399,62 @@
   // Modal details state
   let selectedTask: Task | null = null;
   let showDetails = false;
+  let completionConfirming = false;
+  let completionSubmitting = false;
+  let completionError = '';
   let selectedTaskId = '';
   let selectedExecutionTaskId = '';
   let taskTableShellEl: HTMLElement | null = null;
   let pendingRevealTaskId = '';
   let revealScheduledTaskId = '';
+  let globalSearchSelectedTaskId = '';
 
   function handleGlobalSearchSelection(event: Event) {
     const detail = (event as CustomEvent<{ id?: string; route?: string }>).detail;
     if (detail?.route !== 'tasks' || !detail.id) return;
+    const scopeChanged = selectedProjects.length > 0 || selectedAssignees.length > 0;
     selectedProjects = [];
     selectedAssignees = [];
     selectedProject = 'all';
     selectedAssignee = 'all';
     selectedTaskId = detail.id;
+    globalSearchSelectedTaskId = detail.id;
     pendingRevealTaskId = detail.id;
+    if (scopeChanged) void fetchTasks();
+    void loadSelectedSearchTask(detail.id);
+  }
+
+  function handleGlobalSearchClear() {
+    const taskId = globalSearchSelectedTaskId;
+    if (!taskId) return;
+    if (selectedTaskId === taskId) selectedTaskId = '';
+    if (selectedSearchTask?.id === taskId) selectedSearchTask = null;
+    if (pendingRevealTaskId === taskId) pendingRevealTaskId = '';
+    if (revealScheduledTaskId === taskId) revealScheduledTaskId = '';
+    globalSearchSelectedTaskId = '';
+  }
+
+  async function loadSelectedSearchTask(taskId: string) {
+    const existing = allTasks.find(task => task.id === taskId);
+    if (existing) {
+      selectedSearchTask = workItemTasks.some(task => task.id === taskId) ? null : existing;
+      return;
+    }
+    try {
+      const response = await fetch(`/api/work-items/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const snapshot: WorkItemSnapshot = await response.json();
+      if (selectedTaskId !== taskId) return;
+      selectedSearchTask = mapWorkItem(snapshot);
+    } catch (error) {
+      if (selectedTaskId !== taskId) return;
+      console.error('Failed to load selected work item:', error);
+      showToast('已找到事项，但加载详情失败，请重试。', {
+        type: 'error',
+        title: '事项加载失败'
+      });
+      pendingRevealTaskId = '';
+    }
   }
 
   async function revealPendingTaskRow(taskId: string) {
@@ -480,18 +567,21 @@
   $: focusTaskDelayDays = focusTask ? getDelayDays(focusTask.taskCreatedAt, focusTask.status) : 0;
   $: evidenceLinkedTasks = filteredTasks.filter(t => getEvidenceStatus(t).class === 'badge-has-code').length;
   $: evidenceCoverage = filteredTasks.length > 0 ? Math.round((evidenceLinkedTasks / filteredTasks.length) * 100) : 0;
-  $: requirementCount = filteredTasks.filter(t => t.issueType !== 'bug').length;
-  $: bugCount = filteredTasks.filter(t => t.issueType === 'bug').length;
-  $: plannedWorkItems = filteredTasks.filter(t => Boolean(t.projectKey)).length;
-  $: unplannedWorkItems = filteredTasks.length - plannedWorkItems;
+  $: taskMetricTotal = taskDataLoaded ? workItemSummary.total : filteredTasks.length;
+  $: taskMetricActive = taskDataLoaded ? workItemSummary.active : activeTasks.length;
+  $: taskMetricDone = taskDataLoaded ? workItemSummary.done : done.length;
+  $: requirementCount = taskDataLoaded ? workItemSummary.requirements : filteredTasks.filter(t => t.issueType !== 'bug').length;
+  $: bugCount = taskDataLoaded ? workItemSummary.bugs : filteredTasks.filter(t => t.issueType === 'bug').length;
+  $: plannedWorkItems = taskDataLoaded ? workItemSummary.planned : filteredTasks.filter(t => Boolean(t.projectKey)).length;
+  $: unplannedWorkItems = taskDataLoaded ? workItemSummary.unplanned : filteredTasks.length - plannedWorkItems;
   $: taskFlowStages = [
-    { key: 'backlog', label: '待办', value: backlog.length, tone: 'neutral' },
-    { key: 'progress', label: '进行中', value: inProgress.length, tone: 'info' },
-    { key: 'review', label: '评审', value: inReview.length, tone: 'warning' },
-    { key: 'done', label: '完成', value: done.length, tone: 'success' }
+    { key: 'backlog', label: '待办', value: taskDataLoaded ? workItemSummary.backlog : backlog.length, tone: 'neutral' },
+    { key: 'progress', label: '进行中', value: taskDataLoaded ? workItemSummary.progress : inProgress.length, tone: 'info' },
+    { key: 'review', label: '评审', value: taskDataLoaded ? workItemSummary.review : inReview.length, tone: 'warning' },
+    { key: 'done', label: '完成', value: taskMetricDone, tone: 'success' }
   ].map(stage => ({
     ...stage,
-    percent: filteredTasks.length > 0 ? Math.round((stage.value / filteredTasks.length) * 100) : 0
+    percent: taskMetricTotal > 0 ? Math.round((stage.value / taskMetricTotal) * 100) : 0
   }));
   $: filteredExecutionItems = executionItems
     .filter(item => matchesExecutionFilters(
@@ -527,9 +617,9 @@
     });
     return map;
   })();
-  $: taskCompletionRate = filteredTasks.length > 0 ? Math.round((done.length / filteredTasks.length) * 100) : 0;
+  $: taskCompletionRate = taskMetricTotal > 0 ? Math.round((taskMetricDone / taskMetricTotal) * 100) : 0;
   $: {
-    const _taskMetricDependencies = [filteredTasks.length, activeTasks.length, done.length, requirementCount, bugCount, plannedWorkItems, unplannedWorkItems, taskCompletionRate, inReview.length, inProgress.length, selectedProjectSummary];
+    const _taskMetricDependencies = [taskMetricTotal, taskMetricActive, taskMetricDone, requirementCount, bugCount, plannedWorkItems, unplannedWorkItems, taskCompletionRate, workItemSummary.review, workItemSummary.progress, selectedProjectSummary];
     taskAdminMetrics = buildTaskAdminMetrics();
   }
   $: {
@@ -557,8 +647,8 @@
     return [
       {
         label: '交付事项',
-        value: filteredTasks.length,
-        helper: `活跃 ${activeTasks.length} / 完成 ${done.length}`,
+        value: taskMetricTotal,
+        helper: `活跃 ${taskMetricActive} / 完成 ${taskMetricDone}`,
         delta: selectedProjectSummary,
         tone: 'info'
       },
@@ -578,7 +668,7 @@
       {
         label: '闭环率',
         value: `${taskCompletionRate}%`,
-        helper: `评审 ${inReview.length} / 进行中 ${inProgress.length}`,
+        helper: `评审 ${taskDataLoaded ? workItemSummary.review : inReview.length} / 进行中 ${taskDataLoaded ? workItemSummary.progress : inProgress.length}`,
         tone: taskCompletionRate >= 70 ? 'success' : 'info'
       }
     ];
@@ -760,7 +850,8 @@
         }
       ],
       actions: [
-        { label: '打开版本计划', kind: 'primary' },
+        ...(isTaskDone(task) ? [] : [{ label: '确认完成', kind: 'primary' as const }]),
+        { label: '打开版本计划', kind: isTaskDone(task) ? 'primary' : 'secondary' },
         { label: '查看详情', kind: 'secondary' }
       ]
     };
@@ -840,6 +931,10 @@
   }
 
   function handleTaskInspectorAction(action: AdminInspectorAction, task: Task) {
+    if (action.label === '确认完成') {
+      openDetails(task, true);
+      return;
+    }
     if (action.label === '打开版本计划') {
       onOpenDeliveryPlan(task.id);
       return;
@@ -1030,9 +1125,78 @@
   let activeTelemetryTaskId = '';
   let isTelemetryDrawerOpen = false;
 
-  async function openDetails(task: Task) {
+  function isTaskDone(task: Task | null | undefined): boolean {
+    return String(task?.status || '').toLowerCase().trim() === 'done';
+  }
+
+  function resetCompletionState() {
+    completionConfirming = false;
+    completionSubmitting = false;
+    completionError = '';
+  }
+
+  function openDetails(task: Task, startCompletion = false) {
+    resetCompletionState();
     selectedTask = task;
     showDetails = true;
+    completionConfirming = startCompletion && task.issueType !== 'task' && !isTaskDone(task);
+  }
+
+  function closeDetails() {
+    showDetails = false;
+    selectedTask = null;
+    resetCompletionState();
+  }
+
+  function completionErrorMessage(payload: any): string {
+    const code = String(payload?.error || payload?.code || '').trim();
+    if (code === 'completion_evidence_required') {
+      return '未找到可核对的 Commit 或已合并 MR。请确认提交中包含 Jira Key，等待轨迹刷新后重试。';
+    }
+    if (code === 'revision_conflict') {
+      return '事项刚刚发生更新，请刷新任务表后重试。';
+    }
+    if (code === 'completion_forbidden') {
+      return '仅负责人或管理员可以确认完成。';
+    }
+    return String(payload?.message || '完成操作失败，请稍后重试。');
+  }
+
+  async function completeSelectedTask() {
+    const task = selectedTask;
+    if (!task || task.issueType === 'task' || isTaskDone(task) || completionSubmitting) return;
+
+    completionSubmitting = true;
+    completionError = '';
+    try {
+      const response = await fetch(`/api/work-items/${encodeURIComponent(task.id)}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expected_revision: task.revision || 0,
+          reason: '已在任务详情核对代码证据并确认完成'
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(completionErrorMessage(payload));
+
+      const result = payload as WorkItemCompletionResponse;
+      const completedTask = mapWorkItem(result.snapshot);
+      workItemTasks = workItemTasks.map(item => item.id === completedTask.id ? completedTask : item);
+      selectedTask = completedTask;
+      selectedTaskId = completedTask.id;
+      completionConfirming = false;
+      const commitCount = Number(result.evidence?.commit_count || 0);
+      const mergedMRCount = Number(result.evidence?.merged_mr_count || 0);
+      showToast(`已核对 ${commitCount} 条 Commit、${mergedMRCount} 条已合并 MR，无需绑定目标版本。`, {
+        type: 'success',
+        title: `${completedTask.id} 已完成`
+      });
+    } catch (error: any) {
+      completionError = error?.message || '完成操作失败，请稍后重试。';
+    } finally {
+      completionSubmitting = false;
+    }
   }
 
   function getEvidenceStatus(task: any) {
@@ -1270,27 +1434,45 @@
   }
 
   async function fetchTasks(announce = false) {
-    if (taskRequestInFlight) return;
-    taskRequestInFlight = true;
+    taskRequestController?.abort();
+    const controller = new AbortController();
+    taskRequestController = controller;
     const requestSequence = ++taskRequestSequence;
-    if (announce) taskRefreshing = true;
+    const projectScope = [...selectedProjects];
+    const assigneeScope = [...selectedAssignees];
+    if (announce || taskDataLoaded) taskRefreshing = true;
     try {
       const snapshots: WorkItemSnapshot[] = [];
       let offset = 0;
       let total = 0;
+      let nextSummary = emptyWorkItemSummary();
       do {
-        const res = await fetch(`/api/work-items?limit=500&offset=${offset}`, { cache: 'no-store' });
+        const params = new URLSearchParams();
+        params.set('active', 'true');
+        params.set('limit', '500');
+        params.set('offset', String(offset));
+        for (const project of projectScope) params.append('project', project);
+        for (const assignee of assigneeScope) params.append('assignee', assignee);
+        const res = await fetch(`/api/work-items?${params.toString()}`, {
+          cache: 'no-store',
+          signal: controller.signal
+        });
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const response: WorkItemsResponse = await res.json();
         if (requestSequence !== taskRequestSequence) return;
         const page = response.items || [];
         snapshots.push(...page);
+        if (offset === 0 && response.summary) nextSummary = response.summary;
         total = response.total || snapshots.length;
         offset += page.length;
         if (page.length === 0) break;
       } while (offset < total);
       const data = snapshots.map(mapWorkItem);
       workItemTasks = data;
+      workItemSummary = nextSummary;
+      if (selectedSearchTask && data.some(task => task.id === selectedSearchTask?.id)) {
+        selectedSearchTask = null;
+      }
       taskDataLoaded = true;
       errorMsg = '';
       taskLastRefreshedAt = new Intl.DateTimeFormat('zh-CN', {
@@ -1300,13 +1482,14 @@
         hour12: false
       }).format(new Date());
       if (announce) {
-        showToast(`任务表已更新，共 ${data.length} 条需求与 Bug。`, {
+        showToast(`任务表已更新，载入 ${data.length} 条未闭环需求与 Bug。`, {
           type: 'success',
           title: '刷新完成'
         });
       }
     } catch (e: any) {
       if (requestSequence !== taskRequestSequence) return;
+      if (e?.name === 'AbortError') return;
       console.error('Failed to fetch tasks:', e);
       errorMsg = e.message || '连接 API 失败';
       if (announce) {
@@ -1319,9 +1502,18 @@
       if (requestSequence === taskRequestSequence) {
         loading = false;
         taskRefreshing = false;
-        taskRequestInFlight = false;
+        if (taskRequestController === controller) taskRequestController = null;
       }
     }
+  }
+
+  function handleTaskScopeFiltersChanged() {
+    if (currentView !== 'status') return;
+    if (taskScopeRefreshTimer) clearTimeout(taskScopeRefreshTimer);
+    taskScopeRefreshTimer = setTimeout(() => {
+      taskScopeRefreshTimer = null;
+      void fetchTasks();
+    }, 120);
   }
 
   async function fetchSharedDeliveryDirectory() {
@@ -1369,6 +1561,11 @@
   onMount(() => {
     void Promise.all([fetchSharedDeliveryDirectory(), refreshCurrentTaskView()]);
     fetchJiraLinkConfig();
+    const unsubscribeTelemetryUpdates = subscribeTelemetryUpdates(
+      window,
+      () => refreshCurrentTaskView(true),
+      { visibilityTarget: document }
+    );
     intervalId = setInterval(() => {
       if (document.visibilityState === 'visible') {
         void refreshCurrentTaskView(true);
@@ -1376,15 +1573,20 @@
     }, 60000);
     document.addEventListener('click', handleDocumentClick);
     window.addEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
+    window.addEventListener('well-ambient:global-search-clear', handleGlobalSearchClear);
     window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
+    return unsubscribeTelemetryUpdates;
   });
 
   onDestroy(() => {
     if (intervalId) {
       clearInterval(intervalId);
     }
+    if (taskScopeRefreshTimer) clearTimeout(taskScopeRefreshTimer);
+    taskRequestController?.abort();
     document.removeEventListener('click', handleDocumentClick);
     window.removeEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
+    window.removeEventListener('well-ambient:global-search-clear', handleGlobalSearchClear);
     window.removeEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
   });
 </script>
@@ -1395,6 +1597,7 @@
       <MultiSelect
         id="task-project-filter"
         bind:values={selectedProjects}
+        on:change={handleTaskScopeFiltersChanged}
         options={projectMultiOptions}
         placeholder="全部项目"
         searchPlaceholder="搜索项目"
@@ -1413,6 +1616,7 @@
       <MultiSelect
         id="task-owner-filter"
         bind:values={selectedAssignees}
+        on:change={handleTaskScopeFiltersChanged}
         options={ownerMultiOptions}
         placeholder="全部负责人"
         searchPlaceholder="搜索负责人"
@@ -2094,7 +2298,7 @@
           <div>
             <span class="phase41-kicker">交付事项</span>
             <strong>需求与 Bug 事实表</strong>
-            <small>{taskTableRows.length} 条可见事项 · {selectedAssigneeSummary}{taskLastRefreshedAt ? ` · 更新于 ${taskLastRefreshedAt}` : ''}</small>
+            <small>{taskTableRows.length} 条当前工作集 · {selectedAssigneeSummary}{taskLastRefreshedAt ? ` · 更新于 ${taskLastRefreshedAt}` : ''}</small>
           </div>
           {@render taskScopeFilters()}
           <div class="phase41-toolbar-actions">
@@ -2133,7 +2337,7 @@
                   <tr class="phase41-skeleton-row"><td colspan={taskTableColumns.length}></td></tr>
                 {/each}
               {:else if taskTableRows.length === 0}
-                <tr><td colspan={taskTableColumns.length} class="phase41-empty-cell">当前项目和负责人筛选下暂无需求或 Bug</td></tr>
+                <tr><td colspan={taskTableColumns.length} class="phase41-empty-cell">当前项目和负责人筛选下暂无未闭环需求或 Bug</td></tr>
               {:else}
                 {#each taskTableRows as row (row.id)}
                   <tr
@@ -2157,10 +2361,8 @@
                       </div>
                     </td>
                     <td>
-                      <span class="phase41-type-label {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-requirement'}">
-                        <span class="phase41-type-icon {String(row.cells.issueType).toLowerCase() === 'bug' ? 'is-bug' : 'is-task'}" aria-hidden="true">
-                          {String(row.cells.issueType).toLowerCase() === 'bug' ? 'B' : 'R'}
-                        </span>
+                      <span class="phase41-type-label">
+                        <IssueTypeMark issueType={String(row.cells.issueType)} />
                         {row.cells.issueType}
                       </span>
                     </td>
@@ -2471,7 +2673,7 @@
     title={selectedTask.title}
     size="wide"
     closeLabel="关闭事项详情"
-    on:close={() => { showDetails = false; selectedTask = null; }}
+    on:close={closeDetails}
   >
     <div class="task-detail-surface task-detail-modal-body">
       <div class="task-detail-modal-meta">
@@ -2490,7 +2692,6 @@
       <section class="task-detail-overview" aria-labelledby="task-detail-facts-title">
         <div class="task-detail-section-heading">
           <h3 id="task-detail-facts-title">事项概览</h3>
-          <span>Work Item 实时数据</span>
         </div>
         <dl class="task-detail-fact-grid">
           <div><dt>事项类型</dt><dd>{getIssueTypeLabel(selectedTask)}</dd></div>
@@ -2544,15 +2745,51 @@
     </div>
 
     <div slot="footer" class="task-detail-modal-actions">
-      {#if selectedTask.issueType !== 'task'}
-        <button class="wa-admin-action secondary" type="button" on:click={() => onOpenDeliveryPlan(selectedTask?.id || '')}>
-          打开版本计划
-        </button>
-      {/if}
-      {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
-        <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="wa-admin-action primary">
-          在 Jira 打开
-        </a>
+      {#if completionConfirming && selectedTask.issueType !== 'task' && !isTaskDone(selectedTask)}
+        <div class="task-completion-confirmation" role="group" aria-labelledby="task-completion-title">
+          <div class="task-completion-copy">
+            <strong id="task-completion-title">确认已完成 {selectedTask.id}？</strong>
+            <span>系统会核对已捕获的 Commit 或已合并 MR，完成不要求绑定目标版本。</span>
+            {#if completionError}
+              <p class="task-completion-error" role="alert">{completionError}</p>
+            {/if}
+          </div>
+          <div class="task-completion-actions">
+            <button
+              class="wa-admin-action secondary"
+              type="button"
+              disabled={completionSubmitting}
+              on:click={() => { completionConfirming = false; completionError = ''; }}
+            >
+              取消
+            </button>
+            <button
+              class="wa-admin-action primary"
+              type="button"
+              disabled={completionSubmitting}
+              aria-busy={completionSubmitting}
+              on:click={completeSelectedTask}
+            >
+              {completionSubmitting ? '提交中...' : '提交完成'}
+            </button>
+          </div>
+        </div>
+      {:else}
+        {#if selectedTask.issueType !== 'task' && !isTaskDone(selectedTask)}
+          <button class="wa-admin-action primary" type="button" on:click={() => { completionConfirming = true; completionError = ''; }}>
+            确认完成
+          </button>
+        {/if}
+        {#if selectedTask.issueType !== 'task'}
+          <button class="wa-admin-action secondary" type="button" on:click={() => onOpenDeliveryPlan(selectedTask?.id || '')}>
+            打开版本计划
+          </button>
+        {/if}
+        {#if jiraBaseUrl && selectedTask.id && !selectedTask.id.startsWith('TASK-')}
+          <a href="{jiraBaseUrl}/browse/{selectedTask.id}" target="_blank" rel="noopener noreferrer" class="wa-admin-action secondary">
+            在 Jira 打开
+          </a>
+        {/if}
       {/if}
     </div>
   </Modal>
@@ -6812,32 +7049,6 @@
       display: none;
     }
 
-    .task-console.view-execution {
-      overflow-y: auto !important;
-      overscroll-behavior: contain;
-    }
-
-    .phase41-execution-workbench {
-      height: auto;
-      grid-auto-rows: auto;
-      align-items: start;
-      overflow: visible;
-    }
-
-    .phase41-execution-workbench .phase41-table-panel {
-      height: clamp(480px, calc(100dvh - 320px), 660px);
-    }
-
-    .phase41-execution-workbench .phase41-inspector {
-      position: sticky;
-      top: 0;
-      align-self: start;
-      height: auto;
-      min-height: 0;
-      max-height: none;
-      overflow: visible;
-    }
-
     .phase41-execution-workbench .phase41-inspector-section p {
       display: block;
       overflow: visible;
@@ -7042,6 +7253,47 @@
     text-decoration: none;
   }
 
+  .task-completion-confirmation {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+  }
+
+  .task-completion-copy {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .task-completion-copy strong {
+    color: var(--wa-text-strong);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+
+  .task-completion-copy span,
+  .task-completion-error {
+    margin: 0;
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+    text-wrap: pretty;
+  }
+
+  .task-completion-error {
+    color: var(--wa-danger);
+    font-weight: 650;
+  }
+
+  .task-completion-actions {
+    flex: none;
+    display: flex;
+    gap: 8px;
+  }
+
   .phase41-status-workbench .phase41-fact-pills {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7067,6 +7319,7 @@
   }
 
   @media (min-width: 1181px) {
+    .phase41-execution-workbench .phase41-inspector,
     .phase41-status-workbench .phase41-inspector {
       align-content: start;
       overflow-y: auto;
@@ -7113,11 +7366,24 @@
 
     .task-detail-modal-actions {
       width: 100%;
+      flex-wrap: wrap;
     }
 
     .task-detail-modal-actions .wa-admin-action {
       flex: 1 1 0;
       justify-content: center;
+      min-height: 44px;
+      white-space: nowrap;
+    }
+
+    .task-completion-confirmation {
+      align-items: stretch;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .task-completion-actions {
+      width: 100%;
     }
   }
 </style>

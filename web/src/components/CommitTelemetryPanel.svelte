@@ -1,6 +1,7 @@
 <script lang="ts">
 
   import { onMount } from 'svelte';
+  import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
 
   export let taskID = '';
   export let isOpen = false;
@@ -14,6 +15,7 @@
   let lastFetchedTaskID = '';
   let requestVersion = 0;
   let refreshPending = false;
+  let workspaceScoped = false;
 
   $: if (isOpen && taskID) {
     fetchCommitsIfNeeded();
@@ -23,7 +25,6 @@
   $: mrCount = commits.filter(log => log.action && log.action.startsWith('mr_')).length;
   $: commentCount = commits.filter(log => log.action === 'jira_comment').length;
   $: latestLog = commits[0] || null;
-  $: visibleCommits = presentation === 'inline' ? commits.slice(0, 4) : commits;
   $: evidenceStateLabel = commits.length > 0 ? '已捕获代码证据' : '等待代码证据';
   $: evidenceStateTone = commits.length > 0 ? 'ready' : 'empty';
   $: isInitialLoading = loading && commits.length === 0;
@@ -35,6 +36,37 @@
   function fetchCommitsIfNeeded() {
     if (!taskID || lastFetchedTaskID === taskID) return;
     fetchCommits();
+  }
+
+  function portalToWorkspaceStage(node: HTMLElement) {
+    if (presentation !== 'drawer') return {};
+    const target = node.closest<HTMLElement>('.workspace-stage')
+      || document.querySelector<HTMLElement>('.workspace-stage');
+    if (!target) return {};
+
+    workspaceScoped = true;
+    target.appendChild(node);
+
+    const syncWorkspaceBounds = () => {
+      const rect = target.getBoundingClientRect();
+      node.style.setProperty('--wa-drawer-workspace-top', `${Math.max(0, rect.top)}px`);
+      node.style.setProperty('--wa-drawer-workspace-right', `${Math.max(0, window.innerWidth - rect.right)}px`);
+      node.style.setProperty('--wa-drawer-workspace-bottom', `${Math.max(0, window.innerHeight - rect.bottom)}px`);
+      node.style.setProperty('--wa-drawer-workspace-left', `${Math.max(0, rect.left)}px`);
+    };
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(syncWorkspaceBounds);
+    syncWorkspaceBounds();
+    resizeObserver?.observe(target);
+    window.addEventListener('resize', syncWorkspaceBounds);
+
+    return {
+      destroy() {
+        window.removeEventListener('resize', syncWorkspaceBounds);
+        resizeObserver?.disconnect();
+        workspaceScoped = false;
+        node.remove();
+      }
+    };
   }
 
   async function fetchCommits(preserveExisting = false) {
@@ -119,7 +151,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="drawer-root" class:is-inline={presentation !== 'drawer'}>
+  <div use:portalToWorkspaceStage class="drawer-root" class:is-inline={presentation !== 'drawer'} class:is-workspace-scoped={workspaceScoped}>
     {#if presentation === 'drawer'}
       <button class="drawer-backdrop" type="button" aria-label="关闭代码轨迹面板" on:click={onClose}></button>
     {/if}
@@ -144,7 +176,7 @@
         <div class="drawer-actions">
           <button class="refresh-btn font-mono" type="button" on:click={refreshCommits} disabled={loading}>刷新</button>
           {#if presentation === 'drawer'}
-            <button class="close-btn" type="button" on:click={onClose} aria-label="关闭代码轨迹面板">&times;</button>
+            <OverlayCloseButton label="关闭代码轨迹面板" on:click={onClose} />
           {/if}
         </div>
         </div>
@@ -192,7 +224,7 @@
             </div>
           {/if}
           <div class="commit-timeline">
-            {#each visibleCommits as log}
+            {#each commits as log}
               <div class="timeline-item">
                 <div class="timeline-badge-container">
                   <span class="timeline-badge badge-{log.action}">
@@ -228,9 +260,6 @@
               </div>
             {/each}
           </div>
-          {#if presentation === 'inline' && commits.length > visibleCommits.length}
-            <p class="inline-overflow-note font-mono">另有 {commits.length - visibleCommits.length} 条轨迹，可在任务跟踪中查看完整记录。</p>
-          {/if}
         {:else}
           <div class="empty-state">
             <span class="font-mono">NO TELEMETRY</span>
@@ -253,6 +282,15 @@
     justify-content: flex-end;
     pointer-events: auto;
     animation: fadeIn 0.18s ease-out;
+  }
+
+  .drawer-root.is-workspace-scoped {
+    position: fixed;
+    inset:
+      var(--wa-drawer-workspace-top, 0px)
+      var(--wa-drawer-workspace-right, 0px)
+      var(--wa-drawer-workspace-bottom, 0px)
+      var(--wa-drawer-workspace-left, 0px);
   }
 
   .drawer-backdrop {
@@ -371,7 +409,6 @@
   }
 
   .refresh-btn,
-  .close-btn,
   .retry-btn {
     min-height: 36px;
     border: 1px solid rgba(103, 119, 137, 0.24);
@@ -389,19 +426,7 @@
     font-weight: 800;
   }
 
-  .close-btn {
-    width: 36px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(24, 33, 47, 0.56);
-    font-size: 1.34rem;
-    line-height: 1;
-  }
-
   .refresh-btn:hover,
-  .close-btn:hover,
   .retry-btn:hover {
     transform: translateY(-1px);
     border-color: rgba(32, 197, 183, 0.46);
@@ -417,7 +442,6 @@
   }
 
   .refresh-btn:focus-visible,
-  .close-btn:focus-visible,
   .retry-btn:focus-visible,
   .mr-timeline-link:focus-visible {
     outline: 2px solid rgba(32, 197, 183, 0.58);
@@ -906,13 +930,6 @@
     background: transparent;
   }
 
-  .drawer-panel.is-inline .inline-overflow-note {
-    margin: 10px 0 0;
-    color: rgba(24, 33, 47, 0.56);
-    font-size: 0.7rem;
-    line-height: 1.45;
-  }
-
   .drawer-panel.is-inline .error-state,
   .drawer-panel.is-inline .empty-state {
     padding: 18px 0;
@@ -994,7 +1011,7 @@
   }
 
   .drawer-panel.is-inline .timeline-meta {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 4px;
     margin-bottom: 2px;
   }
@@ -1004,22 +1021,33 @@
   .drawer-panel.is-inline .meta-hash {
     min-width: 0;
     min-height: 20px;
-    overflow: hidden;
+    max-width: 100%;
+    overflow: visible;
     padding: 2px 6px;
     font-size: 0.64rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .drawer-panel.is-inline .timeline-body {
-    display: -webkit-box;
-    overflow: hidden;
+    display: block;
+    overflow: visible;
     padding: 3px 0;
     font-size: 0.7rem;
     line-height: 1.4;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    line-clamp: unset;
+    -webkit-line-clamp: unset;
+    text-overflow: clip;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .drawer-panel.is-inline .mr-timeline-link {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .drawer-panel.is-inline .timeline-footer {

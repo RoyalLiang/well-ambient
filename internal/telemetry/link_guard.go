@@ -41,6 +41,28 @@ func IsWeakSemanticCommit(taskID string, log db.GitCommitLog) bool {
 	return hasNearbySemanticLink(taskID, log.CreatedAt)
 }
 
+// IsWeakSemanticCommitWithNotifications evaluates the same ownership guard
+// against preloaded evidence so bounded list projections do not issue one SQL
+// statement per commit.
+func IsWeakSemanticCommitWithNotifications(taskID string, log db.GitCommitLog, notifications []db.Notification) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || log.Action != "git_push" {
+		return false
+	}
+	if HasExplicitTaskReference(taskID, log.Branch, log.Message) {
+		return false
+	}
+	for _, notification := range notifications {
+		if notification.TaskID != taskID || notification.Type != SemanticLinkerType {
+			continue
+		}
+		if log.CreatedAt.IsZero() || (!notification.CreatedAt.Before(log.CreatedAt.Add(-semanticReviewWindow)) && !notification.CreatedAt.After(log.CreatedAt.Add(semanticReviewWindow))) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasNearbySemanticLink(taskID string, createdAt time.Time) bool {
 	if db.DB == nil || strings.TrimSpace(taskID) == "" {
 		return false

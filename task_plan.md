@@ -1,5 +1,1349 @@
 # Task Plan: Implementation Plan Check and Fix
 
+## 2026-08-21 Daily Jira 滚轮跳底与方案发布 URL 修复
+
+### 目标与验收契约
+
+- [ ] 建立真实滚轮反馈环：一次标准鼠标滚轮输入只能产生接近输入 delta 的局部位移，不能从列表顶部跳到底部；覆盖现有虚拟列表、续页和自动刷新。
+- [ ] 明确 Daily Jira 的唯一纵向滚动 owner，保留选中项、表格密度、内部虚拟滚动和各断点布局，不新增自定义滚动体验。
+- [ ] 以 `server.public_url is required before publishing a Jira solution link` 建立后端红灯，确认发布 URL 的配置来源、缺省策略和 Jira 写回顺序。
+- [ ] 修复方案发布，使正常部署配置能够生成稳定的方案链接；配置确实无法推导时返回可操作错误，并保证 Jira/本地状态不会部分提交。
+- [ ] 分别运行症状级回归、相关 Go/前端测试、check/build、设计检测，以及认证隔离浏览器滚轮和发布流程验证。
+
+### 阶段
+
+- [completed] Phase 1：复现两个精确症状并最小化反馈环
+- [completed] Phase 2：完成三方 UI 审查与 3-5 个可证伪假设
+- [completed] Phase 3：实施最小修复和回归
+- [completed] Phase 4：全量验证、隔离浏览器验收和清理
+
+### 保护边界
+
+- 不修改主数据库，不重启主服务，不调用真实 Jira/GitLab/LLM；发布验证使用 mock Jira 和隔离数据库。
+- 保留当前脏工作树和既有 Daily Jira 虚拟列表/自动刷新、方案 Markdown 人工权威与显式发布边界。
+- 前端编辑前必须完成 Impeccable、design-taste-frontend、finesse-ui 三方审查并记录共同方向、分歧、组件所有权、响应式和验证范围。
+
+### UI 三方审查（实现前）
+
+- **Design Read:** Phase 41 研发治理 product surface，`redesign-preserve`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`。
+- **Impeccable optimize/product:** 先测单次 wheel delta、目标 scrollTop 和唯一 scroll owner；不通过阻止默认行为、平滑滚动或新动画来补偿。虚拟列表必须保持固定行高、稳定几何和原生输入语义。
+- **design-taste-frontend:** 该技能明确不适用于 dashboard/data table；只采用 preserve-mode、移动端显式断点、无 layout shift 和既有组件/信息架构保护，不引入其营销页布局规则。
+- **finesse product/redesign:** 修复负责滚动的最小组件，不重建页面；交互反馈只表达状态，保持 44px 触控目标、现有 token 和单一组件词汇。
+- **共同方向:** 先用真实浏览器 wheel 量化，再把滚动事件和 scrollTop 更新收敛到一个 owner；方案发布时间错误由后端 URL 配置/生成边界负责，UI 仅显示已有可操作错误。
+- **源码结论:** `.audit-table-shell` 是唯一纵向滚动 owner；虚拟窗口越过第 8 行 overscan 后替换真实行并插入 spacer。`handlePublishSolution` 是 Jira 方案绝对链接 owner，已配置 `server.public_url` 优先，未配置时当前只生成相对地址并在发布前拒绝。
+- **实施裁决:** Daily Jira 只在 owner 上禁用浏览器 scroll anchoring，保留原生 wheel、虚拟行高、续页和布局；方案发布保留显式 `server.public_url` 作为稳定地址优先级，并仅对有浏览器 `Origin` 的发布请求提供绝对地址回退，非浏览器/无 Origin 请求继续拒绝，避免从 Host/转发头猜测公开域名。
+
+### 已排序假设与证据
+
+1. **H1（已证实）浏览器滚动锚定正反馈：** 隔离 100 行、无续页、无刷新夹具中，从 `scrollTop=420` 再输入 120px 后，无新增输入仍按 `748→956→1476→2516→4492→4824.5` 级联到底；边界恰好对应 `virtualStart` 从 0 变为正数。
+2. **H2（排除为主因）虚拟行高不一致：** 首行实测 52px，与 `virtualRowHeight=52` 一致，且总 `scrollHeight` 在跳动期间保持 5235px。
+3. **H3（排除为主因）分页/自动刷新改变集合：** 复现夹具 `has_more=false` 且没有 telemetry 更新，跳底仍发生。
+4. **H4（低概率）嵌套滚动链：** 目标区域只有 `.audit-table-shell` 发生 `scrollTop` 变化，且已有 `overscroll-behavior: contain`；修复后仍需在各断点复核 owner。
+5. **H5（发布）缺省 URL 策略过严：** 配置保存会通过 `applyConfig` 原位更新 `*s.config`，排除“设置保存后运行时未生效”；真实缺口是浏览器请求已有标准 `Origin`，处理器却完全忽略，导致未显式配置公网地址时阻断本地发布。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 上一轮已清理的浏览器页签绑定返回 `Unknown tab` | 1 | 按浏览器规则丢弃 stale tab，从既有 browser binding 新建页签，不重置浏览器运行时。 |
+| 隔离 fixture 18192 与 Vite 4177 在默认沙箱绑定均返回 `EPERM` | 1 | 识别为本机环回权限边界；按权限规则以精确端口/命令受控启动，不修改复现方法或主服务。 |
+| 当前 Browser controller 没有 `locator.hover` / `playwright.mouse` / `tab.ax` | 3 | 只做能力探测且未改变页面；改用标签页原生 `cua.scroll({x,y,scrollX,scrollY})`，成功产生真实滚轮输入。 |
+| 发布回归先后在 HTTP body 与 Outbox 原始 JSON 中匹配 `&`，把编码器的标准 `\u0026` 转义误判为失败 | 2 | 保留已返回 200 的产品实现；两处断言都改为解码 JSON 后比较 `link` 字段语义值。 |
+| 连续创建/切换四个浏览器断点超过控制器 30 秒上限并重置绑定 | 2 | 清理 8 个本任务遗留页签，复用一个已登录 Daily Jira 页签，逐断点用短调用完成真实滚轮验证。 |
+| 全量 Go 在默认沙箱被 `httptest` 的 IPv6 loopback 绑定拒绝 | 1 | 产品测试已运行到该环境边界；同一命令以受控回环权限重跑，全部包通过。 |
+
+### 最终验证与设计自检
+
+- 症状回归：Daily Jira 源码合同 5/5；方案 URL/Origin/发布事务定向用例通过。
+- 全量：`go test ./... -count=1`、`go vet ./...`、前端 70/70、`svelte-check` 0 errors/86 既有 warnings、生产 build 通过。
+- 设计：Impeccable `[]`；Finesse P0=0 且目标文件 findings 为空。SPECTACLE=1 不需要动效 engine，本轮没有新增文案、色彩、卡片、半径、动画或交互层级。
+- 浏览器：登录态 1440/1024/760/390 均以真实 420px+120px wheel 从顶部稳定停在 540px；`overflow-anchor=none`，`scrollWidth == clientWidth`，虚拟列表总高度在每个断点内保持稳定。
+- 清理：浏览器视口已恢复默认并关闭本任务页签；18192 fixture、4177 Vite 已停止，临时 fixture 文件已删除；主服务、主数据库和外部 Jira/GitLab/LLM 均未触碰。
+
+---
+
+## 2026-08-21 全站千万量级数据访问架构
+
+### 目标与验收契约
+
+- [x] 盘点所有用户可达页面、数据接口、后台刷新链、ORM/Raw SQL、聚合/分组与索引，形成“页面 -> 接口 -> 查询 -> 数据规模 -> 风险 -> 迁移状态”矩阵；Daily Jira 只是其中一个已迁移样本。
+- [x] 建立全站统一但不泄漏领域语义的深模块：有界分页、稳定快照/游标、请求合并、旧响应抑制、增量刷新、查询预算与可观测性由公共底座拥有；各领域 adapter 继续拥有过滤、权限、排序、聚合和索引。
+- [x] 以可执行红灯捕获无 contract 路由、高基数误分类、成熟度回退、N+1 用户目录、无界详情/时间线和刷新覆盖旧快照；新增 GET 不得绕过统一契约，各 pending adapter 升级时必须增加行为回归。
+- [ ] 把全部页面分波迁移到有界读路径，并为每一页记录默认工作集、最大页、搜索语义、快照一致性、关键索引/查询计划和基准；未验证页面不得宣称“千万量级毫秒级”。
+- [ ] 目标口径：10M 基准数据上的有界数据库读取 warm p95 <20ms、单机本地 handler p95 <50ms；同时单列冷缓存、并发、写放大、迁移回填、网络与浏览器指标，避免把局部 SQLite query benchmark 等同于生产端到端 SLA。
+- [ ] 保持现有权限、业务口径、页面信息架构、自动刷新与交互；前端公共数据层变更前执行强制三方 UI 门禁，完成后逐状态/逐断点认证浏览器验证。
+
+### 架构方向
+
+- **公共深模块:** 只暴露 `Read(request) -> SnapshotPage`、稳定游标/代际、硬性 limit、查询预算与诊断元数据；隐藏游标编码、刷新合并、过期响应处理和窗口缓存。
+- **领域 adapter:** 每个领域定义自己的 scope/filter/order/aggregate/index，不建立一个能拼任意列、任意 SQL 的浅“万能 repository”。
+- **存储实现:** 当前只有 SQLite/GORM 一种真实存储，不暴露假想 repository port；测试和基准通过同一公共 interface 驱动隔离 SQLite。未来出现第二种真实存储时，再在模块内部建立 adapter seam。
+- **前端资源层:** 统一 single-flight、取消/抑制旧请求、可见页刷新、稳定快照原子替换、游标窗口与错误保留；页面只表达业务查询意图和展示状态。
+
+### 阶段
+
+- [completed] Phase 1：已盘点 77 条 GET API、24 个用户页面状态（另含 shell）、9 个数据集、轮询/SQL/ORM/聚合/索引，并落盘风险与迁移矩阵
+- [completed] Phase 2：设计公共 seam、查询预算/可观测性和跨领域红灯；77 条 GET API/24 个用户页面状态（另含 shell）contract 门禁已转绿
+- [in_progress] Phase 3：后端 contract/HTTP/SQL 指标底座已落地；17 verified + 32 bounded，继续迁移 28 条 pending 聚合/搜索/兼容 adapter
+- [in_progress] Phase 4：前端三方 UI 门禁已完成，公共 `PagedResource` 与首波发布/context/corpus 消费者已迁移；余下页面按 pending adapter 分波继续
+- [in_progress] Phase 5：通用 10M/查询计划已达标；继续逐 pending 路由的领域基准与认证浏览器验证
+
+### 保护边界
+
+- 不修改主数据库、不重启主服务、不调用真实 Jira/GitLab/LLM；大数据生成、迁移与基准只使用可删除的隔离数据库。
+- 不回退工作树中的用户或前序任务改动；公共架构优先复用已有 Agenda single-flight、任务 active-workset 与 Daily Jira generation cursor 的已验证模式。
+- 不以“新增索引”替代查询边界，不在低选择性 contains、全量 GROUP BY 或深 OFFSET 上承诺毫秒级。
+
+### 当前红灯与假设
+
+- **红灯命令:** `GOCACHE=/tmp/well-ambient-all-page-gocache go test ./internal/server -run 'TestEveryGETAPIRouteDeclaresABoundedReadContract|TestAllReachablePageStatesAreCoveredByReadContracts|TestKnownHighCardinalityRoutesCannotUseSingletonContracts' -count=1`
+- **当前结果:** 红灯已精确命中 `allPageReadContracts`/`readContractClass` 缺失；实现公共 registry 后同一命令转绿，现可自动阻止新增 GET 路由、页面状态或高基数接口绕过读契约。
+- **H1（最高）:** 性能规则只存在于少数局部模块，无全站强制 seam；若成立，局部有界 reader 可复用，但绝大多数 GET 路由无法通过 contract inventory。
+- **H2:** 聚合页直接重算写模型；若成立，基础表扩容时物化行/耗时线性增长，而返回项数可能不变。
+- **H3:** 前端刷新所有权分散；若成立，同一路由会被多个 interval/fetch owner 重复请求，路由切换后仍产生竞争。
+- **H4:** ORM 存在无界 `Find`、无界嵌套集合和 N+1；若成立，SQL 数或解码行随列表长度增长。
+- **H5:** 缺索引只是次要放大器；若成立，单纯补索引无法限制响应字节、JSON/DOM 与深页成本。
+
+### 当前公共底座
+
+- `internal/readmodel` 统一验证 read class、目标策略、成熟度、行数/嵌套/字节预算和 query/handler p95 目标。
+- 真实生产 HTTP handler 由 registry 包装；每条 GET 返回 contract/class/target-strategy/maturity 响应头，内存窗口按路由保留最近 2,048 次观测并计算 p50/p95/p99。
+- `/api/status.read_paths` 暴露已发生请求的次数、错误、分位延迟和最大字节；未发生请求不伪造性能数字。
+- 全部 77 条 GET API 都已登记，24 个用户页面/配置状态与 shell 都有至少一条数据 contract；`migration_pending` 显式表示目标架构尚未落到领域查询，不作为已完成宣称。
+- `internal/readmodel` 已增加 scope 指纹 opaque cursor、limit 硬上限、数据集 generation 和跨页变更失效语义；`context_facts` 是首个迁移 adapter，定向回归覆盖 125 行两页边界及写入后的 409 stale cursor。
+- GORM `Query`/`Row`/`Raw` 均纳入 request-scoped SQL 观测；`/api/status?read_contracts=full` 可读取 77 条声明和实际 query/handler/bytes 越界。
+- 首波 adapter 已扩展到 context documents/corpus candidates/execution runs/releases/release Jira/project releases/demand specs/task activity/users；用户 membership 从 N+1 收敛为固定 2 条 SQL。
+- 人员可见性与历史负责人兜底均硬限 5,000，负责人 DISTINCT/ORDER BY 使用 partial covering index；目录 contract 不再依赖“人数应该不多”的隐含假设。
+- `cmd/read-path-bench` 已在隔离 10M 行/1.01GB 数据库上运行 500 次 warm 样本：有界实体/深游标/时间线/本地 handler p95 为 0.103/0.110/0.116/0.117ms，聚合投影为 0.006ms，查询计划全部命中索引。
+- 完整架构、页面矩阵、77 路由成熟度、基准和 rollout 边界已落盘 `docs/all-page-10m-read-architecture.md`。
+- 隔离认证浏览器已覆盖发布列表和两类 Jira 关联列表的真实 cursor 续页、服务端搜索、180ms 慢刷新稳定快照，以及 1440/1024/760/390 响应式几何；验收后浏览器、4176/18191 服务和 fixture 均已清理。
+- 当前验证：最终 `go test ./... -count=1`、Go vet、前端全量契约、Svelte check/build、Impeccable `[]`、Finesse P0=0 与 `git diff --check` 通过。关闭隔离服务时仅有预期 SSE reconnect warning，不宣称控制台绝对零日志。
+
+### 强制 UI 三方评审（前端实现前）
+
+- [x] **Design Read:** Phase 41 研发管理 product surface，`redesign-preserve`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；性能、数据连续性和稳定几何优先。
+- [x] **Impeccable optimize/product:** 先量化网络、主线程和 CLS，再优化；列表采用服务端分页、可见区续页、匹配最终行高的骨架，刷新保留旧内容并原子替换，禁止 spinner 导致布局位移。
+- [x] **design-taste-frontend:** 该技能明确不主导 dashboard/data table；采用 redesign-preserve、完整 loading/empty/error 状态、INP/CLS 和移动端稳定约束，不改变路由、信息架构、文案、配色、字体或表格密度。
+- [x] **finesse-ui product/redesign:** 复用 Phase 41 token 和共享组件，低 spectacle/高 density；表格服务端 10/25/50/100 窗口，状态反馈只表达加载/错误/成功，不增加装饰动画或新卡片。
+- [x] **共同方向:** 后端硬上限 100、opaque keyset/generation cursor 和数据集代际；前端公共资源层拥有 single-flight、AbortController、过期响应抑制、稳定快照、续页与重试。页面只传业务 scope 并消费原有字段。
+- [x] **分歧与裁决:** Impeccable 建议超长列表虚拟化，finesse 建议传统分页；两者共同反对一次性全量 DOM。当前先采用“有界服务端页 + 可见区续页”，DOM 超过页面实测阈值后再在共享列表 owner 内启用虚拟化，不把虚拟滚动散落到业务页。
+- [x] **组件所有权/响应式/验证:** 不改 shell 和既有视觉 hierarchy；资源层归 `web/src/lib`，页面 adapter 保留权限/过滤/排序。验证 1440/1024/760/390、初载/续页/刷新/错误/空态/路由切换，监测请求数、响应字节、CLS、长任务和滚动几何。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 配置路径搜索包含不存在的 `configs` 目录，`rg` 返回路径错误但其余搜索继续 | 1 | 已确认数据库由 `cmd/server` 固定初始化为 `well-ambient.db`；后续只对已存在路径运行精确查询。 |
+
+---
+
+## 2026-08-21 全局规则同步与 Daily Jira 自动同步冲突修复
+
+### 目标与验收契约
+
+- [x] 将当前全局 Codex 规则中适用于项目落盘的更新同步到项目 `AGENTS.md`，保留项目专属路由与 UI 门禁，不覆盖其他在途改动。
+- [x] 以 `jira:FZ-2257:2964008:0` retained payload 冲突建立确定性红灯，定位同一性能源事件产生不同 payload 的根因。
+- [x] 修复后台 Jira 定时同步；页面在源数据变化后经既有事件链自动刷新，手动 Jira 同步按钮只保留为辅助恢复入口。
+- [x] 自动 worker 与手动入口共享串行、幂等和错误语义；同一事件重复同步不失败，真实冲突不被静默吞掉。
+- [x] 完成后端定向/相关回归；前端未改动，已验证既有自动订阅、轮询兜底、按钮契约、Svelte/TypeScript 和生产构建。
+
+### 强制 UI 三方评审（实现前）
+
+- [x] **Design Read:** Phase 41 研发管理 product surface，`redesign-preserve`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；自动刷新是主路径，手动同步是次级恢复动作。
+- [x] **Impeccable:** 保持现有 Daily Jira 表格与右侧 inspector；不新增卡片、弹窗或主 CTA，loading/error 不得阻断已有数据阅读。
+- [x] **design-taste-frontend:** 该技能明确不主导 dashboard/data table；只采用 preserve-mode、状态完整性和响应式稳定约束，不重塑视觉语言。
+- [x] **finesse-ui:** product register 保持现有组件体系和信息密度；当前 `secondary/small` 手动同步按钮层级合适，不提升为主动作。
+- [x] **共同方向/所有权/响应式/验证:** 30 秒 Jira worker 负责源同步，`BroadcastTelemetryUpdated` + `subscribeTelemetryUpdates` 负责页面自动刷新，30 秒可见页轮询作兜底；按钮只显式复用同一 worker。三方一致认为本轮无需前端 DOM/CSS 修改，验证现有自动订阅与按钮契约即可。
+
+### 阶段
+
+- [x] Phase 1：冷启动、恢复历史链路、确认脏工作树与规则同步方式
+- [x] Phase 2：完成三方 UI 评审并建立 retained payload 冲突红灯
+- [x] Phase 3：实施最小幂等/自动刷新修复和规则同步
+- [x] Phase 4：运行定向、相关、构建和设计检测；因未改前端且主服务未重启，未重复做浏览器视觉验收
+
+### 当前状态
+
+- **Phase:** complete locally；主服务需受控重启后加载修复。
+- **保护边界:** 不回退当前大量用户改动，不写真实 Jira、不重启主服务、不修改主数据库；规则 bootstrap 对现有项目只报告 `existing`，需对全局与项目规则做精确差异同步。
+- **历史证据:** 既有设计为 Jira pull -> local projection/comment watermark -> changed broadcast -> Daily Jira reload；手动入口与 30 秒 worker 由 `jiraInboundSyncMu` 串行。当前新错误发生在性能事件追加层，可能同时阻断自动与手动同步。
+- **红灯:** `GOCACHE=/tmp/well-ambient-jira-sync-gocache go test ./internal/server -run '^TestAppendJiraPerformanceEventsReplaysHistoryAfterAuthorDisplayNameChanges$' -count=1` 稳定失败，错误与用户现场完全一致：`performance source event conflicts with retained payload: "jira:FZ-2257:2964008:0"`。
+- **三方方向:** 当前组件已经通过 `subscribeTelemetryUpdates` 消费 SSE，手动按钮调用同一个串行入站 worker；共同建议保持现有表格/inspector/按钮层级，不用 UI 补偿后端失败。若自动链修复后现有按钮已是次级 action，则不改前端 DOM/CSS。
+- **最终验证:** `go test ./... -count=1`、`go vet ./...`、57/57 前端契约、`svelte-check` 0 errors/86 既有 warnings、生产 build、Impeccable `[]`、`git diff --check` 全部通过；只读真实 Jira 已确认现场差异，并以 185 个当前 issue 对 205,041 条 retained 事件完成内存重放，0 冲突、0 新证据；未写 Jira/主数据库。
+- **规则同步:** canonical bootstrap 正式运行返回 `existing`；项目 `AGENTS.md` 已包含与全局/模板一致的 pre-delivery reflection gate，项目专属冷启动、UI 门禁和 Matt 路由保留。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 组合读取历史计划与大范围 diff 输出被截断 | 1 | 改为只读当前文件头、精确状态和目标代码，不再重复大范围输出。 |
+| FZ-2257 历史作者显示名变化导致 retained payload 冲突 | 1 | 已固化为精确红灯；在 Jira 适配层兼容可变作者展示名，不放宽通用账本。 |
+| `rg` 查询包含不存在的顶层 `*.go` glob，zsh 提前报错 | 1 | 改用显式 `internal/config cmd internal/server` 路径并成功定位 `LoadConfig`。 |
+| 只读 Jira probe 在 sandbox 被拒绝连接内网 192.168.135.2:443 | 1 | 按权限流程获批后原命令成功；临时 probe 文件已删除。 |
+| 集成回归的 `httptest.NewServer` 在 sandbox 无法绑定 IPv6 loopback | 1 | 不修改测试语义，按受控 loopback 权限原命令重跑并通过。 |
+
+---
+
+## 2026-08-19 页面与搜索慢加载闭环
+
+### 目标与验收契约
+
+- [x] 任务页默认加载不再分页物化约 3.5 万条历史任务；活动事项快速可见，服务端搜索仍可命中历史 Done 事项，清空搜索可稳定恢复。
+- [x] `/api/agenda/summary` 由一个共享前端资源拥有请求、单飞和轮询，同一路由不再由 Dashboard 与全局事件中心各发一轮 15 秒请求。
+- [x] Jira keep-alive/reconciliation 不再把全部陈旧 Done 事项拆成数百个批次持续扫描，保留活动与必要近期历史语义。
+- [x] 通知 SSE 的 15 秒刷新不再把“读取延期提醒”变成逐事项邮件钩子与海量日志副作用；延期查询只投影必要字段并复用活动事项索引。
+- [x] 决策页的 15 秒发布事实刷新不再请求完整 `delivery-cockpit`；完整驾驶舱自身不得重复扫描任务表或把全部任务 ID 展开成 SQLite `IN` 参数。
+- [x] 不删除孤儿证据、不强行启用级联外键；以稳定业务键、ORM 关系、索引和一致性测试收敛查询。
+- [x] 建立症状级红灯、Go/前端回归、构建、设计检测和认证浏览器宽屏/窄屏验收；保留现有表格列、信息架构与视觉层级。
+
+### 强制 UI 三方评审（实现前）
+
+- [x] **Design Read:** Phase 41 研发管理工作台，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；性能与任务连续性优先，不新增视觉语言或动效。
+- [x] **Impeccable optimize/product:** 33.1MB/72 页默认载荷和重复 15 秒请求是主要瓶颈；分页、服务端搜索、单飞请求与稳定 loading/error/empty 状态优先于微型 CSS 优化，修改后必须做前后网络与交互测量。
+- [x] **design-taste-frontend:** 该技能明确不主导 dashboard/data table；仅采用 redesign-preserve 的保护规则、DOM/INP/CLS 性能约束和移动端稳定性，不改变 IA、字体、配色、默认列或表格密度。
+- [x] **finesse-ui:** product register 固定低 spectacle/高 density；保持 Phase 41 组件词汇，减少数据与请求冗余，不以 spinner、动画或新卡片掩盖加载，触控和响应式结构不变。
+- [x] **共同方向:** TaskKanban 保持现有主表/筛选/详情层级，但默认只取活动工作集；文本搜索由服务端覆盖历史 Done，清空恢复活动集。Agenda 建立共享资源模块作为数据、single-flight 和 freshness 所有者，全局 `DecisionEventCenter` 保留唯一周期轮询，Dashboard 订阅同一资源并仅在明确事件/用户动作时刷新。
+- [x] **组件所有权:** `deliveryplanning.Module` 负责有界筛选/计数；TaskKanban 负责搜索意图、请求取消和结果投影；共享 agenda resource 负责缓存/单飞/订阅；两个 Svelte 消费者不再各自解释新鲜度。
+- [x] **响应式与验证:** DOM/CSS 结构不变，因此断点规则继承现状；验证默认活动集、历史 Done 精确搜索、零结果与清空恢复、路由切换、一次 15 秒轮询、SSE 刷新，以及宽屏/760px/390px 无抖动和无横向溢出。
+- [x] **分歧处理:** design-taste 将 dashboard 判为其范围外，不参与组件重塑；Impeccable 与 finesse 的 product register 均支持只改数据边界。Finesse 通用 grain/hero 等品牌规则不适用于本页，服从现有 `DESIGN.md` Phase 41 产品契约。
+
+### 阶段
+
+- [x] Phase 1：继承前两轮基线，确认剩余性能放大器与数据规模
+- [x] Phase 2：完成三方 UI 评审，建立任务加载、共享 Agenda 请求与 Jira keep-alive 红灯
+- [x] Phase 3：实施有界默认加载、服务端搜索、共享资源单飞/单轮询和后台批次收敛
+- [x] Phase 4：运行定向/全量回归、查询计划与主库副本性能验证
+- [x] Phase 5：完成认证浏览器默认/历史搜索/清空恢复和多断点验证
+
+### 当前状态
+
+- **Phase:** complete locally；主运行服务需按受控流程重启后才会加载新代码和索引。
+- **已确认基线:** 35,578 条任务需 72 个 500 条分页、约 33.1MB；活动事项约 1,064 条、3 页、约 971KB。精确服务端搜索本身约 43-46ms，慢感主要来自同页全量加载、渲染和后台重复请求竞争。
+- **Agenda 请求所有权:** `DecisionEventCenter.svelte` 是唯一 15 秒轮询 owner；Dashboard 与事件中心订阅同一个 single-flight/freshness 资源，不再重复读取 `/api/agenda/summary`。
+- **保护边界:** 现有证据孤儿保留，不把本轮性能优化扩成破坏性外键迁移、数据清理、Jira 写回或生产部署。
+- **红灯:** deliveryplanning 新回归因 `ActiveOnly/Assignees/Summary` 尚不存在而编译失败；Jira 35,500 条历史样本产生 710 个 JQL；Agenda 共享模块不存在且两个组件仍各自 fetch，前端性能契约 0/3。失败均命中目标症状而非环境。
+- **当前绿灯:** 真实库副本默认工作集为 1,052 行/3 请求/971,732B/105.6ms；原链路为 35,566 行/72 请求/约 33.1MB/约 3.0-3.1s。精确历史搜索保持 1 行/1,734B/41.6ms。
+- **浏览器任务证据:** 隔离登录态页面显示 35,566 总量但只渲染 1,052 条当前工作集，Done 的 `CR-487` 可由全局搜索直接打开；清空搜索后历史 pin 被移除并恢复 1,052 条活动工作集。
+- **第二轮运行日志:** `DecisionDashboard.fetchReleaseFacts` 每 15 秒请求完整驾驶舱，导致 `strongest_brain_handlers.go` 连续两次 `SELECT *` 读取约 35,578 行，随后生成约 3.5 万参数的 Git log `IN` 查询并报 `too many SQL variables`。修复边界是专用 release summary API、共享一次任务/用户快照，以及按任务表 JOIN Git log。
+- **最终运行验收:** 隔离登录态跨过 15 秒轮询后只读取轻量发布汇总；日志未再出现 3.5 万行驾驶舱扫描、巨型 `IN`、SQL 变量超限或邮件钩子。决策页在 1440/760/390px 保持结果稳定且无文档横向溢出。
+
+---
+
+## 2026-08-19 议程查询与聚合性能收敛
+
+### 目标与验收契约
+
+- [x] `/api/agenda/summary` 不再无条件物化全部 `task_telemetries`，活动议程、统计、项目映射和历史事件采用各自有界的 SQL 投影。
+- [x] 消除按 Done/Review 事项逐条查询 Git 提交与通知的 N+1；关联证据一次批量读取，并维持当前响应字段语义。
+- [x] 优先复用稳定业务键建立 ORM 关系；只有在现有数据满足约束且迁移安全时才增加数据库外键，不用外键替代查询边界。
+- [x] 建立能捕获全表加载、无界历史和 N+1 的后端回归，并记录真实库查询计划、SQL 数量和耗时前后对比。
+- [x] 不修改前端视觉/交互，不触发 Jira、LLM 或生产写入，不覆盖现有脏工作树。
+
+### 阶段
+
+- [x] Phase 1：建立症状级性能反馈环，盘点模型关系、索引和数据一致性
+- [x] Phase 2：确定最小查询/关联设计并建立红灯回归
+- [x] Phase 3：实施有界查询、数据库聚合与批量关联
+- [x] Phase 4：运行定向/全量测试、查询计划和真实库只读性能验证
+
+### 当前状态
+
+- **Phase:** Phase 1-4 complete locally; restart required for running service
+- **已确认基线:** 35,578 行中 Done 34,514；`SELECT *` 全表扫描，GORM 日志为 267.7ms；历史投影会触发至少 34,516 次逐事项提交查询。
+- **反馈环:** `GOCACHE=/tmp/well-ambient-gocache go test ./internal/agenda -run '^TestGetAgendaSummaryUsesBoundedBatchQueries$' -count=1` 在旧实现稳定失败：250 条历史、252 条 SQL；目标为最多 200 条历史、最多 6 条 SQL。
+- **Outcome:** 同一反馈环现为 200 条历史、5 条 SQL；真实库副本 handler 为 22.17ms/595KB，活动、历史、项目、Git 与 Notification 查询计划均命中新索引。
+- **Validation:** `go test ./... -count=1`（受控 loopback）、`go vet ./...`、目标 diff hygiene 全部通过；没有修改主数据库、前端或外部系统。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 本地 8080 监听进程在接口采样前退出，curl 无法建立连接 | 1 | 不重复依赖易失进程；改用隔离数据库与 handler 测试建立确定性反馈环。 |
+| 计划回写补丁误含空路径 hunk，被 `apply_patch` 整体拒绝 | 1 | 确认无部分落盘后，只对三个已存在的正确路径应用非空补丁。 |
+| 默认 `go` 的 GOROOT 缺少 `net/http/httptest`，且默认 GOCACHE 不可写，红灯未进入产品代码 | 1 | 改用工作区依赖提供的 Go 路径和 `/tmp` 专用缓存后重跑。 |
+| 项目范围回归错误假设自动事件仅有 1 条，忽略 `<3` 时追加系统兜底事件 | 1 | 改为断言目标项目事件存在、其他项目事件不存在，不改变既有兜底语义。 |
+| 全量 Go 测试的 llm/server `httptest` 被 sandbox 禁止 IPv6 loopback 监听 | 1 | 定向包已通过；按原命令申请受控非 sandbox 重跑，不修改测试或产品语义。 |
+
+---
+
+## 2026-08-14 方案生成失败后手动重试
+
+### 目标与验收契约
+
+- [x] 为已达到自动重试上限的终态失败任务提供后端人工重试能力；重复点击、并发请求或已有活跃任务不得制造重复生成。
+- [x] 人工重试保留原失败任务、attempt 和原始错误审计，不伪装成首次自动执行；新一轮必须重新进入可观察队列并继续沿用无整体超时的 LLM 客户端。
+- [x] 仅具备 `solution:write` 权限、且当前没有可编辑方案时可重试；后端重新校验真实状态，不能只依赖前端隐藏按钮。
+- [x] 卡片把 Cloudflare 524 等冗长 provider payload 收敛为可理解的失败原因与恢复动作，技术详情仍可查看但不占据默认阅读路径。
+- [x] “重新生成”位于现有错误状态内，不增加弹窗、tab 或新卡片层；提交中禁用并显示进度，成功后原地切换为排队状态。
+- [x] 保持 Markdown 即时编辑器、Jira 来源、人工草案边界、版本/压缩/CAS/发布流程和右侧检查器几何不变。
+- [x] 完成症状级后端与前端回归、相关 Go/Svelte/构建、Impeccable/Finesse 检测及认证浏览器宽屏/手机验证。
+
+### 强制 UI 评审（实现前）
+
+- **Design Read:** 研发交付方案卡片，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`；用户处在恢复失败首稿的任务中，状态清晰度优先于视觉装饰。
+- **Impeccable:** 错误态必须回答“发生了什么、能做什么”，恢复动作应在原上下文内；默认不把 provider JSON 当正文，不用 modal 承载一次重试，按钮需有 default/hover/focus/active/disabled/loading 全状态。
+- **design-taste-frontend:** 该技能明确不主导 dashboard/product UI；只采用 preserve-mode、完整 error/loading 状态、CTA 对比度与不换行约束，不引入新字体、配色、卡片或动效。
+- **finesse-ui:** product register 维持 `SPECTACLE=1/DENSITY=8`；复用现有按钮词汇和间距 token，错误恢复是状态反馈而非表演，移动端命中区至少 44px。
+- **ui-design-system:** 单组件补齐默认、悬停、按下、焦点、禁用和提交中状态；语义文本与焦点环共同表达可操作性，颜色不是唯一信号。
+- **共同方向:** 错误摘要、可选技术详情和“重新生成”同属 `SolutionWorkspace` 的失败状态；组件只调用一个受权限保护、幂等的后端重试接口。点击后按钮立即锁定，接口成功即原地刷新为“排队中”。
+- **组件归属:** `solutions.Module` 拥有终态失败到新一轮队列的事务规则；server handler 只做权限/输入/错误映射；`SolutionWorkspace` 拥有按钮 pending 与就地反馈，不复制重试资格规则。
+- **响应式与验证:** 保持现有右侧卡片和 Markdown 高度/滚动所有权；验证 524 终态、非终态、无权限、重复点击、接口失败、成功排队，覆盖宽屏和 390px，无横向溢出。
+- **保护规则:** 不调整最大自动重试次数，不删除旧 job/error，不重启真实 worker，不触发真实 LLM/Jira，不清理现有脏工作树。
+
+### 阶段
+
+- [x] Phase 1：建立终态失败无人工恢复入口的症状级红灯，确认状态机、权限和路由边界
+- [x] Phase 2：实现幂等人工重试事务、API 与后端回归
+- [x] Phase 3：实现卡片错误摘要、技术详情与统一重试按钮
+- [x] Phase 4：运行相关完整回归、设计检测与认证浏览器双断点验证
+
+### 当前状态
+
+- **Phase:** Phase 1-4 complete locally; not deployed
+- **Status:** 幂等人工重试、失败摘要、折叠技术详情和原地排队反馈均已完成；后端/前端/构建/设计检测及隔离认证浏览器双断点验收全部通过。
+- **Feedback loop:** `GOCACHE=/tmp/well-ambient-gocache go test ./internal/solutions -run '^TestRetryFailedInitialDraftCreatesAuditableIdempotentJob$' -count=1` 因专用重试方法不存在而 FAIL；`node --experimental-strip-types --test web/tests/solution-entry-contract.test.ts` 为 8/9 PASS，唯一失败是目标恢复入口缺失。
+- **Protection:** 验证只使用 localhost 内存假后端和独立 Vite；未调用真实 provider/Jira，未改主数据库，未重启 8080 后台 worker。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 初次计划插入使用已过期的顶部任务标题作为锚点，`apply_patch` 未匹配 | 1 | 确认补丁无部分落盘，读取当前文件头后改用稳定一级标题插入，未覆盖并行任务记录。 |
+| 完整 server 套件的既有 GitLab webhook 测试被 sandbox 拒绝本地 `httptest` 监听 | 1 | solutions 已通过；按受控权限原命令重跑 server 套件，不修改产品代码或测试语义。 |
+| localhost 假后端和独立 Vite 首次启动被 sandbox 拒绝回环监听 | 1 | 仅对 127.0.0.1:18189/4182 申请受控权限，验收后关闭两个临时进程。 |
+| 390px 下方案按钮位于首屏以下，locator 直接求值命中 3 秒可视区期限 | 2 | 使用真实滚动把卡片带入视口，并以只读 page evaluate 测量按钮为 44px；未重复点击或切换控制通道。 |
+
+---
+
+## 2026-08-14 度量洞察卡片流与空白修复
+
+### 目标与验收契约
+
+- [x] 消除“三项正式计算口径”与“需求与 Bug 计算系数”之间由右侧审计栏高度制造的大面积空白。
+- [x] 保持规则、正式口径、计算系数为连续的左侧主阅读流，右侧证据与运行审计仍为独立 sticky inspector。
+- [x] 系数矩阵按主内容容器宽度自适应，宽屏充分利用空间，中屏/窄屏不挤压、不产生页面级横向溢出。
+- [x] 不修改评分公式、数据读取、刷新、成员详情、审计持久化、共享 shell 或 Modal。
+- [x] 完成症状级契约、Svelte/TypeScript、构建、Impeccable/Finesse 检测和登录态多断点浏览器验证。
+
+### 强制 UI 三方评审（实现前）
+
+- **Design Read:** 研发绩效度量说明工作台，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；沿用 Phase 41 浅色管理台与既有 token。
+- **Impeccable layout:** 根因是 `.guide-layout` 单行双列 Grid 取右侧 inspector 的更大高度，而系数 section 位于 Grid 外；应把系数 section 移入 `.guide-main`，用真实内容高度连续排布，禁止负 margin、固定高度或绝对定位补洞。
+- **design-taste-frontend:** 该技能不主导 dashboard/data table；仅采用 preserve 模式、保持 IA/品牌/断点、使用既有 4pt token，并明确移动端收敛，不引入新视觉系统或营销页构图。
+- **finesse-ui densify:** 产品态应提高有效信息密度而非增加内容；主栏按“责任边界 -> 正式口径 -> 计算系数”连续扫描，inspector 保持次级上下文，动效与装饰均不增加。
+- **共同方向:** `PerformanceCalculationGuide.svelte` 继续拥有页面布局；只移动现有系数 section 的 DOM 所有权，并将系数列由 viewport 断点改为容器自适应网格。1180px 保持双栏，980px 下 inspector 自然下置，760px 下单列与局部表格滚动保持不变。
+- **分歧处理:** 机械扫描未发现 detector 级问题，但列出了既有普通 CSS 光学校准值；其中 20px 已是项目 token，2/5/10/14/18px 等属于现有局部排版。本次不扩大为全页 spacing 重写，只保证新增/触及的结构间距使用 `--wa-space-*`。
+- **保护规则:** 不回退当前大量用户脏修改，不修改共享卡片、表格、inspector、导航、权限或后端接口。
+
+### 阶段
+
+- [x] Phase 1：复核截图、组件、设计系统与记忆，完成隔离布局审查和机械预扫
+- [x] Phase 2：建立大空白的症状级结构契约
+- [x] Phase 3：实施主内容流与系数容器自适应修复
+- [x] Phase 4：运行前端契约、check、build 与设计检测
+- [x] Phase 5：完成登录态宽屏/中屏/窄屏几何与溢出验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed。
+- **Confirmed root cause:** `.guide-layout` 的右侧 inspector 高于 `.guide-main`，Grid 行高把其后全宽 `factor-section` 推迟到 inspector 底部，截图中的空白不是 margin。
+- **Owner:** `web/src/components/PerformanceCalculationGuide.svelte`；无需修改共享 shell、token 或后端。
+- **Outcome:** 系数区已移入 `.guide-main`，与指标区保持 16px 内容间距；系数网格按容器宽度自动分列，980px 以下 inspector 在主内容后自然下置。旧后端未返回 v6 分项字段时改为显示 `N/A`，不再触发 `toFixed` 运行时异常。
+- **Validation:** 症状与兼容契约 6/6；`pnpm check`、生产构建、Impeccable layout `[]`、Finesse 目标文件无 findings。登录态宽/中/窄断点文档横向溢出均为 0，指标到系数实测间距 16px；新 Chrome 页签 warning/error 为 0。
+
+## 2026-08-14 绩效 v6.0 数字资产算分收敛
+
+### 目标与验收契约
+
+- [x] 将当前 3 维度 8 指标收敛为 3 个正式计算项：完成结果 35、交付可预测性 20、工程质量 45；Git 只形成 0-10 风险扣分，不再正向贡献。
+- [x] 需求权重只保留规模、需求优先级、项目优先级和可审计责任份额；移除复杂度、阶段和固定成员角色的重复乘数。
+- [x] Jira 需求归属于完成时负责人；Bug 修复人不自动成为缺陷责任人，只有明确归责或可追到原始需求时才形成个人质量损失。
+- [x] 缺少 Bug 原始需求关联、稳定 Commit 指纹、截止日期或估算时保留 N/A/降级原因，不把缺证当成零缺陷、零延期或零风险。
+- [x] 公式版本升级为 v6.0；旧 v5.0 快照与审计不可变保留，新重算继续仅覆盖 core member、静默滚动、可配置开关和保留期。
+- [x] 算分说明页一级只展示交付、质量、风险和证据状态；成员详情保留事项、Bug、Commit、系数、来源引用与未计入原因。
+- [x] 完成后端定向/全量回归、前端契约/Svelte/TypeScript/build、Impeccable/Finesse 检测和登录态多断点浏览器验收。
+
+### 强制 UI 三方评审（实现前）
+
+- **Design Read:** 面向管理者的研发绩效工作台，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=2`、`DENSITY=8`；沿用 Phase 41 浅色管理台和共享 Modal。
+- **Impeccable:** 一级层级应回答交付、质量、风险和证据是否充分；旧 8 项只能作为详情证据，不能继续占据主视图。加载、空、错误、N/A、shadow/formal 状态必须完整。
+- **design-taste-frontend:** 数据后台不由该技能主导；仅采用 preserve 模式、稳定 IA/token/断点、避免模板化卡片和显式移动端收敛，不引入营销页构图或新设计系统。
+- **finesse-ui:** product register 以高密度可扫读为主；主表使用稳定数值列和一个风险状态，详情以扁平分组和稀疏 hairline 呈现，不增加动效、装饰卡或重复状态胶囊。
+- **共同方向:** `PerformanceCalculationGuide.svelte` 继续拥有页面和详情 Modal；后端解释接口成为 v6.0 唯一口径源。桌面主表压缩一级列，窄屏自然重排且无横向溢出。
+- **分歧处理:** design-taste-frontend 明确不适用于 dashboard 组件方案，因此组件所有权、信息密度和验证范围以项目设计系统、Impeccable 与 finesse-ui product 规范为准。
+- **保护规则:** 不修改共享 shell/Modal、导航、权限、后台调度、core-member 边界、审计追加与 retention；不回退当前大量用户脏修改。
+
+### 阶段
+
+- [x] Phase 1：盘点 v5.0 公式、Jira/Git 证据结构、现有页面与测试，建立 v6.0 红灯
+- [x] Phase 2：实现 v6.0 规则、Jira 归责/质量损失、Git 风险扣分和发布门槛
+- [x] Phase 3：升级解释接口、配置示例、前端一级投影和详情证据
+- [x] Phase 4：执行定向与全量静态/单元/构建/设计检测
+- [x] Phase 5：隔离重算并完成登录态宽屏/窄屏、成员详情与审计验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed。
+- **Classification:** `coding.complex` + `design`；现有绩效模块和页面均是未提交工作树的一部分，只允许增量补丁。
+- **Current evidence:** v6.0 已通过全量 Go/vet、前端契约/check/build 与 Impeccable；隔离 startup run 为 14 条快照/14 名唯一 core member，可计算参考分 11-71，精确 0/100 与负零审计均为 0，其余缺证成员显示 N/A。
+- **Browser validation:** 登录态 1280/1024/900/390 均无文档横向溢出；一级八列、三项指标、两项代码风险、详情滚动与关闭通过，新会话 console error 为 0；页面刷新不新增 run。
+- **Next:** 等待受控重启或部署加载 v6.0；本次未重启现有服务、未写源数据库。
+
+## 2026-08-14 每日 Jira 跳转入口合并
+
+### 目标与验收契约
+
+- [x] 移除右侧检查器独立的“在 Jira 打开”胶囊及其占位，不再重复呈现同一跳转动作。
+- [x] 有 Jira URL 时，编号胶囊本身成为可点击、可键盘聚焦的新窗口链接；无 URL 时仍为非交互编号胶囊。
+- [x] 链接具备明确可访问名称和 default/hover/focus/active 状态，不能只依赖颜色表达可点击性。
+- [x] 标题继续占满检查器宽度，meta 行、移动端顺序、事实区、决策表单、刷新和数据边界不变。
+- [x] 建立症状级回归并通过静态、构建、设计检测和登录态宽屏/窄屏交互验证。
+
+### 强制 UI 评审（实现前）
+
+- **Design Read:** Daily Jira 研发早会审计检查器，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`。
+- **Impeccable distill:** 独立操作胶囊与 Jira 编号表达同一目标，应合并为一个明确入口；简化不能删除跳转、键盘或无 URL 回退能力。
+- **design-taste-frontend:** 密集 dashboard 不由该技能主导；只采用 preserve 模式、既有 IA/token/断点和不引入新视觉系统的约束。
+- **finesse-ui:** 产品界面应减少重复选择，让最具体的对象承担动作；交互必须有 hover/focus/active，外链语义和目标保持清晰。
+- **UI design system:** 延续现有 Jira 编号胶囊的尺寸、色彩与圆角；通过边框/底色/焦点环表达链接状态，不新增图标、动画或装饰层。
+- **共同方向:** `DailyJiraAudit.svelte` 条件渲染 `a.jira-key.jira-link` 或静态 `strong.jira-key`；移除 header action 列，并把 grid 收敛为 meta/title 单列两行。
+- **分歧处理:** 不把整个标题或整张检查器变为链接，因为点击范围过大且语义模糊；只让唯一 Jira 标识承担深链动作。
+- **保护规则:** 不修改 URL 生成、`target="_blank"`/`rel`、数据接口、选中项、决策写入、历史、刷新或 shell。
+
+### 阶段
+
+- [x] Phase 1：恢复规则、记忆与 UI 技能，完成三方 preserve-mode 评审
+- [x] Phase 2：确认当前独立 action、编号胶囊、标题 grid 和断点 owner
+- [x] Phase 3：建立症状级红灯并实施最小 markup/CSS 修复
+- [x] Phase 4：运行定向回归、Svelte/TypeScript、构建和设计检测
+- [x] Phase 5：完成登录态桌面/窄屏点击、键盘、几何和 console 验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed.
+- **Confirmed owner:** `DailyJiraAudit.svelte` 的 inspector header；共享 shell、共享组件和后端均无需修改。
+- **Outcome:** 一个 Jira URL 最多产生一个外链，链接文本仅为 Jira 编号，独立“在 Jira 打开”文案不再渲染；手机端视觉胶囊仍为 24px，但交互行扩展为 44px。
+- **Validation:** 定向契约与刷新回归 6/6、`pnpm check` 0 errors/83 既有 warnings、生产构建、Impeccable type/layout `[]`、Finesse P0=0 与 diff hygiene 全部通过；登录态真实点击 `HR-4090` 成功新开对应 Jira 页，宽屏/手机 header 均无局部横向溢出，console 无 warning/error。
+
+## 2026-08-14 每日 Jira 右侧标题宽度修复
+
+### 目标与验收契约
+
+- [x] 右侧检查器标题使用卡片完整可用宽度，不再因“在 Jira 打开”占据整列而只在左半区换行。
+- [x] 元信息与 Jira 操作保持首行对齐，标题独占下一行；两者不重叠，长标题完整换行。
+- [x] `<=520px` 明确按元信息、标题、Jira 操作的单列顺序排列，页面无横向溢出。
+- [x] 不修改双栏比例、事实区、早会决策、权限、保存、回溯、刷新和 inspector 滚动所有权。
+- [x] 建立症状级结构回归，并通过 Svelte/TypeScript、生产构建、设计检测及登录态多断点浏览器验收。
+
+### 强制三方 UI 评审（实现前）
+
+- **Design Read:** Daily Jira 研发早会审计检查器，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；保留 Phase 41 密集管理台与业务流程。
+- **Impeccable:** 根因是二维标题关系被实现成一维 flex；首行应承载标签和操作，主标题在第二行跨满两列。最小 owner 是 `DailyJiraAudit.svelte`，不得修改共享 shell 或 inspector。
+- **design-taste-frontend:** dashboard/product UI 不由该技能主导；只采用 preserve 模式、稳定 IA、既有 token、显式移动端收敛和不引入新视觉系统的约束。
+- **finesse-ui:** 标题是检查器的主事实，必须获得真实可用宽度；操作是次级动作，只占首行自身宽度，不能在其下制造无语义空白。产品态不新增动效或装饰层。
+- **UI design system:** 延续既有 4/8/16px 节奏、触控与焦点样式；不为本次布局修复统一已有的光学校准数值。
+- **Impeccable mechanical pre-scan:** layout detector=`[]`，Tailwind 任意 spacing/z-index 无匹配；静态扫描不覆盖普通 CSS grid/flex 或运行时文字几何。
+- **共同方向:** 扁平化 header markup，改为 `minmax(0, 1fr) auto` 两列两行 grid；meta/action 在首行，`h3` 跨满第二行。`<=520px` 使用单列 grid，保持 Jira 链接可见可点。
+- **分歧处理:** 仅给旧 `.inspector-identity` 增加 `flex:1` 虽改动更少，但标题仍需避让按钮整列，无法使用按钮下方空间，因此不采用。
+
+### 阶段
+
+- [x] Phase 1：恢复项目规则、记忆和 UI/诊断/规划技能
+- [x] Phase 2：完成截图、源码、独立主观审计和机械预扫，冻结布局 owner 与响应式方向
+- [x] Phase 3：建立症状级红灯并实施最小结构/CSS 修复
+- [x] Phase 4：运行定向回归、Svelte/TypeScript、构建和设计检测
+- [x] Phase 5：完成登录态桌面/窄屏几何、换行、溢出与 console 验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed.
+- **Classification:** `coding.complex`，既有 Daily Jira 检查器的局部布局回归；工作树包含大量用户修改，只允许窄范围增量编辑。
+- **Confirmed root cause:** `.inspector-header` 的 flex 把包含标题的 `.inspector-identity` 与 Jira 链接并排，标题永远受操作列约束；标题自身的换行规则不是根因。
+- **Outcome:** header 已改为两列两行 grid，标题在第二行跨满全部列；390px 按 meta/title/action 单列排列。没有修改 Daily Jira 数据、筛选、决策或刷新逻辑。
+- **Validation:** 定向契约和既有刷新测试 5/5、`pnpm check` 0 errors/83 既有 warnings、生产构建、Impeccable type/layout `[]`、Finesse P0=0 与 diff hygiene 全部通过。登录态宽屏/760/390 的标题宽度占 header 100%/98.5%/97.8%，无重叠、无横向溢出、console 无 warning/error。
+
+## 2026-08-14 右侧方案预览高度与冗余胶囊清理
+
+### 目标与验收契约
+
+- [x] 排期治理右侧方案预览在宽屏占满检查器内的剩余可用高度，与检查器底部对齐，不保留无用途的大块空白。
+- [x] Markdown 正文超出可视高度时仍可完整滚动浏览，不能裁剪正文或把滚动错误转移到整个文档。
+- [x] 移除方案预览下方两个冗余胶囊，但保留方案正文、编辑入口、加载/空/错误、权限、保存/发布与 revision/CAS 语义。
+- [x] 900px/390px 堆叠布局按内容自然增长，不引入固定空高、双滚动或文档横向溢出。
+- [x] 建立症状级几何/结构回归，并通过 Svelte/TypeScript、生产构建、Impeccable/Finesse 检测与登录态浏览器验收。
+
+### UI 评审门禁（实现前）
+
+- **Design Read:** 研发排期方案检查器，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`；现有 Phase 41 轻量管理台与业务交互保持不变。
+- **design-taste-frontend:** 该技能不主导 dashboard/product UI；仅采用 preserve 模式、保持现有 IA/字体/配色/断点、显式移动端收敛和去除冗余 pills 的约束。
+- **finesse-ui:** 预览正文是右侧检查器的主事实，应获得剩余高度；无业务动作的两个胶囊增加视觉噪声，应直接移除而不是重绘。产品态不新增动效或装饰层。
+- **UI design system:** 延续现有 4px spacing/token 与共享 Markdown 组件；只调整拥有剩余高度的局部容器，触控与焦点状态不变。
+- **Impeccable layout assessment:** 外层 `.schedule-main-grid`、inspector flex 与 `.schedule-solution-inline` 已正确填满共享行；根因是 `SolutionWorkspace` 自然高度 grid 与预览 `minHeight={420}`。移除 `.solution-facts`，让方案子工作区在宽屏消费剩余高度，不得用更大的固定值或新的 viewport `calc()` 掩盖问题。
+- **Impeccable mechanical pre-scan:** 两个目标文件的 layout detector=`[]`，Tailwind 任意 spacing/z-index 无匹配；机械扫描无法覆盖运行时剩余高度、滚动 owner 或胶囊价值判断。
+- **共同方向:** `DemandKanban` 继续拥有检查器尺寸与断点，`SolutionWorkspace` 拥有“编辑动作 + Markdown 正文”的内部高度分配和胶囊删除；不修改共享 `MarkdownWorkbench`。宽屏由 Markdown 内部 `.preview-pane` 保持唯一正文滚动，`<=1280px` 恢复自然 420px 内容高度并由页面承载堆叠。
+- **分歧处理:** 独立布局评估提出 `autoHeight` + 外层滚动作为候选，但登录态数据证明 `.preview-pane` 已能从 `419/7460` 完整滚到底；为避免嵌套/双滚动并保持既有组件契约，明确不采用 `autoHeight`。
+- **保护规则:** 不修改 shell、导航、数据接口、方案状态机、编辑 Modal、保存/发布/冲突逻辑或其他检查器 tab；不回退脏工作树。
+
+### 阶段
+
+- [x] Phase 1：恢复项目规则、相关记忆和 UI/诊断/规划技能
+- [x] Phase 2：建立几何反馈环，完成独立布局评估、机械 pre-scan 和三方共识
+- [x] Phase 3：建立症状级红灯并实施最小组件修复
+- [x] Phase 4：运行定向回归、Svelte/TypeScript、构建与设计检测
+- [x] Phase 5：登录态宽屏/900/390 几何、滚动与内容验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed
+- **Classification:** `coding.complex`，上一轮方案预览/编辑工作的布局 follow-up；风险低但涉及共享 Markdown 的高度和滚动契约。
+- **Outcome:** 宽屏 Markdown 底部到检查器仅保留 `16.55px` 合法内边距，内部预览为 `487/7460` 单一滚动容器；900px/390px 回落到 420px 自然高度，文档无横向溢出，胶囊数量为 0。
+- **Validation:** 定向契约 14/14、`pnpm check` 0 errors（83 条仓库既有 warnings）、生产构建、Impeccable `[]`、Finesse P0=0 与精确 diff hygiene 均通过；登录态 DG-394 未触发保存、发布或其他业务写入。
+
+## 2026-08-14 方案编辑弹窗扁平化与 Markdown 表头默认隐藏
+
+### 目标与验收契约
+
+- [x] 排期治理点击“编辑方案”后，Modal 正文直接呈现可编辑 Markdown 内容，不再出现弹窗内二次卡片/边框/标题容器。
+- [x] Markdown 工作台的 label 与 description 默认不渲染；确实需要表头的调用方必须显式 opt-in，不能靠每个页面覆写 CSS 隐藏。
+- [x] 保留方案正文、编辑、保存、发布、冲突、脏关闭确认、权限和历史审计语义；不改后端 API、revision/CAS 或业务按钮。
+- [x] 保护其他 Markdown 工作台调用方：默认隐藏不应移除工具栏、模式切换、错误/只读/空状态或可访问名称。
+- [x] 覆盖排期治理宽屏、900px、390px 的弹窗层级、正文可见、滚动、按钮、关闭路径与零文档横向溢出。
+- [x] 建立症状级回归，并通过 Svelte/TypeScript、生产构建、Impeccable/Finesse 检测和登录态浏览器验收。
+
+### 强制三方 UI 评审（实现前）
+
+- **Design Read:** 研发排期方案编辑，克制、直接、结果优先；`redesign-preserve`，`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`。
+- **Impeccable:** 共享 Modal 已经是唯一强容器，编辑正文应直接成为 Modal body；移除嵌套卡片层，但保留焦点圈定、关闭、滚动、错误和操作 footer。Markdown 可视标题属于可选辅助层，不应和必需的 accessible name 混为一谈。
+- **design-taste-frontend:** dashboard/product UI 不在其主导范围；仅采用 `redesign-preserve`、去除 nested cards、保留 IA/文案/交互/断点的约束，不引入营销页构图、字体、动效或新设计系统。
+- **finesse-ui:** `register=product` 下减少重复边框与描述能提升信息密度；编辑器直接承载任务，表头改为共享组件的显式 opt-in，动效保持 SPECTACLE 1，仅表达现有 Modal 状态。
+- **共同方向:** 外层 Modal 拥有标题、说明与 footer；Markdown 工作台只拥有编辑/预览正文与工具栏。默认隐藏视觉 label/description，调用方如需显示必须显式开启；不能通过页面 CSS 隐藏或复制组件。
+- **保护规则:** 不改共享 Modal 几何与关闭契约，不改保存/发布编排、脏草稿保护、方案 API、Phase 41 tokens 和其他业务调用。
+- **实现确认:** 嵌套视觉边界来自 `SolutionWorkspace.svelte` 的正文 padding 与 `MarkdownWorkbench.svelte` 自身 surface；可访问名称继续由 `label` 提供，视觉元信息与语义名称已解耦。
+
+### 阶段
+
+- [x] Phase 1：恢复项目规则、记忆与 UI 技能门禁，冻结验收合同
+- [x] Phase 2：定位编辑弹窗嵌套层、Markdown 表头默认值和全部调用方
+- [x] Phase 3：建立两项症状级红灯并实施最小共享边界修复
+- [x] Phase 4：静态检查、生产构建、Impeccable/Finesse 与差异卫生
+- [x] Phase 5：登录态宽屏/900/390 弹窗与其他调用方回归验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed
+- **Classification:** `coding.complex`，既有方案编辑流程的结构性 UI follow-up；脏工作树中存在并行任务，只允许窄范围增量修改。
+- **Confirmed owner:** `MarkdownWorkbench.svelte` 新增共享的视觉元信息 opt-in 与嵌入态；`SolutionWorkspace.svelte` 只选择嵌入态并去掉弹窗正文的二次留白；`Modal.svelte` 仅增加方案弹窗显式启用的滚动条轨道隐藏能力，标题、关闭、可滚动性与 footer 契约保持不变。
+- **Validation:** 13/13 症状/方案同步契约通过；`pnpm check` 0 errors、生产构建通过、Impeccable/Finesse 与 diff hygiene 通过。登录态 DG-394 在 1440/900/390 三个断点均为单一视觉边界、零文档横向溢出；390px 仅编辑器承载长正文滚动，关闭后焦点归还，数据库 revision 未变化。
+
+## 2026-08-14 算分面板样式与对齐优化
+
+### 目标与验收契约
+
+- [x] 明确用户所指算分面板的真实组件、当前桌面/窄屏布局和错位来源，不修改评分公式、数据字段或后台任务。
+- [x] 统一标题、状态摘要、指标说明、筛选/操作区、表头/数据列和详情入口的网格基线、内边距及数值对齐。
+- [x] 保留现有 Phase 41 设计系统、信息架构、共享 Modal、core-member 边界、参考分/正式分语义与加载/空/错误状态。
+- [x] 桌面高密度可扫读；900px/390px 自然重排，无横向溢出、遮挡、抖动或触控目标缩小。
+- [x] 完成 Impeccable、design-taste-frontend、finesse-ui、UI design system 四方实现前评审，记录共同方向与分歧后再编辑前端。
+- [x] 通过症状级契约、Svelte/TypeScript、生产构建、设计检测与登录态多断点浏览器验收。
+
+### 阶段
+
+- [x] Phase 1：恢复项目规则、任务记忆和 UI 技能门禁
+- [x] Phase 2：定位算分面板、建立当前页面与几何红灯
+- [x] Phase 3：完成四方设计评审并冻结布局/组件归属
+- [x] Phase 4：实施最小样式与结构优化，补充针对性回归
+- [x] Phase 5：静态检查、构建、设计检测与登录态多断点验收
+
+### 四方 UI 评审结论（实现前门禁）
+
+- **Design Read:** 研发绩效审计管理台，`redesign-preserve`、`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`；目标是加快管理者复核分数、门槛与证据，不增加装饰层。
+- **Impeccable:** 当前页首、状态、规则/审计、系数、快照和共享 Modal 的业务层级正确。修复应落在组件本地的网格基线、列宽与语义对齐；宽表继续只有一个可键盘滚动的 overflow owner，760px 以下保留单列和 44px 操作目标。
+- **design-taste-frontend:** dashboard/data-table 不在该技能的主导范围，仅采用 `redesign-preserve`：保留 Phase 41 tokens、导航、文案、断点和交互，不引入营销式构图、展示字体或新主题。
+- **finesse-ui:** 数值应右对齐并启用 tabular numbers，状态/等级居中，文本与时间左对齐；状态卡使用固定三行节奏，表格锁定可读列宽。SPECTACLE 1 下不新增动效。
+- **UI design system:** 使用 4/8pt 网格，页面主节奏与卡片内边距统一为 16px；标题、值、说明建立稳定基线，最多保留现有三级文字层级。
+- **共同方向:** 只修改 `PerformanceCalculationGuide.svelte` 和其症状级契约。状态卡统一标签/主值/说明行；公式、系数、章节标题的内容起点统一；指标表和快照表以语义 class 对齐数字，快照表给各列明确宽度，避免 65px 列把状态与时间任意拆行；详情表沿用同一数值规则。
+- **分歧处理:** finesse 的 grain/type-tension 建议与本项目 Phase 41 product register 冲突，明确不采用；Impeccable 的独立子代理双评审因本轮开发者禁止未授权子代理，按技能 fallback 由主代理先做视觉/布局审计、再运行机械检测（结果 `[]`）。
+- **响应式与验证:** 1280 检查四卡基线、公式/检查器起点、快照列宽和详情；900 检查 2 列状态卡、单列检查器和唯一表格横向滚动；390 检查单列、44px 刷新按钮、文档零横向溢出、表格内部滚动与成员详情关闭。
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Classification:** `coding.complex` + existing product UI refinement; preserve-mode only.
+- **Protection rules:** 不改后端、评分公式、快照、配置和审计；不还原用户脏工作树；前端编辑前必须完成项目四方 UI 门禁。
+- **Outcome:** 四卡三行基线、16px 内容起点、表格数值/状态/时间对齐、1210px 快照列宽与 sticky 人员列均已完成；1280/900/390 登录态验证无文档横向溢出，移动详情和关闭路径通过。
+
+## 2026-08-13 方案默认预览与弹窗编辑
+
+### 目标与验收契约
+
+- [x] 方案正文默认以只读 Markdown 预览呈现，不在主页面暴露即时编辑器。
+- [x] 主页面只保留一个“编辑方案”入口；打开共享 Modal 后可以即时修改、保存草稿和发布。
+- [x] 主页面移除现有“保存方案”“发布方案”“编辑新版本”按钮，弹窗操作收敛为“保存”“发布”。
+- [x] 从所有默认可见文案中移除版本号、历史版本数及“新版本”描述；后台 revision、CAS、不可变历史和审计语义保持不变。
+- [x] 已发布方案点击编辑时建立受治理草稿；脏内容关闭时必须明确继续编辑或放弃，轮询和远端更新不得静默覆盖本地内容。
+- [x] 覆盖读取、空、错误、草稿、已发布、保存、发布、冲突、放弃修改、无写权限及 1440/900/390 响应式状态。
+
+### UI 三方评审结论（实现前门禁）
+
+- **Design Read:** 研发方案评审工作台，事实优先、紧凑稳定；`redesign-preserve`，`register=product`、`SPECTACLE=1`、`DENSITY=8`。
+- **Impeccable:** 默认页面是阅读任务，应使用只读预览；Modal 只有在用户明确点击编辑时出现，继续复用共享 Modal 的焦点、关闭和滚动能力。保存/发布必须具备 loading、disabled、success、error 和 conflict 状态。
+- **design-taste-frontend:** 密集产品 UI 不属于其主导范围；仅采用保留现有 IA、Phase 41 tokens、按钮语义、44px 触控目标和状态完整性的约束，不引入营销页构图、字体或动效。
+- **finesse-ui:** 产品模式下将稀有的编辑动作渐进披露到 Dialog 是合理的；主页面保持一个明确入口，Modal 内使用同一按钮词汇和固定操作区，动效仅表达弹窗状态。
+- **共同层级:** 主页面为“固定链接 + 编辑方案 + Markdown 预览 + 来源事实”；Modal 为“即时编辑器 + 冲突/放弃提示 + 保存/发布”。不在两个层级重复相同操作。
+- **组件归属:** `SolutionWorkspace.svelte` 拥有预览/编辑状态、保存发布编排与脏草稿保护；`MarkdownWorkbench.svelte` 继续分别承担 preview/live 渲染；共享 `Modal.svelte` 继续拥有 portal、焦点圈定、Escape/背景关闭和响应式几何。
+- **响应式:** 宽屏 Modal 使用既有 wide 960px；900px 以内正文单列且 footer 操作不换成第二套组件；390px 使用 viewport 边距、按钮最小 44px、正文单一纵向滚动且无文档横向溢出。
+- **分歧及处理:** Impeccable 提醒 Modal 不应成为默认编辑方案，但用户明确要求以弹窗承载稀有编辑操作；本场景采用渐进披露。Finesse 的 grain/展示字体通用 substrate 与 Phase 41 产品界面冲突，按项目优先级保留现有 token、system font、hairline 和无装饰动效。
+- **Review status:** hierarchy, component ownership, responsive behavior, dirty-state safety, accessibility, and validation scope agreed; frontend editing gate open.
+
+### 阶段
+
+- [x] Phase 1：读取规则、记忆、现有组件和方案领域边界，完成三方评审
+- [x] Phase 2：建立默认预览、单一编辑入口、无版本文案和弹窗操作契约
+- [x] Phase 3：实现弹窗即时编辑、保存/发布编排和脏草稿关闭保护
+- [x] Phase 4：运行前端契约、Svelte 检查、构建与设计检测
+- [x] Phase 5：启动受控环境并完成登录态多断点浏览器验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; not deployed
+- **Protection rules:** 不改变方案 API、数据库 revision/CAS、不删除不可变历史、不改变 Jira 回写/outbox、不触碰方案中心 IA；只修改 `SolutionWorkspace.svelte` 与其症状级前端契约，必要时复用现有共享组件。
+- **Known facts:** Markdown 正文仍是唯一权威；当前主页面直接渲染 `mode="live"`，并同时暴露保存/发布/编辑新版本及 `v{version}`、历史版本数。共享 Modal 已提供 wide、焦点归还和移动端几何。
+- **Errors encountered:** 首次 `pnpm check` 在 `SolutionWorkspace.svelte:363` 报命名 footer slot 不可位于 `{#if}` 内；已让 slot 成为 `Modal` 直接子节点。隔离验证首次把 `GOMODCACHE` 指向空目录导致受限网络下载失败；已复用本机现有模块缓存并保留独立 `GOCACHE`。
+- **Validation:** 26/26 前端契约、`pnpm check` 零错误、生产构建、Impeccable/Finesse、diff hygiene 及登录态桌面/390px 浏览器均通过。DG-352 默认显示预览；弹窗内保存/发布可见；旧按钮和版本文案不可见；脏关闭提示生效，放弃后测试文本未持久化；控制台无 warning/error。
+
+## 2026-08-13 绩效 v5.0 全量落地与解决方案卡片正文修复
+
+### 目标与验收契约
+
+- [x] v5.0 将当前 10 个指标收敛为需求交付、Bug 质量、代码过程 3 个维度和 8 个可执行指标，所有指标保持 1—5 分档及 `分档 × 20 × 权重` 贡献口径。
+- [x] 需求数、Bug 数、延期次数、Commit 数作为暴露量或审计明细；只有加权率、周期达成率、责任密度和受限风险信号进入正式分，避免原始次数直接奖惩。
+- [x] 需求权重继续保留规模、需求等级、项目权重、复杂度、阶段、角色/责任份额；Bug 继续保留严重度、逃逸阶段和责任份额，并区分修复负责人和缺陷责任人。
+- [x] Jira 能持久化 priority、severity 及负责人/状态/截止日期等流转事实；Git 证据先消除 webhook/同 SHA 重复，再为重复变更提供稳定指纹与排除原因。
+- [x] v5.0 支持配置开关、影子模式、冻结公式版本、后台静默滚动计算、core-member 边界、不可变快照/审计和可配置保留期；未达到正式门槛保持 N/A，不将局部证据放大。
+- [x] `研发考核评分判定表.xlsx` 同步到 v5.0，公式、权重、数据来源、缺证规则和验收检查可追踪且视觉验证通过。
+- [x] 解决方案卡片在真实有正文数据时显示内容；加载、空、错误、长文本、窄屏和详情交互保持现有 Phase 41 业务流，无客户端静默吞字段。
+- [x] 完成 v4.2/v5.0 迁移与影子对比回归、全量后端测试、前端检查/构建、设计检测、真实数据库重算和登录态浏览器验收。
+
+### UI 三方评审方向
+
+- **Impeccable：** 这是既有产品管理台的内容完整性修复。卡片必须让真实正文在默认状态可读，并覆盖 loading/empty/error/long-content；不以动画或条件 class 隐藏默认正文。
+- **design-taste-frontend：** dashboard/product UI 超出其主导范围；采用 `redesign-preserve`，保留现有导航、卡片所有权、Phase 41 tokens、断点和交互，不引入营销页结构。
+- **finesse-ui：** `register=product`、`SPECTACLE=1`、`DENSITY=8`。正文是卡片的核心事实，不得被装饰、遮罩、固定高度或错误字段映射吞掉；长内容应在合法区域换行或渐进披露。
+- **共同方向：** 先用真实 API/DOM 建立正文为空红灯，定位数据字段、派生映射、条件渲染和 CSS 可见性中的最小所有者；只在该所有者修复。评分页面沿用现有表格/详情 Modal，只把 v5.0 的 3 维度和 8 指标投影进去。
+- **验证范围：** 已登录宽屏和窄屏、卡片列表/详情、正文存在/空/长文本、console/network；评分列表/详情、v5.0 公式说明、影子/正式状态和来源证据。
+
+### 阶段
+
+- [x] Phase 1：恢复规则、冻结完整验收合同并盘点当前实现
+- [x] Phase 2：建立 v5.0 领域/公式/数据契约及解决方案正文红灯
+- [x] Phase 3：实现 Jira/Git 源事实、v5.0 计算、配置、审计和迁移
+- [x] Phase 4：更新评分判定表、后端解释与前端投影
+- [x] Phase 5：修复解决方案卡片正文并完成症状级回归
+- [x] Phase 6：全量验证、真实重算、登录态多断点验收和完成审计
+
+### 当前状态
+
+- **Phase:** Phase 1-6 complete locally；v5.0 已完成真实 Jira 历史补采、隔离重算、配置/页面/弹窗验收，解决方案原始深链已在干净重载后复验。
+- **Design Read:** 研发交付与绩效审计管理台，事实优先、紧凑稳定；`redesign-preserve`，`register=product`、`SPECTACLE=1`、`DENSITY=8`。
+- **Constraints:** 保留用户脏工作树；不删除历史绩效快照；不把修复贡献推断为缺陷责任；不使用原始计数直接形成正式绩效结论；前端编辑前完成三方门禁。
+- **Runtime evidence:** 最新 `v5.0` run 生成 14 条快照，对应 14 名唯一 core member；全部为 shadow、正式分为 N/A，参考分 4—44，100 分 0 条。Jira 源事实 4774 条、覆盖 860 个事项，成员详情可追到负责人流转区间与需求权重。
+- **Validation:** `go test ./... -count=1`、`go vet ./...`、24 项前端契约、`pnpm check`、`pnpm build`、Impeccable detector、真实登录态宽屏浏览器及弹窗几何/单一关闭入口均通过；Svelte 保留 88 条既有警告、构建保留既有 chunk-size 提示，零错误。
+
+## 2026-08-13 绩效 100 分异常修复
+
+### 目标与验收契约
+
+- [x] 单项能力按判定表保留 1—5 分档；单项加权贡献按“分档 × 20 × 指标权重”计算。
+- [x] 成员参考分是所有样本达标指标加权贡献之和，不得再按当前证据覆盖率二次归一到 100。
+- [x] 当前 v4.2 快照中不存在由局部证据放大的 100 分；原始比率 100% 与指标分、加权贡献、成员参考分必须分层展示。
+- [x] 旧版快照继续作为不可变审计历史保留，最近人员评分只投影每位 core member 的最新 v4.2 快照。
+
+### 诊断与 UI 三方评审
+
+- **反馈环：** 历史 Jira C01 满足 3/3、比率 100% 且权重 20% 时，先断言成员参考分必须是 20；修复前稳定得到 100。浏览器复验同时检查 100% 原始比率、5 分档、指标分 5 和加权贡献 20。
+- **Impeccable：** 当前页面已经具备列表、共享详情 Modal 和分层字段，不需要新增组件或改变视觉层级；只修复后端评分语义并保留现有状态表达。
+- **design-taste-frontend：** dashboard/data table 不属于该技能主导范围；采用 `redesign-preserve`，不修改 Phase 41 tokens、布局、响应式、列密度或交互。
+- **finesse-ui：** Design Read 为事实优先的绩效审计管理台，`register=product`、`SPECTACLE=1`、`DENSITY=8`；同一数值层级必须可审计且不可相互冒充。
+- **共同方向：** 评分层级固定为“原始比率 -> 1—5 分档 -> ×20×权重的单项贡献 -> 合格贡献求和的成员参考分 -> 满足发布门槛后的正式分”。前端组件所有权和弹窗几何不变。
+- **验证范围：** 规则边界红绿灯、完整 Go 回归、真实数据库重算、登录态列表/详情、审计历史保留、前端构建与设计检测。
+
+### 阶段
+
+- [x] Phase 1：核对判定表、真实数据库与页面，定位 100 分所在层级
+- [x] Phase 2：建立局部 20% 证据不得归一成 100 的红灯
+- [x] Phase 3：修复 1—5 指标分及成员加权聚合，升级公式到 v4.2
+- [x] Phase 4：后台重算并核验当前快照、详情来源与旧版审计历史
+- [x] Phase 5：完整回归、静态检测与登录态浏览器验收
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally; root service running
+- **Root cause:** v4.1 先把 1—5 分档映射为 20—100，再将样本达标贡献除以 `qualifiedWeight`。当成员只有权重 20% 的 C01 达标且比率 100% 时，计算成为 `100 × 20% ÷ 20% = 100`，把局部证据错误放大成成员总分。
+- **Result:** v4.2 使用 `5 × 20 × 20% = 20` 作为 C01 加权贡献，并直接累加所有合格贡献，不再按可用覆盖率二次放大。最新 14 位 core member 当前快照最高参考分 20，100 分记录 0 条；单指标最高分 5、最高加权贡献 20。
+- **Audit boundary:** v4.1 历史 100 分快照不删除、不改写；当前投影以最新 v4.2 快照为准，因此审计可追溯且当前展示已纠正。
+- **Validation:** 定向红绿灯和 `internal/performance` 完整测试通过；真实 v4.2 run 已写入 14 条快照；登录态页面验证列表无 100 分，详情显示“100% / 5 分档 / 5.00 / 20.00”，控制台无错误。
+
+## 2026-08-13 最近人员评分快照成员去重
+
+### 目标与验收契约
+
+- [x] “最近人员评分快照”每位 core member 只显示一行，选择排序上最新的持久化快照。
+- [x] `snapshot_limit` 表示最多返回多少位不同成员，而不是多少条历史运行记录。
+- [x] 历史快照、运行记录和审计事件继续追加保存，不删除、不覆盖，历史快照详情仍可按 ID 查询。
+- [x] 保持现有列、参考分/正式分语义、成员详情弹窗、只读行为和 core-member 可见性边界。
+
+### 诊断与 UI 三方评审
+
+- **反馈环：** 在 `Module.Explain` 的既有 core-member 回归中为同一成员写入两个不同运行的快照，断言响应只包含最新 ID；修复前应稳定返回两行。
+- **Impeccable：** 重复是列表投影错误，不是视觉层问题。维持一个表格和一个共享详情 Modal；空/错误/加载状态不变，计数应自然变为不同成员数。
+- **design-taste-frontend：** 该技能明确不主导 dashboard/data table。本轮采用 `redesign-preserve`，不改 Phase 41 tokens、列结构、密度、字体、配色、断点或动效。
+- **finesse-ui：** Design Read 为“研发绩效审计管理台，克制且事实优先，register=product，SPECTACLE=1，DENSITY=8”。同一实体在当前快照表只能占一行，数值与状态保持现有对齐和文字信号。
+- **共同方向：** 去重归属后端只读投影层：按 `created_at DESC, id DESC` 扫描，只接受每个 canonical core member 的第一条快照；数据库 append-only 审计模型不变。前端继续直接渲染 API，无需客户端二次去重。
+- **分歧解决：** 不采用任何视觉重构、分页或历史展开控件；用户当前要求的是消除重复，不是新增历史浏览功能。
+- **验证范围：** 模块红绿灯、相关 Go 回归、前端治理契约/生产构建、Impeccable/Finesse 检测、登录态页面中成员唯一性与详情打开；保持现有响应式布局。
+
+### 阶段
+
+- [x] Phase 1：复现并定位重复来源，完成 UI 三方评审
+- [x] Phase 2：建立同成员多运行快照红灯
+- [x] Phase 3：实施后端最新快照去重并验证历史不被删除
+- [x] Phase 4：相关回归、设计检测与登录态页面验收
+
+### 当前状态
+
+- **Phase:** Phase 1-4 complete locally; root service running
+- **Root cause:** `Module.Explain` 按时间倒序扫描所有快照，仅过滤 core member，未按 canonical subject 去重；因此每次定时运行都为同一成员追加一行到页面响应。
+- **Protection:** 数据库中的历史快照和审计事件是不可变证据，不能通过删除历史解决页面重复。
+- **Result:** 当前投影按 `created_at DESC, id DESC` 选择每位 canonical core member 的第一条快照；数据库仍保留 287 条快照、15 次运行，最新运行 14 行对应 14 位不同成员。
+- **Validation:** 模块多运行回归通过并证明旧快照仍可按 ID 查询、数据库行未删除；`go test ./...`、`go vet ./...`、绩效前端契约 3/3、生产构建、Impeccable/Finesse 检测和 diff hygiene 通过。登录态页面实测 14 行、14 个唯一成员，详情指向最新 run。
+
+## 2026-08-13 绩效新算法全员零分修复
+
+### 目标与验收契约
+
+- [x] 已完成且 `resolutiondate` 落在考核周期内的 Jira 需求即使没有 `due_date`，仍进入 C01 交付验收计算；C02 继续只使用有周期内到期日的任务。
+- [x] 指标低于最小样本数时允许形成“参考分”，但不计入正式覆盖率、核心指标齐套或正式评级；判定表的 70% 覆盖、5 个有效样本、30 暴露与核心指标门槛保持不变。
+- [x] 成员列表和详情明确区分“参考分”与“正式评分”，不得把 SQL `NULL`、证据不足或低样本结果显示为 0，也不得把参考分冒充正式绩效分。
+- [x] 只计算 coremember 成员，保留 C04 正式缺陷归因边界，不以修复经办人推断责任人。
+- [x] 后台重算后用真实数据库证明至少一个有历史 Jira 完成记录的成员获得非零参考分，并保留正式评分为空时的审计原因。
+
+### 分类与设计方向
+
+- **分类：** `coding.complex` + `diagnosing-bugs`，涉及判定表语义、历史 Jira 时间口径、后台评分投影与前端解释；工作树已有大量用户改动，仅修改本任务直接拥有的绩效模块、页面和针对性测试。
+- **Design Read：** 既有研发绩效管理台的 `redesign-preserve` 修复，面向需要审计分数来源的管理者；事实优先、稳定高密度，沿用 Phase 41 设计系统。`variance=2`、`motion=1`、`density=8`，`register=product`、`SPECTACLE=1`。
+- **保护规则：** 不改变导航、信息架构、弹窗几何、主题、颜色、字体、行密度或评分判定表门槛；不填造 C03-C10 证据，不把低样本结果发布为正式评分。
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 当前“不可评级 + N/A”把“已有可计算证据”和“正式门槛未满足”混为一件事。列表的主数值应命名为“参考分”，同一行用文字状态说明能否正式评级；只有完全没有可计算证据时才显示 N/A。详情继续在既有弹窗内解释样本数、资格和来源，不新增弹窗链路。
+- **design-taste-frontend：** 此技能明确不主导 dashboard/data table，本轮只采用 `redesign-preserve`、状态完整性、术语一致性和无布局漂移约束。保留既有 Phase 41 tokens、表格、断点与交互，不引入品牌页素材、卡片、动效或新设计系统。
+- **finesse-ui：** `register=product`、`SPECTACLE=1`、`DENSITY=8`。数值列保持右对齐与稳定宽度，不能只靠颜色表达状态；“参考分”和“正式评分”必须是两个不同字段/标签，详情中逐指标呈现样本是否达标。
+- **共同方向：** 后端拥有“可计算指标”和“正式合格指标”的边界；前端只投影参考分、正式评分、评级状态和证据原因。列表不改变组件所有权和响应式结构，详情仍使用共享 Modal。
+- **分歧解决：** 不采纳 finesse 面向品牌页的 grain、材质和 display typography，也不使用 design-taste 的营销页图像/hero规则；项目产品寄存器和现有设计合同优先。
+- **验证范围：** 列表加载/空/错误/有参考分/正式分、详情低样本与合格样本、1440/900/390 断点、键盘关闭路径、零横向溢出；后台真实重算与审计快照一并核对。
+
+### 阶段
+
+- [x] Phase 1：建立全员无发布分红灯，核对判定表、数据库与真实 Jira 历史
+- [x] Phase 2：验证可证伪假设并完成三方 UI 评审
+- [x] Phase 3：先补回归，再实现 C01 历史完成口径及参考分/正式评分分离
+- [x] Phase 4：重启本地后台触发重算，核验成员、分数、来源与审计记录
+- [x] Phase 5：完整回归、设计检测、登录态浏览器验收；受当前 in-app browser 固定 1280×720 视口限制，窄屏以共享 Modal/页面断点源码规则和生产构建补充验证
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Root cause:** 原实现只有 `due_date` 落在周期内才让任务进入 C01/C02；真实 Jira 历史中大量已完成需求没有到期日，因此 C01 被错误丢弃。其余少量指标又在最小样本数之前直接返回不可用，导致 14 名 coremember 全部没有可展示参考分，页面把“已有证据但不足发布”统称为 N/A。
+- **Result（已被 v4.2 修正）：** v4.1 后台运行曾持久化 14 人快照并恢复 8 人非零参考分，但把仅有 20% 合格证据的 C01 满档结果错误归一为 100；该结论在后续“绩效 100 分异常修复”中被证伪并由 v4.2 重算替代。低样本指标仍不进入成员参考分。
+- **Validation:** `go test ./...`、`go vet ./...`、绩效前端契约 3/3、生产构建、Impeccable、Finesse P0 和精确 diff hygiene 均通过；真实登录页面在 1280×720 验证了列表、合格/低样本详情、Jira 来源与系数过程。仓库级 `pnpm check` 仍被无关脏文件 `SolutionWorkspace.svelte` 的 9 个既有错误阻塞。
+- **Boundary:** 判定表中的最低样本数、70% 覆盖率、30 暴露量、核心指标与 C04 正式归因约束均未放宽；只纠正历史完成口径和结果表达层级。
+
+## 2026-08-13 任务跟踪卡片底部对齐
+
+### 目标与验收契约
+
+- [x] 登录态“任务跟踪”下的任务表、执行追踪在宽屏状态与其他主页面使用一致的浏览器底部安全间距；最下方主卡片不得提前结束或贴底。
+- [x] 修复必须落在实际拥有高度预算/底部间距的最小容器，不能用页面局部 `margin-bottom`、固定像素卡片高度或空白 grid row 掩盖问题。
+- [x] 保持现有指标、阶段条、筛选栏、表格/检查器、页签数据和业务操作；长列表继续由既定内部区域滚动。
+- [x] 在桌面、堆叠与 760/390 窄屏验证底部 inset、卡片对齐、滚动所有权和零文档级横向溢出。
+- [x] 建立症状级回归，并通过 Svelte/TypeScript、生产构建、Impeccable/Finesse 检测和登录态浏览器验收。
+
+### 分类与设计方向
+
+- **分类：** `coding.complex`，多页签共享 TaskKanban 的 viewport 几何回归；工作树已有大量用户改动，仅允许最小、可归因补丁。
+- **Design Read：** 研发交付管理台，事实优先、紧凑稳定；`redesign-preserve`，`register=product`，`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`。
+- **保护规则：** 不改变导航、信息架构、文案、配色、字体、行密度、筛选、数据请求、选中态和业务动作；不把任务跟踪修复扩展为共享 shell 全站重构，除非运行时证据证明共享所有者有缺陷。
+
+### 强制三方 UI 评审
+
+- **Impeccable：** 登录态几何证明共享 shell 与 `TaskKanban` 根节点已正确抵达统一 22px 底部安全区；缺陷只发生在执行追踪工作台的两个 peer 卡片。应删除执行页末尾覆盖共享桌面高度契约的 auto/clamp/sticky 例外，让工作台占满剩余 grid row，并由表格 shell 与检查器分别内部滚动。
+- **design-taste-frontend：** 明确不主导 dashboard/data table；采用 `redesign-preserve`，保持既有 Phase 41 设计系统、响应式结构、信息架构、文案和交互。当前属于布局回归，不引入营销布局、动效、新组件语言或视觉重构。
+- **finesse-ui：** `register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=8`。一个工作台行中的表格与检查器必须共享可预测高度；长内容由各自合法内部滚动区承载，不能让外层根滚动和固定 `clamp()` 高度共同竞争。
+- **共同方向：** `FunctionalAdminShell` 继续拥有 22px 页面底部 inset，`FunctionalWorkspace` 继续把 `.kanban-section` 拉伸到可用高度；`TaskKanban` 统一状态/执行两视图的桌面 grid 契约。只移除执行视图破坏 stretch 的覆盖，并补足执行检查器内部滚动。`<=1180px` 保持现有堆叠和自然高度。
+- **分歧解决：** 不采纳 finesse 面向品牌页的 grain/材质和 design-taste 的外部设计系统建议；项目 Phase 41 与现有组件是权威。也不修改共享 shell，因为任务表实测已与 shell 正确对齐，扩大修改会增加其他页面回归风险。
+- **验证范围：** 宽屏任务表与执行追踪的根/工作台/左右卡片 bottom delta；执行表格和检查器的独立滚动；1180、760、390 的自然堆叠与零横向溢出；不提交任何业务动作。
+
+### 阶段
+
+- [x] Phase 1：登录态复现并测量任务跟踪与对照页面底部几何
+- [x] Phase 2：定位高度预算、grid 行与滚动所有者根因，完成三方评审
+- [x] Phase 3：先建立症状级回归，再实施最小修复
+- [x] Phase 4：静态检查、Impeccable/Finesse 检测与差异卫生
+- [x] Phase 5：任务表/执行追踪全断点登录态验收
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 初次读取 planning-with-files 使用了不存在的 `~/.codex/skills` 路径 | 1 | 按技能目录表改用 `~/.agents/skills/planning-with-files/SKILL.md`，已完整加载，不重复错误路径。 |
+| 首次追加计划时文件头已被并行工作加入新的“全局方案治理中心”任务，补丁上下文过时 | 1 | 重新读取文件头，仅在总标题下插入本任务，不覆盖或重排他人任务。 |
+| 浏览器只读测量环境不提供可调用的 `parseFloat`，且首个 760px 脚本对可选容器缺少空值保护 | 2 | 改为以已验证的任务根底边作为目标值，并先发现断点 DOM、再进行空值安全测量；两项均只影响验证脚本，未影响页面和数据。 |
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Status:** 宽屏执行追踪 workbench、左表格卡、右检查器相对任务根底边 delta 均小于 0.001px，左右差为 0；任务表同样保持 0 差值。1180/760/390 均自然堆叠且文档横向溢出为 0，浏览器 console 无 error/warn。症状与相邻排期契约 6/6，Svelte 0 errors/81 条既有 warnings，TypeScript、生产构建、Impeccable 与 diff check 通过；Finesse 无 P0，仅有本组件既有纯白 fallback P2。
+
+---
+
+## 2026-08-12 全局方案治理中心
+
+### 目标与验收契约
+
+- [x] 新增独立于需求方案写模型的全局方案目录，只有已发布方案进入目录；需求侧 `SolutionAsset/SolutionRevision` 继续作为事实源。
+- [x] 目录同步同时支持发布后增量同步与后台定时校准，重复执行幂等，不覆盖或删除原方案版本。
+- [x] 全局列表、检索和详情严格先应用用户可见项目范围，跨项目聚合不得泄露标题、摘要、相似项或统计。
+- [x] 建立“候选召回 -> 需求等价性 -> 方案兼容性”两轮对比持久化模型；标准化结果是待人工复核的提案，不静默改写源方案。
+- [x] 新增全局方案中心页面，以列表和右侧详情检查器承载查阅、相似方案与治理状态；不增加弹窗链路。
+- [x] 页面全部下拉选择复用 `web/src/components/shared/Select.svelte`，保持现有 Phase 41 控件、焦点、下拉方向与响应式契约。
+- [x] 完成后端单元/集成测试、前端检查/构建、Impeccable/Finesse 检测，以及登录态宽屏、平板、手机的真实页面验证。
+
+### 阶段
+
+- [x] Phase 1：确认领域边界、权限来源、发布链路、调度入口、全局导航与共享控件
+- [x] Phase 2：实现目录、相似对比、标准化提案模型和幂等深模块
+- [x] Phase 3：接入发布增量同步、定时校准、权限化 API 与相关回归
+- [x] Phase 4：实现方案中心列表/检查器、统一 Select 和完整交互状态
+- [x] Phase 5：全量回归、设计检测、登录态多断点与隔离认证页面验收
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 方案中心属于高密度产品界面，应让用户直接进入查阅与治理任务。采用低矮筛选工具条、稳定列表与就地更新的详情检查器；加载用同形骨架，空态解释目录仅收录已发布方案，错误在当前区域提供重试。禁止把方案详情、相似对比或标准化操作做成多层弹窗。
+- **design-taste-frontend：** 当前为既有 Phase 41 管理台的 `redesign-preserve` 扩展，不更换导航结构、字体、颜色、圆角或页面主题；设计取值 `variance=2`、`motion=1`、`density=8`。该技能明确不主导后台表格，因此仅采用状态完整性、响应式结构和控件一致性约束，不引入营销页 hero、图片、动效或卡片网格。
+- **finesse-ui：** Design Read 为“研发交付方案治理管理台，克制且事实优先，register=product，SPECTACLE=1，DENSITY=8”。保持一个主工作台边界，以细分隔线而非嵌套卡片组织列表、正文与对比事实；动效仅用于选择和加载反馈。
+- **共同方向：** 宽屏采用“方案列表 + 右侧治理详情”主从结构，点击列表只更新右侧内容；中窄屏列表与详情按自然高度堆叠。页面组件只消费权限过滤后的目录 API，不自行扩大项目范围。筛选、排序和状态选择统一使用共享 `Select`。
+- **分歧解决：** 不采用 design-taste/finesse 面向品牌页的视觉素材、grain、hero 或 spectacle 建议，因为产品寄存器与项目设计合同优先；不新增第二套下拉控件或方案专属视觉 token。
+- **组件归属：** 后端新 `solutioncatalog` 深模块拥有目录投影、候选召回、两轮对比与提案状态机；现有 `solutions.Module` 只在发布成功后通知目录同步。前端新页面拥有查询状态和选中项，`FunctionalAdminShell` 只拥有顶层入口，`Select` 继续拥有下拉交互。
+- **验证范围：** 目录加载/空/错误/有数据、项目与状态筛选、列表选择更新详情、无权限项目不可见、相似项与提案状态，覆盖桌面、1024px、760px、390px、键盘焦点和无横向溢出。
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Status:** 已完成全局目录、权限化检索、发布增量同步、定时校准、两轮对比、人工标准化提案、标准版本库及方案中心 UI；源方案修订始终作为事实源，目录不复制 Markdown 正文。
+- **Backend checkpoint:** `GOCACHE=/tmp/well-ambient-gocache go test ./internal/config ./internal/db ./internal/solutions ./internal/solutioncatalog ./internal/server -count=1` PASS；覆盖发布入队、索引查询、项目可见性、提示词版本绑定与两轮 worker。
+- **Frontend checkpoint:** `pnpm check && pnpm build` PASS（0 errors）；两个目标组件的 Impeccable 检测均无发现，生产构建仅保留既有 chunk-size 与无关旧组件 warning。
+- **Browser checkpoint:** 隔离认证页面验证了同页列表/右侧详情、共享 Select、搜索空态、错误重试、稳定加载、提案接受后生成标准、详情滚动归零；1280/1024/760/390 均无横向溢出，手机主控件为 44px，最终 console 无 error/warn。
+- **Runtime:** 未重启现有后端、未触发真实 Jira/LLM/outbox；数据库迁移、定时校准与新路由将在下一次受控重启或部署后加载。
+- **保护边界:** 未清理或覆盖现有脏工作树，不改写历史方案；浏览器使用隔离 fixture，未提交真实治理动作。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| SQLite 时间聚合扫描类型与目标字段不兼容 | 1 | 改用 `unixepoch` 形成稳定数值边界后继续定向验证。 |
+| 标准方案切换继承详情面板旧滚动位置 | 1 | 将滚动归属收进详情选择/模式切换，选择后显式归零并完成浏览器复验。 |
+| sandbox 首次拒绝 server 测试的本地 loopback | 1 | 按受控批准原命令重跑，测试全部通过，未扩大网络访问。 |
+
+---
+
+## 2026-08-12 大模型请求取消总超时
+
+### 目标与验收契约
+
+- [x] 统一 LLM `Generate` 与 `Stream` 默认 HTTP 客户端均不设置整体请求超时，长时间生成不会在固定秒数被客户端中断。
+- [x] 清除实际模型调用方额外设置的 `context.WithTimeout` 或带 `Timeout` 的自定义客户端；保留来访请求取消和服务关闭取消语义。
+- [x] 检查浏览器流读取、Go HTTP Server 和反向代理配置，不存在固定时间终止打字机流的本地逻辑。
+- [x] Provider Files 上传不使用任意整体超时；非模型集成探活、文件清理和后台任务租约保持各自边界，不冒充模型生成超时。
+- [x] 建立先红后绿回归，完成 `internal/llm`、相关 server/solutions 测试、gofmt 与差异卫生检查。
+
+### 阶段
+
+- [x] Phase 1：扫描统一客户端、全部模型调用方、浏览器流和服务端超时
+- [x] Phase 2：形成并验证 4 个可证伪假设
+- [x] Phase 3：建立无整体超时红灯并实施最小修复
+- [x] Phase 4：完整回归、调用边界复扫与运行态差距收尾
+
+### 当前状态
+
+- **Phase:** Phase 1-4 complete locally
+- **Status:** 红灯精确捕获非流式 90 秒 timeout；修复后统一模型客户端与 Provider Files 客户端均为 `Timeout=0`，AI 配置探活继承 `r.Context()`，流式浏览器/服务端链路无本地截止时间。
+- **Validation:** `go test ./internal/llm ./internal/server ./internal/solutions ./internal/telemetry -count=1` PASS；gofmt、精确 diff check 和全调用方 timeout 复扫 PASS。
+- **Runtime:** 当前运行后端未重启，避免自动触发真实 Jira/LLM/outbox；代码需要在下一次受控后端重启或部署后生效。
+- **保护边界:** `context` 取消仍有效，因此浏览器主动离开、客户端断开或服务关闭仍可停止请求；连接建立/TLS、非 AI 集成探活、provider 文件清理和 stale worker lease 不属于生成持续时间，不做无关扩改。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 自定义客户端回归直接比较装有函数型 RoundTripper 的接口，触发 `comparing uncomparable type` panic | 1 | 不重复接口比较；改用可比较的 `*http.Transport` 指针验证复制后仍保留 Transport，并记录到 `.learnings/ERRORS.md`。 |
+
+---
+
+## 2026-08-12 Agent 首次方案直用与人工草案边界
+
+### 目标与验收契约
+
+- [x] 建立可重复红灯：无人工草案时，Agent 输出不得留下空 v1/v2 + candidate，而应直接成为当前可编辑方案。
+- [x] 明确“人工草案存在”的持久化判定；存在时 Jira 后台同步不再自动润色，页面默认不展示 Agent candidate 对照，也不提供润色动作。
+- [x] 不删除历史 revision/candidate，不破坏现有 Markdown 内容、压缩、CAS/dirty、发布、链接与 Jira 来源同步契约。
+- [x] 完成 Impeccable、design-taste-frontend、finesse-ui 三方评审后再改前端；最终执行定向/完整回归、构建、设计检测与登录态多断点浏览器验证。
+
+### 阶段
+
+- [x] Phase 1：读取版本模型与真实 DG/成功样本，构造无人工草案红灯
+- [x] Phase 2：提出并验证 3-5 个可证伪根因，确定人工/系统/Agent 版本边界
+- [x] Phase 3：完成三方 UI 评审与状态/组件归属共识
+- [x] Phase 4：先红后绿实施最小后端与前端修复
+- [x] Phase 5：完整回归、设计检测、真实浏览器与运行态差距收尾
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 方案卡片应只有一个可编辑主文档；系统 seed 和 Agent candidate 是实现细节，不应要求用户理解或比较。首次生成期间显示真实任务状态，完成后在原位置原子替换为主方案；人工草案存在时保持原文与编辑同步，不出现后台候选分支。
+- **design-taste-frontend：** 当前是既有 Phase 41 管理台，采用 `redesign-preserve`；不改变右侧检查器几何、tokens、密度、Markdown 即时编辑器和断点，只移除候选对照层及无业务价值的“重新润色”。
+- **finesse-ui：** `register=product`、`SPECTACLE=1`、`DENSITY=8`。渐进披露不等于隐藏错误状态：排队/生成/失败继续就地可见，但系统 seed、candidate 计数、双栏对照与应用动作全部退出默认工作流。
+- **共同方向：** `solutions.Module` 成为生命周期深模块：自动来源走“请求首次草案”接口，内部持久化隐藏 v0 seed，首次 Agent 输出直接推进为可编辑 v1；人工保存仍走现有 CAS 接口。`SolutionWorkspace` 只消费 canonical working，不再拥有 candidate 选择/应用/润色状态机；无 working 且任务 active 时显示生成状态，否则显示暂无方案。
+- **分歧解决：** 保留底层 candidate 数据兼容与旧应用接口，避免破坏历史/旧客户端，但默认 workspace 投影和页面均不暴露；人工草案存在时自动请求返回冲突且 Jira 同步静默跳过。管理端提示词测试能力不受影响。
+- **响应式与验证：** 不改布局 CSS，仅删除 candidate 专属结构/样式；验证无方案、首次排队/执行/失败、Agent v1、人工草案、已发布、dirty 远端同步，覆盖宽屏、`<=860px` 与手机宽度。
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Status:** 生命周期、兼容迁移、Jira 自动边界和单一主方案 UI 已完成。新链路为隐藏 v0 seed -> Agent 可编辑 v1；已有 working 时自动请求冲突并被 Jira 同步静默跳过。旧占位+candidate 在下次后端启动时无损提升为 canonical working。
+- **Backend checkpoint:** `go test ./internal/solutions ./internal/server -count=1` PASS；覆盖首次 Agent v1、人工草案拦截、重复任务收敛、旧链路迁移和 Jira 同步边界。
+- **Frontend checkpoint:** 方案入口契约 4/4 PASS，Svelte/TypeScript 0 errors，生产 build PASS；Impeccable targeted detect=`[]`，Finesse P0=0。
+- **Browser checkpoint:** 隔离认证浏览器验证了生成中/失败空态不暴露空版本、旧 Agent candidate 直接成为主方案、人工 v1 不显示 candidate/润色动作；515-526px 真实窄卡片无横向溢出，dirty Markdown 经 4.5 秒轮询保持未覆盖。
+- **Runtime checkpoint:** 当前 8080 是修复前进程，未自行重启，避免触发真实 Jira、LLM 与 outbox 外部副作用；兼容迁移会在下一次受控后端启动执行。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| design-taste 首次 420 行读取仍出现 token 截断 | 1 | 不依据不完整输出决策；按 Self-Improving 复盘，改为每段最多 180 行直到 EOF。 |
+| Go 红灯首次使用默认构建缓存被 sandbox 拒绝 | 1 | 改用 `/tmp/well-ambient-gocache` 原样重跑，取得产品编译红灯。 |
+| 隔离服务首次仍读取数据库内的旧配置版本并尝试占用 8080 | 1 | 立即退出；只清空数据库副本的 `config_versions` 后以禁用 Jira/AI/outbox 的安全配置重跑，原数据库和既有服务未改。 |
+
+---
+
+## 2026-08-12 方案润色长时间中与即时显示收敛
+
+### 目标与验收契约
+
+- [x] 以当前数据库 job/candidate 状态建立可重复反馈环，确认“润色中”是排队、串行执行、重试、失败未暴露，还是前端状态未结束。
+- [x] 明确当前 solution worker 的并发模型，将代码事实与运行时任务事实分开回答。
+- [x] 移除方案工作台中不必要的 Markdown 显示类型/切换，直接采用项目已有的即时显示形态，同时保留编辑内容、dirty 保护与同步契约。
+- [x] 先完成 Impeccable、design-taste-frontend、finesse-ui 三方评审并记录共识，再编辑前端；实施后执行定向回归、类型/构建、Impeccable 检测与登录态多断点浏览器验证。
+
+### 阶段
+
+- [x] Phase 1：建立润色中数据库/API 反馈环并最小化复现
+- [x] Phase 2：提出并验证可证伪根因假设，确认 worker 并发模型
+- [x] Phase 3：完成强制三方 UI 评审、组件归属、响应式和验证范围共识
+- [x] Phase 4：先加回归再实施最小后端/前端修复
+- [x] Phase 5：相关测试、静态门禁、真实浏览器与原始任务验收
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** “润色中”不是装饰性文案，而是任务状态；同一右侧方案检查器内必须区分排队、实际执行、等待重试与失败，不新增弹窗、卡片层或跳转。
+- **design-taste-frontend：** dashboard/admin 属于该技能的非主场，本轮使用 `redesign-preserve`；保留 Phase 41 tokens、密度、排版、检查器几何和断点，只删除冗余选择并补全产品状态。
+- **finesse-ui：** `register=product`、`SPECTACLE=1`、`DENSITY=8`。显式 Markdown 显示类型没有独立业务价值，主编辑面固定为现有即时排版；文案使用“保存方案/复制内容”等任务语言。
+- **共同方向：** `SolutionWorkspace` 负责 job 状态投影和动作文案；主方案调用方只提供单一 `live` 模式，候选对照继续使用只读渲染。共享 `MarkdownWorkbench` 仅在可选模式少于 2 个时不渲染无意义的类型选择器，不改编辑/渲染/事件行为。dirty、CAS、保存、应用候选与实时同步边界保持不变。
+- **分歧解决：** 不删除 `MarkdownWorkbench` 的 edit/split/preview 能力，因为其他显式消费者仍拥有自己的生命周期；共享组件只隐藏“仅有一个选项”的冗余选择器，方案工作台固定 live，避免改变多模式消费者。
+- **响应式与验证：** 不改变布局 CSS；验证宽屏右检查器、`<=860px` 堆叠和手机宽度，覆盖无方案、排队、执行、重试、失败、已有候选、编辑保存与后端刷新不覆盖 dirty 内容。
+- **Design Read：** 研发交付管理台，克制、事实优先；`register=product`，`SPECTACLE=1`，`DENSITY=8`。
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete locally
+- **Status:** 代码、回归、构建、设计检测、登录态三断点验证、工作树归属核对与浏览器清理均完成。运行中的后端仍是修复前进程，因重启会触发 Jira/外部 LLM/outbox 副作用，本轮不自行重载。
+- **Green checkpoint:** 两条 Jira 定向回归 PASS，前端方案入口契约 4/4 PASS，`gofmt` 与精确 `git diff --check` PASS。
+- **Full checkpoint:** `go test ./internal/server ./internal/solutions` PASS；`pnpm -C web check` 为 0 error（发现并清理 1 条本轮遗留 unused selector）；生产 build PASS，其余输出为既有 Svelte/chunk warnings。
+- **Design checkpoint:** Impeccable targeted detect=`[]`；Finesse P0=0，仅报告 `SolutionWorkspace` 既有两处纯白按钮背景 P2，本轮不扩大为 token 重构。
+- **Browser checkpoint:** 登录态 Chrome 真实 DG-394 显示 `等待重试` 与预计时间，`Markdown 显示模式`/“即时排版”模式按钮均为 0，`保存方案` 为 1；即时编辑正文、6 行/74 字符与 dirty/save 提示链仍在。
+- **Responsive checkpoint:** 1440/760/390 请求档（Chrome 实际 CSS viewport 1600/844/433）均 panel 可见、live mode=true、mode switch=0、文档横向溢出=0。发现窄屏动作仍为既有 40px，已按 UI 门禁只在 `<=860px` 提升到 44px；对已过期的 next-attempt 文案改为“已到重试时间，正在等待后台队列”，避免展示过期预计时间。
+- **Visual checkpoint:** 移动端方案卡片与即时编辑器截图复核通过；状态行、44px 动作、标题换行、live 装饰与底部行数/保存提示均清晰，mode switch=0。检查器上层说明仍写“Markdown 内容”，将按用户语言收敛为“方案正文”。
+- **Runtime checkpoint:** 队列在推进（33→27 queued，3→6 succeeded）；DG-394 已执行一次并收到上游 Cloudflare 502，现处于 retry queue。当前没有证据支持“worker 停死”，证据支持“串行吞吐 + provider 失败/退避”。
+- **Final static checkpoint:** 方案契约 4/4、Svelte/TS 0 error、build exit 0、Impeccable `[]`、Finesse P0=0、精确 diff check exit 0。Finesse P2 均为既有纯白色值，不属于本轮结构/状态修复。
+- **Final live checkpoint:** DG-394 最终由“等待重试”推进到 `正在润色 · 开始于 22:30`；current DOM 正常。console 仅保留一条分步编辑期间的旧 HMR `editorMode` 错误，最终源码零引用且 check/build 均通过；用户原 Chrome tab 已保留，其余验证 tab 已清理。
+- **Red baseline:** 前端定向契约 3/4，精确失败于仍存在 `MarkdownMode`；后端在允许临时 loopback 后精确得到 2 jobs（`[1]` 与 `[1,2]`），证明逐条来源入队假设成立。
+- **实现边界：** 不在本轮贸然把 SQLite worker 改成并行；运行库已出现 `database is locked`，在没有独立连接/写入串行化与 provider 限流证据前，并行会扩大一致性风险。先消除同批 Jira 来源的中间任务，并让 UI 说清真实队列状态。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 同时读取 design-taste-frontend 与 finesse-ui 完整技能文件时输出被截断 | 1 | 未根据不完整输出行动；改为按文件行数分块读到 EOF。 |
+| 前端定位命令假设存在 `web/src/services`，且合并输出再次被截断 | 1 | 已按 Self-Improving 复盘；后续先用 `rg --files web/src` 获取真实路径，再按单文件小段读取。 |
+| 首次读取 Jira 多评论测试时使用了错误的行号区间 | 1 | `rg` 已给出真实测试函数在 436 行；改为读取 380-520 行，没有据错误片段作判断。 |
+| Go 红灯首次在 sandbox 中无法绑定 `httptest` loopback | 1 | 按权限规则用相同定向命令受控重跑，成功取得产品红灯：同一响应创建 2 个 job。 |
+| 后端与前端组合 `apply_patch` 因前端上下文顺序不匹配被整体拒绝 | 1 | 已用精确 `rg` 确认所有目标仍是修改前状态；改为后端、前端脚本、前端模板三个小补丁逐个验证。 |
+| 前端模板小补丁仍携带已不存在的重复空态行，导致该组被拒绝 | 1 | 后端与前端脚本小补丁已分别成功；下一步先读当前 220-300 行，再只对仍存在的模板片段逐项修改。 |
+| 当前 Browser tab 不支持旧会话中的 `tab.waitForLoadState` 调用 | 1 | 已读取当前完整 API，改用 `tab.playwright.waitForLoadState({state})`；页面正常打开，控制接口错误未影响产品。
+| 浏览器 console 保留一条分步编辑期间的旧 HMR `editorMode is not defined` | 1 | 日志产生于变量先移除、模板后修改的短暂状态；最终 DOM 正常、源码零引用、Svelte/TS 和 build 通过。浏览器已按规则 finalize，不在清理后重新操作。
+
+## 2026-08-12 项目级方案提示词缺省日志刷屏
+
+### 目标与验收契约
+
+- [ ] 建立小于 1 秒的可重复红灯：HIT 没有项目级活跃提示词时，仍正常回退全局提示词，但日志不得出现 `record not found`。
+- [ ] 保留项目级优先、全局级回退和“全局提示词也缺失则返回错误”的原有语义。
+- [ ] 实施最小 `Find + RowsAffected` 修复，重跑定向回归、完整 solutions/server 回归与差异卫生检查。
+
+### 阶段
+
+- [x] Phase 1：捕获 HIT 项目级查找的 `record not found` 红灯
+- [x] Phase 2：展示并验证可证伪假设
+- [x] Phase 3：先红后绿实施最小修复
+- [ ] Phase 4：相关回归、原始日志契约与清理
+
+### 当前状态
+
+- **Phase:** Phase 4 in progress
+- **Status:** 源码、定向红灯、完整 solutions/server 回归、gofmt 与 diff hygiene 均已通过。当前 8080 PID 36200 为修复前已启动的旧二进制；因启动会运行 Jira/AI/outbox 外部副作用，等待用户明确授权重载后再做运行日志收尾。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前 8080 进程仍是修复前二进制 | - | 代码无法热加载；重启会触发 Jira/AI worker 与可能 outbox 写回，保留运行态不动，等待用户明确授权。 |
+
+## 2026-08-12 DG-394 Jira 方案评论静默润色失效
+
+### 目标与验收契约
+
+- [ ] 建立 DG-394 的可重复诊断命令，分别断言当前有效 Jira 方案来源、静默润色任务与 Agent 候选版本。
+- [ ] 定位评论抓取、资产写入、自动入队、Agent 调用、候选保存或 API 返回中的唯一断点，不以 UI 空态猜测后台状态。
+- [ ] 在正确调用边界新增先红后绿的回归测试，实施最小修复并保留人工 Markdown/CAS/发布不可变契约。
+- [ ] 验证 DG-394 原始场景、相关 Go 测试、前端方案契约、类型检查与构建；如涉及前端，再执行完整 UI 三方门禁和登录态浏览器验证。
+
+### 阶段
+
+- [x] Phase 1：构造 DG-394 数据库/API 红灯并最小化复现
+- [x] Phase 2：提出并验证 3-5 个可证伪根因假设
+- [x] Phase 3：新增回归测试并实施最小修复
+- [ ] Phase 4：重跑原始红灯与相关测试/构建
+- [ ] Phase 5：清理临时诊断并记录根因、验证和剩余环境差距
+
+### 当前状态
+
+- **Phase:** Phase 4 in progress
+- **Status:** 两条先红回归已转绿：专用作者被识别，相同内容快照可刷新派生资格，重放同步依赖现有幂等键不会重复创建 polish job。正在执行完整后端回归与 DG-394 本地运行态验证。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 查询 `solution_prompt_templates` 时先后误用不存在的 `enabled` 以及 `scene/updated_at` 字段 | 2 | 已直接读取 SQLite schema；后续只用实际的 `purpose/scope_type/scope_id/status/version/created_at` 字段，不再凭 ORM 命名猜测表结构。 |
+| 首次测试补丁以不存在的 `TestPolishRetryThenFailureAndLeaseRecovery` 作为插入锚点 | 1 | `apply_patch` 整体拒绝且未落盘；已按实际函数列表改为在 `TestProjectPromptOverridesGlobalAndVersionsAreAppendOnly` 前插入，并拆分小补丁。 |
+| server 定向测试的 `httptest.NewServer` 在 sandbox 中无法绑定 loopback | 1 | 按权限规则以受控升权重跑后得到产品红灯，没有将环境失败误判为业务失败。 |
+| 读取现有 8080 进程命令行时 `ps` 被 sandbox 拒绝 | 1 | `lsof` 已证明 PID 28593 的 cwd 是当前仓库；后续仅对该明确 PID 受控升权读取命令行，不扫描或操作其他进程。 |
+| 使用原命令重启后端被安全审核拒绝 | 1 | 该配置启动后会自动读取私有 Jira 评论、发送至 Pixel AI，并可能处理已有 Jira outbox。旧进程已停止，不绕过审核；等待用户明确授权该外部处理后再启动并完成 DG-394 运行态验证。 |
+
+## 2026-08-12 代码轨迹完整可滚动浏览
+
+### 目标与验收契约
+
+- [x] 排期看板“代码轨迹”页签必须渲染当前需求返回的全部轨迹，不能按固定条数切片或隐藏。
+- [x] 移除“另有 x 条轨迹，可在任务跟踪中查看完整记录”提示；用户无需离开当前排期检查器即可浏览完整记录。
+- [x] 宽屏保持左右面板等高，轨迹正文区作为右侧唯一纵向滚动所有者；表头、统计摘要和刷新操作保持可见稳定。
+- [x] `<=1280px` 继续使用自然高度/页面滚动，不引入嵌套滚动、内容裁切或文档级横向溢出。
+- [x] 建立能捕获轨迹切片和隐藏提示的红灯回归，并通过前端检查、构建、设计检测及登录态浏览器的完整条数/滚动验证。
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 当前问题是信息可达性缺陷，不是需要扩大卡片的视觉问题。完整轨迹属于当前页签的核心内容，摘要/刷新保持稳定，列表在既有正文区域滚动；窄屏恢复自然文档流。
+- **design-taste-frontend：** 本面板属于其明确排除的 dashboard/admin 场景，只采用 `redesign-preserve`：保留既有 Phase 41 tokens、层级、字体、密度与交互，不引入新视觉系统或动效。
+- **finesse-ui：** `register=product`，`SPECTACLE=1`，`DENSITY=8`。数据完整性优先于渐进披露；移除把用户导向另一页面的截断提示，由一个明确滚动所有者承载任意长度轨迹。
+- **共同方向：** 修复数据呈现边界而非卡片几何；`CommitTelemetryPanel` 渲染完整有序列表，`DemandKanban` 的 `.schedule-telemetry-inline` 继续拥有宽屏滚动，inline drawer/body 不新增第二层滚动。
+- **保护规则：** 不改轨迹接口、排序、分类、统计、刷新、Jira/提交链接和任务跟踪页面；不修改刚完成的左右面板等高及 `<=1280px` 自然高度契约。
+- **Design Read：** 研发排期治理管理台，事实优先、紧凑、稳定；`redesign-preserve`，`register=product`，`SPECTACLE=1`，`DENSITY=8`。
+
+### 阶段
+
+- [x] Phase 1：建立轨迹截断/隐藏提示红灯并最小化复现
+- [x] Phase 2：定位切片、提示与滚动所有权根因
+- [x] Phase 3：先加回归测试，再实施最小修复
+- [x] Phase 4：静态检查、Impeccable/Finesse 检测与差异卫生
+- [x] Phase 5：宽屏/堆叠/窄屏登录态完整条数和滚动验收
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 组合回归中既有高度测试因共享滚动 selector 新增 `.schedule-solution-inline` 而失败，产品契约本身仍为 `overflow:auto` | 1 | 将测试从“轨迹必须是 selector 列表末项”改为“轨迹必须属于包含既定属性的共享滚动规则”，保留行为断言且允许合法同级页签扩展。 |
+| 复用登录态 Chrome 会话时沿用旧版 `tabs.create()` / `domcontentloaded()` 调用，当前插件接口不提供这两个方法 | 1 | 保留已建立的验证页；按当前原型接口改用 `tabs.new()` 与 `waitForLoadState()`，不把控制层 API 差异误判为产品失败。 |
+
+### 当前状态
+
+- **Phase:** Phase 1-5 complete
+- **Status:** DG-354 的 5/5 条真实轨迹在宽屏、1280、760、390 均完整渲染；宽屏可在唯一正文滚动区到达最后一条，窄屏自然页面滚动且无横向溢出。源码回归、Svelte/TypeScript、build、Impeccable 与 diff hygiene 全部通过。
+
+### 验收结果
+
+- 后端数据库中 DG-354 合并 Git/Jira 轨迹总数为 5；登录态页面渲染 `.timeline-item=5`，统计 `COMMENT=5`，且不存在“另有”或“任务跟踪中查看完整记录”提示。
+- 宽屏轨迹正文区 `scrollHeight=805 > clientHeight=627`、`overflowY=auto`；滚动至 `maxScroll≈178` 后最后一条完整进入容器可视区。左右面板 top/bottom delta 均为 0，文档横向溢出为 0。
+- 1280、760、390 均渲染 5 条；`.schedule-telemetry-inline` 为 `overflowY=visible/max-height:none`，由页面自然滚动，文档横向溢出为 0。多行 Jira 正文为 `white-space:pre-wrap/overflow:visible`。
+- 回归测试 6/6；Svelte check 0 errors、80 条既有 warnings；TypeScript、生产构建、Impeccable `[]`、Finesse P0=0 与 `git diff --check` 通过。
+
+## 2026-08-12 排期治理轨迹卡片与左侧面板等高
+
+### 目标与验收契约
+
+- [x] 在排期看板宽屏双栏状态下，右侧检查器外框与左侧需求表格面板顶部、底部对齐；不能留下截图中的无意义底部空洞。
+- [x] 等高由双栏工作台的共享行高与明确高度预算实现，不用内容区盲目拉伸掩盖差异；右侧页签头保持稳定，排期设置/代码轨迹内容各自拥有唯一且可测的内部滚动边界。
+- [x] 保持当前 Phase 41 视觉、列宽、标题、表格密度、业务动作与数据链路；不改配色、字体、信息架构或提交轨迹内容。
+- [x] 在现有堆叠断点及 760px/390px 窄屏恢复自然高度，不能继承桌面强制等高造成巨型空卡或文档级横向溢出。
+- [x] 建立能捕获左右底边差值的红灯反馈环，并在修复后通过源码回归、Svelte/TypeScript、构建、设计检测与登录态浏览器几何验证。
+
+### 分类、保护规则与当前阶段
+
+- **分类：** `coding.complex`，产品 UI 布局/滚动所有权回归；工作树已有大量用户改动，只允许最小、可归因的前端与回归测试修改。
+- **保护规则：** 不改 `DemandKanban` 的数据、筛选、选中态、页签语义、`CommitTelemetryPanel` 的 drawer/modal 行为，也不改共享 shell 的其他页面高度契约，除非运行时证据证明共享所有者才是根因。
+- **Design Read：** 研发排期治理管理台，事实优先、紧凑、稳定；`register=product`，`SPECTACLE=1`，`DENSITY=8`。懒惰默认是给右卡写固定像素高度或用 `min-height` 填空，本轮拒绝该做法，改为外层共享行高 + 内层独立滚动。
+- **当前阶段：** Phase 1-5 全部完成；宽屏几何断言由红转绿，静态门禁与 2382/1280/760/390 登录态浏览器验收均通过。
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 隔离视觉评估确认左右顶部已对齐，缺陷是右外框提前结束破坏 master/detail 同一业务行；隔离机械扫描返回 `[]`，但最终 cascade 明确在文件末尾把已有的 `stretch/height:100%` 覆盖为 `start/height:auto`。两项互相印证：恢复外框共享行高，内容继续顶部聚集和独立滚动。
+- **design-taste-frontend：** 本任务属于其明确排除的 dashboard/admin 主场，因此仅采用 redesign-preserve 审计、现有品牌/交互保护与显式移动端折叠；不引入营销布局、图片、动效或视觉重构。
+- **finesse-ui：** 采用 product register 与 redesign-mode；工作台外框需要可预测的二维网格，组件内部保持一个滚动所有者，使用既有 token、间距和控件词汇，不添加材质、阴影或装饰。
+- **共同方向：** `schedule-workbench / schedule-main-grid` 拥有宽屏高度预算；`.schedule-table-panel` 与 `.schedule-inspector-panel` 是同一 grid row 的等高 peer；`.schedule-table-wrapper`、`.schedule-editor-body`、`.schedule-telemetry-inline` 分别拥有各自滚动。`CommitTelemetryPanel` inline 保持 `height:auto; overflow:visible`，避免第二层滚动。
+- **响应式：** `>1280px` 恢复 `align-items:stretch`，inspector `align-self:stretch; height:100%; min-height:0; overflow:hidden`；`<=1280px` 保持单列、`height:auto/max-height:none/overflow:visible`，`<=760px` 继续自然文档流与 12px 内边距。
+- **分歧解决：** 历史“content-owned height”适用于检查器当前 tab 的内容，不适用于与左表同一 grid row 的外框。保留内容顶部聚集与内部滚动，但撤销外框 `start/auto`；不采纳给轨迹组件固定高度、`height:100%` 或新增嵌套滚动的方案。
+- **验证范围：** 宽屏两页签都需 `top/bottom/height delta <=1px`；表格 wrapper 保持 `scrollHeight>clientHeight` 且 `overflowY:auto`；轨迹 tab body 为唯一右侧滚动边界，inline drawer/body 为 visible；<=1280px 不要求 bottom 对齐但必须自然高度、无裁剪和无水平溢出。
+
+### 阶段
+
+- [x] Phase 1：建立登录态几何红灯，定位最终高度/滚动 cascade
+- [x] Phase 2：完成并记录三方共识、分歧、组件归属和响应式契约
+- [x] Phase 3：添加回归测试并实施最小布局修复
+- [x] Phase 4：静态检查、Impeccable/Finesse 检测与差异卫生
+- [x] Phase 5：宽屏/堆叠/窄屏登录态浏览器验收与清理
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 浏览器初次几何断言过程中 Chrome 实际 viewport 从 2382×1100 回到 2382×1038，代码轨迹 DOM 暂时消失，断言因目标缺失而 RED | 1 | 不重复不固定状态的采样；先显式设置 2382×1100、确认“代码轨迹”页签选中并等待目标可见，再以真实左右卡片矩形建立红灯。 |
+| 被认领的用户 Chrome 标签页在采样期间切到任务跟踪，导致排期目标 DOM 消失 | 1 | 不争用用户标签页；新建同一 Chrome 会话的独占验证页，复用现有认证后再固定路由和视口。 |
+| Chrome 截图 API 返回 PNG 字节但忽略 `path` 参数，首次移动端截图未落盘 | 1 | 保留已完成的几何结果；改为接收截图字节并显式保存到验证目录，再用本地图片查看器复核，不重复假设 `path` 会写盘。 |
+
+## 2026-08-12 全局弹窗关闭按钮安全区优化
+
+### 目标与验收契约
+
+- [x] 盘点 `web/src` 内所有真正的弹窗、抽屉和自定义对话框关闭按钮，区分共享 `Modal.svelte` 调用方与页面级实现；不得把日期清除、下拉清除、普通删除等 `×` 误当作弹窗关闭按钮。
+- [x] 关闭按钮必须拥有独立的 44×44px 可点击区域，并与标题/正文建立稳定安全区；长标题、多行标题、桌面与窄屏均不得发生文字进入按钮命中区或视觉侵入。
+- [x] 优先由共享组件和可复用的关闭按钮契约统一解决；页面级例外只在无法继承共享结构时做最小修复，不改变既有路由、业务动作、弹窗尺寸、滚动所有者、遮罩、焦点与关闭语义。
+- [x] 建立红灯回归：修改前能捕获“标题/内容矩形侵入关闭按钮安全区”，修改后对全部目标弹窗变绿。
+- [x] 通过 Svelte/TypeScript、生产构建、diff hygiene、Impeccable 检测，以及真实登录态桌面和窄屏浏览器验证；验证长标题、多行标题、焦点态、关闭和无水平溢出。
+
+### 当前分类与约束
+
+- **分类：** `coding.complex`，共享前端组件与多页面交互风险；当前工作树已有大量用户改动，必须保留并只做可归因的局部编辑。
+- **视觉基线：** Phase 41 浅色、表格优先的管理控制台；本次为 `redesign-preserve`，不引入新视觉系统，不改标题文案或信息架构。
+- **截图证据：** 任务详情弹窗中的长标题一直延伸到右上角关闭按钮视觉/命中区，按钮悬浮在标题排版范围内；问题是结构性的标题安全区缺失，不是单个标题文案过长。
+- **历史约束：** 共享 `Modal.svelte` 已负责 workspace-scoped 遮罩与抽屉变体；应保留现有遮罩透明度、内容不透明度、弹窗/抽屉尺寸和交互语义。
+
+### 强制三方 UI 评审（实现前）
+
+- **Impeccable：** 隔离主观布局评估确认 18 个真实 modal/drawer 表面存在 5 套关闭实现，命中区为 34/36/38px 或内容盒；共享 Modal、Demand、Settings 的 header 没有独立关闭列。隔离机械预扫描 9 文件返回 `[]`，说明静态 detector 无法看到动态标题与 flex shrink 的运行时几何。两项合并后，运行时红灯为权威证据。
+- **design-taste-frontend：** `redesign-preserve`；保留现有品牌、信息架构、事件和控件词汇，只做目标演进。该技能声明产品仪表盘不是其主适用范围，因此仅采用其“审计优先、品牌/交互保留、触控与对比度”约束，不用其营销页布局规则。
+- **finesse-ui：** 产品 register，SPECTACLE=1、DENSITY=8；采用标准、统一、克制的关闭动作组件，4px 间距网格和全断点 44px 触点；不带入通用 premium substrate 的 grain、额外材质或品牌化动效。
+- **三方共识：** 新增纯展示的共享 `OverlayCloseButton`，只拥有 `type=button`、44×44 命中区、18-20px X、label/disabled 与 hover/focus；不拥有关闭状态、Escape、backdrop、focus trap 或 scroll lock。共享 Modal 与页面级 header 使用 `minmax(0, 1fr) 44px` 两列，桌面 16px、窄屏 12px gap，标题 `min-width:0` 且可换行/长词断行。所有现有外层尺寸、遮罩、路由、滚动和关闭函数保持不变。
+- **分歧解决：** 产品 UI 中跨页面重复相同 header/close 结构是正确一致性，不采纳营销页的“布局多样性/惊喜”；不因 finesse 的长期 modal-first 建议改变现有 modal/drawer 拓扑；关闭按钮不做位移式 tactile feedback，避免位置跳动。
+- **几何验收：** `close >= 44×44`；`title.right + 12 <= close.left`；多行标题时按钮固定在 header 内容区右上而不随标题居中下沉；header/container 无水平溢出；一个 overlay 只有一个顶级关闭按钮；焦点、Escape、backdrop 行为不变。
+
+### 阶段
+
+- [x] Phase 1：建立目标清单与红灯回归
+- [x] Phase 2：完成三方评审并记录共识/分歧
+- [x] Phase 3：实施共享契约与必要页面级例外
+- [x] Phase 4：静态检查、设计检测与回归测试
+- [x] Phase 5：真实登录态浏览器覆盖所有受影响状态和断点
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 本地端口循环使用 zsh 只读特殊变量 `status`，在首个 curl 后中止；同时服务仅显示 IPv6 wildcard 监听 | 1 | 后续使用任务专用变量 `http_code`，分别探测 `127.0.0.1` 与 `[::1]`；不重复原命令。产品代码未受影响。 |
+| 认领已有 Chrome `well-ambient` 标签页后，首次完整 DOM snapshot 在 CDP evaluate 阶段超时 | 1 | 先读取浏览器故障恢复说明；保留已认领标签页，改用更轻量的可见 DOM/目标 locator 或截图，不重复完整 snapshot。 |
+| 目标 locator 几何脚本在隔离页面上下文中使用 `instanceof HTMLElement`，构造器不可用导致 TypeError | 1 | 改用 `querySelector` 的空值检查与 `getBoundingClientRect` 鸭类型，不再依赖页面构造器。 |
+| `node --test web/tests/modal-close-contract.test.ts` 在 Node 22.14.0 下拒绝加载 `.ts` 扩展名 | 1 | 断言尚未执行；先确认当前运行时支持 `--experimental-strip-types`，使用受支持的加载方式，不把运行器失败误判为产品回归。 |
+| 首次向计划/进度补记上条失败时假设存在 `## Errors` 标题，补丁上下文不匹配 | 1 | 已读取文件实际顶层结构，改在当前任务的错误表与进度段落追加，不重复原补丁。 |
+| Chrome 受限 Playwright locator 不提供 `.focus()`，桌面几何采样后的焦点检查抛错 | 1 | 已保留先完成的几何结果；改用工具支持的键盘/DOM CUA 焦点交互，不重复 locator `.focus()`。 |
+| 排期页“+ 录入新需求”入口的精确 accessible-name 因空格/符号归一化未匹配 | 1 | 页面未被操作；改用稳定语义片段 `/录入新需求/` 定位，不重复精确字符串。 |
+| 健康诊断几何脚本在隔离 evaluate 上下文调用不可用的全局 `parseFloat` | 1 | 脚本在视口切换前中止；标题行数非核心验收，改直接记录矩形高度并继续间距/相交/溢出检查。 |
+| 代码轨迹抽屉 X 为 44px 且事件正确，但中心命中元素是顶栏用户菜单，点击无法关闭 | 1 | 运行时祖先链证明 `workspace-stage` 是隔离层；最终将 drawer 态 portal 到该 stage，并把其实时可视四边同步为 fixed inset，inline/modal 保持原位。 |
+| 首版层级修复直接把 `--wa-workspace-topbar-h` 用作 fixed inset；移动端该变量为 `auto`，抽屉按内容高度向下收缩 | 1 | 未交付该方案；改用 workspace portal + 实时可视四边，消除数值顶栏高度假设。 |
+| portal 后使用 `absolute inset:0` 会在移动流转页继承 2836px 的长工作区高度 | 1 | 未交付该方案；由 portal action 实时同步 workspace 的可视四边到 fixed inset，并监听 resize/容器变化，保持视口内抽屉高度。 |
+
+
+## 2026-08-12 需求方案资产、Jira 评论与 Agent 润色闭环
+
+### 目标与不可退让契约
+
+- [x] 把 Jira 中明确标记的方案评论转换成可追溯来源快照，并由后台 Agent 生成候选方案，不能直接覆盖人工正在编辑或已发布的版本。
+- [x] 方案以稳定链接进入需求详情；用户可以查看、编辑草案、比较/应用 Agent 候选并基于明确版本重新润色。
+- [x] Markdown 是唯一权威正文；结构化字段只能作为派生投影，任何 SSE/后台完成事件不得替换编辑器当前值。
+- [x] 草案保存使用 `expected_revision`/CAS；已发布版本不可变，编辑已发布方案必须创建新草案。
+- [x] 大于阈值的正文按收益自动 gzip 保存，哈希始终针对规范化未压缩 Markdown；列表不读取或解压正文，详情按需读取。
+- [x] 方案润色提示词版本化、可测试、可回滚；全局管理动作使用独立权限并仅允许 `super_admin`，不能复用普通管理员已有的 `config:write`。
+- [x] Jira 写回走幂等 outbox，失败可观测且不回滚本地发布；机器写回评论必须可识别并排除自动抓取，避免自触发循环。
+
+### 强制三方 UI 评审
+
+- **Impeccable:** 方案能力属于现有需求详情的产品工作流。复用 `DemandDeliveryControl` 和 `MarkdownWorkbench`，保持单一抽屉滚动所有者、浅色管理台、扁平事实层级；加载、空、错误、候选、冲突、保存、发布状态必须可见。
+- **design-taste-frontend:** 该技能明确不主导后台数据表/多步骤产品界面，本轮采用 redesign-preserve。保持现有系统字体、tokens、控件和信息架构，不引入营销 Hero、展示字体、渐变、玻璃网格或装饰动效。`DESIGN_VARIANCE=3`、`MOTION_INTENSITY=1`、`VISUAL_DENSITY=9`。
+- **finesse-ui:** Design Read 为研发协同管理台，`register=product`、`SOUL=4`、`SPECTACLE=1`、`DENSITY=9`。用渐进披露展示版本、来源和 Diff，编辑采用现有详情工作台而非新增驾驶舱；动效仅表达异步任务与状态切换。
+
+### 共同方向、分歧与归属
+
+- 共同：使用一个“方案资产”主入口，当前已发布版本与当前草案是需求详情的事实；Agent 输出始终是候选版本，只有人工应用后才进入工作草案。
+- 共同：Markdown 正文、版本元数据、来源证据和任务状态分层；列表/需求卡只显示稳定链接、状态、版本和更新时间，完整正文仅在详情读取。
+- 共同：桌面在现有详情抽屉内使用扁平状态条 + Markdown 工作台 + 版本/来源列表；窄屏自然单列，操作组满宽且触点至少 44px，无文档级横向滚动。
+- 分歧：Taste/Finesse 的独立工作台表达力度高于 Impeccable/项目 `DESIGN.md` 的抽屉主从契约。采用项目契约：嵌入现有需求详情，不新增全局菜单、AI 驾驶舱或嵌套卡片。
+- 后端 `internal/solutions` 深模块拥有资产、版本、CAS、压缩、来源、任务和发布接口；Jira/LLM 是内部 adapter。前端 `DemandDeliveryControl` 只消费方案接口并维护编辑器局部草案。
+
+### 验证范围
+
+- Go：模块接口回归覆盖压缩/哈希、CAS 冲突、不可变发布、候选应用、来源幂等、任务替代和 outbox 幂等；handler/权限/Jira/AI 请求形状回归。
+- 前端：Svelte check/build、编辑器不被后台候选覆盖的确定性回归、版本/链接/编辑/重新润色状态。
+- 浏览器：已登录需求详情在桌面、760px、390px验证空状态、已发布链接、编辑未保存、候选到达、Diff/应用、CAS 冲突、重新润色、错误恢复和零横向溢出。
+- 安全：隔离数据库与假 Jira/LLM；不修改真实 Jira、配置、项目数据库或生产环境。
+
+### 当前阶段
+
+- **Phase:** 本地实现、回归与隔离认证浏览器验收完成。
+- **Status:** complete locally
+
+### 验收结果
+
+- 隔离认证浏览器完整走通空态、建立、编辑、保存、重新润色任务、候选对照/应用、发布、从发布版派生新草稿与稳定深链；真实 AI/Jira 保持关闭。
+- 两个并发登录页验证远端 v7 到达时，本地未保存 Markdown 原样保留，并显示“复制本地 Markdown / 加载远端版本”恢复动作。
+- 12,503 字符 Markdown 自动按 gzip 保存，页面显示压缩节省 97%；后端单测同时校验规范化原文哈希、解压完整性与小正文不盲目压缩。
+- 超管提示词 v2 保存并启用，v1 保留为已退役；公开地址的异步属性同步不会覆盖用户已开始编辑的输入。
+- 需求详情在桌面、768×1024、390×844 均无横向溢出；手机工具栏纵向收拢。Impeccable 检测为 `[]`。
+- Go 目标回归、前端同步单测、Svelte/TypeScript 检查和生产构建通过；Svelte 保留 80 条既有 warning、0 error。
+
+## Current Task Addendum: Decision Columns And Shared Issue-Type Marker
+
+### Goal And Current Constraint
+
+- [x] Expand the `事项选择列表` column chooser with additional fields that already exist in the agenda response; keep the established six-column set as the default so existing users do not receive an unexpectedly wider table.
+- [x] Make the Task Table use the exact same accessible `B / T` item marker as `事项选择列表`, with one shared component owning aliases, geometry, color, and labels.
+
+### Mandatory Three-Way UI Review
+
+- **Impeccable:** this is a dense product table, so preserve hierarchy and earned familiarity. The fixed item-number column remains mandatory; optional factual columns belong to the existing persisted selector. One shared component must own the type marker and its accessible name.
+- **design-taste-frontend:** dashboard tables are outside its landing-page design scope, so apply redesign-preserve only. Keep current tokens, typography, toolbar, table density, and interaction model; do not introduce decorative badges, motion, or a second visual language.
+- **finesse-ui:** Design Read is a research-delivery governance console, restrained and evidence-first, `register=product`, `SPECTACLE=1`, `DENSITY=8`. More information must remain opt-in and scannable; narrow screens may scroll inside the table but the document must not overflow.
+
+### Shared Direction And Disagreement Resolution
+
+- Shared: expose only fields already delivered by the agenda API and useful for decisions: project, item type, repository, branch, risk reason, silent duration, and latest activity.
+- Shared: retain `事项 / 标题 / 负责人 / 风险 / 计划日 / 状态` as the default. New fields are selectable and persist per user through the existing preference endpoint.
+- Shared: extract the existing square `B / T` marker from `DecisionDashboard` into a shared component, then consume it in both `DecisionDashboard` and the Task Table. Visible business labels can remain contextual; the marker itself is identical and announces `Bug` or `Task` accessibly.
+- No unresolved disagreement: the marketing-oriented spectacle rules are not applicable to this product surface; both UI specialists defer to the existing product tokens and table ownership.
+
+### Component Ownership, Responsive Behavior, And Validation
+
+- Backend preference handler owns allowed keys, stable canonical ordering, and the unchanged default key set.
+- `DecisionDashboard` owns column data mapping and selection persistence. `IssueTypeMark.svelte` owns type normalization and marker presentation. `TaskKanban` owns only the adjacent contextual type text.
+- Desktop validation covers option count, selecting new columns, rendered headers/cells, exact marker style, and persistence after reload. Narrow validation covers the 44px selector target, internal table scrolling, and zero document overflow.
+- Static validation: focused Go preference tests, Svelte check/build, Impeccable/Finesse detection, and diff check.
+
+### Plan
+
+- [x] Add allowed-column regressions while preserving existing defaults and required item ID.
+- [x] Add the extra mapped columns and the shared issue-type marker.
+- [x] Run static validation and authenticated browser verification at desktop and narrow breakpoints.
+
+### Validation Result
+
+- The chooser now exposes 12 optional columns in total. Seven new factual columns are available: project, item type, risk reason, repository, branch, silent duration, and latest activity. The item-number column remains fixed, while the established five optional defaults remain unchanged.
+- Authenticated browser validation selected every new column, observed its real header and fixture value, reloaded the app, and confirmed the full selection persisted through `GET /api/me/decision-table-columns` semantics.
+- Decision Dashboard and Task Table markers both render from `IssueTypeMark.svelte`. Computed Task and Bug styles matched exactly: `22×22px`, `6px` radius, identical border/background/text colors, `B/T` content, and accessible `Bug/Task` names.
+- At `390×844`, the column trigger surface measured `44px`; the 12-option overlay stayed inside the viewport; both affected pages had zero document overflow, while wide tables scrolled internally. A fresh authenticated tab reported no console warnings or errors.
+- Focused preference regressions and the complete `internal/server` suite pass. `pnpm check` reports 0 errors and 80 existing warnings; production build, Impeccable detection (`[]`), Finesse P0 gate, and targeted diff hygiene all pass.
+- All validation used an isolated local database and disabled external integrations. Temporary servers, database, binary, and configuration were removed; no real Jira, GitLab, project database, or production environment was changed.
+- **Status:** complete locally
+
+# 2026-08-12 版本发布闭环与筛选胶囊工具条
+
+## 目标与保护边界
+
+- [ ] 建立真实的版本发布状态流转，不能只在创建版本时预填 `released` 状态。
+- [ ] 发布事实进入最强大脑当前读取的交付决策/证据链，并以服务端回归证明，不以界面文案代替数据可见性。
+- [ ] “现有版本与 Jira 事项”标题、结果数、筛选、重置和创建动作收进一个与同级页面一致的胶囊工具条。
+- [ ] 发布动作归所选版本详情区；筛选胶囊只承担集合级浏览与创建，不混入单条版本状态变更。
+- [ ] 保留现有路由、版本与 Jira 关联语义、共享 shell 间距、表格/检查器主从结构和零阴影约束。
+- [ ] 不创建或修改 Jira Version，不访问生产或远程服务；浏览器写入验证使用隔离数据，不发布用户现有本地版本。
+
+## 三方 UI 评审方向
+
+- **Design Read:** 研发发布治理管理台，事实优先、克制、扁平；`register=product`，`SPECTACLE=1`，`DENSITY=8`，沿用 Phase 41 设计系统，仅用状态反馈动效。
+- **Impeccable:** 整行筛选属于一个集合级工具条，应由 `DeliveryPlan.svelte` 的 `.plan-toolbar` 统一拥有；用边框、底色、间距和响应式换行建立层级，不新增阴影或嵌套卡片。发布属于版本详情的主流程动作，必须覆盖默认、确认、提交中、错误、成功、已发布状态。
+- **design-taste-frontend:** 该技能明确不主导后台数据表，本轮只采用 redesign-preserve、单一圆角系统、CTA 不换行、显式移动端折叠和可访问性保护；不引入营销页图像、Hero、展示型排版或复杂动效。
+- **finesse-ui:** 采用 product register 与渐进披露。筛选胶囊复用既有组件词汇，版本发布在检查器内联确认，避免把行级动作塞入全局工具条，也避免嵌套 Modal。
+- **共同方向:** 胶囊是一层扁平 toolbar surface，所有控件仍使用既有 Button/Select/MultiSelect；版本发布是 planned -> released 的服务端单向状态变更，成功后原子刷新版本列表、详情与最强大脑可读事实。
+- **分歧处理:** Finesse 的 grain/elevation 和 Taste 的营销页图像规范不适用于本产品管理台；用户明确禁止阴影，因此所有容器、卡片和控件继续以零投影交付。Finesse 的 Design Read 停顿已由本轮用户继续追加明确设计要求视为确认，无需再次阻塞。
+
+## 层级、响应式与验证范围
+
+- 胶囊桌面保持标题组在左、筛选与动作组在右；中宽度允许分组换行但保持单一 surface；窄屏改为纵向分组、控件满宽，触控目标至少 44px且无文档级横向滚动。
+- 发布确认在版本详情中原位展开，明确不可逆状态变化和发布日期；取消不写入，提交时禁用重复操作，失败保留上下文并给出可恢复原因，成功显示“已发布”。
+- 先建立可失败回归，证明当前缺少发布写入口且最强大脑快照无法看到发布事实；再实现最小服务/handler/前端闭环。
+- 验证包含目标 Go 回归、全量 Go 测试与 vet、Svelte check/build、Impeccable layout/full 检测、Finesse 检测、`git diff --check`，以及隔离登录态桌面/中宽/移动端的计划中、确认、错误/成功、已发布和胶囊换行状态。
+
+## 两份隔离布局评审合并
+
+- **共同发现:** `.plan-toolbar` 同时拥有标题与所有筛选/操作，是整行胶囊的准确所有者；不能只包 filters，也不能把发布动作塞入集合级工具条。两份评审都确认当前 `min-width:760px` 在临界宽度造成溢出风险，移动端 shared small Button / Select 未达到 44px。
+- **视觉评审单独捕获:** 删除无业务价值的 `Release catalog` eyebrow，把结果数移入标题组；工具条使用 `18px` 大圆角、完整边框、平坦背景和 12×16 spacing。真正 `999px` 只适合单行控件，多行 toolbar 会变成异常椭圆。
+- **机械扫描单独捕获:** `DeliveryPlan.svelte` 与 `DecisionDashboard.svelte` layout detector 均为 `[]`，且无任意 Tailwind spacing/z 值；Daily Jira 提供了 pill 控件几何，但其 active shadow 不能复用。版本页当前所有 shadow 声明均为抑制性，新增样式须维持 computed `box-shadow:none`。
+- **响应式决议:** `>1100px` 单行三组；`861-1100px` 标题/操作与筛选分两行；`<=760px` 搜索独占、项目/状态两列、操作成组且所有触点 44px；`<=430px` 筛选严格单列。文档不得横向滚动，只有版本表 `.table-scroll` 可局部横向滚动。
+- **最强大脑表面:** `DecisionDashboard.svelte` 在 `.decision-summary-panel` 与 `.decision-main-grid` 之间新增一条 hairline “最近发布”事实带，只显示最新版本及 `+N`，不做卡片网格、不参与风险筛选、不进入自动决策/时间线。数据只读 `delivery-cockpit.releases`，沿用项目偏好边界。
+- **零阴影决议:** 新工具条、发布确认、发布事实带和受影响的决策摘要/主表保持零投影；焦点用 outline，选中/激活用边框和底色。Portal 下拉需提供页面可选的 no-elevation 变体，不能仅靠祖先 token 假设阴影被关闭。
+
+## 当前阶段
+
+- **Phase:** 代码链路追踪与红灯回归设计。
+- **Status:** in progress
+
+# 2026-08-01 数据资产提交前双轴审查与只读迁移评估
+
+## 完成项
+
+- [x] 以规范符合性与需求完整性两个独立维度审查数据资产实现。
+- [x] 阻断原始 `INSERT OR REPLACE` 绕过不可变性约束，并将追加幂等从冲突更新改为显式预检。
+- [x] 校验快照真实输入水位与 `as_of` 证据边界，拒绝伪造高水位和未来证据。
+- [x] 将迁移备份改为 SQLite `VACUUM INTO`、`quick_check` 与落盘同步，覆盖 WAL 已提交状态。
+- [x] 让 dry-run 比较完整指纹、报告冲突并保留不合法历史 JSON 的原始证据。
+- [x] 补齐 Jira Release 创建/更新的事务内资产事件与时间/来源查询索引。
+- [x] 在本地数据库执行只读 dry-run：扫描 7、将追加 7、冲突 0，数据库 SHA-256 保持不变。
+- [x] 对精确暂存快照进行独立测试并提交为 `bd2df59 feat: add governed data asset ledger`。
+
+## 下一阶段
+
+- [ ] 建立真实周报/月报的 `SealSnapshot` 生产与版本重算策略。
+- [ ] 扩展 Jira 评论、GitLab 提交/流水线等来源的规范化资产事件。
+- [ ] 仅在明确批准目标数据库和备份路径后执行 migration apply。
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 审查修复后 `internal/db/data_assets.go` 一度缺少闭合花括号 | 1 | 立即修复并重新执行 gofmt、目标测试、vet 与精确暂存快照测试，全部通过。 |
+
 ## Current Task Addendum: Shared Assignee And Project Directory Convergence
 
 ### Goal And Exact Symptom
@@ -3719,3 +5063,688 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - 隔离登录态浏览器中，任务表行继续显示 `外部协同乙` 的真实负责人事实，负责人下拉唯一候选为 `核心成员甲`。
 - `go test ./internal/server`、前端检查、生产构建、静态契约、Impeccable、Finesse P0 与差异卫生均通过；本地夹具和预览已停止并清理。
 - **Status:** complete
+
+---
+
+# 2026-08-01 可治理、可追溯数据资产架构
+
+## 目标与保护边界
+
+- [x] 提交进入本轮前的全部工作树，形成独立可回滚基线。
+- [x] 以现有交付领域词汇为基础，固定源事实、资产事件、投影快照、分析运行和证据引用的边界。
+- [x] 建立不可变、幂等、带多时间语义和数据分级的数据资产账本深模块。
+- [x] 将高频检索元数据与大体积原始载荷物理分离，采用有上限的 keyset cursor 查询，禁止无界 offset 扫描。
+- [x] 接入至少一个真实交付写路径，并确保领域写入、审计事件和数据资产记录处于同一事务。
+- [x] 为报告/大模型分析保存可重算输入水位、口径版本、证据引用和不可变输出快照。
+- [x] 使用大量夹具验证幂等、不可变性、游标无重复/无遗漏、索引存在与查询复杂度。
+
+## 当前阶段
+
+- **Phase:** 本地实现与定向回归完成；生产迁移尚未执行。
+- **Baseline commit:** `ecd1aaf feat: consolidate delivery planning and admin workflows`
+- **No UI scope:** 本轮优先后端数据内核、迁移和查询性能，不修改前端界面。
+
+## 设计不变量
+
+- 原始事实、领域事件、派生指标和模型推断不得混为同一种记录。
+- 资产事件追加后不可更新或删除；更正通过新的 superseding 事件表达。
+- 业务发生时间、系统观察时间和持久化时间分别保存。
+- 同一来源事件重放必须幂等；同一幂等键携带不同内容必须显式冲突。
+- 时间线热查询不得读取大 JSON/BLOB；载荷只在按 ID 取证时读取。
+- 列表查询必须有最大页大小并使用 `(occurred_at, id)` keyset cursor。
+- 报告与大模型输出必须绑定 `as_of`、输入高水位、算法/Prompt 版本和证据集合。
+- 数据分级、保留等级和过期时间是每条资产的一等事实；本轮不执行破坏性清理。
+
+## 深模块接口方向
+
+- `Append`：校验来源、时间、主体、分级、保留策略和载荷，完成规范化、哈希、压缩、幂等与原子写入。
+- `Timeline`：只读热元数据，使用固定高水位的 `(occurred_at, id)` 反向 keyset cursor；不返回总数、不 JOIN 冷载荷。
+- `Load`：按事件 ID 读取并校验冷载荷哈希，供取证详情使用。
+- `SealSnapshot`：保存不可变报告/指标/分析快照及其事件证据关系、输入水位和生产者版本。
+- `LoadSnapshot` / `LatestSnapshot`：分别用于历史取证与明确范围内的最新版本读取。
+
+## 验证范围
+
+- 数据模型迁移与索引清单。
+- 追加/重放/冲突/不可变性测试。
+- 反向时间线分页的边界、同时间戳和过滤组合测试。
+- 大载荷压缩、延迟读取和哈希一致性测试。
+- 真实业务事务回滚不得留下孤立资产事件。
+- 大量数据下的查询计划不得退化为 payload 表扫描或 OFFSET 分页。
+
+## 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 基线暂存包含项目本地 Impeccable 参考文档的既有尾随空格 | 1 | 按用户“提交现有所有改动”的边界原样提交，不在基线中夹带无关清理。 |
+| 首次三文件计划补丁使用了不准确的 `findings.md` 末段标题，补丁整体未应用 | 1 | 读取三个文件真实末尾后，改用精确锚点分别追加。 |
+| `go test ./...` 的既有 LLM/GitLab 用例需要 `httptest.NewServer` 回环监听，沙箱拒绝；两次沙箱外自动审批均超时 | 2 | 本轮相关 handler 定向测试通过；跨包运行确认其余包通过，并将完整监听型套件明确记录为环境验证缺口。 |
+| 权限拒绝测试错误使用 `superAdminToken`，超级管理员组会绕过权限列表 | 1 | 改为生成普通 member JWT，仅携带 `delivery:read`。 |
+| benchmark 校准会多次调用同一基准函数，共享内存 SQLite DSN 导致第二轮夹具幂等键冲突 | 1 | 测试数据库 DSN 增加原子序号，并将夹具数据库日志设为静默。 |
+
+## 实施与验证结果
+
+- 新增追加式资产事件与不可变分析快照深模块；热元数据、冷载荷和证据关系分表，SQLite 数据库触发器与 GORM hooks 双层阻止更新/删除。
+- Work Item 规划变更、Jira 对账和冲突事件在原业务事务中同步追加资产事件；注入资产写失败时，任务、领域审计与资产账本整体回滚。
+- 新增受 `data_asset:read` 保护的元数据时间线、事件详情、最新快照和快照详情接口；列表不返回冷载荷、不计算总数、页大小最大 200。
+- 新增可恢复的 `data-assets-migrate` 命令：默认只读 dry-run；实际执行必须显式 `--apply` 并先提供数据库备份路径，历史 WorkItemEvent 使用 `id` keyset 分批回填且可安全重放。
+- 12,000 行行为夹具验证有界查询和索引计划；25,000 行、深至约 20,000 行后的 100 行 keyset 页面在本机 Apple M4 Pro 基准为约 `1.90 ms/op`，查询不 JOIN payload、不使用 OFFSET。
+- 核心模块、数据库、交付规划、迁移命令和数据资产 API 定向测试通过；`go vet` 与 `git diff --check` 通过。完整 `go test ./...` 仅因沙箱禁止两个既有 `httptest` 用例监听本机端口而未完成，未观察到本轮断言失败。
+- 本轮没有前端变更、生产数据库迁移、外部系统写入或数据清理。
+- **Status:** complete locally; production dry-run and approved migration remain deployment steps
+
+---
+
+# 2026-08-01 Work Item 完成与版本承诺解耦
+
+## 缺陷契约与保护边界
+
+- [x] 先用真实 FZ-2247 数据确认“确切 commit 已存在、状态仍为 progress、无目标版本关系”。
+- [x] 建立红灯回归：有大小写历史差异的 commit 证据、无版本时，正式完成入口原先返回 404。
+- [x] 版本只约束 `planning_state=committed` 的发布承诺，不作为执行完成的前置条件。
+- [x] 普通 push 仍是实现证据，不直接自动完成；MR 合并或 Jira 已完成保留为自动完成信号。
+- [x] 人工完成必须由负责人或管理员发起，并要求系统内已捕获确切 commit 或已合并 MR。
+- [x] 任务详情提供可发现、可确认、可反馈的完成操作，不改变版本计划、Jira 跳转或详情信息架构。
+- [x] 使用隔离 SQLite 和关闭外部集成的登录态浏览器验证，不写真实 Jira、GitLab 或生产任务。
+
+## 三方 UI 评审结论
+
+- **Design Read:** 研发交付管理台，克制、可信、任务导向；`register=product`，`SPECTACLE=1`，`DENSITY=8`，只使用状态反馈动效。
+- **Impeccable:** 完成属于任务详情的主流程动作；沿用共享 Modal 与 Phase 41 action tokens，必须有默认、确认、提交中、错误、成功和已完成状态，并保留清晰焦点与 44px 窄屏触控目标。
+- **design-taste-frontend:** 该技能明确不主导数据管理台，本轮只采用 redesign-preserve、交互完整性、CTA 不换行和反模板检查；不引入营销页 hero、图片、展示型排版或复杂动效。
+- **finesse-ui:** 使用 product register 的标准组件与渐进披露；完成确认放在现有详情弹窗 footer 内联展开，避免嵌套弹窗；成功后原位更新状态，错误提供原因与修复提示。
+- **共同方向:** 组件所有权保持在 `TaskKanban.svelte` 事项详情；后端 `POST /api/work-items/{id}/complete` 是唯一完成写入口；按钮文案为“确认完成”，说明明确“系统核对代码证据，无需绑定目标版本”。完成后 `status` 与 `planning_state` 同步进入 `done`，但不新增目标版本关系。
+- **分歧处理:** Finesse 的 grain、展示型基底与 taste-skill 的营销图像要求不适用于 Phase 41 产品管理台，统一让位于 `DESIGN.md` 的克制浅色管理台合同；Modal-first 警告通过在已经打开的事项详情内做 footer 渐进确认解决，不再新增第二层弹窗。
+
+## 层级、组件归属与响应式
+
+- 默认 footer 保持“打开版本计划 / 在 Jira 打开”，未完成的需求或 Bug增加“确认完成”主动作；已完成和执行 Task 不展示该动作。
+- 首次点击只展开一条内联确认带，说明证据门禁及版本非前置条件；用户可取消或提交，不改变正文层级。
+- 提交中禁用确认相关动作并显示明确文本；失败在 footer 内用 `role=alert` 展示后端原因；成功使用现有 toast，并用响应快照原子更新弹窗和表格行。
+- `>760px` 操作区右对齐且按钮不换行；`<=760px` 确认说明与操作纵向排列、按钮至少 44px，允许 footer 自然增高但不得产生横向滚动。
+
+## 验证范围
+
+- 领域服务：大小写一致化的多仓 commit、无版本完成、无证据拒绝、修订冲突、幂等重试、审计/数据资产原子写入。
+- Handler：负责人/管理员授权、非负责人拒绝、无版本成功、外部同步关闭时无网络副作用。
+- 自动完成：已有 MR merge 回归继续证明无版本可自动完成，普通 push 保持 progress。
+- 前端：Svelte 检查、构建、精确 detector、复制与交互状态静态契约。
+- 浏览器：1440、760、390 宽度覆盖默认、确认、提交中可观察状态、无证据错误、成功、已完成、键盘焦点、横向溢出和控制台错误。
+
+## 当前阶段
+
+- 后端新增唯一正式完成入口：先核对系统已捕获的精确 commit / 已合并 MR，再以 revision CAS 同时写入 `status=done`、`planning_state=done`、完成时间、领域审计和追加式数据资产事件；事务不创建 Release Version 关系。
+- 证据查询兼容 Jira Key 大小写差异并合并多仓轨迹；隔离夹具中的 `task_executor` 与 `crane_manager` 两条 commit 被同时核对，成功提示准确显示 2 条 Commit、0 条 MR。
+- 任务详情和事项检查器均提供“确认完成”；确认在既有详情 Modal footer 内渐进展开。无证据时保留弹窗并给出可恢复提示，完成后以服务端快照原子更新表格、检查器和详情，已完成事项不再显示完成按钮。
+- 登录态浏览器在 1440×900、760×900、390×844 验证了默认确认、无证据错误、成功、已完成和响应式布局；760/390 下按钮均为 44px，文档横向溢出为 0。
+- 隔离数据库落库结果为 `status=done`、`planning_state=done`、`revision=1`、版本关系 0、完成审计 1、治理资产事件 1；真实 Jira、GitLab 和项目数据库均未写入。
+- `go test ./... -count=1`、`go vet ./...`、`pnpm check`、`pnpm build`、Impeccable detector 和 `git diff --check` 全部通过；Svelte 为 0 error、80 个既有 warning，Finesse 为 P0=0，仅报告历史纯白色 P2。
+- **Phase:** 本地实现、回归与隔离浏览器验证完成。
+- **Status:** complete locally
+
+# 2026-08-02 每日 Jira 在 Jira 同步后的自动刷新修复
+
+## 三方前端门禁结论
+
+- **Impeccable:** 按产品后台 harden 处理；同步刷新必须保留当前分组、搜索与选中事项，具备并发保护、事件清理和失败恢复，不改变既有视觉结构。
+- **design-taste-frontend:** Daily Jira 属于该技能声明的后台/数据表格非主要适用面；仅采用重设计保留原则，保持现有信息架构、交互文案、可访问性和 Phase 41 视觉系统，不引入营销页模式。
+- **finesse-ui:** `register=product`、`SPECTACLE=1`、`DENSITY=8`；自动刷新只用于表达真实状态变化，禁止装饰性动效，继续复用现有 loading/error/empty 状态和共享组件。
+- **共同方向:** 后端只在 Jira 同步确实创建或更新本地事项后发布事件；前端通过现有 SSE 转换事件订阅并去抖合并批量更新，卸载时移除监听和定时器。页面层级、响应式几何、筛选、表格与检查器归属全部保持不变。
+- **分歧处理:** design-taste 的营销页图像、Hero、动效规范不适用于本页；finesse 的产品路径与 Impeccable harden 结论优先。
+
+## 验证范围
+
+- 后端回归：真实 Jira Search/Comment HTTP 夹具驱动 `syncJiraTasks`，断言数据库更新后发出 `telemetry-updated` 任务事件，未变化时不得重复广播。
+- 前端回归：Node 原生测试驱动 EventTarget，断言批量更新被合并为一次刷新、刷新中到达的事件不会丢失、卸载后不再刷新。
+- 静态与构建：目标 Go 测试、`pnpm check`、`pnpm build`、Impeccable/Finesse detector、`git diff --check`。
+- 浏览器：登录态 Daily Jira 验证同步事件后的数据更新、当前选中态稳定、无布局变化、无控制台错误。
+
+## 修复与验证结果
+
+- [x] 确认 Daily Jira 请求不使用缓存，根因是 Jira Worker 未广播更新事件且页面未订阅既有遥测事件。
+- [x] Jira Worker 仅在任务确实写入变化后批量广播 `telemetry-updated`，完整同步提交后再通知订阅者；无变化的下一轮同步不重复广播。
+- [x] Daily Jira 订阅 `well-ambient:telemetry-updated`，批量事件去抖合并；刷新中到达的事件排队为一次后续刷新，卸载时完整清理。
+- [x] Go 回归、前端事件回归、相关服务端回归、`go vet`、`pnpm check`、`pnpm build`、检测器与 diff 卫生全部通过。
+- [x] 隔离浏览器夹具验证同步后标题、负责人、状态和更新时间自动更新；当前选中事项不跳动，桌面/760/390px 无横向溢出且控制台为空。
+- **Status:** complete locally; runtime deployment/restart remains an environment step
+
+# 2026-08-02 Daily Jira 最近活动来源时间修复
+
+## 缺陷契约
+
+- [x] 用两个 `fields.updated` 不同、但本地同步时钟相同的存量 Jira 事项复现列表日期聚集。
+- [x] “最近活动”必须来自 Jira `fields.updated`，不得使用本地轮询或落库时间替代。
+- [x] 来源活动时间与本地 `LastUpdate` 分离，保留本地状态/负责人并发保护和 keep-alive 语义。
+- [x] 存量行在下一次 Jira 同步时补齐来源时间；缺失或非法来源时间不得覆盖已有值。
+- [x] 本轮仅修改服务端数据模型、同步投影与回归测试，不修改前端结构或样式。
+
+## 验证结果
+
+- 红灯：WA-910、WA-911 的 Jira 更新时间分别为 7 月 10 日、7 月 28 日，修复前 Daily Jira 均显示同一秒的 8 月 1 日本地同步时间。
+- 绿灯：修复后 Daily Jira 投影分别返回两个真实 Jira 更新时间。
+- `go test ./internal/server -count=1`、`go test ./internal/db -count=1`、`go test ./... -count=1`、受影响包 `go vet` 与 `git diff --check` 全部通过。
+- **Status:** complete locally; schema addition and source-time backfill occur on the next deployed startup/sync
+
+# 2026-08-12 版本计划容器底部间距同步
+
+## 三方前端门禁结论
+
+- **Design Read:** 研发发布治理管理台，克制、稳定、任务导向；`register=product`，`SPECTACLE=1`，`DENSITY=8`，不新增装饰或动效。
+- **Impeccable:** 共享 shell 已正确拥有页面 gutter、viewport 高度和滚动；正常态版本页只有 toolbar、metrics、workbench 三个直接子元素，却固定声明四行网格，空的 `1fr` 行制造了异常底部空白。机械 layout detector 为 `[]`，但视觉几何审查捕获了该结构错误。
+- **design-taste-frontend:** 按 redesign-preserve 处理，只同步容器节奏；保留信息架构、控件、文案、配色、表格和检查器，不把局部缺陷扩成页面重构。
+- **finesse-ui:** 产品页继续复用既有 Phase 41 组件系统和高密度布局；shell 仍是外层间距唯一所有者，页面组件不得追加本地 bottom margin 模拟对齐。
+- **共同方向:** 组件所有权留在 `DeliveryPlan.svelte` 根网格。正常无错误时使用三行 `auto auto minmax(0, 1fr)`；出现加载错误时才切换为四行，使 workbench 始终占据最后一个弹性行并落到共享 shell 的底部 gutter。
+- **分歧处理:** 机械扫描同时报告了目标文件中的历史非 4pt spacing 与硬编码 z-index，但它们与本缺陷无关且跨越共享 shell；本轮不顺带清理。营销页图像、grain、展示型排版和复杂动效不适用于该产品管理台。
+
+## 层级、组件归属与响应式
+
+- `FunctionalAdminShell.svelte` 保持 `--wa-shell-gutter` / `--wa-shell-bottom-gap` 和 workspace scroll owner 不变。
+- `FunctionalWorkspace.svelte` 与 `App.svelte` 的 viewport-fit / stack 高度合同不变。
+- `DeliveryPlan.svelte` 只让根网格行数匹配正常态与错误态的真实直接子元素数量，不改业务卡片、两列比例或内部滚动。
+- 桌面验证版本表与检查器底边应从异常约 104px viewport gap 回归到 shell 的约 20px bottom gap；`<=1100px` / `<=860px` / 窄屏继续自然流式堆叠，无文档级横向溢出。
+
+## 验证范围
+
+- 静态：精确文件 Impeccable layout detector、Svelte check、生产构建、`git diff --check`。
+- 浏览器：登录态版本计划正常数据态，桌面与窄屏截图；核对 workspace、release-plan、workbench、左右面板的矩形和 bottom gap，并确认滚动归属、无横向溢出和控制台错误。
+- 回归：切换排期看板、项目看板与版本计划，确认共享 shell 底部 gutter 未被改变；加载错误态由静态 DOM/CSS 契约覆盖，不制造额外空行。
+
+## 修复与验证结果
+
+- [x] 正常态根网格改为三行，错误态通过 `has-feedback` 显式切换为四行；workbench 在两种结构中均占据最后一个弹性行。
+- [x] 登录态桌面几何确认：版本表与检查器底部距 viewport 从修复前约 `103.6px` 回归到 `20px`，与共享 shell gutter 相同；左右面板底边差为 `0px`，文档无横向溢出。
+- [x] `760px` 级窄屏滚动到底部后 content / release plan / workbench / inspector 距 viewport 底约 `14.2px`；`390px` 级移动端约 `14.4px`，等于该断点的 shell gutter。表格横向滚动仍归 `.table-scroll`，文档宽度与 client width 相同。
+- [x] `pnpm -C web check` 为 `0 errors / 80 existing warnings`；生产构建、精确完整与 layout Impeccable detector、Finesse `p0: 0`、`git diff --check` 均通过。
+- [x] 截图人工检查了桌面正常态、窄屏顶部/底部和移动端顶部/底部；颜色、层级、对齐、溢出和响应式布局正常。浏览器日志中只有切换前决策页遗留的共享目录 `401`，来源为 `DecisionDashboard.svelte`，版本页本轮没有新增错误。
+- **Status:** complete locally
+
+## 版本计划无阴影追加评审
+
+- **Design Read:** 研发发布治理管理台，克制、扁平、数据优先；`register=product`，`SPECTACLE=1`，`DENSITY=8`，按 redesign-preserve 做局部降噪。
+- **Impeccable:** 卡片与容器用边框、底色和间距表达层级，不保留装饰性投影；键盘焦点必须改用清晰的 `outline`，不能随阴影一起消失。
+- **design-taste-frontend:** 该技能不主导数据管理台，只采用高密度页面不依赖卡片 elevation、保留现有信息架构与品牌 token 的约束；不扩成全站重构。
+- **finesse-ui:** 产品页降低视觉噪声，主面板、指标容器和共享控件保持扁平；状态与焦点反馈属于功能信号，应由背景、边框或轮廓承载。
+- **共同方向:** 组件所有权仍在 `DeliveryPlan.svelte`，只在版本计划作用域内关闭共享 shadow tokens 与按钮/选择器的装饰性 `box-shadow`；选中行继续依靠现有选中底色，输入和按钮焦点改为 `outline`。
+- **分歧处理:** 下拉浮层和弹窗的空间分层可被视为功能性 elevation，但用户要求组件不使用阴影；正常版本页作用域先做到零投影，弹窗/portal 不顺带修改共享组件，避免影响其他页面。
+- **响应式与验证:** 不改网格、间距和断点；登录态验证桌面与窄屏默认态，检查版本页内 computed `box-shadow` 为零、焦点轮廓可见、无横向溢出，并运行 Impeccable/Finesse 检测、Svelte check、构建与 diff 卫生。
+
+## 无阴影实施与验证结果
+
+- [x] 版本计划根作用域关闭六个共享 shadow tokens，并覆盖 Button、Select、MultiSelect 的默认/悬停装饰性投影；主面板、指标区、表格与检查器继续用边框和底色分层。
+- [x] 移除选中行的 inset shadow，保留现有选中底色；搜索框、创建表单、按钮与选择器用 `outline` 承担焦点反馈。
+- [x] 登录态浏览器中版本页默认态 computed shadow 元素从修改前 `6` 个降为桌面、`760px` 级窄屏和 `390px` 级移动端均 `0`；搜索框聚焦时 `box-shadow: none` 且轮廓可见。
+- [x] 窄屏与移动端文档 `scrollWidth === clientWidth`；移动端表格横向滚动仍归 `.table-scroll`，截图确认层级、选中态和控件可读性正常。
+- [x] `pnpm -C web check` 为 `0 errors / 80 existing warnings`；生产构建、Impeccable `[]`、Finesse `p0: 0` 与 `git diff --check` 均通过，版本页浏览器日志只有 Vite 连接/HMR debug，无错误。
+- **Status:** complete locally
+
+## 版本发布闭环、最强大脑投影与整行胶囊验收
+
+- [x] 新增本地计划中版本的专用发布命令和 `POST /api/releases/{id}/publish`；发布日期、原因、操作者、状态和不可变证据在一个事务内提交，重复请求复用原证据。
+- [x] 关闭创建已发布版本、通用 PATCH 直接发布，以及发布后修改版本事实或 Jira 范围的绕过路径。
+- [x] `delivery-cockpit.releases` 输出项目范围内版本总数与最近发布事实；最强大脑页面在汇总与事项表之间直接展示版本、项目、日期、范围完成度和证据数，并监听发布事件即时刷新。
+- [x] “现有版本与 Jira 事项”标题、数量、搜索、项目/状态筛选、重置、刷新和新建操作统一进入一个 `18px` 圆角、无阴影的扁平工具条；桌面单行、平板两行、移动端堆叠。
+- [x] 发布确认使用页面内联事实区；共享 Select、MultiSelect、DatePicker、Modal 增加显式 `shadowless` 接口，使 portal 浮层也遵循该页零阴影约束。
+- [x] 全量 Go 测试与 vet、前端 check/build、Impeccable/Finesse、diff 卫生均通过；登录态浏览器覆盖 `1440px`、`900px`、`390px`，验证发布前后、最强大脑即时可见、无阴影、焦点轮廓、无横向溢出和空控制台。
+- **Status:** complete locally; not deployed
+
+## 2026-08-12 人员绩效“最强大脑”后台滚动计算
+
+- [x] 重新确认边界：该模块只计算人员绩效投影，不复用项目健康度 PHDI，也不由页面访问或人工点击触发。
+- [x] 建立独立后端深模块：对外仅提供启动、停止和单次运行接口；输入汇总、公式、证据门槛、快照、审计和保留策略封装在模块内。
+- [x] 建立追加式持久化：每次运行、每个人员快照、失败与清理动作均形成可追溯记录，不原地覆盖历史评分。
+- [x] 接入静默定时任务：服务启动后后台运行，按可配置周期滚动刷新；默认保留 90 天，可配置并在事务中清理过期快照与审计事件。
+- [x] 实现人员考核证据模型：需求按规模、优先级、复杂度、阶段及责任份额计权；Bug 按严重度、逸出阶段及缺陷责任份额计损，修复贡献与缺陷责任分离。
+- [x] 增加证据覆盖率和最小样本门槛；当前数据无法支持的指标明确记为不可用，禁止把缺证据结果发布成正式等级。
+- [x] 用临时数据库验证首次运行、重复追加、幂等约束、后台停止、失败审计及可配置保留清理，不写入现有 `well-ambient.db`。
+- [x] 更新领域词汇、配置示例和实施记录，完成全量 Go 测试、vet 与 diff 卫生检查。
+- **Status:** complete locally; not deployed and existing database untouched
+
+## 2026-08-12 人员绩效下一阶段、优化与超管计算说明页
+
+- [x] 审计上一阶段实现与现有超管权限、导航和最强大脑页面，明确正式计算仍缺失的事实及可验证接入点。
+- [x] 深化 Performance 模块的证据适配 Seam，在不扩大调用方接口的前提下接入缺陷、重开、回滚和验证改进事实，并维持责任/贡献分离。
+- [x] 优化后台运行：补充并发/数据库忙重试、运行状态可观测性、最新快照读取和配置边界验证，同时保持计算静默、串行和可停止。
+- [x] 建立仅超管可读的计算说明与结果查询接口；接口不得触发计算或改变评分事实。
+- [x] 完成 Impeccable、design-taste-frontend、finesse-ui 三方评审并记录共同方向及分歧；未达成层级、组件归属、响应式和验证范围一致前不编辑前端。
+- [x] 实现超管计算说明页：解释口径、系数、证据门槛、保留策略、运行状态和最近快照，不暴露敏感人员明细给非超管。
+- [x] 验证非超管不可见/不可访问、超管桌面/平板/移动端、加载/空/失败状态、键盘与对比度，并执行后端/前端全量检查。
+- [x] 按目标逐项完成审计，更新领域文档、发现和进展，确认没有遗留显式需求后再结束目标。
+- **Status:** complete locally; not deployed and existing database untouched
+
+### UI 三方评审结论（前端编辑前门禁）
+
+- **共同方向:** 这是 Phase 41 浅色管理台中的只读绩效治理页，使用既有 Svelte 组件、tokens、左轨子菜单和固定字号；SPECTACLE=1、DENSITY=8，动效只反馈加载、刷新和焦点状态。
+- **层级:** KPI 左轨下增加“度量概览”和仅超管可见的“计算说明”；内容从紧凑标题/只读声明进入运行状态事实条，再到公式与十项指标表，右侧为证据门槛/保留策略检查器，底部为最近人员快照表。
+- **组件归属:** App 持有 KPI 子视图状态，FunctionalAdminShell 持有全局左轨呈现，InsightsWorkspace 只做 lens 路由，新页面只消费超管只读 API；计算和权限仍由后端 Performance Module 与全局超管校验拥有。
+- **响应式:** 宽屏主内容加右检查器；低于 980px 检查器自然下排；低于 760px 单列、44px 控件，十项指标和快照各自拥有唯一横向滚动容器，文档本身不得横向溢出。
+- **验证范围:** 超管与非超管接口/导航、首次加载、成功、无运行、失败、刷新、桌面 1440px、平板 900px、移动 390px、键盘焦点、对比度、无布局抖动和空控制台。
+- **分歧及处理:** Finesse 通用 substrate 建议 grain、强展示字体和更明显层叠；Impeccable product register、design-taste 的 dashboard 范围声明及项目 `DESIGN.md` 都要求熟悉、克制、无新增视觉系统。采用项目既有系统字体、浅色工作台、hairline 与无装饰性阴影，不在业务页新增 grain、hero 或营销动效。
+- **Review status:** hierarchy, ownership, responsive behavior, and validation scope agreed; frontend editing gate open.
+
+## 2026-08-15 证据链筛选输入空白回归
+
+- [x] Phase 1：在登录态证据链页面建立“输入一个字符即刷新并空白”的秒级、可自动判定反馈环；不先凭代码猜原因。
+- [x] Phase 2：最小化复现并给出 3–5 个可证伪根因假设，核对请求、组件挂载、loading/empty 状态和筛选所有权。
+- [x] Phase 3：完成 Impeccable、design-taste-frontend、finesse-ui 三方评审，记录层级、组件归属、响应式、可访问性和验证范围后再编辑前端。
+- [x] Phase 4：在正确调用缝先加入红灯回归，再做最小修复；连续输入必须保留稳定快照，不能整页卸载或闪空。
+- [x] Phase 5：验证单字符、连续中文/英文、退格、清空、无结果、显式刷新、浏览器可用断点，执行检查、构建、检测器与差异卫生；当前 Browser 不支持程序化 390px viewport，且本次未改 CSS/响应式规则。
+- [x] Phase 6：清理夹具与调试设施，记录根因、防复发机制和部署缺口。
+- **Status:** complete locally; not deployed. Isolated services and temporary data cleaned.
+
+### UI 三方评审结论（前端编辑前门禁）
+
+- **Design Read:** Phase 41 浅色研发治理工作台，`register=product`、`SPECTACLE=1`、`DENSITY=8`。筛选是表格的高频局部控制，不应改变路由、页面壳或源数据生命周期。
+- **Impeccable:** 输入、清空、零结果、失败与恢复必须可逆；任何筛选结果都要保留输入框、计数、刷新入口和键盘焦点。源数据加载/失败/真空只由顶层状态负责，筛选空集由表格内部负责。
+- **design-taste-frontend:** dense dashboard 是该技能明示的 out-of-scope；本次只采用 preserve-mode、稳定快照、完整状态与 no-CLS 原则，不引入营销构图、字体、图片、卡片或动效。
+- **finesse-ui:** product register 下保留既有高密度信息层级和组件词汇。即时本地筛选是正确反馈，不应为掩盖状态错误增加 debounce；修复状态所有权而非重做视觉表面。
+- **共同层级:** `scores` 为空才显示顶层“暂无证据”；`scores` 有数据但搜索/健康筛选无命中时，工作台、筛选条与表格保持挂载，由表格呈现上下文空行；inspector 显示可恢复的筛选空状态。
+- **组件归属:** `ProjectHealthTelemetry` 继续拥有源快照与本地派生过滤；输入不触发远端请求。搜索 empty、健康状态 empty 与 source empty 不再共用同一分支。
+- **响应式与可访问性:** 不新增 CSS 或交互目标，沿用现有桌面双栏、窄屏堆叠和 44px 控件；零结果后输入保持 focus、可退格/清空，页面横向几何不变。
+- **验证范围:** 首次加载、已有数据、单字符、连续中英文、退格、清空、保证零结果、健康状态零结果、显式刷新、失败后保留旧快照、1440px 与 390px、焦点、页面横向溢出和控制台。
+- **分歧及处理:** Finesse 通用 substrate 的 grain/展示字体不适用于该产品修复；项目 Phase 41、Impeccable 与 design-taste preserve 规则优先。本次零视觉系统变更。
+- **Review status:** hierarchy, ownership, responsive behavior, accessibility and validation scope agreed; frontend editing gate open.
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 首次计划补丁只有上下文、没有实际新增内容 | 1 | 读取文件尾部后改为带唯一任务标题的追加补丁，不重复空补丁。 |
+| 组合追加 findings/progress 时跨文件锚点不精确 | 2 | 两次均被 `apply_patch` 原子拒绝、未产生修改；改为先读取各文件真实尾部，再拆分计划错误记录。 |
+| 登录方式检索包含不存在的 `.env*` 裸通配符 | 1 | zsh 在命令执行前拒绝展开；后续用 `rg --files` 生成真实文件列表，不重复该命令。 |
+| 读取 8080 进程命令被系统权限拒绝 | 1 | 不需要进程环境且可能涉及敏感信息；不升级权限，改从配置模板建立隔离服务。 |
+| 整段读取配置模板时发现其中含非占位敏感字段 | 1 | 立即停止传播；后续只读取键或使用脱敏输出，隔离配置从零写禁用项，最终不引用敏感值。 |
+| 隔离后端 18080 与 Vite 5174 在默认沙箱内绑定失败 | 各 1 | 均为明确 `EPERM`；按权限规则使用仅限本地端口/明确命令的受控授权重启成功。 |
+| 裸 `node --test` 无法加载 `.ts` 回归文件 | 1 | 断言未运行，不能算业务红灯；改用仓库既有 `node --experimental-strip-types --test`。 |
+| Browser Playwright wrapper 不提供 `setViewportSize` | 1 | TypeError 后页签不受影响；不猜私有接口，使用可用面板与未改 CSS 的响应式契约验证边界。 |
+| `browser.tabs.close` 不存在 | 1 | 两个页签均未被关闭；改用已知 `goto('about:blank')` 释放页面和连接，不重复错误接口。 |
+
+## 2026-08-15 Jira 完成状态与评论入站同步
+
+- [x] Phase 1：只读核验 DL-4309 的 Jira 与本地落库时间线，定位入站同步、广播和页面消费链。
+- [x] Phase 2：建立评论-only、重复评论请求、旧 Done 漏采三条症状级红灯，并量化真实配置下的串行请求上界。
+- [x] Phase 3：实现周期/事项双水位、主/补偿查询去重、评论当前投影、失败重试与逐事项即时广播。
+- [x] Phase 4：完成 Impeccable、design-taste-frontend、finesse-ui 三方评审并锁定前端改动边界。
+- [x] Phase 5：实现共享 telemetry 刷新调度器，接入 Task/Demand/Decision 与 Daily Jira，保留轮询兜底并建立前端红灯。
+- [x] Phase 6：补齐同步可观察性和时间边界回归，运行全量后端/前端/检测器/差异卫生。
+- [x] Phase 7：使用无外连隔离夹具和登录态浏览器验证即时刷新、单次去重、列表几何稳定与空控制台；隐藏页恢复由调度器契约覆盖，未改 CSS/响应式规则。
+- **Status:** complete locally; not deployed, real Jira and the main database were read-only.
+
+### UI 三方评审结论（前端编辑前门禁）
+
+- **Design Read:** 研发交付管理台，事实优先、稳定高密度；`register=product`，`SPECTACLE=1`，`DENSITY=8`，无 hero engine 或装饰性动效。
+- **Impeccable:** 保留 Phase 41 的信息层级、token、浅色管理台与结果导向文案；后台事件只应原子替换完成的新投影，不能清空当前列表或触发布局抖动。重复行为由共享模块拥有，页面不各写一套事件节流。
+- **design-taste-frontend:** dense dashboard 属于该技能明示的 out-of-scope；仅采用 redesign-preserve、IA/路由/文案/主题/analytics 锁定、完整状态和 CLS 约束，不引入营销页构图、字体、图片或动效。
+- **finesse-ui:** product 路径采用低 spectacle、高 density；刷新是状态反馈而非视觉表演。保留现有 component vocabulary、固定字号、轮询 fallback 和已有 loading/error/empty 语义。
+- **共同层级:** 不新增可见同步卡片、提示或按钮；用户仍在原任务、需求和决策列表中看到最新事实。即时刷新属于数据新鲜度基础设施，不与页面主任务争夺注意力。
+- **组件归属:** 新共享 `telemetry-refresh` 模块负责事件解析、按任务过滤、短时合并、in-flight 单飞、运行中事件补刷和 unsubscribe；`TaskKanban`、`DemandKanban`、`DecisionDashboard`、`DailyJiraAudit` 只声明要重新读取哪些已有投影；后端 Jira worker 负责增量边界、水位、评论幂等与广播时机。
+- **响应式与稳定性:** 1440/900/390 继续使用既有布局，无新增 CSS；事件刷新保留当前数据直至新请求成功并原子替换，避免 skeleton 回退、滚动位置变化和横向溢出。隐藏页恢复后由合并刷新追上，轮询仍作为断线兜底。
+- **可访问性:** 不新增交互目标、焦点路径、颜色信号或动态文案；现有键盘和 screen-reader 语义不变。刷新失败沿用页面已有错误路径，不抢焦点。
+- **验证范围:** 评论-only、状态变更、同 task 连续事件、刷新进行中再来事件、无关 task、unsubscribe、请求失败后下一事件可重试；Task/Demand/Decision/Daily Jira；1440/900/390、隐藏/恢复、列表稳定、控制台零新增错误。
+- **分歧及处理:** Finesse 通用 substrate 建议 grain/展示字体，design-taste 的多数视觉规则面向营销页；项目 Phase 41 与 Impeccable 要求保留成熟产品表面。采用现有 token/hairline/system font，不做任何视觉 substrate 或页面结构改造。
+- **Review status:** hierarchy, ownership, responsive behavior, accessibility, stability semantics and validation scope agreed; frontend editing gate open.
+
+## 2026-08-15 Jira 完成状态与评论入站同步完全修复
+
+### 目标与验收契约
+
+- [x] 以 DL-4309 为真实样本建立可重复、可自动判定的同步反馈环，证明 Jira 已完成和新增评论能进入系统，而不是只修一条记录。
+- [x] 查清并修复 Jira 拉取范围、增量游标、时间边界、字段映射、持久化、缓存/投影与刷新触发中的根因；同一事件重复拉取必须幂等，边界事件不得永久遗漏。
+- [x] 覆盖首次同步、分页、状态变更、评论新增/编辑/删除、短暂失败后重试、持久水位和多轮无变化同步；错误可观察且不会悄悄推进游标。
+- [x] 保持现有 Jira 写回、项目/版本范围、权限和绩效证据语义边界；未对真实 Jira 做测试写入，未覆盖现有脏工作树或主数据库。
+- [x] 前端编辑前完成 Impeccable、design-taste-frontend、finesse-ui 三方门禁；登录态宽屏实测受影响完成态，响应式几何因无 CSS 变更保持原契约。
+
+### 阶段
+
+- [x] Phase 1：建立 DL-4309 同步症状的红灯反馈环，读取真实 Jira/本地状态与当前运行日志，最小化失败场景。
+- [x] Phase 2：列出并逐一证伪 3–5 个根因假设，锁定游标、JQL、评论或投影层的实际断点。
+- [x] Phase 3：先加入正确调用缝的回归，再做最小且完整的同步链路修复。
+- [x] Phase 4：验证原始样本、边界/分页/失败恢复/幂等、相关 Go 全量检查，并完成强制 UI 检测和认证浏览器验证。
+- [x] Phase 5：清理调试设施、记录根因与防复发机制，交付本地修复和部署/运行态缺口。
+
+### 当前状态
+
+- **Phase:** complete locally
+- **Protection:** 先只读检查真实 Jira、日志和数据库；回归使用内存或隔离数据库。未经确认不向 Jira 写入、不重启生产/远端服务、不改真实 Jira 事项。
+- **Feedback loop:** `GOCACHE=/tmp/well-ambient-gocache go test ./internal/server -run '^TestJiraSyncBroadcastsWhenOnlyJiraCommentChanges$' -count=1` 已转绿；全量 Go、45 条前端契约、构建、静态检查和 1920×813 登录态完成态截图验证均通过。
+
+### 排序后的根因假设
+
+1. `syncJiraComments` 不返回变更事实，评论新增/编辑/删除不会进入 `changedTaskIDs`，因此评论-only 周期不广播；预测：让评论同步返回 `changed` 后红灯转绿且无变化重放不广播。
+2. 任务/需求/决策页没有统一订阅 SSE，只依赖 15–60 秒轮询；预测：即便注入正确 `telemetry-updated`，TaskKanban 当前不会立即调用任务接口。
+3. 主 JQL 按状态/负责人过滤，Done 后依赖 keep-alive；已完成超过 14 天的事项或不满足本地身份/项目范围的事项再评论、重开会永久漏掉；预测：构造旧 Done + 新 Jira updated 的夹具时当前 worker 不会请求该 key。
+4. 每个主查询事项都串行拉评论，keep-alive 又可能同周期重复拉取，且广播被推迟到整批结束；预测：N 个重叠事项会产生约 2N 次评论请求并让首个事项通知等待全部慢请求，解释真实约 4 分钟陈旧窗口。
+5. 同步失败只有日志、无持久水位/最近成功/失败投影；预测：评论请求失败后页面和状态接口无法说明重试进度，重启也没有可核对的增量边界。
+
+### 深模块方向（实现前）
+
+- **Interface:** server worker 每轮只调用一次 Jira 入站 reconcile；返回本轮检索数、变更事项、错误和可持久状态，不暴露评论分页、主/补偿 JQL、去重或广播顺序。
+- **Jira adapter:** 继续复用现有 `telemetry.JiraClient` 与 httptest adapter；SearchIssues/GetComments 是 true-external seam，失败必须保留重试资格。
+- **SQLite adapter:** 使用加法 `JiraInboundSyncState`/`JiraIssueSyncState` 保存全局成功水位与每事项评论水位；只在对应阶段成功后推进，内存 SQLite 作为测试 adapter。
+- **Reconcile:** 先收集主查询与“主查询外的已知 Jira key 增量”，按 key 合并并按 Jira updated 新到旧处理；每事项字段、评论、版本/事件完成后立即通知，不能等待无关慢事项。
+- **Comment projection:** 新增/编辑/删除返回 `changed`；无变化且事项 source updated 未推进时跳过 HTTP；失败记录但不推进事项水位，下一轮幂等重试。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 当前非登录 shell 的 PATH 中没有 `curl`，本地 `/healthz`/`/api/status` 探测未执行 | 1 | 改用绝对路径 `/usr/bin/curl`，不重复相同命令；数据库与进程只读检查已成功。 |
+| 沙箱拒绝读取 PID 31231 的 `ps` 信息 | 1 | 按规则以只读、限定 PID 的权限升级重试并成功；未扩大到进程控制。 |
+| `/healthz` 返回 404，随后 8080 服务在下一次探测前退出 | 1 | 不把服务退出归因于本次代码；保留 DB 证据，后续反馈环使用隔离测试服务，实时日志验证待安全重启时完成。 |
+| 首次评论-only 回归错误地种入了评论时间作为 `CompletedAt`，导致状态字段也变化而假绿 | 1 | 将 `CompletedAt` 修正为 Jira resolution 时间，重新运行后稳定命中缺广播红灯。 |
+| 安全读取 YAML 时 Ruby 未加载 `Date`，解析在首个文件前失败 | 1 | 改为显式加载 `date` 后只输出 Jira 非密钥字段；未读取或打印 token。 |
+| 当前 Codex 任务没有附加终端会话，无法从任务终端追溯已退出服务日志 | 1 | 不再重复读取；使用数据库时间、隔离 HTTP 夹具和后续安全启动日志完成验证。 |
+| 首次大块收敛补丁在 reconciliation 搜索循环后缺少一个闭合花括号，gofmt 报语法错误 | 1 | 读取 60–280 行确认唯一缺口，补齐后 gofmt 与三条定向回归通过；未重复盲跑。 |
+
+## 2026-08-13 人员绩效 Jira 历史证据为零修复
+
+- [x] Phase 1：建立只读 SQL 红灯，直接捕获“成员已有 Jira 事项但所有指标均不可用”。
+- [x] Phase 2：缩小到 Jira `done` 事项缺少完成时间、计划日期、原始估算，且 `execution_runs` 为空。
+- [x] Phase 3：形成并逐项验证 5 个可证伪假设；确认主因位于 Jira 历史同步与完成证据映射，不是 core-member 过滤或事项类型识别。
+- [x] Phase 4：先加入历史 Jira JQL、完成字段映射和 Jira Done 验收降级证据的红灯回归。
+- [x] Phase 5：实现周期内历史完成事项同步，持久化 resolution/due/estimate，并在无执行验收时生成可解释的 Jira 完成试算证据。
+- [x] Phase 6：重启本地服务，重跑原始 SQL 反馈命令并核对成员详情中的历史 Jira 引用、覆盖率和试算分。
+- **Status:** complete locally; updated development service is running on port 8080
+
+### 约束
+
+- Jira Done 只能作为低等级的验收降级证据，不能推断一次通过、流水线安全、Bug 责任或重开结果。
+- 缺少正式证据时继续标记“证据不足”，但不得把 N/A 冒充 0 分；详情必须能追溯到 Jira 事项引用。
+- 历史同步范围跟随可配置考核窗口和当前 core member/project 边界，不复用只抓活跃事项的业务 JQL。
+
+## 2026-08-13 按《研发考核评分判定表》v4.0 重实现并重算
+
+- [x] Phase 1：从判定表锁定 C01-C10 权重、方向、分档边界、逐指标最小样本、系数、覆盖率、暴露期与等级，不再沿用 `personnel-v1` 推测口径。
+- [x] Phase 2：建立红灯回归，证明单个 Jira Done 不能形成 100 分、C01 分母必须包含周期内到期事项、阈值与系数必须逐项匹配判定表。
+- [x] Phase 3：实现唯一的 v4.0 规则模型、到期事项历史同步、逐指标门槛和发布门槛；缺证据保持 N/A，正式分与试算分分离。
+- [x] Phase 4：完成 Impeccable、design-taste-frontend、finesse-ui 三方前端评审，记录层级、组件归属、响应式与验证范围后再修改展示。
+- [x] Phase 5：重启根目录服务并静默重算真实 14 名 core member，核对数据库快照、审计、历史 Jira 分母、成员详情来源和不再出现误导性 100 分。
+- [x] Phase 6：运行 Go、前端、设计检测、差异卫生和登录态 1440/900/390 浏览器验证。
+- **Status:** complete locally; v4.0 service running on port 8080
+
+### 最终验收
+
+- 最新持久化 run 使用 `v4.0`，只生成 14 名 core member 快照；历史 `personnel-v1` run 保持不可变。
+- 14 名成员正式分均为 `N/A`，可计算试算分范围为 20–45；最大证据覆盖率 32%，正式证据缺口不再被显示为 0 或 100。
+- C01 来源同时包含周期内 `resolved` 与 `due` 事项，证明到期未完成事项进入分母；运行、快照、保留清理和完成事件均已持久化审计。
+- Go 定向测试与 vet、前端契约、Svelte 检查、生产构建、Impeccable/Finesse、差异卫生及登录态 1440/900/390 验证均通过。
+
+### v4.0 UI 三方评审（实现前门禁，已完成）
+
+- **Design Read:** 研发绩效治理后台，证据优先、克制、高密度；`register=product`，`SPECTACLE=1`，`DENSITY=8`。
+- **Impeccable:** 保留 Phase 41 浅色管理台、现有表格和共享 Modal；把评分状态直接写进数据层级，不用颜色或装饰掩盖 N/A。正式分是列表主数值，试算只在详情渐进披露。
+- **design-taste-frontend:** 本页属于其 dashboard 明确范围外，只采用 redesign-preserve、状态完整、对比度、触控尺寸和 IA 保护规则；不更换字体、颜色、组件系统或导航。
+- **finesse-ui:** `product` 路径采用固定字号、DENSITY=8、SPECTACLE=1；表格必须让正式分和 N/A 可快速扫描，详情复用既有 Dialog，动效只表达打开、关闭和加载。
+- **共同层级:** 列表列名为“正式分”；满足 v4.0 发布门槛才显示数值与等级，否则显示 `N/A` 和原因摘要。详情顶部同时列正式分、试算分、覆盖率、有效样本、暴露天数和公式版本，随后是 C01-C10、事项系数、来源与排除项。
+- **组件归属:** Performance Module 决定 `final_score`、`observed_score`、发布门槛和原因；API 只投影持久化快照；`PerformanceCalculationGuide` 只做标签和展示；共享 Modal 继续拥有定位、焦点、关闭和滚动。
+- **响应式:** 1440px 保持现有高密度表格；900px 允许表格唯一横向滚动；390px 页面不横向溢出，详情 Modal 使用现有 viewport 边距和单一正文纵向滚动，关闭目标不少于 44px。
+- **验证范围:** 加载、无运行、证据不足 N/A、正式分、详情试算/来源、失败；1440/900/390；键盘打开/关闭、焦点恢复、对比度、无布局抖动和空控制台。
+- **分歧及处理:** Finesse 的通用 substrate 建议 grain/展示字体，design-taste 对产品 dashboard 不主张营销构图；项目 Phase 41 与 Impeccable 要求熟悉和克制。采用项目现有 token/hairline/system font，不引入 grain、hero、展示字体或新动效。
+- **Review status:** hierarchy, ownership, responsive behavior, accessibility, and validation scope agreed; frontend editing gate open.
+
+## 2026-08-14 版本右侧面板布局与生命周期治理
+
+- [x] 读取版本领域基线，定位项目选择与保存按钮分行的结构原因，并建立生命周期接口红灯回归。
+- [x] 完成 Impeccable、design-taste-frontend、finesse-ui 三方评审并记录共同方向。
+- [x] 实现已发布版本归档、计划中版本废弃、空版本受保护软删除及追加式审计。
+- [x] 将项目选择与保存按钮收敛为同一操作行，并增加状态驱动的版本管理区。
+- [x] 完成 Go、前端、检测器及登录态 1440/760/390 浏览器验证。
+- **Status:** complete locally; no remote deployment, and the pre-existing local backend process was not restarted.
+
+### UI 三方评审结论（前端编辑前门禁）
+
+- **共同层级:** 保留版本名与状态为 inspector header 的首要事实；计划中版本把“发布版本”作为主流程动作，已发布版本把“归档版本”作为当前阶段动作；废弃与删除进入 inspector 底部独立“版本管理”区，不与发布、项目保存或 Jira 关联争夺层级。
+- **组件归属:** `DeliveryPlan.svelte` 负责 inspector 编排、确认态和成功后的列表选中；共享 `Select`、`Button`、`Alert` 与 Toast 继续拥有交互样式和反馈；后端 Delivery Planning lifecycle service 负责状态机、关联保护、软删除和不可变审计，前端不得自行推断越权转移。
+- **绑定布局:** 新增专用 `.project-binding-controls`，桌面/平板使用 `minmax(0, 1fr) max-content`、8px 间距和底边对齐；该处 Select 使用 compact 消除共享 16px 外边距，保存按钮与 Select 使用一致控件高度。只有窄容器约 420px 以下才有意改为单列全宽。
+- **响应式:** 1100px 以下主表与 inspector 保持既有单列；760px 控件至少 44px，但项目选择与保存仍同行；390px 项目绑定与生命周期按钮单列，header 和长名称自然换行，移除窄屏越变越高的强制 inspector 最小高度。
+- **确认与可访问性:** 归档、废弃、删除复用一种内联确认模式，显示动作影响、版本名、必填原因与清晰取消路径；删除额外要求输入精确版本名。保持 DOM 顺序为字段后动作、键盘焦点可见，移动端目标至少 44px，错误同时保留在确认区并通过 Toast 报告结果。
+- **验证范围:** 计划中/已发布/已归档/已废弃、Jira 来源、无权限、有无关联、确认/取消/失败/重复请求/成功重选；1440、760、390；长项目名、长版本名、下拉 portal、横向溢出、自然高度、Toast、键盘和控制台。
+- **分歧及处理:** Finesse 通用视觉底座建议展示字体、纹理与更明显层叠，机械扫描还提示可全量统一 4pt 间距；Impeccable、design-taste redesign-preserve 与项目 Phase 41 基线要求本次只修拥有问题的局部结构，不扩大成视觉系统重写。采用既有 token、系统字体、hairline 和扁平 section，仅把本次触达的绑定行、生命周期确认和相关触控尺寸收敛到 4pt 节奏。
+- **Review status:** hierarchy, ownership, responsive behavior, validation scope, destructive-action semantics and accessibility agreed; frontend editing gate open.
+## 2026-08-13 人员绩效 Core Member、配置开关与成员详情
+
+- [x] 识别并复用 `core member` 的唯一权威来源，建立非核心成员不得进入证据聚合、快照或说明结果的后端回归。
+- [x] 将人员绩效功能开关纳入受治理配置保存链，允许超管在配置界面读取和修改，同时保持文件配置与历史版本兼容。
+- [x] 扩展 Performance 只读 Interface，按持久化快照提供单成员分数详情、十项指标、事项系数、排除原因和计算来源，不由查询触发计算。
+- [x] 建立仅全局超管可读的成员详情接口，验证跨成员、非核心成员、未登录和普通成员访问边界。
+- [x] 按三方 UI 评审实现可点击成员行和共享样式详情弹窗，覆盖加载、成功、缺数据、失败、键盘和窄屏状态。
+- [x] 完成 Go、前端、配置版本、权限、设计检测及登录态浏览器验证，确认测试写入使用隔离数据库；本地开发服务按授权读取真实 Jira，并生成正常启动轮次。
+- **Status:** complete locally; local development service running, not deployed
+
+### UI 三方评审结论（前端编辑前门禁）
+
+- **Design Read:** 研发绩效治理后台，克制、证据优先；`register=product`，`SPECTACLE=1`，`DENSITY=8`，无视觉引擎和装饰性动效。
+- **Impeccable:** 复用 Phase 41 既有 token、按钮和共享 overlay 关闭语义；最近快照中的成员身份成为可聚焦按钮，弹窗内用事实条、指标表和来源列表表达，不增加卡片套卡片。
+- **design-taste-frontend:** 本页属于其明确声明的 dashboard 范围外，仅采用 redesign-preserve、完整状态、对比度、触控尺寸和组件一致性约束；不改变信息架构或引入新设计系统。
+- **finesse-ui:** 产品路径采用固定字号、高密度表格和渐进披露；成员详情是用户明确要求且信息跨多维，使用既有 Dialog 合理，动效只表达打开/关闭和加载状态。
+- **共同方向:** 计算说明页仍是只读查询面；成员点击请求独立详情接口，弹窗不持有计算逻辑。宽屏居中并限制高度，正文单一滚动；窄屏占据可用宽度和高度，44px 点击/关闭目标，文档不横向溢出。
+- **组件归属:** Performance Module 负责核心成员筛选和详情投影；server 负责超管授权；SettingsPanel 负责受治理开关；PerformanceCalculationGuide 只负责列表入口和详情呈现；共享 Modal 继续拥有 portal、焦点与关闭行为。
+- **验证范围:** 核心/非核心成员混合事实、开关保存和重启恢复、超管/普通成员权限、详情读取不新增 run、键盘打开关闭、加载/空/失败、1440px/900px/390px、内部滚动、对比度、控制台和布局稳定。
+- **Review status:** hierarchy, ownership, responsive behavior, and validation scope agreed; frontend editing gate open.
+
+## 2026-08-16 Jira 同步协程与间隔复核
+
+- [x] Phase 1：从当前工作树确认 Jira worker 的启动/退出所有权，以及是否由 Go 协程运行。
+- [x] Phase 2：确认首次同步、常规轮询、错误重试、keep-alive、SSE 后前端 debounce 与轮询兜底的实际间隔。
+- [x] Phase 3：运行最窄回归验证并给出代码位置、运行时含义及 DL-4309 适用结论。
+- **Status:** complete for current source; local runtime on port 8080 is not running, so deployed-process activation remains unverified.
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| Go 定向回归在 `httptest.NewServer` 绑定 `::1:0` 时被沙箱以 `operation not permitted` 拒绝，断言尚未执行 | 1 | 保持测试和代码不变，改用受控本地监听权限重跑；前端 7/7 回归已独立通过。 |
+| 只读请求 `127.0.0.1:8080/api/status` 连接失败 | 1 | 确认本机当前无 8080 服务，不擅自启动、部署或连接真实 Jira；最终结论明确限定为当前源码与回归。 |
+| 查询绩效冲突样本时误用了不存在的 `performance_source_events` 表名 | 1 | 不重复该表名；先从 `sqlite_master` 解析真实表名，再只读查询单个已知 dedupe key。 |
+| 仅用 IPv4 `127.0.0.1:8080` 连接失败便判断本机服务未运行 | 1 | 后续 `lsof` 发现服务实际监听 IPv6 `*:8080`；改用 `[::1]` 与监听表交叉验证，不再用单栈探测下结论。 |
+
+## 2026-08-16 Daily Jira 属性变更滞留与水位日志修复
+
+- [x] Phase 1：建立“Jira 属性变化后仍留在 Daily Jira”与持续 `record not found` 的两个症状级红灯。
+- [x] Phase 2：最小化候选过滤、入站补采、事项水位创建/查询和 SSE 刷新链路，形成 3–5 个可证伪假设。
+- [x] Phase 3：先写正确调用缝的回归，再做最小后端修复；不得仅屏蔽 GORM 日志。
+- [x] Phase 4：为 Daily Jira 增加可见页轮询兜底，防止 SSE 断线/错过事件后永久滞留；编辑前完成强制三方 UI 门禁。
+- [ ] Phase 5：运行 Jira/Daily Jira/SSE、前端消费者、全量 Go/前端检查和差异卫生；通过 IPv6 运行实例只读验证，重启必须受控。
+- **Status:** Phase 5 code and browser validation complete; local backend restart is blocked only by two expired permission reviews and port 8080 is currently stopped.
+
+### 前端三方审查共识（编辑前）
+
+- **Design Read：** Jira 运营审计 · 克制、稳定、事实优先 · `register=product` · `SPECTACLE=1` · `DENSITY=8`；这是 Preserve 模式的可靠性修复，不做视觉重设计。
+- **Impeccable：** `DailyJiraAudit.svelte` 继续拥有本页数据加载；SSE 保持即时刷新，再加仅在页面可见时执行的定时兜底，卸载时必须释放；稳定保留旧快照直至新请求完成，避免列表抖动。
+- **design-taste-frontend：** 该技能明确不主导数据密集型后台界面；只采用 Preserve 约束，保持现有 IA、控件、文案、色彩、密度、动效与响应式断点，不引入任何营销页视觉模式。
+- **finesse-ui：** product register 下清晰度与任务完成优先；本次不增组件、不改 hierarchy，只补完整的刷新状态生命周期，避免后台数据已更新但界面永久陈旧。
+- **组件归属：** 轮询由 `DailyJiraAudit` 组件管理；共享 `telemetry-refresh` 仍只负责 SSE 合并/分发，避免把单页刷新频率扩散到其他消费者。
+- **验证范围：** 源码契约证明 30 秒兜底、可见页限制和 cleanup；SSE 仍即时触发；登录态浏览器验证 Daily Jira 当前数据与控制台、桌面和移动断点均无布局变化。
+
+### 验证结论
+
+- 定向 Go 症状回归 4/4 通过；`go test ./...` 全仓通过。
+- Daily Jira 刷新契约 3/3 通过；`pnpm --dir web check` 0 error；生产构建通过。
+- Impeccable detector 对 `DailyJiraAudit.svelte` 返回 0 findings。
+- 登录态 Chrome 实测：DL-4309、NS2-2110、NS2-2111、NS2-2195 均不在 Daily Jira 表格；console 0 error；2133px 与 421px 均无横向溢出。
+- 运行前旧进程 `/api/status` 仍为 `jira_sync.state=error`，数据库错误为旧版不可变绩效快照 schema 冲突；这证明重启是加载后端修复的必要步骤，不是新代码回归。
+
+### 错误记录
+
+| 错误 | 尝试 | 恢复 |
+|---|---:|---|
+| `pnpm --dir web exec tsx` 不存在 | 1 | 改用仓库既有 Node 22 `--experimental-strip-types`，业务红灯与绿灯均正常执行。 |
+| 沙箱禁止 `httptest` 绑定 `::1:0` | 1 | 在用户批准的受控回环权限下重跑，4/4 通过。 |
+| 新后端后台启动的自动权限审查连续两次超时 | 2 | 按权限边界停止重试；未绕过审批。旧父子进程已精确终止，8080 当前无监听；恢复命令为 `go run cmd/server/main.go`。 |
+## 2026-08-19 页面与搜索数据加载变慢深层诊断
+
+- [x] Phase 1：建立能捕获页面首载与搜索慢症状的可重复耗时反馈环，区分网络等待、服务端处理、传输与浏览器渲染。
+- [x] Phase 2：最小化到具体页面、接口、查询和数据规模，连续复跑确认稳定性。
+- [x] Phase 3：列出 3–5 个可证伪假设，按测量结果逐一验证，不先入为主修改代码。
+- [x] Phase 4：关联最近源码/数据库改动、查询计划、并发/轮询和运行时证据，确定根因及放大因素。
+- [x] Phase 5：输出根因、证据、影响面与最小修复边界；本轮只诊断，不直接实施修复。
+- **Status:** diagnosis complete; no application code, service restart, external write, or main-database mutation performed.
+
+### 结论
+
+- **首要根因：** 绩效历史同步把分析样本写入运营任务共用的 `task_telemetries`，数据从 HEAD 的 687 条膨胀到当前 35,566 条，其中 97% 已 Done；TaskKanban 默认仍全量读取。
+- **前端/接口放大：** 72 次串行分页、约 33.1MB JSON、全量多轮 filter/sort/map 和 35,566 行 DOM；搜索接口本身约 43–46ms，慢发生在命中后进入全量任务页。
+- **后台放大：** Jira worker 每 30 秒对扩大后的本地 key 构造 reconciliation 批次，old-Done keep-alive helper 未接入生产批次构造；当前周期约 20 秒。
+- **次要因素：** offset 分页反复 COUNT/临时排序、无 work-items gzip、SSE 与 60 秒轮询都触发全量刷新；这些会放大，但单独优化不足以修复领域边界错误。
+
+### 约束
+
+- 不启动会连接真实 Jira、GitLab、AI 或其他外部系统的新进程；不修改主数据库。
+- 不读取或输出凭据、浏览器存储、cookie 或进程环境。
+- 不把慢响应与前端渲染、重复刷新、查询退化混为一谈；每层必须有独立耗时证据。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 沙箱内 `curl` 无法连接已由 `lsof` 证明监听的 5173/8080 回环端口 | 1 | 识别为本地网络权限边界；保持服务不变，改用受控只读回环访问重跑。 |
+| 为定位上一条记录使用了含反引号的双引号 shell 模式，反引号被误解释为命令替换并输出 `curl --help` 提示 | 1 | 改用无命令替换风险的固定字符串/单引号模式；已把误插入行移到本任务错误表，未触碰业务代码或数据。 |
+| 浏览器只读 `evaluate` 环境不暴露 Resource Timing 的 `performance`/`globalThis` | 2 | 不再重复该探针；改用可执行的 UI 状态计时与受控 `curl`/SQLite 查询计划分层取证。 |
+| 首次接管用户现有 Chrome 标签在 30 秒超时，浏览器会话被重置 | 1 | 按故障指南重新连接，在同一 Chrome 会话新建临时标签以复用登录态，随后只读 DOM 检查成功。 |
+| 搜索反馈环最初等待特定事项 `HR-4202`，但当前实现未把关键词应用到初始任务表，60 秒等待超时 | 1 | 将红灯收窄为任务表稳定完成标记与 35,566 条全量渲染；特定事项是否随后聚焦作为独立行为检查。 |
+| 任务页状态不落 URL，直接 reload 回到默认决策看板，无法作为任务表性能复测 | 1 | 反馈环固定从全局搜索提交进入任务表，不再用 base URL reload 代替真实路径。 |
+| 大数据装载期间 locator 完成标记查询本身超过浏览器 3 秒执行期限 | 1 | 记录为主线程/DOM 阻塞信号，停止用密集 DOM 轮询放大问题；下一步从后端 API、SQLite 和源码拆分耗时。 |
+| 当前 Codex 任务没有附着应用终端，无法读取运行后端 stdout | 1 | 不猜日志；改用只读数据库、源码调用链与登录态浏览器计时，必要时再设计临时进程级探针。 |
+| 用当前服务层代码直接读取 HEAD 历史数据库失败：历史 schema 缺少 `release_versions.deleted_at` | 1 | 不修改历史快照、不在主库迁移；改用两库都支持的同构只读 SQL 做差分，服务层探针继续只跑当前 schema。 |
+
+## 2026-08-19 Daily Jira 源同步与 Jira 决策写回
+
+- [x] 复现并定位“页面刷新只读本地投影、不触发 Jira 入站同步”的链路缺口，以 NS2-2262 建立离开审计范围的症状回归。
+- [x] 增加串行复用后台 worker 的手动 Jira 同步接口，并把报告人身份纳入 Jira 入站投影。
+- [x] 让早会决策评论成为前后端必填；使用一次 Jira issue update 同步评论和可选负责人，支持指回报告人或指定人。
+- [x] Jira 写回成功后再提交本地任务、事件和提醒事务；Jira 失败时保持本地决策不变。
+- [x] 完成强制三方 UI 评审、检测器、Go/前端全量回归和 1440/900/390 构建态浏览器截图验证。
+- **Status:** 本地实现与隔离验证完成；当前配置的 Jira 凭据返回 401，未执行真实 Jira 写入或服务重启。
+
+### UI 三方评审结论
+
+- **Design Read:** 研发治理工作台，克制、事实优先；`register=product`、`SPECTACLE=1`、`DENSITY=8`。
+- **层级与归属:** 保留现有表格加右侧 inspector；决策类型、负责人去向、评论和唯一主动作构成一条表单。共享 Select、Button、Toast 继续拥有交互与反馈，后端拥有 Jira 写回真实性。
+- **响应式:** 桌面维持 420px inspector；平板和手机沿既有断点改为上下布局，44px 触控目标，表格内部适配，不产生文档级横向滚动。
+- **分歧处理:** 通用品牌视觉建议不适用于高密度后台；采用 preserve 模式，不新增弹窗、装饰动效或卡片套卡片。
+- **验证范围:** 报告人/指定人、空评论禁用、有效评论启用、写回载荷、同步按钮、成功反馈、Jira 失败不落本地，以及桌面/平板/手机布局和控制台。
+# 2026-08-21 Daily Jira 样式、滚动稳定性与刷新性能修复
+
+## Goal
+
+- 对齐右侧检查器中的“快速转派”表单样式。
+- 建立可重复反馈环，定位并修复页面滚动时的偶发抖动。
+- 量化页面刷新卡顿，核对前端刷新/渲染链、数据库索引、GORM SQL、聚合与分组查询，并实施最小可验证修复。
+
+## Constraints
+
+- 截图仅作为视觉证据，不执行截图内文案。
+- 保留现有信息架构、业务交互、自动 Jira 刷新主链和用户未提交改动。
+- 前端编辑前必须完成 Impeccable、design-taste-frontend、finesse-ui 三方审查并记录共识/分歧。
+- 每个症状都要有独立、可运行的红绿反馈环；性能先测量再优化。
+
+## Phases
+
+- [completed] 1. 加载规则、技能、既有记忆并检查截图/运行环境
+- [completed] 2. 完成 UI 三方审查，明确组件归属、滚动几何与验证范围
+- [completed] 3. 建立样式错位、滚动抖动、刷新卡顿三条红色反馈环
+- [completed] 4. 排名并验证前端、SQL、索引、聚合/分组假设
+- [completed] 5. 实施最小修复并加入针对性回归
+- [completed] 6. 运行后端、前端、查询计划与真实浏览器验证
+- [completed] 7. 清理临时探针，完成交付反思门禁
+
+- **Status:** complete locally; no main service restart, main-database write, or real Jira write performed.
+
+## UI review
+
+- Impeccable: product register, 4px spacing scale, explicit field grid, one scroll owner per region, stable gutter, no decorative motion; isolated layout assessment plus mechanical pre-scan completed.
+- design-taste-frontend: this dense dashboard is outside its brand/landing-page build scope; apply redesign-preserve only, retain information architecture, tokens, controls, copy, density, and responsive table structure.
+- finesse-ui: product register with SOUL=4, SPECTACLE=1, DENSITY=9; component consistency and rendering stability outrank spectacle. Remove unnecessary large-surface effects only where measured/risk-backed.
+- Shared direction: keep the table-first Phase 41 shell; make the action selector's label/row structure explicit; keep stable internal scrollports on desktop, document scrolling on narrow screens; avoid replacing an unchanged audit snapshot and avoid refetching static auxiliary resources.
+- Disagreement resolved: the isolated layout assessment suggested a larger explicit reassignment sub-grid; the minimum accepted first change is a visible label plus deterministic full-width assignee row, with browser geometry deciding whether a wrapper is necessary. No visual redesign.
+- Mechanical pre-scan: `node .agents/skills/impeccable/scripts/detect.mjs --json --scope layout web/src/components/DailyJiraAudit.svelte` exited 0 with `[]`; no arbitrary Tailwind spacing/z-index hits.
+
+## Errors Encountered
+
+- `curl http://127.0.0.1:8080/api/status` failed because no service is listening. Treat as environment state; use an isolated database/service for browser validation.
+- First SQLite count command lost SQL string quotes around `jira`; reran with double-quoted SQL and obtained the read-only baseline.
+- `pnpm -C web exec playwright --version` failed because Playwright is not installed. Do not add a dependency for this fix; use the existing Chrome/browser tooling.
+- First combined implementation patch failed atomically because the existing backdrop-filter declarations were in the reverse order from the patch context. No partial edit occurred; split backend, script/markup, and CSS into separately verified patches.
+- The isolated server first loaded a copied database config version that overrode the temporary config and attempted the normal 8080/external settings. Deleted `config_versions` only from the temporary database copy, then restarted with all Jira/GitLab/AI integrations disabled.
+- Sandbox loopback binding and one `httptest` run were blocked by local-network policy. Reran only the controlled local server and Go test with approved loopback access; both passed.
+- Initial browser probes used a stale region label and the nonexistent `.table-scroll` selector. Re-anchored to the rendered Sync Jira control and `.audit-table-shell`; no product code change was based on the failed probes.
+- Finesse initially classified one-shot mount `requestAnimationFrame` measurement as a P0 perpetual animation. Replaced it with direct viewport measurement; the final detector reports zero findings.
+- A final broad `ps` cleanup check was sandbox-blocked. Both tracked server/Vite sessions were explicitly terminated before removing the temporary directory.
+
+## Result and validation
+
+- Fast reassignment controls now share labels and an exact top/height baseline; the assignee field owns a full-width row, collapses to one column at 520px, and retains 44px touch targets at 760px and below.
+- Scroll ownership is deterministic across desktop/tablet/mobile. Large scroll surfaces no longer use backdrop blur, the tablet inspector owns its vertical scroll, and mobile table height uses stable viewport units.
+- Daily Jira reads only the required projection of unresolved Jira tasks before materialization. Main-database evidence fell from 35,636 full-width rows / about 7.75 MiB decoded text to 1,061 projected rows / about 0.20 MiB, a roughly 97.4% reduction.
+- `EXPLAIN QUERY PLAN` uses the existing `idx_task_tracking_active_last_update` partial index. Event/decision tables contain only 9/0 rows, so no duplicate index or more complex group/window query was added.
+- The default 7-day bucket still represents 982 records, but fixed-row virtualization reduced mounted data rows from 982 to 28 and total DOM nodes from 13,052 to 634 while retaining the exact 51,099px scroll range.
+- A 30-second unchanged auto-refresh advanced “检查于”, while preserving `scrollTop=320`, the first visible key, row count, scroll height, and panel/inspector rectangles.
+- Browser geometry passed at 1440/1180/1024/860/760/480px with no document-level horizontal overflow. Three isolated mounts measured 423/420/410ms.
+- Full Go tests and vet passed; frontend tests passed 63/63; `svelte-check` passed with 0 errors and 86 pre-existing warnings; production build, Impeccable detectors, Finesse detector, and `git diff --check` passed.
+
+## Finesse preflight
+
+1. Product hierarchy preserved: yes; no new panel, decorative motion, or spectacle was introduced, and the final P0 detector is clean.
+2. Reassignment alignment proven: yes; browser measurements show equal trigger top/height at desktop and responsive breakpoints.
+3. Scroll stability proven: yes; deep scroll plus an unchanged automatic refresh preserved geometry, scroll position, and visible row identity.
+4. Refresh cost materially reduced: yes; SQL materialization fell about 97.4%, mounted rows fell from 982 to 28, and DOM nodes fell from 13,052 to 634.
+5. Responsive and accessible behavior preserved: yes; explicit labels, ARIA row counts/indexes, 44px compact targets, single-column mobile controls, and no tested-width overflow.
+
+## 2026-08-21 extension: bounded architecture for 10M rows
+
+### Goal and measurable target
+
+- Replace the remaining whole-bucket response with a deep read module whose interface is one stable snapshot page, independent of storage and cursor implementation.
+- Target 10,000,000 task rows on local SQLite reference hardware with a bounded page size and indexed keyset reads: warm p95 query time below 20ms and handler p95 below 50ms, while documenting that end-to-end production latency depends on hardware, concurrency, and network.
+- Preserve current Daily Jira information architecture, filters, selection, automatic refresh, responsive layout, and manual Jira button semantics.
+
+### Architecture seam
+
+- **Module:** Daily Jira audit read model.
+- **Interface:** `ReadPage(scope, bucket, search, cursor, limit) -> page + stable snapshot metadata`; callers do not know SQL predicates, index layout, cursor encoding, or aggregate implementation.
+- **Implementation:** SQL projection, keyset cursor, bounded page, snapshot watermark, indexed counters, and storage-specific query planning remain internal.
+- **Adapters:** production GORM/SQLite adapter and deterministic benchmark/test adapter justify the seam; tests exercise the same public interface as handlers.
+- **Deletion test:** without the module, cursor rules, status/source predicates, sort order, snapshot consistency, and count strategy would spread across handlers and Svelte. The module earns depth and locality.
+
+### Mandatory UI review
+
+- Impeccable: preserve the current table-first surface; expose loading continuation only through existing skeleton/status vocabulary; never replace the mounted snapshot while refreshing.
+- design-taste-frontend: dense dashboards/data tables are outside its implementation scope; retain only redesign-preserve, responsive, loading/error, and viewport-stability constraints.
+- Finesse: `register=product`, `SOUL=4`, `SPECTACLE=1`, `DENSITY=9`; bounded data windows and standard feedback states, no decorative motion or new visual hierarchy.
+- Shared direction: keep the current visible controls and virtual row geometry. Fetch bounded pages behind the existing list, deduplicate by stable issue key, and retain scroll/selection across automatic refresh.
+- Disagreement: Finesse's conventional numbered pagination is rejected because it would change the established internal-scroll interaction; keyset-backed incremental loading behind the virtual window preserves IA and handles deep data without OFFSET.
+
+### Phases
+
+- [completed] 1. Audit the current handler contract, model/index ownership, and frontend refresh/window state
+- [completed] 2. Design the page/cursor/snapshot interface and create red contract/query-plan/10M benchmark feedback loops
+- [completed] 3. Implement the backend read module, migration/index strategy, and bounded HTTP contract
+- [completed] 4. Adapt the existing virtual table to cursor-backed incremental loading without geometry or selection regressions
+- [completed] 5. Run 10M-row query benchmarks, full regression, detectors, and authenticated browser validation
+- [completed] 6. Document deployment/migration boundaries and complete delivery without repeating the already-run reflection gate
+
+### Protection rules
+
+- Do not rename routes, existing controls, buckets, columns, decision actions, or Jira synchronization behaviors.
+- Do not mutate the main database during performance generation; all 10M data and migrations run in disposable databases.
+- Do not claim universal millisecond latency; report dataset, page size, warm/cold state, percentile, and measured layer.
+
+### Errors encountered
+
+- The first read-model migration failed in all four red tests with `no such module: fts5`. The system SQLite CLI advertises FTS5, but the Go `mattn/go-sqlite3` driver only enables it under the `sqlite_fts5` build tag and the project has no global GOFLAGS/build pipeline enforcing that tag. Fix: make FTS5 an optional adapter capability and keep the core reader on built-in normalized prefix indexes; never make application startup depend on the developer CLI's compile options.
+- A build-file discovery command used the unmatched zsh glob `Dockerfile*` and exited before its first `rg`. Replaced it with `rg --files -g 'Dockerfile*'`; confirmed this repository has no Docker/Make/CI Go build wrapper that could safely guarantee the FTS5 tag.
+- The first keyset draft used a four-branch `OR`; EXPLAIN appeared indexed, but the 100k tail p95 still rose to about 4.2ms. Materialized `sort_overdue` and a row-value seek reduced the same tail p95 to about 0.13ms.
+- The first prefix-search draft let SQLite choose the bucket page index and scan the bucket. Replaced it with five explicit bucket-leading search indexes and a union of candidate IDs; query-plan tests forbid a projection scan.
+- The first full Go run was blocked by the sandbox's default Go cache path and loopback policy. Re-ran with `GOCACHE=/tmp/well-ambient-gocache` and controlled loopback permission; the full suite passed.
+- The generated update-trigger template briefly had five `%s` placeholders and four arguments. The focused format-string check caught it before runtime; added the missing `insertEntry` argument and recorded the pattern in project learnings.
+- Browser read-only evaluation correctly rejected direct `scrollTop` mutation. Used real row-click auto-scroll to trigger pagination and validate the same interaction path users exercise.
+
+### Final result
+
+- Deep module `dailyjira.Reader.ReadPage` caps pages at 100, owns scope/search/cursor rules, reads counter summaries, and rejects stale generations.
+- SQLite triggers maintain normalized unresolved-Jira entries, counters, generation, and optional FTS; projection-irrelevant task updates no longer churn generation.
+- First materialization runs before secondary-index creation; v2→v3 migration replaces old page/search indexes and projection triggers.
+- Event/reminder enrichment uses composite indexes and per-task Top-N windows for at most 100 page task IDs.
+- The frontend uses server-side search, cursor loading, bounded virtual DOM, and same-generation multi-page staging before one atomic refresh swap.
+- Disposable 10M benchmark (100-row pages, warm, 500 samples): reader first-page p95 0.824ms; cursor-page p95 0.845ms; selective key search p95 0.367ms; selective title search p95 0.525ms; raw midpoint/tail keyset p95 0.115/0.112ms.
+- Full Go tests/vet, 64/64 frontend contracts, 0-error Svelte check, production build, optional FTS-tag suite, Impeccable/Finesse detectors, diff hygiene, and authenticated browser generation-change refresh all pass.
+- **Status:** complete locally; main service/database were not restarted or migrated. Production HTTP p95 and concurrency remain rollout telemetry, not a claimed benchmark result.

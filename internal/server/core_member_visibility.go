@@ -12,7 +12,7 @@ type coreMemberVisibility struct {
 
 func (s *Server) loadCoreMemberVisibility() (coreMemberVisibility, []userdb.User, error) {
 	var users []userdb.User
-	if err := db.DB.Find(&users).Error; err != nil {
+	if err := db.DB.Order("created_at ASC").Order("id ASC").Limit(5000).Find(&users).Error; err != nil {
 		return coreMemberVisibility{}, nil, err
 	}
 	filter := s.buildKPICoreMemberFilter(users)

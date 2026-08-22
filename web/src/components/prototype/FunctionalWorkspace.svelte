@@ -350,7 +350,15 @@
   }
 
   :global(.workspace-content > .settings-container) {
-    min-height: min(760px, calc(100dvh - 110px));
+    min-height: max(
+      0px,
+      calc(
+        100dvh
+        - var(--wa-main-content-top, var(--wa-workspace-topbar-h, 68px))
+        - (var(--wa-shell-gutter, 16px) * 2)
+        - 56px
+      )
+    );
   }
 
   @media (max-width: 980px) {
