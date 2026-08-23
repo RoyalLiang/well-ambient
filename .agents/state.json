@@ -1,32 +1,62 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-08-21T18:59:00+08:00",
+  "updated_at": "2026-08-23T15:36:00+08:00",
   "active_task": {
-    "goal": "Introduce a bounded Daily Jira read architecture targeting millisecond page reads at ten million task rows",
-    "intent": "daily_jira_ten_million_keyset_read_model",
+    "goal": "Keep Daily Jira assignee changes automatically synchronized even while Jira performance history replay is slow",
+    "intent": "daily_jira_worker_isolation",
     "complexity": "multi_step",
-    "continuity": "single_turn",
-    "freshness": "disposable_ten_million_benchmark_plus_main_database_read_only_explain",
+    "continuity": "new_related_task",
+    "freshness": "live_restart_checkpoint_plus_mock_worker_regression",
     "risk": "medium",
-    "phase": "complete_locally_rollout_pending",
+    "phase": "runtime_verified_ready_to_commit",
     "loaded_modules": [
       "core-lite",
       "state-lite",
-      "domains/review",
       "workflow/default",
+      "domains/coding",
       "runtime/memory",
       "diagnosing-bugs",
       "planning-with-files",
-      "codebase-design",
-      "impeccable",
-      "design-taste-frontend",
-      "finesse-ui",
       "self-improving"
     ]
   },
   "warm_memory": {
     "summary": "Jira inbound synchronization now reconciles items that leave the primary JQL, advances durable cycle and per-item watermarks only after success, treats comments as a current projection, emits each changed task immediately without burst loss, and refreshes all Jira-backed product views through one event scheduler while retaining polling fallback.",
     "current_summary": "Daily Jira now uses a trigger-maintained bounded read model with counter summaries, generation-bound row-value keyset pagination, indexed server search, bounded Top-N enrichment, virtual rendering, and same-generation atomic multi-page refresh. A disposable 10M-row warm benchmark keeps reader page p95 below 0.9ms; full tests and authenticated browser validation pass. Main migration, restart, and production HTTP concurrency telemetry remain pending.",
+    "daily_jira_worker_isolation": {
+      "status": "runtime_verified_ready_to_commit",
+      "findings": [
+        "NS2-1986 changed assignee in Jira at 11:29, but the local projection only updated during the 11:32 manual cycle; automatic checkpoints then had about seven-minute gaps.",
+        "The 30-second inbound worker ran full performance Jira history replay and performance recalculation inline, so multi-minute history work starved Daily Jira source refresh.",
+        "Inbound projection and performance history now run in independent context-bound workers; performance work starts after one tick and cannot block inbound cadence.",
+        "Jira health becomes stale after four missed 30-second cycles instead of remaining healthy for ten minutes.",
+        "The live service now advances Jira inbound checkpoints every 30 seconds and reports healthy after a controlled restart.",
+        "The performance scorer now batches 35,660 work-item IDs, uses a covering timeline index, and starts five seconds after Jira to avoid SQLite startup lock contention."
+      ],
+      "validation": [
+        "The new blocked-performance worker regression failed before the seam existed and passes after isolation; it is stable for 30 repetitions and passes the race detector.",
+        "Assignee-leaves-scope, changed broadcast, manual sync, and retained FZ-2257 event regressions pass.",
+        "go test ./... -count=1, go vet ./..., Serena diagnostics, and git diff hygiene pass.",
+        "Live checkpoints at 15:24:14, 15:25:14, and after the final restart at 15:35:29 succeeded with 192 issues and no error.",
+        "The final performance startup run completed with 14 snapshots; its query plan uses idx_performance_work_item_timeline without a temporary sort."
+      ],
+      "touched_files": [
+        "internal/server/jira_worker.go",
+        "internal/server/jira_worker_test.go",
+        "internal/server/server.go",
+        "internal/server/jira_sync_status_test.go",
+        "internal/performance/module.go",
+        "internal/performance/scoring.go",
+        "internal/performance/module_test.go",
+        "internal/db/read_indexes.go",
+        "internal/db/read_indexes_test.go",
+        ".agents/state.json",
+        "task_plan.md",
+        "findings.md",
+        "progress.md"
+      ],
+      "next_action": "Commit the verified worker isolation, performance batching/index, startup staggering, tests, and task evidence; authenticated visual confirmation remains optional because the available browser session is logged out."
+    },
     "daily_jira_ten_million_read_architecture": {
       "status": "complete_locally_rollout_pending",
       "findings": [

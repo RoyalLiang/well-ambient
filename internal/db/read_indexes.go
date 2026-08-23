@@ -48,6 +48,8 @@ var allPageReadIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_task_assignee_directory
 		ON task_telemetries (assignee)
 		WHERE TRIM(assignee) <> ''`,
+	`CREATE INDEX IF NOT EXISTS idx_performance_work_item_timeline
+		ON performance_work_item_events (work_item_id, occurred_at, id)`,
 }
 
 func MigrateAllPageReadIndexes(conn *gorm.DB) error {

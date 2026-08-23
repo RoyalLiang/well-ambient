@@ -431,8 +431,8 @@ func (s *Server) Start() error {
 	log.Printf("Starting well-ambient server on %s", addr)
 	workerContext, stopWorkers := context.WithCancel(context.Background())
 
-	// Start background Jira sync worker
-	go s.startJiraSyncWorker()
+	// Keep the latency-sensitive Jira projection independent from heavy history replay.
+	s.startJiraSyncWorkers(workerContext)
 	go s.startSolutionWorker()
 	go s.startDailyJiraProjectionWorker(workerContext)
 	catalogStarted := s.solutionCatalog != nil && s.solutionCatalog.Start(workerContext)
@@ -511,7 +511,6 @@ func (s *Server) jiraInboundStatus(now time.Time) jiraInboundStatus {
 	status.LastChangedCount = checkpoint.LastChangedCount
 	status.HasError = strings.TrimSpace(checkpoint.LastError) != ""
 
-	const staleAfter = 10 * time.Minute
 	switch {
 	case status.HasError:
 		status.State = "error"
@@ -519,12 +518,12 @@ func (s *Server) jiraInboundStatus(now time.Time) jiraInboundStatus {
 		status.State = "pending"
 	case checkpoint.LastStartedAt.After(checkpoint.LastSucceededAt):
 		status.State = "syncing"
-		if now.Sub(checkpoint.LastStartedAt) > staleAfter {
+		if now.Sub(checkpoint.LastStartedAt) > jiraInboundStaleAfter {
 			status.State = "stale"
 		}
 	case checkpoint.LastSucceededAt.IsZero():
 		status.State = "pending"
-	case now.Sub(checkpoint.LastSucceededAt) > staleAfter:
+	case now.Sub(checkpoint.LastSucceededAt) > jiraInboundStaleAfter:
 		status.State = "stale"
 	default:
 		status.State = "healthy"

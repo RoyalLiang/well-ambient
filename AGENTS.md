@@ -52,6 +52,16 @@ Treat orchestration skills as user-invoked. Use `ask-matt`, `grill-me`, `grill-w
 
 Before the first tracker- or domain-dependent Matt Pocock workflow in this repository, run `setup-matt-pocock-skills` with the user’s awareness. Do not silently choose an issue tracker, labels, or documentation location.
 
+## Serena code intelligence routing
+
+- Treat Serena MCP as the default semantic code-intelligence layer for every code-related task unless the user explicitly opts out.
+- At the first applicable code step, activate the current repository in Serena and read its initial instructions before broad code exploration or edits. Reuse the active project when it already matches the current repository.
+- Prefer Serena for symbol overviews, symbol lookup, reference and implementation tracing, call/dependency understanding, symbol renames, and semantic refactor scope. Request the smallest useful symbol body or overview instead of reading whole files by default.
+- Keep built-in tools for their stronger boundaries: use `rg` first for exact text or path search and for non-code files, shell for builds/tests/linters, and `apply_patch` for edits required by the active file-edit policy. Serena complements rather than replaces compilation, tests, browser checks, or runtime evidence.
+- When the active edit policy permits Serena editing tools, prefer symbol-level edits for semantic refactors; otherwise use Serena to establish the exact semantic scope, then apply the change with the required edit tool.
+- If Serena is unavailable, cannot activate the project, or does not support the language or artifact, make one targeted recovery attempt and then fall back to built-in tools. State the Serena gap in delivery instead of blocking otherwise safe work.
+- Do not use Serena memories as a second project-memory system unless the user explicitly asks; follow the active project memory contract.
+
 ## Pre-delivery reflection gate
 
 For every user task, at the first point when you would otherwise send the final completion response:

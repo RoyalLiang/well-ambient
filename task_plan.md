@@ -1,5 +1,52 @@
 # Task Plan: Implementation Plan Check and Fix
 
+## 2026-08-23 Daily Jira 负责人变更自动退出列表
+
+### 目标与验收契约
+
+- [x] 用 NS2-1986 等价夹具建立红灯：Jira 负责人变更使事项离开 Daily Jira 责任范围后，无需点击“同步 Jira”，后台周期同步必须更新本地投影并使列表自动移除。
+- [x] 分段证明 Jira 拉取、离开主 JQL 的补偿查询、TaskTelemetry 负责人更新、Daily Jira eligibility、changed broadcast/页面重载；不得用 issue 特判或缩短前端轮询掩盖后端缺口。
+- [x] 手动“同步 Jira”继续复用同一同步深模块，只作为恢复入口；自动 worker 与手动路径的结果必须一致。
+- [x] 先完成定向回归，再运行相关 Go 测试、全量回归/静态检查；只有确需前端改动时才进入强制三方 UI 门禁与认证浏览器验证。
+
+### 阶段
+
+- [completed] Phase 1：建立确定性红灯并最小化自动路径与手动路径差异
+- [completed] Phase 2：验证 3-5 个可证伪假设并定位唯一根因
+- [completed] Phase 3：实施最小通用修复与症状级回归
+- [completed] Phase 4：相关/全量验证、运行态边界确认与清理
+
+### 已排序假设与证据
+
+1. **H1（已证实）单 worker 饥饿：** 30 秒 Jira 入站同步后内联执行全量绩效 Jira 历史回放；运行态 checkpoint 从 11:32 到 11:39 才推进，随后又停滞超过 6 分钟。新回归阻塞绩效回放时，旧架构无独立入站 seam，拆分后入站在 10ms 内连续运行 3 次。
+2. **H2（排除）worker 永久关闭/崩溃：** checkpoint 在 11:39 自行推进，说明 goroutine 仍存活，只是再次进入重任务。
+3. **H3（排除）负责人移出主 JQL 后无法补偿查询：** mock 回归覆盖自定义项目范围和外部负责人并通过；NS2-1986 本地投影已更新为 Jira 新负责人。
+4. **H4（排除为首因）前端未处理广播：** changed broadcast 定向回归通过；现场延迟发生在本地投影更新之前，本轮不需前端改动。
+5. **H5（已证实并消除）旧进程未加载本轮修复：** 旧服务进程启动于 08/21 23:09；受控重启后，新进程连续完成 30 秒 Jira 入站周期，状态保持 healthy。
+
+### 实施裁决
+
+- Jira 入站投影与绩效历史回放分别运行在独立、受 context 取消的周期 worker；入站启动即执行，绩效回放延迟一个 30 秒 tick，避免启动时抢占主同步。
+- 绩效回放继续按配置间隔自限流，即使其 Search/事件落库/绩效重算耗时或失败，也不能阻止 30 秒入站循环。
+- `/api/status` 的 Jira stale 门槛从固定 10 分钟收紧为 4 个入站周期（2 分钟），让自动同步停滞可被及时观测。
+
+### 当前验证
+
+- 症状级：worker 隔离红灯已转绿；负责人离开范围、changed broadcast、手动同步、FZ-2257 retained actor 回归全部通过。
+- 并发：新 worker 回归 `-race` 通过，并连续运行 30 次无抖动。
+- 全量：`go test ./... -count=1`、`go vet ./...`、Serena 目标文件 diagnostics、`git diff --check` 均通过。
+- 运行态：当前源码已在 8080 启动，15:24:14 与 15:25:14 连续采样及重启后的 15:35:29 周期均成功；`/api/status` 为 healthy，192 项、无错误。
+- 样例：NS2-1986 本地负责人已自动更新为 `jira公用-南沙二期码头`；该负责人不在配置的核心成员范围，读取层回归证明外部负责人会退出 Daily Jira 页面结果。认证浏览器仍停在登录页，因此未绕过认证做视觉点击验证。
+- 扩展发现：绩效评分对 35,660 个 task ID 使用单次 `IN` 会超过 SQLite 变量上限；现已按 500 分批、增加 `(work_item_id, occurred_at, id)` 复合索引并错峰 5 秒启动。重启后 startup run 为 completed，生成 14 个快照。
+
+### 保护边界
+
+- 不向真实 Jira 写入，不用 NS2-1986 的硬编码补偿；服务重启仅在交付反思后经用户确认执行，运行态验证只读 Jira 和本地状态。
+- 当前已有 `AGENTS.md`、`.agents/domains/coding.yaml`、任务记录和 `well-ambient.db` 变动，均视为既有改动并保留；本任务只触碰根因所需文件。
+- 当前先按后端同步缺陷处理；若证据证明前端广播/刷新有缺口，必须先完成 Impeccable、design-taste-frontend、finesse-ui 三方审查再编辑前端。
+
+---
+
 ## 2026-08-21 Daily Jira 滚轮跳底与方案发布 URL 修复
 
 ### 目标与验收契约
@@ -5748,3 +5795,37 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - Disposable 10M benchmark (100-row pages, warm, 500 samples): reader first-page p95 0.824ms; cursor-page p95 0.845ms; selective key search p95 0.367ms; selective title search p95 0.525ms; raw midpoint/tail keyset p95 0.115/0.112ms.
 - Full Go tests/vet, 64/64 frontend contracts, 0-error Svelte check, production build, optional FTS-tag suite, Impeccable/Finesse detectors, diff hygiene, and authenticated browser generation-change refresh all pass.
 - **Status:** complete locally; main service/database were not restarted or migrated. Production HTTP p95 and concurrency remain rollout telemetry, not a claimed benchmark result.
+
+## 2026-08-23 Serena MCP 全局接入与代码路由
+
+### 目标
+
+- [x] 按 Serena 官方 Quick Start 安装并初始化 `serena-agent`，不误装成 Codex `SKILL.md`。
+- [x] 以官方 `codex` context 接入全局 STDIO MCP，并保留现有 Codex 配置与 hooks。
+- [x] 将“代码任务优先使用 Serena 的符号检索、引用分析和符号级编辑”同步至全局规则、规范源模板与当前项目规则，同时保留明确降级边界。
+- [x] 用配置检查、MCP 启动验证、规则校验和新项目 bootstrap 证明安装与传播有效。
+
+### 阶段
+
+- [completed] 1. 核对官方安装/客户端文档与本机现状
+- [completed] 2. 安装、初始化并接入 Serena MCP
+- [completed] 3. 更新全局、规范源模板和当前项目规则
+- [completed] 4. 验证 MCP、规则一致性和新项目自动传播
+- [completed] 5. 执行交付前 Agent 自检、吸收反馈并完成 CLI 真实调用验证
+
+### 保护规则
+
+- 不把 Serena 仓库当作 Codex Skill 目录安装；以官方 MCP 方式接入。
+- 不覆盖现有 `~/.codex/config.toml`、`hooks.json`、项目脏修改或项目内存。
+- Serena 不可用、语言不支持或任务不是符号级代码工作时允许明确降级到 `rg`、shell 和 `apply_patch`，不得让 MCP 成为所有代码工作的单点阻塞。
+
+### 错误记录
+
+- 官方 MCP 文档第二次展开调用缺少一个闭合括号，工具在执行前报语法错误；已加载 Self-Improving 并用同一官方页面精确行号重试成功，无外部变更。
+- uv standalone 安装器下载阶段长时间无完成输出，主动中止后验证 `uv`/`uvx` 0.12.5 已完整落盘；没有启动第二份并发安装。
+- zsh 中误用特殊变量名 `path` 暂时覆盖了 `PATH`，导致同一探针内 `ls/head/uname` 不可见；改为非保留变量名并对系统工具使用绝对路径。
+- `serena setup codex` 因本机 `/usr/local/bin/codex` 缺少平台二进制而拒绝自动配置；确认失败未改配置后，按 Serena/OpenAI 官方手动 TOML 方案增量接入，未重装 Codex CLI。
+- 首次 STDIO 冒烟在沙箱内无法写 `~/.serena/logs`；受控权限下原样重跑后服务器成功启动。
+- 首个 MCP 会话未分配 TTY，stdin 在启动后关闭；改为临时 Node 协议客户端管理子进程，完成 initialize、tools/list 和只读符号概览。
+- 两次跨文件动态补丁分别因空 hunk 与逐行 `+` 前缀生成错误而被整体拒绝；确认无部分落盘后拆分补丁并逐行生成新增段，随后全部通过。
+- `uv tool list` 需要在全局工具目录创建瞬时锁文件，沙箱内失败；受控权限重跑后确认 `serena-agent v1.7.0`。

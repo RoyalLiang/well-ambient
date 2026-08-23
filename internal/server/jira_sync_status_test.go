@@ -95,3 +95,24 @@ func TestStatusReportsDisabledAndPendingJiraInboundSync(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusReportsJiraInboundSyncStaleAfterFourMissedCycles(t *testing.T) {
+	setupServerTestDB(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	lastCycle := now.Add(-jiraInboundStaleAfter - time.Second)
+	if err := db.DB.Create(&db.JiraInboundSyncState{
+		Scope:             jiraInboundSyncScope,
+		SuccessfulThrough: lastCycle,
+		LastStartedAt:     lastCycle,
+		LastSucceededAt:   lastCycle,
+	}).Error; err != nil {
+		t.Fatalf("seed stale Jira inbound sync state: %v", err)
+	}
+
+	server := NewServer(&config.Config{Jira: config.JiraConfig{Enabled: true}}, "")
+	status := server.jiraInboundStatus(now)
+	if status.State != "stale" || status.HasError {
+		t.Fatalf("Jira sync status = %+v, want stale without source error", status)
+	}
+}

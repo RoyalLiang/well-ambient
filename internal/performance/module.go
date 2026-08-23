@@ -85,6 +85,15 @@ func (m *Module) startLocked(parent context.Context) bool {
 			m.cancel = nil
 			m.stateMu.Unlock()
 		}()
+		startupTimer := time.NewTimer(performanceInitialDelay(settings.Interval))
+		select {
+		case <-ctx.Done():
+			if !startupTimer.Stop() {
+				<-startupTimer.C
+			}
+			return
+		case <-startupTimer.C:
+		}
 		_, _ = m.RunOnce(ctx, "startup")
 		ticker := time.NewTicker(settings.Interval)
 		defer ticker.Stop()
@@ -98,6 +107,14 @@ func (m *Module) startLocked(parent context.Context) bool {
 		}
 	}()
 	return true
+}
+
+func performanceInitialDelay(interval time.Duration) time.Duration {
+	const maximumDelay = 5 * time.Second
+	if interval > 0 && interval < maximumDelay {
+		return interval
+	}
+	return maximumDelay
 }
 
 // Stop cancels the background loop and waits until an in-flight run exits.

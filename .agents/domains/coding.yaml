@@ -5,6 +5,14 @@ domain_coding:
     - "edit_file capability is needed"
     - "tests, builds, or linters are needed after code changes"
   rules:
+    serena:
+      default: "Use Serena MCP as the semantic code-intelligence layer for every code-related task unless the user opts out."
+      activation: "Activate the current repository and read Serena's initial instructions before broad exploration or edits; reuse the active project when it already matches."
+      semantic_scope: "Prefer symbol overviews, symbol lookup, references, implementations, call/dependency understanding, rename/refactor scope, and the smallest useful symbol body."
+      native_scope: "Use rg first for exact text/path and non-code search, shell for builds/tests/linters, and apply_patch when required by the active edit policy."
+      editing: "When policy permits Serena editing, prefer symbol-level edits for semantic refactors; otherwise use Serena to establish scope and apply the change with the required edit tool."
+      fallback: "After one targeted recovery attempt, fall back when Serena is unavailable, activation fails, or the language/artifact is unsupported; report the gap without blocking safe work."
+      memory: "Do not create duplicate Serena memories unless the user explicitly requests them; follow the project memory contract."
     targeted_read: "Verify exact local context before editing. Use line-numbered excerpts when line references matter."
     edit_precision:
       preferred: "Use structured patch/edit tools."

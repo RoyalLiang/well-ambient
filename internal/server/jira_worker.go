@@ -24,15 +24,16 @@ import (
 const jiraCompletedKeepAliveWindow = 14 * 24 * time.Hour
 const jiraInboundSyncScope = "jira-inbound"
 const jiraInboundSyncOverlap = 5 * time.Minute
+const jiraInboundSyncInterval = 30 * time.Second
+const jiraPerformanceHistoryPollInterval = 30 * time.Second
+const jiraInboundStaleAfter = 4 * jiraInboundSyncInterval
 
-// startJiraSyncWorker starts a background loop to fetch tasks/bugs from Jira
-func (s *Server) startJiraSyncWorker() {
-	log.Println("Starting background Jira task synchronization worker...")
-	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds for quick local testing/responsiveness
-	defer ticker.Stop()
+// startJiraSyncWorkers keeps the latency-sensitive Jira projection independent
+// from the much heavier performance-history replay.
+func (s *Server) startJiraSyncWorkers(ctx context.Context) {
+	log.Println("Starting background Jira task and performance-history synchronization workers...")
 	var lastPerformanceHistorySync time.Time
-	runCycle := func() {
-		s.syncJiraTasks()
+	runPerformanceHistoryCycle := func() {
 		performanceConfig := s.config.PerformanceBrain.Normalized()
 		if !performanceConfig.Enabled || !*performanceConfig.JiraHistoryEnabled {
 			return
@@ -54,11 +55,46 @@ func (s *Server) startJiraSyncWorker() {
 		}
 	}
 
-	// Initial run
-	runCycle()
+	startIndependentJiraWorkers(
+		ctx,
+		jiraInboundSyncInterval,
+		jiraPerformanceHistoryPollInterval,
+		s.syncJiraTasks,
+		runPerformanceHistoryCycle,
+	)
+}
 
-	for range ticker.C {
-		runCycle()
+func startIndependentJiraWorkers(
+	ctx context.Context,
+	inboundInterval time.Duration,
+	performanceInterval time.Duration,
+	inboundSync func(),
+	performanceSync func(),
+) {
+	go runPeriodicJiraWorker(ctx, inboundInterval, true, inboundSync)
+	go runPeriodicJiraWorker(ctx, performanceInterval, false, performanceSync)
+}
+
+func runPeriodicJiraWorker(ctx context.Context, interval time.Duration, runImmediately bool, run func()) {
+	if run == nil {
+		return
+	}
+	if runImmediately {
+		run()
+	}
+	if interval <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
 	}
 }
 

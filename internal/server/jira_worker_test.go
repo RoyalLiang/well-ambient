@@ -25,6 +25,49 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
+func TestJiraInboundWorkerContinuesWhilePerformanceHistorySyncIsBlocked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	inboundRuns := make(chan struct{}, 8)
+	performanceStarted := make(chan struct{}, 1)
+	releasePerformance := make(chan struct{})
+	defer close(releasePerformance)
+
+	startIndependentJiraWorkers(
+		ctx,
+		5*time.Millisecond,
+		5*time.Millisecond,
+		func() {
+			select {
+			case inboundRuns <- struct{}{}:
+			default:
+			}
+		},
+		func() {
+			select {
+			case performanceStarted <- struct{}{}:
+			default:
+			}
+			<-releasePerformance
+		},
+	)
+
+	select {
+	case <-performanceStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("performance Jira history worker did not start")
+	}
+
+	for run := 1; run <= 3; run++ {
+		select {
+		case <-inboundRuns:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("Jira inbound sync stopped at run %d while performance history was blocked", run)
+		}
+	}
+}
+
 func TestMapJiraStatus(t *testing.T) {
 	tests := []struct {
 		input    string

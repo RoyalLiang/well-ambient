@@ -14,6 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const performanceEventQueryBatchSize = 500
+
 type subjectEvidence struct {
 	SubjectKey string
 	Units      []deliveryUnitEvidence
@@ -118,9 +120,8 @@ func loadSubjectEvidence(tx *gorm.DB, windowStart, watermark time.Time, coreMemb
 	}
 	eventsByTask := make(map[string][]db.PerformanceWorkItemEvent)
 	if len(taskIDs) > 0 {
-		var events []db.PerformanceWorkItemEvent
-		if err := tx.Where("work_item_id IN ? AND occurred_at <= ?", taskIDs, watermark).
-			Order("work_item_id ASC, occurred_at ASC, id ASC").Find(&events).Error; err != nil {
+		events, err := loadPerformanceWorkItemEvents(tx, taskIDs, watermark)
+		if err != nil {
 			return nil, err
 		}
 		for _, event := range events {
@@ -226,6 +227,23 @@ func loadSubjectEvidence(tx *gorm.DB, windowStart, watermark time.Time, coreMemb
 		result = append(result, *bySubject[key])
 	}
 	return result, nil
+}
+
+func loadPerformanceWorkItemEvents(tx *gorm.DB, taskIDs []string, watermark time.Time) ([]db.PerformanceWorkItemEvent, error) {
+	events := make([]db.PerformanceWorkItemEvent, 0)
+	for start := 0; start < len(taskIDs); start += performanceEventQueryBatchSize {
+		end := start + performanceEventQueryBatchSize
+		if end > len(taskIDs) {
+			end = len(taskIDs)
+		}
+		var batch []db.PerformanceWorkItemEvent
+		if err := tx.Where("work_item_id IN ? AND occurred_at <= ?", taskIDs[start:end], watermark).
+			Order("work_item_id ASC, occurred_at ASC, id ASC").Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		events = append(events, batch...)
+	}
+	return events, nil
 }
 
 func deliveryFactor(task db.TaskTelemetry, project projectFactors) itemFactor {

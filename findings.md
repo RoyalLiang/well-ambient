@@ -1,5 +1,24 @@
 # Findings & Decisions
 
+## 2026-08-23 - Daily Jira 负责人变更自动退出列表
+
+- 用户现场样例为 `NS2-1986`：Jira 中修改负责人后，本地 Daily Jira 仍保留；显式点击“同步 Jira”后才退出，说明手动源同步能收敛，自动链路至少有一段没有及时运行或没有覆盖离开集合的事项。
+- 既有系统契约是 `Jira pull -> local projection/comment watermark -> changed broadcast -> Daily Jira reload`；手动路由与 30 秒 worker 应由 `jiraInboundSyncMu` 串行复用同一同步实现。
+- 上一轮改动只在本地提交 `257cf9b`，当时明确没有重启运行中服务或验证真实 Jira；“运行态仍加载旧二进制/旧凭据”是必须验证的部署假设，但不能代替代码级自动路径回归。
+- 当前工作树在本任务开始前已有规则、任务记录、数据库变动，Serena 激活还生成了 `.serena/`；所有既有改动需保留，本任务生成的临时工具状态需在交付前清理。
+- 运行态精确时间线：NS2-1986 的 Jira `updated` 为 11:29:07，本地负责人在手动轮 11:32:28 更新；自动 checkpoint 下一次到 11:39:38 才出现，随后到 11:45 仍未推进。原 `startJiraSyncWorker` 在每轮入站后内联调用全量 `syncPerformanceJiraHistory` 和可能的绩效 `RunOnce`，因此“30 秒 ticker”不等于“每 30 秒入站”。
+- 当前直接同步、负责人离开主范围、事件广播和手动同步回归全部通过，排除 Jira reconciliation/eligibility 的代码缺口；缺的是调度隔离。
+- 修复使用两个独立周期 worker：入站立即运行且每 30 秒继续，绩效历史首次延迟 30 秒并在自己的 goroutine 中按配置间隔运行。二者共享进程生命周期 context，但不共享执行栈。
+- 新增状态观测门槛 `jiraInboundStaleAfter = 4 * 30s`；原固定 10 分钟会把已漏掉十余个周期的同步仍报告为 healthy。
+- 本轮不修改前端：源投影和广播边界已有定向证据，进入 UI 门禁不会增加有效修复。
+- 受控重启后入站 checkpoint 连续按 30 秒推进，最终状态为 healthy；NS2-1986 的本地负责人已是 `jira公用-南沙二期码头`，说明自动源投影不再依赖手动按钮。
+- Daily Jira 读模型有意保留外部负责人投影行用于审计与其他页面，但 handler 通过核心成员 filter 排除页面结果；配置的 15 位核心负责人及其目录别名均不包含该负责人。通用“外部负责人不可见”与“离开自定义 JQL 范围”回归通过。
+- 运行态额外暴露绩效评分一次性绑定 35,660 个 task ID，超过 SQLite 变量上限；按 500 个 ID 分批读取后，大范围回归通过，且复合 timeline 索引消除了 ORDER BY 临时 B-tree。
+- Jira 与绩效模块同时启动会争用 SQLite 写锁；绩效长周期任务首轮延后 5 秒后，Jira 先完成、绩效 startup run 随后 completed 并生成 14 个快照。短测试周期仍使用自身 interval，不改变生命周期测试语义。
+- 浏览器已加载到登录页但没有可复用认证态；本轮没有绕过登录、读取会话存储或点击真实 Jira 写操作。样例闭环使用服务 checkpoint、数据库投影/配置范围和确定性 handler 回归完成。
+
+---
+
 ## 2026-08-21 - Daily Jira 滚轮跳底与方案发布 URL
 
 - 两个症状必须独立判红：浏览器反馈环断言一次 wheel 的实际位移，后端回归断言缺失/可推导 public URL 时的发布行为和副作用边界。
@@ -2316,3 +2335,17 @@
 - 6.25GB 合成库的行装载约 26.8s、索引构建约 69.8s，证明首次物化不是在线请求；生产必须先备份、对等数据副本演练并安排迁移窗口。
 - 登录态隔离浏览器在 260 行深滚动处经历真实 generation 变化与 30 秒自动刷新：`scrollTop=13144.5`、`scrollHeight=13555`、左右面板高度 `519.5/519.5` 均不变，精确搜索随后读到新标题。
 - 毫秒结论只覆盖本机 warm SQLite read module；生产 HTTP p95、并发锁等待、冷缓存、网络和低选择性广泛搜索必须通过部署后监控确认。
+
+## 2026-08-23 Serena MCP 接入发现
+
+- Serena 官方明确说明它是 MCP 代码工具包，不应通过 MCP/plugin marketplace 的陈旧命令安装；当前 Quick Start 使用 `uv tool install -p 3.13 serena-agent`、`serena init`。
+- Serena 官方 Codex 接入为 `serena setup codex`，等价配置使用 `serena start-mcp-server --project-from-cwd --context=codex`，启动超时建议 15 秒。
+- OpenAI 官方文档确认 Codex 的本地 STDIO MCP 放在 `~/.codex/config.toml`，ChatGPT 桌面、Codex CLI 与 IDE 扩展共享同一主机配置；可用 `codex mcp list` 和 `/mcp` 验证。
+- Serena 的 Codex App 进程不一定从项目目录启动，因此规则必须要求代码任务先激活当前项目并读取 Serena 初始指令；不能只依赖 `--project-from-cwd`。
+- Serena 对 Codex context 默认关闭与宿主重叠的基础文件/搜索/shell 工具；最有价值的边界是符号发现、引用追踪、重命名和符号级编辑，普通文本/非代码仍由宿主工具处理。
+- 最终安装为 `uv 0.12.5` + `serena-agent 1.7.0`，默认 LSP 后端；Codex 使用绝对命令路径、15 秒启动、120 秒工具超时、写工具审批、非 required 和禁止自动打开 Dashboard。
+- 真实 STDIO MCP 握手返回 24 个工具；`activate_project`、`get_symbols_overview`、`find_symbol`、`find_referencing_symbols`、`replace_symbol_body`、`rename_symbol` 均存在，临时 Go 项目的符号概览成功识别 `Ready`。
+- 本机 npm 安装的 `/usr/local/bin/codex` 平台二进制缺失，无法运行 `codex mcp list` 或供 `serena setup codex` 自检；这不影响 Codex App 读取同一 `~/.codex/config.toml`，但 CLI 修复不在本轮授权范围内。
+- 规则边界最终为：Serena 负责代码语义层；`rg` 保留精确文本/路径和非代码搜索；shell 保留构建测试；编辑遵守活动文件编辑策略；一次 Serena 恢复失败后明确降级，不阻塞安全工作。
+- 用户补装后 `/usr/local/bin/codex` 已恢复为 `codex-cli 0.149.0`；CLI 能读取全局 Serena 配置，并在只读临时会话中真实完成 `activate_project`、`initial_instructions` 与 Go/Svelte `get_symbols_overview`。
+- Serena 首次为当前项目生成的配置只识别 Go，但仓库实际有 196 个 Go、58 个 Svelte 和 38 个 TypeScript 文件；项目配置已补为 `go + svelte`，Svelte 服务器 ready 且成功解析 `DemandKanban.svelte`。未执行 Serena onboarding，避免与既有 `.agent-runtime` 项目内存形成第二套记忆。

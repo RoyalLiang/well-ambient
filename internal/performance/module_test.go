@@ -123,6 +123,30 @@ func TestRunOnceAppendsAuditedSnapshotsWithoutPublishingIncompleteEvidence(t *te
 	}
 }
 
+func TestLoadPerformanceWorkItemEventsBatchesLargeTaskScopes(t *testing.T) {
+	conn := newPerformanceTestDB(t)
+	now := time.Date(2026, 8, 23, 8, 0, 0, 0, time.UTC)
+	taskIDs := make([]string, 35_660)
+	for index := range taskIDs {
+		taskIDs[index] = "WA-" + strconv.Itoa(index+1)
+	}
+	want := []db.PerformanceWorkItemEvent{
+		performanceSourceFixture("large-scope-first", taskIDs[0], SourceEventIssueSnapshot, "", "", now.Add(-time.Hour)),
+		performanceSourceFixture("large-scope-last", taskIDs[len(taskIDs)-1], SourceEventStatusChange, "open", "done", now),
+	}
+	if err := conn.Create(&want).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := loadPerformanceWorkItemEvents(conn, taskIDs, now)
+	if err != nil {
+		t.Fatalf("load events across SQLite variable limit: %v", err)
+	}
+	if len(events) != len(want) || events[0].DedupeKey != want[0].DedupeKey || events[1].DedupeKey != want[1].DedupeKey {
+		t.Fatalf("loaded events = %+v, want first and last task events", events)
+	}
+}
+
 func TestRunOnceAppliesConfigurableRetentionAndAuditsDeletion(t *testing.T) {
 	conn := newPerformanceTestDB(t)
 	now := time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC)
@@ -828,6 +852,15 @@ func TestBackgroundRunnerStopsWithoutFurtherRefresh(t *testing.T) {
 	}
 	if laterCount != stoppedCount {
 		t.Fatalf("runner continued after stop: before=%d after=%d", stoppedCount, laterCount)
+	}
+}
+
+func TestPerformanceInitialDelayStaggersLongRunningBackgroundWork(t *testing.T) {
+	if got := performanceInitialDelay(time.Hour); got != 5*time.Second {
+		t.Fatalf("hourly startup delay = %s, want 5s", got)
+	}
+	if got := performanceInitialDelay(15 * time.Millisecond); got != 15*time.Millisecond {
+		t.Fatalf("short-interval startup delay = %s, want interval", got)
 	}
 }
 

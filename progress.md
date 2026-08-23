@@ -1,3 +1,21 @@
+# Session: 2026-08-23 - Daily Jira 负责人变更自动退出列表
+
+- 已加载项目冷启动、复杂编码/内存规则、CONTEXT、相关 Jira ADR，以及 diagnosing-bugs、planning-with-files；Serena 已激活并读取初始说明。
+- 已复核最近两轮 Daily Jira 记忆：自动 worker/事件广播是主路径，手动按钮只作恢复；上一轮代码本地通过但运行服务未重启、真实 Jira 未验证。
+- 已记录任务前脏工作树，尚未编辑业务代码或触碰主服务/主数据库/真实 Jira；正在建立 NS2-1986 等价的确定性红灯。
+- 已捕获运行态红灯：NS2-1986 手动轮成功更新，但 checkpoint 的相邻入站轮间隔约 7 分钟，且随后再次停滞；源码证明全量绩效 Jira 历史回放内联阻塞 30 秒入站 worker。
+- 已新增先红后绿回归 `TestJiraInboundWorkerContinuesWhilePerformanceHistorySyncIsBlocked`，将入站与绩效历史拆成独立 context worker；负责人离开范围、广播、手动同步和 FZ-2257 幂等定向用例全部通过。
+- `go test -race` 新并发回归通过；新增 stale 状态回归，漏掉 4 个 30 秒周期后 `/api/status` 标记 stale。`go vet ./...` 已通过，正在执行全量回归与清理。
+- 全量 `go test ./... -count=1` 通过；新 worker/stale 回归连续 30 次通过，`git diff --check` 通过。Serena 生成缓存已精确清理，不再出现在工作树。
+- 当前代码验证完成；仍需在用户反馈后决定是否受控重启本机 8080 服务，并以真实运行态 checkpoint/认证页面完成最后闭环。
+- 用户回复“继续交付”后已执行受控重启；新服务连续完成多个 30 秒 Jira 周期，`/api/status` 保持 healthy，192 项、无错误。
+- 运行态发现并修复绩效评分的 35,660 ID 单次 `IN` 参数溢出；新增 500 条分批读取、覆盖索引和大范围回归。
+- 首次重启验证捕获 Jira/绩效同秒启动的 SQLite 写锁竞争；绩效 startup 错峰 5 秒后再次启动，Jira 首轮先成功，绩效 startup 随后 completed 并生成 14 个快照。
+- 最终全仓 `go test ./... -count=1`、`go vet ./...`、关键 Jira 30 次重复、两个 race 回归、数据库/绩效包测试和 query-plan 合同均通过；当前 8080 运行最新源码。
+- 登录态浏览器仍显示登录页，未绕过认证做页面点击；NS2-1986 的负责人投影、核心范围排除和通用页面可见性回归已形成样例级闭环。
+
+---
+
 # Session: 2026-08-19 - 页面与搜索慢加载闭环
 
 # Session: 2026-08-21 - Daily Jira 滚轮跳底与方案发布 URL
@@ -3131,3 +3149,20 @@
 - 最终 10M disposable benchmark：首页面/cursor 页面 p95 为 0.824/0.845ms，选择性 key/title 搜索 p95 为 0.367/0.525ms，mid/tail raw seek p95 为 0.115/0.112ms；临时 6.25GB 数据库已删除。
 - 全量 Go 测试与 vet、optional FTS build-tag suite、64/64 前端测试、0-error Svelte check、production build、Impeccable/Finesse detectors 与 targeted diff hygiene 全部通过。
 - 登录态隔离浏览器完成 100→200→260 分页、真实 generation 变化、30 秒深滚自动刷新和搜索确认；滚动位置/高度/面板几何无变化且无错误。下一步只剩按正常流程迁移/重启主服务并采集生产 HTTP 与锁等待指标。
+
+# 2026-08-23 Serena MCP 全局接入
+
+- 已读取 `skill-installer`、OpenAI Docs、Self-Improving 和 planning-with-files 技能说明。
+- 已核对 OpenAI 官方 MCP 配置与 Serena 官方 Quick Start/Codex 客户端文档，确认 Serena 应作为全局 STDIO MCP 安装，不是 `SKILL.md`。
+- 已建立五阶段计划；下一步检查本机 `uv`/`serena`/Codex 配置与现有 hooks，再执行最小增量安装。
+- 已安装并初始化 `uv 0.12.5`、`serena-agent 1.7.0`，生成 `~/.serena/serena_config.yml`，LSP backend 成功。
+- 已在 `~/.codex/config.toml` 增量加入全局 Serena STDIO MCP；解析证明原配置除 Serena block 外完全不变，文件权限保持 0600。
+- 已完成临时 Go 项目 MCP 协议验证：initialize、24 工具发现和 `get_symbols_overview(main.go)` 均成功，未在当前项目创建 `.serena` 目录。
+- 已同步全局 AGENTS、规范仓库根/项目模板/coding domain 与当前项目 AGENTS/coding domain；规范版本升为 1.1.0。
+- 当前项目严格 YAML、规范校验、8/8 单测、diff hygiene 和新 Git 项目 bootstrap 均通过；新项目来源版本为 1.1.0 并自动含 Serena 路由。
+- 最终复核再次通过当前项目严格 YAML、规范仓库校验、8/8 单测与 `git diff --check`；确认当前项目未生成 `.serena`，规范仓库没有 remote，临时安装/冒烟目录均已清理。
+- 交付前检查曾用过窄的两空格 YAML 匹配而返回 1；按实际四空格结构重查后 Serena 规则完整存在，这是检查命令问题，不是配置缺失。
+- 已完成交付前 Agent 自检；用户安装 Codex CLI 后要求补充验证，本任务不重复门禁。
+- `codex-cli 0.149.0` 的 `codex mcp list/get serena` 已确认 Serena 为 enabled STDIO server，命令、Codex context、15/120 秒超时和 writes 审批配置均正确。
+- 临时只读 `codex exec` 会话实际通过 Serena 激活当前项目、读取初始指令，并成功读取 Go `main` 符号；随后补齐项目 Serena `go + svelte` 双语言配置，第二次真实调用成功解析 `DemandKanban.svelte`。
+- 仅保留可版本化的 `.serena/project.yml` 与 `.serena/.gitignore`；已删除此次验证生成的符号缓存和本机覆盖文件。

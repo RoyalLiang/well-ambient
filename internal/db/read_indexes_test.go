@@ -22,7 +22,7 @@ func TestAllPageReadIndexesBackBoundedKeysetQueries(t *testing.T) {
 	if err := conn.AutoMigrate(
 		&ContextFact{}, &ContextDocument{}, &CorpusCandidate{},
 		&ExecutionRun{}, &ExecutionAction{}, &ReleaseVersion{}, &TaskTelemetry{},
-		&GitCommitLog{}, &JiraCommentLog{}, &userdb.User{},
+		&GitCommitLog{}, &JiraCommentLog{}, &userdb.User{}, &PerformanceWorkItemEvent{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +108,13 @@ func TestAllPageReadIndexesBackBoundedKeysetQueries(t *testing.T) {
 			name: "task assignee directory", wantIndex: "idx_task_assignee_directory",
 			sql: `SELECT DISTINCT assignee FROM task_telemetries
 				WHERE TRIM(assignee) <> '' ORDER BY assignee LIMIT 5000`,
+		},
+		{
+			name: "performance work item timeline", wantIndex: "idx_performance_work_item_timeline",
+			sql: `SELECT id FROM performance_work_item_events
+				WHERE work_item_id IN (?, ?) AND occurred_at <= ?
+				ORDER BY work_item_id, occurred_at, id`,
+			args: []any{"FZ-2257", "NS2-1986", now},
 		},
 	}
 	for _, testCase := range cases {
