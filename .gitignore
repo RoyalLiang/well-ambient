@@ -38,6 +38,7 @@ web/node_modules/
 
 # Local configuration files (ignore local configs with secrets)
 config.yaml
+/config_test.yaml
 .env
 .env.*
 !.env.example
