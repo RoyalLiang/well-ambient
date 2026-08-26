@@ -29,6 +29,7 @@ web/dist/
 web/node_modules/
 .eslintcache
 .stylelintcache
+.finesse/
 
 # Local configuration files (ignore local configs with secrets)
 config.yaml

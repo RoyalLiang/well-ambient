@@ -8,6 +8,7 @@ function component(relativePath: string) {
 
 const demandKanban = component('DemandKanban.svelte');
 const deliveryControl = component('DemandDeliveryControl.svelte');
+const solutionCenter = component('SolutionCenter.svelte');
 const solutionWorkspace = component('SolutionWorkspace.svelte');
 
 test('solution button updates the existing right inspector without adding a third tab', () => {
@@ -168,4 +169,57 @@ test('solution draft save uses the global toast without shifting or remounting t
     solutionWorkspace,
     /<MarkdownWorkbench[\s\S]*?mode="live"[\s\S]*?saving=\{action === 'save' \|\| action === 'publish'\}[\s\S]*?on:save=\{saveDraft\}/,
   );
+});
+
+test('solution center keeps every catalog row to a compact two-line register', () => {
+  assert.match(solutionCenter, /class="row-title"/);
+  assert.match(solutionCenter, /class="row-identity"/);
+  assert.doesNotMatch(solutionCenter, /class="row-summary"/);
+  assert.doesNotMatch(solutionCenter, /% 存储/);
+  assert.match(solutionCenter, /\.register-row\s*\{[^}]*min-height:\s*72px[^}]*max-height:\s*72px/s);
+  assert.match(solutionCenter, /\.skeleton-row\s*\{[^}]*height:\s*72px/s);
+  assert.match(solutionCenter, /\.mode-switch button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(solutionCenter, /\.document-actions button, \.document-actions a\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(solutionCenter, /@media \(max-width: 820px\)[\s\S]*?\.center-grid\s*\{\s*display:\s*block/);
+});
+
+test('solution center makes markdown the published and standard document surface', () => {
+  const catalogDocument = solutionCenter.match(/\{:else if mode === 'catalog' && detail\}[\s\S]*?\{:else if mode === 'comparisons'/)?.[0] || '';
+  const standardDocument = solutionCenter.match(/\{:else if mode === 'standards' && standardDetail\}[\s\S]*?\{:else\}/)?.[0] || '';
+
+  assert.match(catalogDocument, /class="document-surface"/);
+  assert.match(catalogDocument, /<MarkdownWorkbench[\s\S]*?mode="preview"[\s\S]*?readonly/);
+  assert.doesNotMatch(catalogDocument, /当前已发布版本|fact-strip|comparison-section|需求背景/);
+  assert.match(standardDocument, /class="document-surface"/);
+  assert.match(standardDocument, /<MarkdownWorkbench[\s\S]*?mode="preview"[\s\S]*?readonly/);
+  assert.doesNotMatch(standardDocument, /当前版本|fact-strip/);
+});
+
+test('similar solutions live in a dedicated center view and preserve proposal review', () => {
+  assert.match(solutionCenter, /type CenterMode = 'catalog' \| 'comparisons' \| 'standards'/);
+  assert.match(solutionCenter, /mode === 'comparisons'[\s\S]*?>相似方案<\/button>/);
+  const comparisonView = solutionCenter.match(/\{:else if mode === 'comparisons' && selectedComparison\}[\s\S]*?\{:else if mode === 'standards'/)?.[0] || '';
+  assert.match(comparisonView, /两轮对比与标准化建议/);
+  assert.match(comparisonView, /标准化提案/);
+  assert.match(comparisonView, /beginReview\(selectedComparison!\.proposal/);
+  assert.match(comparisonView, /submitReview/);
+});
+
+test('solution center exports markdown and copies stable authenticated deep links', () => {
+  assert.match(solutionCenter, /new Blob\(\[markdown\], \{ type: 'text\/markdown;charset=utf-8' \}\)/);
+  assert.match(solutionCenter, /anchor\.download = markdownFilename/);
+  assert.match(solutionCenter, /URL\.revokeObjectURL/);
+  assert.match(solutionCenter, /navigator\.clipboard\.writeText/);
+  assert.match(solutionCenter, /params\.set\('solution_entry'/);
+  assert.match(solutionCenter, /params\.set\('solution_standard'/);
+  assert.match(solutionCenter, /复制链接/);
+  assert.match(solutionCenter, /导出 Markdown/);
+});
+
+test('solution center opens a stable entry deep link even outside the first catalog page', () => {
+  assert.match(solutionCenter, /readLocationIntent\(\)/);
+  assert.match(solutionCenter, /solution_entry/);
+  assert.match(solutionCenter, /solution_standard/);
+  assert.match(solutionCenter, /if \(!entries\.some\(\(item\) => item\.id === response\.entry\.id\)\)/);
+  assert.match(solutionCenter, /entries = \[response\.entry, \.\.\.entries\]/);
 });
