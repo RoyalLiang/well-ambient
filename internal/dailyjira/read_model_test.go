@@ -70,6 +70,57 @@ func TestReadPageUsesBoundedGenerationCursorAndStableSort(t *testing.T) {
 	}
 }
 
+func TestReadPageSupportsBoundedPreviousNavigationWithoutSkippingRows(t *testing.T) {
+	conn := openReadModelTestDB(t)
+	now := time.Now()
+	for index := 0; index < 7; index++ {
+		task := db.TaskTelemetry{
+			TaskID: fmt.Sprintf("BACK-%03d", index), ProjectKey: "BACK", Source: "jira",
+			Title: fmt.Sprintf("bounded page %d", index), Repo: "Backfill", Status: "progress",
+			TaskCreatedAt: now.AddDate(0, 0, -20+index), LastUpdate: now.Add(time.Duration(index) * time.Minute),
+		}
+		if err := conn.Create(&task).Error; err != nil {
+			t.Fatalf("seed previous-page task: %v", err)
+		}
+	}
+
+	reader := dailyjira.NewReader(conn)
+	first, err := reader.ReadPage(context.Background(), dailyjira.Query{
+		Bucket: dailyjira.BucketSevenDay, Limit: 3, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("read first bounded page: %v", err)
+	}
+	second, err := reader.ReadPage(context.Background(), dailyjira.Query{
+		Bucket: dailyjira.BucketSevenDay, Limit: 3, Cursor: first.NextCursor, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("read second bounded page: %v", err)
+	}
+	if !second.HasPrevious || second.PreviousCursor == "" {
+		t.Fatalf("second page must expose a previous cursor: %+v", second)
+	}
+
+	back, err := reader.ReadPage(context.Background(), dailyjira.Query{
+		Bucket: dailyjira.BucketSevenDay, Limit: 3, Cursor: second.PreviousCursor,
+		Direction: dailyjira.DirectionPrevious, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("read previous bounded page: %v", err)
+	}
+	if len(back.Items) != len(first.Items) {
+		t.Fatalf("previous page length = %d, want %d", len(back.Items), len(first.Items))
+	}
+	for index := range first.Items {
+		if back.Items[index].TaskID != first.Items[index].TaskID {
+			t.Fatalf("previous page item %d = %s, want %s", index, back.Items[index].TaskID, first.Items[index].TaskID)
+		}
+	}
+	if back.HasPrevious || back.PreviousCursor != "" || !back.HasMore || back.NextCursor == "" {
+		t.Fatalf("previous page boundaries are incorrect: %+v", back)
+	}
+}
+
 func TestReadPageRejectsCursorAfterProjectionGenerationChanges(t *testing.T) {
 	conn := openReadModelTestDB(t)
 	now := time.Now()

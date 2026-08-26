@@ -1,0 +1,74 @@
+database:
+  # 首次启动只开放受令牌保护的数据库安装页；成功后自动持久化为 postgres。
+  driver: setup
+  # 可选：把停写后的只读 SQLite 快照放到该服务端固定路径。
+  # 页面只会显示安全的文件大小/表数，不会暴露或允许修改路径。
+  legacy_sqlite_path: /var/lib/well-ambient/legacy/well-ambient.db
+  auto_migrate: false
+  max_open_connections: 20
+  max_idle_connections: 10
+  connection_max_lifetime_minutes: 30
+  connection_max_idle_time_minutes: 5
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  public_url: ""
+  attachment_dir: /var/lib/well-ambient/attachments
+
+gitlab:
+  enabled: false
+  base_url: ""
+  secret_token: ""
+  api_token: ""
+  repos: []
+
+feishu:
+  enabled: false
+  app_id: ""
+  app_secret: ""
+  bot:
+    enabled: false
+    chat_group: ""
+  bitable:
+    enabled: false
+    app_token: ""
+    table_id: ""
+    status_column: ""
+    task_id_column: ""
+
+jira:
+  enabled: false
+  base_url: ""
+  username: ""
+  api_token: ""
+  sync_projects: []
+  sync_users: []
+  sync_statuses: []
+  custom_jql: ""
+  version_sources: []
+
+ai:
+  enabled: false
+  provider: openai
+  base_url: ""
+  endpoint_type: responses
+  api_token: ""
+  model: ""
+  project_architecture: ""
+  delivery_workflow: ""
+  implemented_features: ""
+  estimation_guidelines: ""
+  default_work_hours_per_day: 8
+
+performance_brain:
+  enabled: false
+  interval_minutes: 60
+  assessment_window_days: 90
+  retention_days: 90
+  publication_mode: shadow
+
+solution_catalog:
+  interval_minutes: 30
+  candidate_limit: 8
+  recall_threshold: 0.18

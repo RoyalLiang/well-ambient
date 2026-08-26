@@ -13,6 +13,8 @@ import (
 	"well-ambient/internal/config"
 )
 
+const configuredSecretPlaceholder = "__configured__"
+
 // handleGetConfig returns the current server configuration
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -23,6 +25,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	response := *s.config
 	response.PerformanceBrain = response.PerformanceBrain.Normalized()
+	redactConfiguredSecrets(&response)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding config: %v", err)
 	}
@@ -64,6 +67,10 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
 		return
 	}
+	// Database settings are bootstrap-only and never accepted from the browser.
+	// Preserve the file-loaded values across ordinary integration config saves.
+	newCfg.Database = s.config.Database
+	mergeConfiguredSecrets(&newCfg, *s.config)
 	if err := config.NormalizeJiraVersionSources(&newCfg.Jira); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid Jira version sources: %v", err), http.StatusBadRequest)
 		return
@@ -118,6 +125,9 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
 		return
+	}
+	if s.config != nil {
+		mergeConnectionTestSecrets(&req, *s.config)
 	}
 
 	var res ConnectionTestResponse
@@ -315,6 +325,9 @@ func (s *Server) handleGetGitLabProjects(w http.ResponseWriter, r *http.Request)
 
 	baseURL := r.URL.Query().Get("base_url")
 	token := r.URL.Query().Get("api_token")
+	if token == configuredSecretPlaceholder && s.config != nil {
+		token = s.config.GitLab.APIToken
+	}
 
 	if baseURL == "" || token == "" {
 		http.Error(w, "base_url and api_token are required", http.StatusBadRequest)
@@ -349,6 +362,64 @@ func (s *Server) handleGetGitLabProjects(w http.ResponseWriter, r *http.Request)
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		log.Printf("Failed to write response: %v", err)
 	}
+}
+
+func redactConfiguredSecrets(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	cfg.GitLab.Secret = redactConfiguredSecret(cfg.GitLab.Secret)
+	cfg.GitLab.APIToken = redactConfiguredSecret(cfg.GitLab.APIToken)
+	cfg.Feishu.AppSecret = redactConfiguredSecret(cfg.Feishu.AppSecret)
+	cfg.Feishu.Bitable.AppToken = redactConfiguredSecret(cfg.Feishu.Bitable.AppToken)
+	cfg.Jira.APIToken = redactConfiguredSecret(cfg.Jira.APIToken)
+	cfg.AI.APIToken = redactConfiguredSecret(cfg.AI.APIToken)
+}
+
+func redactConfiguredSecret(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return configuredSecretPlaceholder
+}
+
+func mergeConfiguredSecrets(next *config.Config, current config.Config) {
+	if next == nil {
+		return
+	}
+	next.GitLab.Secret = resolveConfiguredSecret(next.GitLab.Secret, current.GitLab.Secret)
+	next.GitLab.APIToken = resolveConfiguredSecret(next.GitLab.APIToken, current.GitLab.APIToken)
+	next.Feishu.AppSecret = resolveConfiguredSecret(next.Feishu.AppSecret, current.Feishu.AppSecret)
+	next.Feishu.Bitable.AppToken = resolveConfiguredSecret(next.Feishu.Bitable.AppToken, current.Feishu.Bitable.AppToken)
+	next.Jira.APIToken = resolveConfiguredSecret(next.Jira.APIToken, current.Jira.APIToken)
+	next.AI.APIToken = resolveConfiguredSecret(next.AI.APIToken, current.AI.APIToken)
+}
+
+func mergeConnectionTestSecrets(req *ConnectionTestRequest, current config.Config) {
+	if req == nil {
+		return
+	}
+	if req.GitLab != nil {
+		req.GitLab.Secret = resolveConfiguredSecret(req.GitLab.Secret, current.GitLab.Secret)
+		req.GitLab.APIToken = resolveConfiguredSecret(req.GitLab.APIToken, current.GitLab.APIToken)
+	}
+	if req.Feishu != nil {
+		req.Feishu.AppSecret = resolveConfiguredSecret(req.Feishu.AppSecret, current.Feishu.AppSecret)
+		req.Feishu.Bitable.AppToken = resolveConfiguredSecret(req.Feishu.Bitable.AppToken, current.Feishu.Bitable.AppToken)
+	}
+	if req.Jira != nil {
+		req.Jira.APIToken = resolveConfiguredSecret(req.Jira.APIToken, current.Jira.APIToken)
+	}
+	if req.AI != nil {
+		req.AI.APIToken = resolveConfiguredSecret(req.AI.APIToken, current.AI.APIToken)
+	}
+}
+
+func resolveConfiguredSecret(value, current string) string {
+	if value == configuredSecretPlaceholder {
+		return current
+	}
+	return value
 }
 
 type GitLabWebhookEnsureRequest struct {

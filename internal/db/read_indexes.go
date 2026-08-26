@@ -63,3 +63,50 @@ func MigrateAllPageReadIndexes(conn *gorm.DB) error {
 	}
 	return nil
 }
+
+// postgresReadIndexes contains only PostgreSQL-specific indexes backed by
+// concrete production query shapes. Keep these separate from the portable
+// SQLite indexes so local tests do not mask dialect-specific DDL mistakes.
+var postgresReadIndexes = []string{
+	`CREATE INDEX IF NOT EXISTS idx_pg_task_active_project_created
+		ON task_telemetries (project_key, task_created_at, task_id)
+		INCLUDE (assignee, due_date, last_update, source_updated_at)
+		WHERE status IS NULL OR LOWER(BTRIM(status)) NOT IN
+			('done','closed','resolved','completed','archived','已完成','已关闭')`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_task_active_assignee_created
+		ON task_telemetries (LOWER(BTRIM(assignee)), task_created_at, task_id)
+		INCLUDE (project_key, due_date, last_update, source_updated_at)
+		WHERE status IS NULL OR LOWER(BTRIM(status)) NOT IN
+			('done','closed','resolved','completed','archived','已完成','已关闭')`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_catalog_project_page
+		ON solution_catalog_entries (project_key, published_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_catalog_page
+		ON solution_catalog_entries (published_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_catalog_token_entry
+		ON solution_catalog_search_tokens (token, entry_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_revision_asset_version
+		ON solution_revisions (solution_asset_id, version DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_source_asset_observed
+		ON solution_source_refs (solution_asset_id, observed_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_job_asset_id
+		ON solution_polish_jobs (solution_asset_id, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_comparison_left_recall
+		ON solution_comparisons (left_entry_id, recall_score DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_pg_solution_comparison_right_recall
+		ON solution_comparisons (right_entry_id, recall_score DESC, id DESC)`,
+}
+
+func MigratePostgresReadIndexes(conn *gorm.DB) error {
+	if conn == nil {
+		return gorm.ErrInvalidDB
+	}
+	if conn.Dialector.Name() != "postgres" {
+		return nil
+	}
+	for _, statement := range postgresReadIndexes {
+		if err := conn.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}

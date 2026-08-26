@@ -13,6 +13,14 @@ func Migrate(conn *gorm.DB) error {
 	if conn == nil {
 		return fmt.Errorf("Daily Jira read model database is not initialized")
 	}
+	if conn.Dialector.Name() == "postgres" {
+		// PostgreSQL derives the projection from the indexed task fact table and
+		// uses the shared task_facts generation maintained by readmodel.
+		return nil
+	}
+	if conn.Dialector.Name() != "sqlite" {
+		return fmt.Errorf("unsupported Daily Jira database driver %q", conn.Dialector.Name())
+	}
 	return conn.Transaction(func(tx *gorm.DB) error {
 		statements := readModelSchemaStatements()
 		for _, statement := range statements[:4] {

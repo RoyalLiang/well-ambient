@@ -10,6 +10,7 @@
   import TaskKanban from './components/TaskKanban.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
+  import DatabaseSetup from './components/DatabaseSetup.svelte';
   import FunctionalAdminShell from './components/prototype/FunctionalAdminShell.svelte';
   import FunctionalWorkspace from './components/prototype/FunctionalWorkspace.svelte';
   import {
@@ -27,6 +28,7 @@
 	type KPIView = 'overview' | 'calculation';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
+  type SetupGateState = 'checking' | 'required' | 'configured' | 'unavailable';
 
   interface WorkspaceAction {
     label: string;
@@ -160,6 +162,9 @@
   let availableRoutes: AppTab[] = [];
   let latestDecisionEventSummary: WorkspaceDecisionEventSummary | null = null;
   let decisionTimelineDrawerRequest = 0;
+  let setupGateState: SetupGateState = 'checking';
+  let setupGateMessage = '';
+  let applicationInitialized = false;
 
   interface Alert {
     id: number;
@@ -358,11 +363,15 @@
 
   // Save original fetch
   const originalFetch = window.fetch;
+
+  function isPublicBootstrapRequest(url: string): boolean {
+    return url.includes('/api/login') || url.includes('/api/setup/');
+  }
   
   // Override window.fetch globally to inject JWT token
   window.fetch = async function(resource, init) {
     const urlStr = typeof resource === 'string' ? resource : (resource as Request).url;
-    if (urlStr.includes('/api/login')) {
+    if (isPublicBootstrapRequest(urlStr)) {
       return originalFetch(resource, init);
     }
     
@@ -376,7 +385,7 @@
     
     try {
       const response = await originalFetch(resource, init);
-      if (response.status === 401 && !urlStr.includes('/api/login')) {
+      if (response.status === 401 && !isPublicBootstrapRequest(urlStr)) {
         logout();
       }
       return response;
@@ -799,15 +808,50 @@
     }
   }
 
-  onMount(() => {
+  function initializeApplication() {
+    if (applicationInitialized) return;
+    applicationInitialized = true;
     if (jwtToken) {
       applyAuthClaims(jwtToken);
-      refreshCurrentUserProfile();
-      loadConfig();
+      void refreshCurrentUserProfile();
+      void loadConfig();
       connectSSE();
       autoRedirectTab();
       applyLocationIntent();
     }
+  }
+
+  async function checkDatabaseSetup() {
+    setupGateState = 'checking';
+    setupGateMessage = '';
+    try {
+      const response = await originalFetch('/api/setup/status', { cache: 'no-store' });
+      if (response.status === 404) {
+        setupGateState = 'configured';
+        initializeApplication();
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json() as { setup_required?: boolean };
+      if (payload.setup_required === true) {
+        setupGateState = 'required';
+        return;
+      }
+      throw new Error('安装状态响应不完整');
+    } catch (error) {
+      setupGateState = 'unavailable';
+      setupGateMessage = error instanceof Error ? error.message : '无法读取安装状态';
+    }
+  }
+
+  function handleDatabaseSetupCompleted() {
+    window.location.reload();
+  }
+
+  onMount(() => {
+    void checkDatabaseSetup();
 
     const handleOutsideClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -842,7 +886,30 @@
   }
 </script>
 
-{#if !jwtToken}
+{#if setupGateState === 'checking'}
+  <main class="startup-gate" aria-live="polite" aria-busy="true">
+    <div class="startup-gate-panel">
+      <span class="startup-gate-mark" aria-hidden="true">WA</span>
+      <div>
+        <strong>正在检查运行环境</strong>
+        <p>确认数据库配置后继续。</p>
+      </div>
+    </div>
+  </main>
+{:else if setupGateState === 'unavailable'}
+  <main class="startup-gate" aria-labelledby="startup-error-title">
+    <div class="startup-gate-panel startup-gate-error">
+      <span class="startup-gate-mark" aria-hidden="true">!</span>
+      <div>
+        <h1 id="startup-error-title">暂时无法确认数据库状态</h1>
+        <p>{setupGateMessage}。请检查服务状态后重试。</p>
+        <button type="button" on:click={checkDatabaseSetup}>重新检查</button>
+      </div>
+    </div>
+  </main>
+{:else if setupGateState === 'required'}
+  <DatabaseSetup onCompleted={handleDatabaseSetupCompleted} />
+{:else if !jwtToken}
   <div class="login-overlay">
     <div class="login-card">
       <div class="login-header">
@@ -1174,6 +1241,82 @@
 {/if}
 
 <style>
+  .startup-gate {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--wa-bg-ambient), var(--wa-bg-page);
+    color: var(--wa-text-main);
+  }
+
+  .startup-gate-panel {
+    width: min(100%, 460px);
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+    padding: 24px;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-lg);
+    background: var(--wa-surface-panel);
+    box-shadow: var(--wa-shadow-panel);
+  }
+
+  .startup-gate-mark {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+    font: 800 12px var(--wa-font-mono);
+  }
+
+  .startup-gate-panel strong,
+  .startup-gate-panel h1 {
+    display: block;
+    margin-top: 2px;
+    color: var(--wa-text-strong);
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  .startup-gate-panel h1 {
+    margin-bottom: 0;
+  }
+
+  .startup-gate-panel p {
+    margin: 7px 0 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .startup-gate-error .startup-gate-mark {
+    background: var(--wa-danger-soft);
+    color: var(--wa-danger);
+  }
+
+  .startup-gate-panel button {
+    min-height: 44px;
+    margin-top: 18px;
+    padding: 0 16px;
+    border: 1px solid var(--wa-accent-fill);
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-accent-fill);
+    color: var(--wa-accent-fill-ink);
+    font: 760 13px var(--wa-font-sans);
+    cursor: pointer;
+  }
+
+  .startup-gate-panel button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--wa-accent-soft);
+  }
+
   :global(body) {
     background-color: #020617;
     background-image: 

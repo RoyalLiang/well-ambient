@@ -52,3 +52,11 @@ Thumbs.db
 /server
 /server_bin
 /well-ambient-server
+/well-ambient.db
+/well-ambient.db-*
+
+# Local production deployment state and secrets
+/deploy/.env.production
+/deploy/runtime/
+/deploy/backups/
+/deploy/.state/

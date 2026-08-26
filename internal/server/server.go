@@ -8,9 +8,12 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"well-ambient/internal/agenda"
 	"well-ambient/internal/config"
@@ -23,6 +26,24 @@ import (
 	"well-ambient/internal/solutions"
 	"well-ambient/internal/telemetry"
 )
+
+var buildInfo = struct {
+	Version   string
+	Commit    string
+	BuildTime string
+}{Version: "dev", Commit: "unknown", BuildTime: "unknown"}
+
+func SetBuildInfo(version, commit, buildTime string) {
+	if strings.TrimSpace(version) != "" {
+		buildInfo.Version = strings.TrimSpace(version)
+	}
+	if strings.TrimSpace(commit) != "" {
+		buildInfo.Commit = strings.TrimSpace(commit)
+	}
+	if strings.TrimSpace(buildTime) != "" {
+		buildInfo.BuildTime = strings.TrimSpace(buildTime)
+	}
+}
 
 // Server encapsulates the HTTP server logic
 type Server struct {
@@ -85,8 +106,16 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	}
 	s.routes()
 	if db.DB != nil {
-		if err := readmodel.EnsureDatasets(db.DB, allPageReadDatasets()); err != nil {
-			panic(fmt.Sprintf("initialize all-page read generations: %v", err))
+		databaseConfig, configErr := cfg.Database.Resolve()
+		if configErr != nil {
+			panic(fmt.Sprintf("resolve database configuration: %v", configErr))
+		}
+		if databaseConfig.AutoMigrate {
+			if err := MigrateReadModels(db.DB); err != nil {
+				panic(fmt.Sprintf("initialize all-page read generations: %v", err))
+			}
+		} else if err := verifyReadModels(db.DB); err != nil {
+			panic(fmt.Sprintf("verify all-page read generations: %v", err))
 		}
 	}
 	readRegistry, err := readmodel.NewRegistry(allPageReadContracts())
@@ -131,6 +160,8 @@ func (s *Server) performanceSettings() performance.Settings {
 func (s *Server) routes() {
 	// Status and Health Check (No Auth)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+	s.mux.HandleFunc("GET /ready", s.handleHealth)
+	s.mux.HandleFunc("GET /live", s.handleLiveness)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 
 	// Auth APIs (No Auth)
@@ -427,9 +458,18 @@ func resourceTypeForPermission(permission string) string {
 
 // Start runs the server
 func (s *Server) Start() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return s.Serve(ctx)
+}
+
+// Serve runs the HTTP server and all background workers until the context is
+// cancelled. It gives Linux service managers and containers a bounded graceful
+// shutdown path instead of abruptly abandoning in-flight work.
+func (s *Server) Serve(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	log.Printf("Starting well-ambient server on %s", addr)
-	workerContext, stopWorkers := context.WithCancel(context.Background())
+	workerContext, stopWorkers := context.WithCancel(ctx)
 
 	// Keep the latency-sensitive Jira projection independent from heavy history replay.
 	s.startJiraSyncWorkers(workerContext)
@@ -453,13 +493,57 @@ func (s *Server) Start() error {
 	if handler == nil {
 		handler = s.mux
 	}
-	return http.ListenAndServe(addr, handler)
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	serverError := make(chan error, 1)
+	go func() {
+		serverError <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverError:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownContext); err != nil {
+			_ = httpServer.Close()
+			return fmt.Errorf("graceful HTTP shutdown: %w", err)
+		}
+		err := <-serverError
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }
 
-// handleHealth checks system readiness
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+// handleLiveness proves only that the process and HTTP event loop are alive.
+func (s *Server) handleLiveness(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	_, _ = w.Write([]byte("OK"))
+}
+
+// handleHealth checks database readiness. Existing /health clients keep their
+// path while /ready makes the readiness intent explicit for new deployments.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := db.Ping(ctx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "unavailable", "dependency": "database"})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK"))
 }
 
 type jiraInboundStatus struct {
@@ -537,13 +621,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	payload := struct {
 		Status        string                  `json:"status"`
 		Version       string                  `json:"version"`
+		Commit        string                  `json:"commit"`
+		BuildTime     string                  `json:"build_time"`
 		Telemetry     map[string]int          `json:"telemetry"`
 		JiraSync      jiraInboundStatus       `json:"jira_sync"`
 		ReadContracts readmodel.Inventory     `json:"read_contracts"`
 		ReadPaths     []readmodel.Observation `json:"read_paths"`
 	}{
 		Status:        "online",
-		Version:       "0.1.0",
+		Version:       buildInfo.Version,
+		Commit:        buildInfo.Commit,
+		BuildTime:     buildInfo.BuildTime,
 		Telemetry:     map[string]int{"active_hooks": 0},
 		JiraSync:      s.jiraInboundStatus(time.Now()),
 		ReadContracts: s.readContractInventory(strings.EqualFold(r.URL.Query().Get("read_contracts"), "full")),

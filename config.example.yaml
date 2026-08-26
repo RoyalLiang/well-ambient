@@ -1,10 +1,74 @@
+# 本文件只包含不可用示例值。不要在仓库中保存真实 URL、账号、项目清单、JQL 或凭据。
+database:
+  # 本地开发默认 SQLite；正式 Linux 环境使用 deploy/config.production.example.yaml 的 setup 模式。
+  driver: sqlite
+  dsn: well-ambient.db
+  auto_migrate: true
+  max_open_connections: 4
+  max_idle_connections: 2
+  connection_max_lifetime_minutes: 0
+  connection_max_idle_time_minutes: 0
+
+server:
+  host: 127.0.0.1
+  port: 8080
+  public_url: http://127.0.0.1:8080
+  attachment_dir: ./data/demand-attachments
+
+gitlab:
+  enabled: false
+  base_url: https://gitlab.example.com
+  secret_token: ""
+  api_token: ""
+  repos:
+    - name: example-service
+      path: example-group/example-service
+      project_id: "100"
+
+feishu:
+  enabled: false
+  app_id: ""
+  app_secret: ""
+  bot:
+    enabled: false
+    chat_group: ""
+  bitable:
+    enabled: false
+    app_token: ""
+    table_id: ""
+    status_column: ""
+    task_id_column: ""
+
+jira:
+  enabled: false
+  base_url: https://jira.example.com
+  username: ""
+  api_token: ""
+  sync_projects: []
+  sync_users: []
+  sync_statuses: []
+  custom_jql: ""
+  version_sources: []
+
+ai:
+  enabled: false
+  provider: openai
+  base_url: https://api.example.com
+  endpoint_type: responses
+  api_token: ""
+  model: example-model
+  project_architecture: ""
+  delivery_workflow: ""
+  implemented_features: ""
+  estimation_guidelines: ""
+  default_work_hours_per_day: 8
+
 performance_brain:
-  enabled: true
+  enabled: false
   interval_minutes: 60
   assessment_window_days: 90
   retention_days: 90
   formula_version: v6.0
-  # shadow 只产生参考分与审计快照；完成数据质量验收后改为 formal 才发布正式分。
   publication_mode: shadow
   demand_metrics_enabled: true
   bug_metrics_enabled: true
@@ -18,134 +82,6 @@ performance_brain:
   busy_retry_delay_ms: 200
 
 solution_catalog:
-  # 已发布方案立即进入增量队列；该间隔用于修复漏投影并统一扫描新发布版本。
   interval_minutes: 30
-  # 每个新发布方案最多进入多少组两轮对比，避免全量 N² 比较。
   candidate_limit: 8
   recall_threshold: 0.18
-
-server:
-    port: 8080
-    host: 0.0.0.0
-    # Jira 方案回写所使用的浏览器可访问地址。
-    public_url: https://ambient.example.com
-    attachment_dir: ""
-gitlab:
-    enabled: true
-    base_url: https://devgit.westwell.cc
-    secret_token: ""
-    api_token: ""
-    repos:
-        - name: tos_interface_general
-          path: fms3.0-malaysia/tos_interface_general
-          project_id: "2047"
-        - name: task_executor
-          path: fms3.0-malaysia/task_executor
-          project_id: "1647"
-        - name: task_info_service
-          path: fms3.0-malaysia/task_info_service
-          project_id: "1696"
-        - name: vehicle_manager
-          path: fms3.0-malaysia/vehicle_manager
-          project_id: "1716"
-        - name: cms_spreader_info
-          path: fms3.0-malaysia/cms_spreader_info
-          project_id: "2569"
-        - name: gui_server
-          path: /fms3.0-malaysia/gui_server
-          project_id: "1695"
-        - name: crane_manager
-          path: fms3.0-malaysia/crane_manager
-          project_id: "1751"
-        - name: wellhub-backend
-          path: fms3.0-malaysia/wellhub-backend
-          project_id: "2895"
-        - name: area_slot_manager
-          path: fms3.0-malaysia/areaslotmanager
-          project_id: "2052"
-        - name: kafka_project
-          path: fms3.0-malaysia/kafka_project
-          project_id: "2959"
-feishu:
-    enabled: false
-    app_id: cli_a1b2c3d4e5f6g7h8
-    app_secret: ""
-    bot:
-        enabled: true
-        chat_group: oc_chatgroupid12345
-    bitable:
-        enabled: true
-        app_token: ""
-        table_id: tblYourTableID
-        status_column: 任务状态
-        task_id_column: 任务ID
-jira:
-    enabled: true
-    base_url: https://jira.westwell-lab.com
-    username: ""
-    api_token: ""
-    sync_projects:
-        - zjk
-        - MAQT
-        - shg
-        - quz
-        - ez
-        - AB
-        - HIT
-        - TNJ
-        - MDL
-        - CK
-        - LCB
-        - tpy
-        - JTG
-        - TH
-        - PRJ23003
-        - PRJ23096
-        - DL
-        - FZ
-        - QZ
-        - HR
-        - ZK
-        - FEL
-        - AQCT
-        - ICA
-        - CHQ
-        - YH
-        - GY
-        - LUZ
-        - ZPU
-        - WLY
-        - TC
-        - RZ
-        - HACTLAA
-        - WUH
-        - PACTL
-        - YN
-        - NS2
-        - HACTL2
-        - HKAA
-        - DG
-        - WLY
-        - PACTL
-        - PD
-        - ML
-        - EZ
-        - FEL2WD
-    sync_users: []
-    sync_statuses:
-        - To Do
-        - Awaiting fix
-        - Investigation
-    custom_jql: project in (zjk,MAQT,shg,quz,ez,AB,HIT,FEL2WD,TNJ,MDL,CK,LCB,tpy,JTG,TH,PRJ23003,PRJ23096,DL,FZ,QZ,HR,ZK,FEL,AQCT,ICA,CHQ,YH,GY,LUZ,ZPU,WLY,TC,RZ,HACTLAA,WUH,PACTL,YN,NS2,HACTL2,HKAA,DG,WLY,PACTL,PD,ML,EZ,YBET) AND issuetype in (Bug, Task) and status not in (done,testing,"awaiting fix","merge request") AND created >= 2026-3-1  and  ( labels not  in( 暂不处理) or labels is empty)  and assignee in (梁志远, 朱家聪, 岳颖颖, 姜昊良, 白凌云, 陈伟华, 李厚奇, 鲁俊, 刘子翔, 张路路, 韩程程,纵涵,尹祖雷,王财和,孙海峰)
-ai:
-    enabled: true
-    provider: Pixel
-    base_url: https://sub2.congmingai.com
-    endpoint_type: completions
-    api_token: ""
-    model: gpt-5.5
-    project_architecture: well-ambient 是研发协同与 AI 需求解构平台；当前补充的业务上下文仅限路径规划模块。路径规划模块面向自动驾驶/无人车/港口堆场现场的领航长路径、推荐短路径、道路/区域约束、交通权重、特殊作业场景和现场定制能力。来源归档：docs/ai-context/path-planning-module.md。AI 解析时必须先判断需求是否属于路径规划模块，不能把该清单误认为协同平台全系统能力。
-    delivery_workflow: 路径规划需求进入 Deconstructor 后，应先识别功能归属（标准功能/扩展能力/进阶探索/定制化功能）、当前状态（已耐久/已初步验证/已开发完成/开发中/待开发/未标注）、是否可配置、涉及现场项目与验证场景；随后输出配置项或代码改造任务、现场适配任务、仿真/回归/现场验证任务，并把缺失信息进入 meeting_questions。
-    implemented_features: 路径规划模块第一个 sheet 共 39 项能力：标准功能 13、扩展能力 23、进阶探索 2、定制化功能 1；已耐久 20、已初步验证 7、已开发完成 3、开发中 3、待开发 5、未标注 1；可配置 25、不可配置 12、未明确 2。已耐久核心包括领航长路径、短路径可行区域、规避死锁、道路权重偏好、vpb 选择、取消领航、优先级行驶路权、删除幽灵车、禁行区、禁停区、流量控制区域、拖挂模型适配等；扩展包括点路径表示、短路径前后继、大小弯、倒车点路径、白名单禁行区、双向道路、电子围栏、路径回收、潮汐车道、倒箱门、车道通行方向、禁用道路、短路径车速、车级红绿灯、锁站、cutin/cutout、途径点、灵活上下岸桥、卡车倒车上报、堆场顺序作业、转场禁行区、动态调整道路、ETA 等。
-    estimation_guidelines: 以小时为主估算。已耐久能力按配置、现场适配、联调、仿真/现场回归和验收估算，不按从零开发估算；已初步验证/已开发完成能力重点估算现场反馈闭环、测试覆盖、配置治理和回归风险；开发中/待开发/进阶探索能力需包含方案设计、实现、仿真、现场验证、回滚方案和多现场差异。可配置能力必须输出配置项、默认值/取值范围、作用域（全局/项目/现场/堆场/道路/区域/车辆级）和验证场景；不可配置能力若被要求配置化，应提示需要代码改造或能力扩展。
-    default_work_hours_per_day: 8

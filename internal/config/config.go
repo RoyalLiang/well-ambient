@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -10,6 +12,7 @@ import (
 
 // Config holds all configuration details for well-ambient
 type Config struct {
+	Database         DatabaseConfig         `yaml:"database" json:"-"`
 	Server           ServerConfig           `yaml:"server" json:"server"`
 	GitLab           GitLabConfig           `yaml:"gitlab" json:"gitlab"`
 	Feishu           FeishuConfig           `yaml:"feishu" json:"feishu"`
@@ -17,6 +20,113 @@ type Config struct {
 	AI               AIConfig               `yaml:"ai" json:"ai"`
 	PerformanceBrain PerformanceBrainConfig `yaml:"performance_brain" json:"performance_brain"`
 	SolutionCatalog  SolutionCatalogConfig  `yaml:"solution_catalog" json:"solution_catalog"`
+}
+
+// DatabaseConfig is bootstrap-only infrastructure configuration. It is read
+// from YAML before the database is opened and deliberately excluded from the
+// runtime configuration API and version archive so a database credential can
+// never be returned to the browser or stored inside the database it unlocks.
+type DatabaseConfig struct {
+	Driver                       string `yaml:"driver" json:"-"`
+	DSN                          string `yaml:"dsn,omitempty" json:"-"`
+	DSNEnv                       string `yaml:"dsn_env,omitempty" json:"-"`
+	LegacySQLitePath             string `yaml:"legacy_sqlite_path,omitempty" json:"-"`
+	LegacyMigrationDecision      string `yaml:"legacy_migration_decision,omitempty" json:"-"`
+	AutoMigrate                  *bool  `yaml:"auto_migrate,omitempty" json:"-"`
+	MaxOpenConnections           int    `yaml:"max_open_connections,omitempty" json:"-"`
+	MaxIdleConnections           int    `yaml:"max_idle_connections,omitempty" json:"-"`
+	ConnectionMaxLifetimeMinutes int    `yaml:"connection_max_lifetime_minutes,omitempty" json:"-"`
+	ConnectionMaxIdleTimeMinutes int    `yaml:"connection_max_idle_time_minutes,omitempty" json:"-"`
+}
+
+// ResolvedDatabaseConfig contains only validated values needed by the database
+// adapter. Callers should avoid logging DSN because it may contain credentials.
+type ResolvedDatabaseConfig struct {
+	Driver                       string
+	DSN                          string
+	AutoMigrate                  bool
+	MaxOpenConnections           int
+	MaxIdleConnections           int
+	ConnectionMaxLifetimeMinutes int
+	ConnectionMaxIdleTimeMinutes int
+}
+
+// RequiresSetup reports the explicit first-install state. Connection failures
+// never imply setup mode: once the driver is persisted as postgres, an outage
+// remains an outage and must not reopen anonymous infrastructure configuration.
+func (c DatabaseConfig) RequiresSetup() bool {
+	return strings.EqualFold(strings.TrimSpace(c.Driver), "setup")
+}
+
+func (c DatabaseConfig) Resolve() (ResolvedDatabaseConfig, error) {
+	driver := strings.ToLower(strings.TrimSpace(c.Driver))
+	switch driver {
+	case "", "sqlite", "sqlite3":
+		driver = "sqlite"
+	case "postgres", "postgresql", "pg":
+		driver = "postgres"
+	default:
+		return ResolvedDatabaseConfig{}, fmt.Errorf("unsupported database driver %q", c.Driver)
+	}
+
+	dsn := strings.TrimSpace(c.DSN)
+	if envName := strings.TrimSpace(c.DSNEnv); envName != "" {
+		value, ok := os.LookupEnv(envName)
+		if !ok || strings.TrimSpace(value) == "" {
+			return ResolvedDatabaseConfig{}, fmt.Errorf("database DSN environment variable %s is not set", envName)
+		}
+		dsn = strings.TrimSpace(value)
+	}
+	if dsn == "" {
+		if driver == "sqlite" {
+			dsn = "well-ambient.db"
+		} else {
+			return ResolvedDatabaseConfig{}, fmt.Errorf("PostgreSQL database DSN is required")
+		}
+	}
+
+	autoMigrate := driver == "sqlite"
+	if c.AutoMigrate != nil {
+		autoMigrate = *c.AutoMigrate
+	}
+	maxOpen := c.MaxOpenConnections
+	maxIdle := c.MaxIdleConnections
+	maxLifetime := c.ConnectionMaxLifetimeMinutes
+	maxIdleTime := c.ConnectionMaxIdleTimeMinutes
+	if driver == "sqlite" {
+		if maxOpen <= 0 {
+			maxOpen = 4
+		}
+		if maxIdle <= 0 {
+			maxIdle = 2
+		}
+	} else {
+		if maxOpen <= 0 {
+			maxOpen = 20
+		}
+		if maxIdle <= 0 {
+			maxIdle = 10
+		}
+		if maxLifetime <= 0 {
+			maxLifetime = 30
+		}
+		if maxIdleTime <= 0 {
+			maxIdleTime = 5
+		}
+	}
+	if maxIdle > maxOpen {
+		return ResolvedDatabaseConfig{}, fmt.Errorf("database max_idle_connections cannot exceed max_open_connections")
+	}
+
+	return ResolvedDatabaseConfig{
+		Driver:                       driver,
+		DSN:                          dsn,
+		AutoMigrate:                  autoMigrate,
+		MaxOpenConnections:           maxOpen,
+		MaxIdleConnections:           maxIdle,
+		ConnectionMaxLifetimeMinutes: maxLifetime,
+		ConnectionMaxIdleTimeMinutes: maxIdleTime,
+	}, nil
 }
 
 const (
@@ -227,13 +337,54 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// SaveConfig writes configuration back to a YAML file
+// SaveConfig atomically writes configuration back to a YAML file with owner-only
+// permissions. The file can contain bootstrap credentials, so callers must not
+// rely on a process umask or leave a partially-written replacement behind.
 func SaveConfig(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	cleanPath := filepath.Clean(path)
+	directory := filepath.Dir(cleanPath)
+	base := filepath.Base(cleanPath)
+	temporary, err := os.CreateTemp(directory, "."+base+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		_ = temporary.Close()
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+
+	if err := temporary.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, cleanPath); err != nil {
+		return err
+	}
+	removeTemporary = false
+	if err := os.Chmod(cleanPath, 0600); err != nil {
+		return err
+	}
+	if directoryHandle, err := os.Open(directory); err == nil {
+		_ = directoryHandle.Sync()
+		_ = directoryHandle.Close()
+	}
+	return nil
 }
 
 // Protocol returns the active provider wire protocol. Chat Completions is kept

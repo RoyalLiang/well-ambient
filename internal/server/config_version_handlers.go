@@ -101,6 +101,8 @@ func (s *Server) handleRollbackConfigVersion(w http.ResponseWriter, r *http.Requ
 	}
 
 	previous := *s.config
+	restored.Database = previous.Database
+	mergeConfiguredSecrets(&restored, previous)
 	if err := s.applyConfig(restored); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -131,10 +133,13 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	var latest db.ConfigVersion
 	err := db.DB.Order("version desc").First(&latest).Error
 	if err == nil {
+		databaseConfig := cfg.Database
 		restored, unmarshalErr := restoreVersionedConfig(*cfg, latest.ConfigJSON)
 		if unmarshalErr != nil {
 			return fmt.Errorf("latest database config snapshot is invalid: %w", unmarshalErr)
 		}
+		restored.Database = databaseConfig
+		mergeConfiguredSecrets(&restored, *cfg)
 		*cfg = restored
 		log.Printf("Loaded configuration from database version %d", latest.Version)
 		return nil
@@ -143,7 +148,9 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 		return fmt.Errorf("failed to load latest config version: %w", err)
 	}
 
-	nextJSON, err := json.Marshal(cfg)
+	archivedConfig := *cfg
+	redactConfiguredSecrets(&archivedConfig)
+	nextJSON, err := json.Marshal(archivedConfig)
 	if err != nil {
 		return err
 	}
@@ -232,7 +239,9 @@ func (s *Server) recordConfigVersion(previous config.Config, next config.Config,
 		return db.ConfigVersion{}, fmt.Errorf("database not initialized")
 	}
 
-	nextJSON, err := json.Marshal(next)
+	archivedConfig := next
+	redactConfiguredSecrets(&archivedConfig)
+	nextJSON, err := json.Marshal(archivedConfig)
 	if err != nil {
 		return db.ConfigVersion{}, err
 	}
@@ -284,6 +293,76 @@ func (s *Server) recordConfigVersion(previous config.Config, next config.Config,
 		return tx.Create(&created).Error
 	})
 	return created, err
+}
+
+// sanitizeConfigVersionSecrets removes plaintext secrets written by older
+// releases. It runs only in the explicit migration process; normal runtime
+// startup remains read-only with respect to schema and archived configuration.
+func sanitizeConfigVersionSecrets(conn *gorm.DB) error {
+	if conn == nil || !conn.Migrator().HasTable(&db.ConfigVersion{}) {
+		return nil
+	}
+	var versions []db.ConfigVersion
+	if err := conn.Select("id", "config_json").Find(&versions).Error; err != nil {
+		return fmt.Errorf("read configuration archives for secret sanitization: %w", err)
+	}
+	for _, version := range versions {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(version.ConfigJSON), &raw); err != nil {
+			return fmt.Errorf("sanitize configuration archive %d: %w", version.ID, err)
+		}
+		sanitized := markSensitiveConfigValues(raw)
+		encoded, err := json.Marshal(sanitized)
+		if err != nil {
+			return fmt.Errorf("encode sanitized configuration archive %d: %w", version.ID, err)
+		}
+		if string(encoded) == version.ConfigJSON {
+			continue
+		}
+		if err := conn.Model(&db.ConfigVersion{}).Where("id = ?", version.ID).
+			Update("config_json", string(encoded)).Error; err != nil {
+			return fmt.Errorf("write sanitized configuration archive %d: %w", version.ID, err)
+		}
+	}
+	return nil
+}
+
+func markSensitiveConfigValues(input map[string]interface{}) map[string]interface{} {
+	output := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		if isSensitiveConfigKey(key) {
+			if strings.TrimSpace(fmt.Sprintf("%v", value)) == "" || value == nil {
+				output[key] = ""
+			} else {
+				output[key] = configuredSecretPlaceholder
+			}
+			continue
+		}
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			output[key] = markSensitiveConfigValues(typed)
+		case []interface{}:
+			output[key] = markSensitiveConfigSlice(typed)
+		default:
+			output[key] = typed
+		}
+	}
+	return output
+}
+
+func markSensitiveConfigSlice(input []interface{}) []interface{} {
+	output := make([]interface{}, 0, len(input))
+	for _, value := range input {
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			output = append(output, markSensitiveConfigValues(typed))
+		case []interface{}:
+			output = append(output, markSensitiveConfigSlice(typed))
+		default:
+			output = append(output, typed)
+		}
+	}
+	return output
 }
 
 func redactConfigForArchive(cfg config.Config) map[string]interface{} {

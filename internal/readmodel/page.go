@@ -42,11 +42,15 @@ func EnsureDatasets(conn *gorm.DB, datasets []Dataset) error {
 	if conn == nil {
 		return fmt.Errorf("read model database is not configured")
 	}
-	if err := conn.Exec(`CREATE TABLE IF NOT EXISTS read_model_generations (
+	generationType := "INTEGER"
+	if conn.Dialector.Name() == "postgres" {
+		generationType = "BIGINT"
+	}
+	if err := conn.Exec(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS read_model_generations (
 		dataset TEXT PRIMARY KEY,
-		generation INTEGER NOT NULL DEFAULT 1,
-		updated_unix INTEGER NOT NULL
-	)`).Error; err != nil {
+		generation %s NOT NULL DEFAULT 1,
+		updated_unix %s NOT NULL
+	)`, generationType, generationType)).Error; err != nil {
 		return fmt.Errorf("create read generation table: %w", err)
 	}
 	for _, dataset := range datasets {
@@ -55,14 +59,16 @@ func EnsureDatasets(conn *gorm.DB, datasets []Dataset) error {
 		}
 		tracked := 0
 		for _, table := range dataset.Tables {
-			exists, err := sqliteTableExists(conn, table)
-			if err != nil {
-				return err
-			}
-			if !exists {
+			if !conn.Migrator().HasTable(table) {
 				continue
 			}
 			tracked++
+			if conn.Dialector.Name() == "postgres" {
+				if err := ensurePostgresGenerationTrigger(conn, dataset.Name, table); err != nil {
+					return err
+				}
+				continue
+			}
 			for _, operation := range []struct {
 				suffix string
 				timing string
@@ -96,6 +102,80 @@ func EnsureDatasets(conn *gorm.DB, datasets []Dataset) error {
 			ON CONFLICT(dataset) DO NOTHING`, dataset.Name, time.Now().UTC().Unix()).Error; err != nil {
 			return fmt.Errorf("seed read generation %s: %w", dataset.Name, err)
 		}
+	}
+	return nil
+}
+
+// VerifyDatasets is the read-only startup gate used after a separate migration
+// job. It proves every declared dataset has a generation row without silently
+// creating tables, functions, or triggers in the runtime process.
+func VerifyDatasets(conn *gorm.DB, datasets []Dataset) error {
+	if conn == nil {
+		return fmt.Errorf("read model database is not configured")
+	}
+	if !conn.Migrator().HasTable("read_model_generations") {
+		return fmt.Errorf("read model generations are not migrated")
+	}
+	for _, dataset := range datasets {
+		if err := validateDataset(dataset); err != nil {
+			return err
+		}
+		for _, table := range dataset.Tables {
+			if !conn.Migrator().HasTable(table) {
+				return fmt.Errorf("read dataset %q is missing table %q", dataset.Name, table)
+			}
+			if conn.Dialector.Name() == "postgres" {
+				triggerName := "read_generation_" + dataset.Name + "_" + table
+				var triggerCount int64
+				if err := conn.Raw(`SELECT COUNT(*)
+					FROM pg_trigger trigger
+					JOIN pg_class relation ON relation.oid = trigger.tgrelid
+					JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+					WHERE namespace.nspname = current_schema()
+						AND relation.relname = ?
+						AND trigger.tgname = ?
+						AND NOT trigger.tgisinternal`, table, triggerName).Scan(&triggerCount).Error; err != nil {
+					return fmt.Errorf("verify read generation trigger %s: %w", triggerName, err)
+				}
+				if triggerCount != 1 {
+					return fmt.Errorf("read dataset %q is missing generation trigger for %q", dataset.Name, table)
+				}
+			}
+		}
+		var count int64
+		if err := conn.Raw("SELECT COUNT(*) FROM read_model_generations WHERE dataset = ?", dataset.Name).Scan(&count).Error; err != nil {
+			return fmt.Errorf("verify read generation %s: %w", dataset.Name, err)
+		}
+		if count != 1 {
+			return fmt.Errorf("read dataset %q is not migrated", dataset.Name)
+		}
+	}
+	return nil
+}
+
+func ensurePostgresGenerationTrigger(conn *gorm.DB, dataset, table string) error {
+	functionName := "read_generation_bump_" + dataset + "_" + table
+	triggerName := "read_generation_" + dataset + "_" + table
+	functionSQL := fmt.Sprintf(`CREATE OR REPLACE FUNCTION "%s"() RETURNS trigger AS $$
+		BEGIN
+			INSERT INTO read_model_generations(dataset, generation, updated_unix)
+			VALUES (%s, 1, EXTRACT(EPOCH FROM NOW())::BIGINT)
+			ON CONFLICT(dataset) DO UPDATE SET
+				generation = read_model_generations.generation + 1,
+				updated_unix = EXTRACT(EPOCH FROM NOW())::BIGINT;
+			RETURN NULL;
+		END;
+		$$ LANGUAGE plpgsql`, functionName, sqlLiteral(dataset))
+	if err := conn.Exec(functionSQL).Error; err != nil {
+		return fmt.Errorf("create PostgreSQL read generation function %s: %w", functionName, err)
+	}
+	if err := conn.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS "%s" ON "%s"`, triggerName, table)).Error; err != nil {
+		return fmt.Errorf("replace PostgreSQL read generation trigger %s: %w", triggerName, err)
+	}
+	triggerSQL := fmt.Sprintf(`CREATE TRIGGER "%s" AFTER INSERT OR UPDATE OR DELETE ON "%s"
+		FOR EACH STATEMENT EXECUTE FUNCTION "%s"()`, triggerName, table, functionName)
+	if err := conn.Exec(triggerSQL).Error; err != nil {
+		return fmt.Errorf("create PostgreSQL read generation trigger %s: %w", triggerName, err)
 	}
 	return nil
 }
@@ -180,17 +260,8 @@ func validateDataset(dataset Dataset) error {
 	return nil
 }
 
-func sqliteTableExists(conn *gorm.DB, table string) (bool, error) {
-	var count int64
-	if err := conn.Raw(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
-		table,
-	).Scan(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
+func sqliteLiteral(value string) string {
+	return sqlLiteral(value)
 }
 
-func sqliteLiteral(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
+func sqlLiteral(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }

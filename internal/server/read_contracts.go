@@ -2,6 +2,8 @@ package server
 
 import "well-ambient/internal/readmodel"
 
+import "gorm.io/gorm"
+
 type readContractClass = readmodel.Class
 
 const (
@@ -111,6 +113,17 @@ func allPageReadDatasets() []readmodel.Dataset {
 		{Name: "security_facts", Tables: []string{"audit_logs", "authorization_audit_logs", "authorization_policies", "config_versions"}},
 		{Name: "identity_facts", Tables: []string{"users", "user_groups", "user_group_memberships", "permissions", "group_permissions", "project_configs"}},
 	}
+}
+
+func MigrateReadModels(conn *gorm.DB) error {
+	if err := readmodel.EnsureDatasets(conn, allPageReadDatasets()); err != nil {
+		return err
+	}
+	return sanitizeConfigVersionSecrets(conn)
+}
+
+func verifyReadModels(conn *gorm.DB) error {
+	return readmodel.VerifyDatasets(conn, allPageReadDatasets())
 }
 
 func singletonRead(id string, maturity readmodel.Maturity, surfaces ...string) readmodel.Contract {

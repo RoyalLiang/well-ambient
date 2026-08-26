@@ -136,3 +136,34 @@ func TestAllPageReadIndexesBackBoundedKeysetQueries(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresReadIndexesMatchAuditedQueryLeadingColumns(t *testing.T) {
+	joined := strings.Join(postgresReadIndexes, "\n")
+	for _, fragment := range []string{
+		"(project_key, task_created_at, task_id)",
+		"(LOWER(BTRIM(assignee)), task_created_at, task_id)",
+		"INCLUDE (assignee, due_date, last_update, source_updated_at)",
+		"WHERE status IS NULL OR LOWER(BTRIM(status)) NOT IN",
+		"(project_key, published_at DESC, id DESC)",
+		"(token, entry_id)",
+		"(solution_asset_id, version DESC)",
+		"(left_entry_id, recall_score DESC, id DESC)",
+		"(right_entry_id, recall_score DESC, id DESC)",
+	} {
+		if !strings.Contains(joined, fragment) {
+			t.Fatalf("PostgreSQL index contract missing %q:\n%s", fragment, joined)
+		}
+	}
+}
+
+func TestPostgresReadIndexesAreSkippedForSQLite(t *testing.T) {
+	conn, err := gorm.Open(sqlite.Open("file:postgres_index_skip?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigratePostgresReadIndexes(conn); err != nil {
+		t.Fatalf("PostgreSQL-only index migration should be a no-op on SQLite: %v", err)
+	}
+}

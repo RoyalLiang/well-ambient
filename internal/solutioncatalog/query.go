@@ -155,8 +155,12 @@ func (module *Module) ListProjects(ctx context.Context, scope []string) ([]Catal
 		Count          int64
 		LastSyncedUnix int64
 	}
+	epochExpression := "MAX(unixepoch(synced_at))"
+	if module.conn.Dialector.Name() == "postgres" {
+		epochExpression = "MAX(EXTRACT(EPOCH FROM synced_at)::BIGINT)"
+	}
 	query := module.conn.WithContext(ctx).Model(&db.SolutionCatalogEntry{}).
-		Select("project_key, COUNT(*) AS count, MAX(unixepoch(synced_at)) AS last_synced_unix")
+		Select("project_key, COUNT(*) AS count, " + epochExpression + " AS last_synced_unix")
 	query = applyProjectScope(query, scope)
 	var aggregates []projectAggregate
 	if err := query.Group("project_key").Order("project_key ASC").Scan(&aggregates).Error; err != nil {

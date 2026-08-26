@@ -1,17 +1,37 @@
 package db
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 	"well-ambient/internal/dailyjira"
 	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/readmodel"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // DB is the global database instance
 var DB *gorm.DB
+
+var sqliteMemorySequence uint64
+
+type Options struct {
+	Driver                       string
+	DSN                          string
+	AutoMigrate                  bool
+	MaxOpenConnections           int
+	MaxIdleConnections           int
+	ConnectionMaxLifetimeMinutes int
+	ConnectionMaxIdleTimeMinutes int
+	Silent                       bool
+}
 
 // WebhookLog stores raw GitLab webhook payloads for auditing
 type WebhookLog struct {
@@ -347,16 +367,109 @@ type DailyJiraDecision struct {
 	CreatedAt  time.Time `gorm:"index:idx_daily_jira_task_created" json:"created_at"`
 }
 
-// InitDB initializes the SQLite connection and runs auto-migrations
+// InitDB keeps the legacy SQLite test/development interface. Production callers
+// should use Init with an explicit driver and connection policy.
 func InitDB(dbPath string) error {
-	var err error
-	DB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	return Init(Options{
+		Driver:             "sqlite",
+		DSN:                dbPath,
+		AutoMigrate:        true,
+		MaxOpenConnections: 4,
+		MaxIdleConnections: 2,
+	})
+}
+
+// Open creates and validates an independent database connection. It is used by
+// first-install probes and migration jobs that must not mutate the process-wide
+// runtime handle before their work has succeeded.
+func Open(options Options) (*gorm.DB, error) {
+	driver := strings.ToLower(strings.TrimSpace(options.Driver))
+	var dialector gorm.Dialector
+	switch driver {
+	case "sqlite", "sqlite3":
+		driver = "sqlite"
+		dialector = sqlite.Open(normalizeSQLiteDSN(options.DSN))
+	case "postgres", "postgresql", "pg":
+		driver = "postgres"
+		dialector = postgres.Open(options.DSN)
+	default:
+		return nil, fmt.Errorf("unsupported database driver %q", options.Driver)
+	}
+
+	gormConfig := &gorm.Config{}
+	if options.Silent {
+		gormConfig.Logger = logger.Default.LogMode(logger.Silent)
+	}
+	conn, err := gorm.Open(dialector, gormConfig)
+	if err != nil {
+		return nil, fmt.Errorf("open %s database: %w", driver, err)
+	}
+	pool, err := conn.DB()
+	if err != nil {
+		return nil, fmt.Errorf("open %s connection pool: %w", driver, err)
+	}
+	configureConnectionPool(pool, options)
+	pingContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := pool.PingContext(pingContext); err != nil {
+		_ = pool.Close()
+		return nil, fmt.Errorf("ping %s database: %w", driver, err)
+	}
+
+	if options.AutoMigrate {
+		if err := Migrate(conn); err != nil {
+			_ = pool.Close()
+			return nil, err
+		}
+	}
+	if err := readmodel.InstallGORMObserver(conn); err != nil {
+		_ = pool.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// Init opens and validates the configured database adapter. Migrations run only
+// when explicitly requested by Options.AutoMigrate.
+func Init(options Options) error {
+	conn, err := Open(options)
 	if err != nil {
 		return err
 	}
+	DB = conn
+	return nil
+}
 
-	// Auto migrate schemas
-	err = DB.AutoMigrate(
+func normalizeSQLiteDSN(dsn string) string {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == ":memory:" {
+		sequence := atomic.AddUint64(&sqliteMemorySequence, 1)
+		return fmt.Sprintf("file:well_ambient_memory_%d?mode=memory&cache=shared&_foreign_keys=on&_busy_timeout=5000", sequence)
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + "_foreign_keys=on&_busy_timeout=5000&_journal_mode=WAL"
+}
+
+func configureConnectionPool(pool *sql.DB, options Options) {
+	if options.MaxOpenConnections > 0 {
+		pool.SetMaxOpenConns(options.MaxOpenConnections)
+	}
+	if options.MaxIdleConnections >= 0 {
+		pool.SetMaxIdleConns(options.MaxIdleConnections)
+	}
+	if options.ConnectionMaxLifetimeMinutes > 0 {
+		pool.SetConnMaxLifetime(time.Duration(options.ConnectionMaxLifetimeMinutes) * time.Minute)
+	}
+	if options.ConnectionMaxIdleTimeMinutes > 0 {
+		pool.SetConnMaxIdleTime(time.Duration(options.ConnectionMaxIdleTimeMinutes) * time.Minute)
+	}
+}
+
+func coreSchemaModels() []any {
+	return []any{
 		&WebhookLog{},
 		&TaskTelemetry{},
 		&DeconstructArchive{},
@@ -415,14 +528,44 @@ func InitDB(dbPath string) error {
 		&PerformanceEvidenceFact{},
 		&PerformanceWorkItemEvent{},
 		&PerformanceAuditEvent{},
-	)
+	}
+}
+
+// RequiredSchemaModels returns every source-of-truth model that must exist
+// before a pre-migrated PostgreSQL database can be accepted by setup mode.
+// Callers must treat the returned values as read-only schema descriptors.
+func RequiredSchemaModels() []any {
+	models := coreSchemaModels()
+	return append(models, dataAssetModels...)
+}
+
+// Migrate applies the application schema to an already-open database. It is
+// intentionally callable as a separate deployment step before the service is
+// restarted.
+func Migrate(conn *gorm.DB) error {
+	if err := MigrateSchema(conn); err != nil {
+		return err
+	}
+	return InitializeReferenceData(conn)
+}
+
+// MigrateSchema creates application-owned tables and indexes without inserting
+// reference rows. The legacy SQLite importer uses this seam so historical rows
+// can be copied before idempotent defaults are added.
+func MigrateSchema(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+
+	// Auto migrate schemas
+	err := conn.AutoMigrate(coreSchemaModels()...)
 	if err != nil {
 		return err
 	}
-	if err := MigrateDataAssets(DB); err != nil {
+	if err := MigrateDataAssets(conn); err != nil {
 		return err
 	}
-	if err := dailyjira.Migrate(DB); err != nil {
+	if err := dailyjira.Migrate(conn); err != nil {
 		return err
 	}
 	// Task-tracking read models filter by normalized issue type before status,
@@ -458,23 +601,67 @@ func InitDB(dbPath string) error {
 			ON daily_jira_decisions (task_id, created_at DESC, id DESC)`,
 	}
 	for _, statement := range taskTrackingIndexes {
-		if err := DB.Exec(statement).Error; err != nil {
+		if err := conn.Exec(statement).Error; err != nil {
 			return err
 		}
 	}
-	if err := MigrateAllPageReadIndexes(DB); err != nil {
+	if err := MigrateAllPageReadIndexes(conn); err != nil {
 		return err
 	}
-	if err := ensureDefaultSolutionPrompts(DB); err != nil {
+	if err := MigratePostgresReadIndexes(conn); err != nil {
 		return err
 	}
+	return nil
+}
 
+// InitializeReferenceData inserts only idempotent application defaults. It is
+// deliberately separate from schema creation for cross-database data imports.
+func InitializeReferenceData(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+	if err := ensureDefaultSolutionPrompts(conn); err != nil {
+		return err
+	}
 	// Seed data for RBAC before attaching the request-scoped query observer so
 	// startup migrations and seeds are not reported as HTTP read work.
-	if err := userdb.InitializeSeeds(DB); err != nil {
+	return userdb.InitializeSeeds(conn)
+}
+
+func Ping(ctx context.Context) error {
+	if DB == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+	pool, err := DB.DB()
+	if err != nil {
 		return err
 	}
-	return readmodel.InstallGORMObserver(DB)
+	return pool.PingContext(ctx)
+}
+
+func Close() error {
+	if DB == nil {
+		return nil
+	}
+	pool, err := DB.DB()
+	if err != nil {
+		return err
+	}
+	DB = nil
+	return pool.Close()
+}
+
+// CloseConnection closes an independent connection returned by Open without
+// changing the global runtime handle.
+func CloseConnection(conn *gorm.DB) error {
+	if conn == nil {
+		return nil
+	}
+	pool, err := conn.DB()
+	if err != nil {
+		return err
+	}
+	return pool.Close()
 }
 
 func ensureDefaultSolutionPrompts(conn *gorm.DB) error {

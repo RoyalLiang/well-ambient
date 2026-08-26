@@ -40,7 +40,8 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 	}
 
 	fileConfig := config.Config{
-		Server: config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080},
 		PerformanceBrain: config.PerformanceBrainConfig{
 			Enabled: true, IntervalMinutes: 37, RetentionDays: 91,
 		},
@@ -54,6 +55,9 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 	}
 	if !fileConfig.PerformanceBrain.Enabled || fileConfig.PerformanceBrain.IntervalMinutes != 37 || fileConfig.PerformanceBrain.RetentionDays != 91 {
 		t.Fatalf("new file-only performance section was discarded: %#v", fileConfig.PerformanceBrain)
+	}
+	if fileConfig.Database.Driver != "postgres" || fileConfig.Database.DSNEnv != "WELL_AMBIENT_DATABASE_DSN" {
+		t.Fatalf("bootstrap-only database config was replaced by runtime archive: %#v", fileConfig.Database)
 	}
 }
 
@@ -142,8 +146,9 @@ func TestRecordConfigVersionStoresDiffAndSections(t *testing.T) {
 	before := config.Config{}
 	after := config.Config{
 		Jira: config.JiraConfig{
-			Enabled: true,
-			BaseURL: "https://jira.example.com",
+			Enabled:  true,
+			BaseURL:  "https://jira.example.com",
+			APIToken: "plain-test-secret",
 		},
 	}
 	req := httptest.NewRequest("POST", "/api/config", nil)
@@ -164,5 +169,60 @@ func TestRecordConfigVersionStoresDiffAndSections(t *testing.T) {
 	}
 	if len(dto.Diff) == 0 {
 		t.Fatalf("expected diff entries")
+	}
+	if strings.Contains(version.ConfigJSON, "plain-test-secret") || !strings.Contains(version.ConfigJSON, configuredSecretPlaceholder) {
+		t.Fatalf("restorable archive must contain only a configured marker: %s", version.ConfigJSON)
+	}
+}
+
+func TestSanitizeConfigVersionSecretsPreservesUnknownFields(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	legacy := db.ConfigVersion{
+		Version:    1,
+		ConfigJSON: `{"jira":{"base_url":"https://jira.example.com","api_token":"legacy-test-secret"},"future":{"unknown":true}}`,
+	}
+	if err := gormDB.Create(&legacy).Error; err != nil {
+		t.Fatalf("seed legacy archive: %v", err)
+	}
+
+	if err := sanitizeConfigVersionSecrets(gormDB); err != nil {
+		t.Fatalf("sanitize archives: %v", err)
+	}
+	var stored db.ConfigVersion
+	if err := gormDB.First(&stored, legacy.ID).Error; err != nil {
+		t.Fatalf("reload archive: %v", err)
+	}
+	if strings.Contains(stored.ConfigJSON, "legacy-test-secret") || !strings.Contains(stored.ConfigJSON, configuredSecretPlaceholder) {
+		t.Fatalf("legacy secret was not sanitized: %s", stored.ConfigJSON)
+	}
+	if !strings.Contains(stored.ConfigJSON, `"future":{"unknown":true}`) {
+		t.Fatalf("unknown archive fields were lost: %s", stored.ConfigJSON)
+	}
+}
+
+func TestRestoreVersionedConfigInheritsCurrentSecrets(t *testing.T) {
+	current := config.Config{Jira: config.JiraConfig{APIToken: "current-test-secret"}}
+	archived := config.Config{Jira: config.JiraConfig{
+		Enabled:  true,
+		BaseURL:  "https://jira.example.com",
+		APIToken: configuredSecretPlaceholder,
+	}}
+	encoded, err := json.Marshal(archived)
+	if err != nil {
+		t.Fatalf("marshal archive: %v", err)
+	}
+	restored, err := restoreVersionedConfig(current, string(encoded))
+	if err != nil {
+		t.Fatalf("restore archive: %v", err)
+	}
+	mergeConfiguredSecrets(&restored, current)
+	if restored.Jira.APIToken != current.Jira.APIToken || restored.Jira.BaseURL != archived.Jira.BaseURL {
+		t.Fatalf("restore did not combine historical non-secrets with current secret: %#v", restored.Jira)
 	}
 }

@@ -64,7 +64,7 @@ type SolutionComparison struct {
 	RoundOnePromptVersion string     `gorm:"size:96;column:round_one_prompt_version" json:"round_one_prompt_version"`
 	RoundOneVerdict       string     `gorm:"index;size:32;column:round_one_verdict" json:"round_one_verdict"`
 	RoundOneScore         float64    `gorm:"column:round_one_score" json:"round_one_score"`
-	RoundOnePayload       []byte     `gorm:"type:blob;column:round_one_payload" json:"-"`
+	RoundOnePayload       []byte     `gorm:"column:round_one_payload" json:"-"`
 	RoundOneEncoding      string     `gorm:"size:16;column:round_one_encoding" json:"round_one_encoding"`
 	RoundOneHash          string     `gorm:"size:64;column:round_one_hash" json:"round_one_hash"`
 	RoundOneBytes         int        `gorm:"column:round_one_bytes" json:"round_one_bytes"`
@@ -72,7 +72,7 @@ type SolutionComparison struct {
 	RoundTwoPromptVersion string     `gorm:"size:96;column:round_two_prompt_version" json:"round_two_prompt_version"`
 	RoundTwoVerdict       string     `gorm:"index;size:32;column:round_two_verdict" json:"round_two_verdict"`
 	RoundTwoScore         float64    `gorm:"column:round_two_score" json:"round_two_score"`
-	RoundTwoPayload       []byte     `gorm:"type:blob;column:round_two_payload" json:"-"`
+	RoundTwoPayload       []byte     `gorm:"column:round_two_payload" json:"-"`
 	RoundTwoEncoding      string     `gorm:"size:16;column:round_two_encoding" json:"round_two_encoding"`
 	RoundTwoHash          string     `gorm:"size:64;column:round_two_hash" json:"round_two_hash"`
 	RoundTwoBytes         int        `gorm:"column:round_two_bytes" json:"round_two_bytes"`
@@ -95,7 +95,7 @@ type SolutionStandardizationProposal struct {
 	Status          string     `gorm:"index;size:32;not null" json:"status"`
 	Title           string     `gorm:"size:512" json:"title"`
 	Summary         string     `gorm:"type:text" json:"summary"`
-	Content         []byte     `gorm:"type:blob;not null" json:"-"`
+	Content         []byte     `gorm:"not null" json:"-"`
 	ContentEncoding string     `gorm:"size:16;not null;column:content_encoding" json:"content_encoding"`
 	ContentHash     string     `gorm:"index;size:64;not null;column:content_hash" json:"content_hash"`
 	ContentBytes    int        `gorm:"not null;column:content_bytes" json:"content_bytes"`
@@ -129,7 +129,7 @@ type SolutionStandardRevision struct {
 	Version          int       `gorm:"uniqueIndex:idx_solution_standard_version,priority:2;not null" json:"version"`
 	ParentRevisionID uint      `gorm:"index;column:parent_revision_id" json:"parent_revision_id"`
 	ProposalID       uint      `gorm:"uniqueIndex;not null;column:proposal_id" json:"proposal_id"`
-	Content          []byte    `gorm:"type:blob;not null" json:"-"`
+	Content          []byte    `gorm:"not null" json:"-"`
 	ContentEncoding  string    `gorm:"size:16;not null;column:content_encoding" json:"content_encoding"`
 	ContentHash      string    `gorm:"index;size:64;not null;column:content_hash" json:"content_hash"`
 	ContentBytes     int       `gorm:"not null;column:content_bytes" json:"content_bytes"`

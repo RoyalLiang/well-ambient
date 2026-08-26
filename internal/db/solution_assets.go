@@ -28,7 +28,7 @@ type SolutionRevision struct {
 	Status                  string    `gorm:"index;size:32;not null" json:"status"`
 	Title                   string    `gorm:"size:512" json:"title"`
 	Summary                 string    `gorm:"type:text" json:"summary"`
-	Content                 []byte    `gorm:"type:blob;not null" json:"-"`
+	Content                 []byte    `gorm:"not null" json:"-"`
 	ContentEncoding         string    `gorm:"size:16;not null;column:content_encoding" json:"content_encoding"`
 	ContentHash             string    `gorm:"index;size:64;not null;column:content_hash" json:"content_hash"`
 	ContentBytes            int       `gorm:"not null;column:content_bytes" json:"content_bytes"`
@@ -52,7 +52,7 @@ type SolutionSourceRef struct {
 	Marker          string     `gorm:"size:64" json:"marker"`
 	Eligible        bool       `gorm:"index;not null;default:false" json:"eligible"`
 	Current         bool       `gorm:"index;not null;default:true" json:"current"`
-	Content         []byte     `gorm:"type:blob;not null" json:"-"`
+	Content         []byte     `gorm:"not null" json:"-"`
 	ContentEncoding string     `gorm:"size:16;not null;column:content_encoding" json:"content_encoding"`
 	ContentBytes    int        `gorm:"not null;column:content_bytes" json:"content_bytes"`
 	StoredBytes     int        `gorm:"not null;column:stored_bytes" json:"stored_bytes"`

@@ -1,8 +1,111 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func boolPointer(value bool) *bool { return &value }
+
+func TestDatabaseConfigResolveDefaultsSQLiteForExistingConfigs(t *testing.T) {
+	resolved, err := (DatabaseConfig{}).Resolve()
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resolved.Driver != "sqlite" || resolved.DSN != "well-ambient.db" || !resolved.AutoMigrate {
+		t.Fatalf("unexpected SQLite defaults: %#v", resolved)
+	}
+	if resolved.MaxOpenConnections != 4 || resolved.MaxIdleConnections != 2 {
+		t.Fatalf("unexpected SQLite pool defaults: %#v", resolved)
+	}
+}
+
+func TestDatabaseConfigResolvePostgresFromEnvironment(t *testing.T) {
+	const envName = "WELL_AMBIENT_TEST_DATABASE_DSN"
+	t.Setenv(envName, "postgres://ambient:secret@postgres/ambient?sslmode=disable")
+	resolved, err := (DatabaseConfig{Driver: "postgresql", DSNEnv: envName}).Resolve()
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resolved.Driver != "postgres" || resolved.DSN != os.Getenv(envName) || resolved.AutoMigrate {
+		t.Fatalf("unexpected PostgreSQL defaults: %#v", resolved)
+	}
+	if resolved.MaxOpenConnections != 20 || resolved.MaxIdleConnections != 10 {
+		t.Fatalf("unexpected PostgreSQL pool defaults: %#v", resolved)
+	}
+}
+
+func TestDatabaseConfigResolveRejectsMissingPostgresDSNAndInvalidPool(t *testing.T) {
+	if _, err := (DatabaseConfig{Driver: "postgres"}).Resolve(); err == nil {
+		t.Fatal("missing PostgreSQL DSN was accepted")
+	}
+	if _, err := (DatabaseConfig{Driver: "postgres", DSN: "postgres://example", MaxOpenConnections: 2, MaxIdleConnections: 3, AutoMigrate: boolPointer(false)}).Resolve(); err == nil {
+		t.Fatal("invalid PostgreSQL pool was accepted")
+	}
+}
+
+func TestDatabaseConfigRequiresExplicitSetupDriver(t *testing.T) {
+	if !(DatabaseConfig{Driver: " setup "}).RequiresSetup() {
+		t.Fatal("explicit setup driver was not detected")
+	}
+	if (DatabaseConfig{Driver: "postgres"}).RequiresSetup() {
+		t.Fatal("configured PostgreSQL was treated as setup")
+	}
+}
+
+func TestSaveConfigIsOwnerOnlyAndReplacesCompleteYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("stale: true\n"), 0644); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg := &Config{
+		Database: DatabaseConfig{Driver: "postgres", DSN: "postgres://ambient:secret@postgres/well_ambient"},
+		Server:   ServerConfig{Host: "127.0.0.1", Port: 8080},
+	}
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat config: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("config mode = %04o, want 0600", info.Mode().Perm())
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("load saved config: %v", err)
+	}
+	if loaded.Database.Driver != "postgres" || loaded.Database.DSN != cfg.Database.DSN || loaded.Server.Port != 8080 {
+		t.Fatalf("unexpected saved config: %#v", loaded)
+	}
+	if matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".config.yaml.tmp-*")); err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files remain: %v, %v", matches, err)
+	}
+}
+
+func TestSaveConfigPersistsSetupOnlyLegacyMigrationDecision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := &Config{
+		Database: DatabaseConfig{
+			Driver:                  "setup",
+			LegacySQLitePath:        "/var/lib/well-ambient/legacy/well-ambient.db",
+			LegacyMigrationDecision: "migrate",
+		},
+		Server: ServerConfig{Host: "127.0.0.1", Port: 8080},
+	}
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if loaded.Database.LegacySQLitePath != cfg.Database.LegacySQLitePath || loaded.Database.LegacyMigrationDecision != "migrate" {
+		t.Fatalf("legacy migration setup fields did not round-trip: %#v", loaded.Database)
+	}
+}
 
 func TestGetRealAPIURL(t *testing.T) {
 	tests := []struct {

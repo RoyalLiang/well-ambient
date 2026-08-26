@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -48,7 +49,7 @@ type DataAssetEventPayload struct {
 	EventID      uint      `gorm:"primaryKey;autoIncrement:false;column:event_id" json:"event_id"`
 	ContentType  string    `gorm:"size:96;not null;column:content_type" json:"content_type"`
 	Encoding     string    `gorm:"size:16;not null" json:"encoding"`
-	Data         []byte    `gorm:"type:blob;not null" json:"-"`
+	Data         []byte    `gorm:"not null" json:"-"`
 	OriginalSize int64     `gorm:"not null;column:original_size" json:"original_size"`
 	StoredSize   int64     `gorm:"not null;column:stored_size" json:"stored_size"`
 	CreatedAt    time.Time `gorm:"not null;column:created_at" json:"created_at"`
@@ -90,7 +91,7 @@ type DataAssetSnapshotPayload struct {
 	SnapshotID   uint      `gorm:"primaryKey;autoIncrement:false;column:snapshot_id" json:"snapshot_id"`
 	ContentType  string    `gorm:"size:96;not null;column:content_type" json:"content_type"`
 	Encoding     string    `gorm:"size:16;not null" json:"encoding"`
-	Data         []byte    `gorm:"type:blob;not null" json:"-"`
+	Data         []byte    `gorm:"not null" json:"-"`
 	OriginalSize int64     `gorm:"not null;column:original_size" json:"original_size"`
 	StoredSize   int64     `gorm:"not null;column:stored_size" json:"stored_size"`
 	CreatedAt    time.Time `gorm:"not null;column:created_at" json:"created_at"`
@@ -152,7 +153,7 @@ var dataAssetImmutableInsertGuards = []struct {
 }
 
 // MigrateDataAssets applies only additive schema/index changes and installs
-// database-level immutability guards for the active SQLite adapter.
+// database-level immutability guards for the active database adapter.
 func MigrateDataAssets(conn *gorm.DB) error {
 	if conn == nil {
 		return errors.New("database is not initialized")
@@ -186,8 +187,11 @@ func migrateDataAssetSchema(conn *gorm.DB) error {
 			return err
 		}
 	}
+	if conn.Dialector.Name() == "postgres" {
+		return installPostgresDataAssetGuards(conn)
+	}
 	if conn.Dialector.Name() != "sqlite" {
-		return nil
+		return fmt.Errorf("unsupported data asset database driver %q", conn.Dialector.Name())
 	}
 	for _, table := range dataAssetImmutableTables {
 		for _, action := range []string{"update", "delete"} {
@@ -204,6 +208,44 @@ func migrateDataAssetSchema(conn *gorm.DB) error {
 			" BEFORE INSERT ON " + guard.table + " WHEN " + guard.condition +
 			" BEGIN SELECT RAISE(ABORT, 'data asset records are append-only'); END"
 		if err := conn.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func installPostgresDataAssetGuards(conn *gorm.DB) error {
+	if err := conn.Exec(`CREATE OR REPLACE FUNCTION reject_data_asset_mutation() RETURNS trigger AS $$
+		BEGIN
+			RAISE EXCEPTION 'data asset records are append-only' USING ERRCODE = 'integrity_constraint_violation';
+		END;
+		$$ LANGUAGE plpgsql`).Error; err != nil {
+		return err
+	}
+	for _, table := range dataAssetImmutableTables {
+		trigger := "trg_" + table + "_no_mutation"
+		if err := conn.Exec("DROP TRIGGER IF EXISTS " + trigger + " ON " + table).Error; err != nil {
+			return err
+		}
+		if err := conn.Exec("CREATE TRIGGER " + trigger + " BEFORE UPDATE OR DELETE ON " + table +
+			" FOR EACH ROW EXECUTE FUNCTION reject_data_asset_mutation()").Error; err != nil {
+			return err
+		}
+	}
+	for _, guard := range dataAssetImmutableInsertGuards {
+		functionName := "reject_" + guard.table + "_replacement"
+		triggerName := "trg_" + guard.table + "_no_replace"
+		functionSQL := "CREATE OR REPLACE FUNCTION " + functionName + "() RETURNS trigger AS $$ BEGIN " +
+			"IF " + guard.condition + " THEN RAISE EXCEPTION 'data asset records are append-only' " +
+			"USING ERRCODE = 'integrity_constraint_violation'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql"
+		if err := conn.Exec(functionSQL).Error; err != nil {
+			return err
+		}
+		if err := conn.Exec("DROP TRIGGER IF EXISTS " + triggerName + " ON " + guard.table).Error; err != nil {
+			return err
+		}
+		if err := conn.Exec("CREATE TRIGGER " + triggerName + " BEFORE INSERT ON " + guard.table +
+			" FOR EACH ROW EXECUTE FUNCTION " + functionName + "()").Error; err != nil {
 			return err
 		}
 	}

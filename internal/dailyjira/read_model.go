@@ -3,6 +3,7 @@ package dailyjira
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -17,13 +18,16 @@ import (
 )
 
 type Bucket string
+type Direction string
 
 const (
-	BucketToday        Bucket = "today"
-	BucketRecentWatch  Bucket = "recent_watch"
-	BucketThreeDay     Bucket = "three_day"
-	BucketSevenDay     Bucket = "seven_day"
-	BucketUnclassified Bucket = "unclassified"
+	BucketToday        Bucket    = "today"
+	BucketRecentWatch  Bucket    = "recent_watch"
+	BucketThreeDay     Bucket    = "three_day"
+	BucketSevenDay     Bucket    = "seven_day"
+	BucketUnclassified Bucket    = "unclassified"
+	DirectionNext      Direction = "next"
+	DirectionPrevious  Direction = "previous"
 
 	defaultPageLimit = 100
 	maxPageLimit     = 100
@@ -42,12 +46,13 @@ type Scope struct {
 }
 
 type Query struct {
-	Bucket Bucket
-	Search string
-	Cursor string
-	Limit  int
-	Scope  Scope
-	Now    time.Time
+	Bucket    Bucket
+	Search    string
+	Cursor    string
+	Direction Direction
+	Limit     int
+	Scope     Scope
+	Now       time.Time
 }
 
 type Summary struct {
@@ -79,13 +84,15 @@ type Item struct {
 }
 
 type Page struct {
-	GeneratedAt time.Time
-	Generation  int64
-	SearchMode  string
-	Summary     Summary
-	Items       []Item
-	NextCursor  string
-	HasMore     bool
+	GeneratedAt    time.Time
+	Generation     int64
+	SearchMode     string
+	Summary        Summary
+	Items          []Item
+	PreviousCursor string
+	HasPrevious    bool
+	NextCursor     string
+	HasMore        bool
 }
 
 type Reader struct {
@@ -111,6 +118,9 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 		return Page{}, fmt.Errorf("Daily Jira read model is not initialized")
 	}
 	query = normalizeQuery(query)
+	if query.Direction == DirectionPrevious && query.Cursor == "" {
+		return Page{}, ErrInvalidCursor
+	}
 	fingerprint := queryFingerprint(query)
 	now := query.Now
 	if now.IsZero() {
@@ -118,13 +128,25 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 	}
 
 	var result Page
+	transactionOptions := &sql.TxOptions{ReadOnly: true}
+	if r.conn.Dialector.Name() == "postgres" {
+		transactionOptions.Isolation = sql.LevelRepeatableRead
+	}
 	err := r.conn.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var state struct {
 			Generation int64  `gorm:"column:generation"`
 			SearchMode string `gorm:"column:search_mode"`
 		}
-		if err := tx.Raw("SELECT generation, search_mode FROM daily_jira_audit_state WHERE id = 1").Scan(&state).Error; err != nil {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Raw("SELECT generation FROM read_model_generations WHERE dataset = ?", "task_facts").Scan(&state).Error; err != nil {
+				return fmt.Errorf("read PostgreSQL Daily Jira generation: %w", err)
+			}
+			state.SearchMode = "postgres_prefix"
+		} else if err := tx.Raw("SELECT generation, search_mode FROM daily_jira_audit_state WHERE id = 1").Scan(&state).Error; err != nil {
 			return fmt.Errorf("read Daily Jira generation: %w", err)
+		}
+		if state.Generation <= 0 {
+			return fmt.Errorf("Daily Jira generation is not initialized")
 		}
 
 		var cursor *pageCursor
@@ -158,26 +180,36 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 			Summary:     summary,
 			Items:       items,
 		}
-		if len(result.Items) > query.Limit {
-			result.HasMore = true
+		hasDirectionalContinuation := len(result.Items) > query.Limit
+		if hasDirectionalContinuation {
 			result.Items = result.Items[:query.Limit]
-			last := result.Items[len(result.Items)-1]
-			encoded, err := encodeCursor(pageCursor{
-				Version:      cursorVersion,
-				Generation:   state.Generation,
-				Fingerprint:  fingerprint,
-				SortOverdue:  boolInt(!last.Overdue),
-				CreatedUnix:  last.CreatedUnix,
-				ActivityUnix: last.ActivityUnix,
-				TaskID:       last.TaskID,
-			})
+		}
+		if query.Direction == DirectionPrevious {
+			for left, right := 0, len(result.Items)-1; left < right; left, right = left+1, right-1 {
+				result.Items[left], result.Items[right] = result.Items[right], result.Items[left]
+			}
+			result.HasPrevious = hasDirectionalContinuation
+			result.HasMore = cursor != nil && len(result.Items) > 0
+		} else {
+			result.HasPrevious = cursor != nil && len(result.Items) > 0
+			result.HasMore = hasDirectionalContinuation
+		}
+		if result.HasPrevious {
+			encoded, err := encodeItemCursor(result.Items[0], state.Generation, fingerprint)
+			if err != nil {
+				return err
+			}
+			result.PreviousCursor = encoded
+		}
+		if result.HasMore {
+			encoded, err := encodeItemCursor(result.Items[len(result.Items)-1], state.Generation, fingerprint)
 			if err != nil {
 				return err
 			}
 			result.NextCursor = encoded
 		}
 		return nil
-	})
+	}, transactionOptions)
 	if err != nil {
 		return Page{}, err
 	}
@@ -185,6 +217,9 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 }
 
 func readItems(tx *gorm.DB, query Query, cursor *pageCursor, searchMode string) ([]Item, error) {
+	if tx.Dialector.Name() == "postgres" {
+		return readPostgresItems(tx, query, cursor)
+	}
 	var sqlBuilder strings.Builder
 	sqlBuilder.WriteString(`SELECT e.task_id, e.title, e.project_key, e.project, e.assignee, e.reporter,
 		e.status, e.issue_type, e.task_created_at, e.last_activity_at, e.due_date,
@@ -231,12 +266,30 @@ func readItems(tx *gorm.DB, query Query, cursor *pageCursor, searchMode string) 
 		}
 	}
 	if cursor != nil {
-		sqlBuilder.WriteString(` AND (e.sort_overdue, e.created_unix, e.activity_unix, e.task_id) > (?, ?, ?, ?)`)
+		operator := ">"
+		if query.Direction == DirectionPrevious {
+			operator = "<"
+		}
+		sqlBuilder.WriteString(` AND (e.sort_overdue, e.created_unix, e.activity_unix, e.task_id) `)
+		sqlBuilder.WriteString(operator)
+		sqlBuilder.WriteString(` (?, ?, ?, ?)`)
 		args = append(args,
 			cursor.SortOverdue, cursor.CreatedUnix, cursor.ActivityUnix, cursor.TaskID,
 		)
 	}
-	sqlBuilder.WriteString(" ORDER BY e.sort_overdue ASC, e.created_unix ASC, e.activity_unix ASC, e.task_id ASC LIMIT ?")
+	order := "ASC"
+	if query.Direction == DirectionPrevious {
+		order = "DESC"
+	}
+	sqlBuilder.WriteString(" ORDER BY e.sort_overdue ")
+	sqlBuilder.WriteString(order)
+	sqlBuilder.WriteString(", e.created_unix ")
+	sqlBuilder.WriteString(order)
+	sqlBuilder.WriteString(", e.activity_unix ")
+	sqlBuilder.WriteString(order)
+	sqlBuilder.WriteString(", e.task_id ")
+	sqlBuilder.WriteString(order)
+	sqlBuilder.WriteString(" LIMIT ?")
 	args = append(args, query.Limit+1)
 
 	var items []Item
@@ -247,6 +300,9 @@ func readItems(tx *gorm.DB, query Query, cursor *pageCursor, searchMode string) 
 }
 
 func readSummary(tx *gorm.DB, scope Scope) (Summary, error) {
+	if tx.Dialector.Name() == "postgres" {
+		return readPostgresSummary(tx, scope)
+	}
 	var sqlBuilder strings.Builder
 	sqlBuilder.WriteString("SELECT bucket, SUM(item_count) AS item_count FROM daily_jira_audit_counts WHERE item_count > 0")
 	args := make([]any, 0, 8)
@@ -327,6 +383,9 @@ func normalizeQuery(query Query) Query {
 		query.Limit = maxPageLimit
 	}
 	query.Search = strings.TrimSpace(query.Search)
+	if query.Direction != DirectionPrevious {
+		query.Direction = DirectionNext
+	}
 	query.Scope.ProjectKeys = normalizeProjects(query.Scope.ProjectKeys)
 	query.Scope.Assignees = normalizeAssignees(query.Scope.Assignees)
 	return query
@@ -378,6 +437,18 @@ func encodeCursor(cursor pageCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
+func encodeItemCursor(item Item, generation int64, fingerprint string) (string, error) {
+	return encodeCursor(pageCursor{
+		Version:      cursorVersion,
+		Generation:   generation,
+		Fingerprint:  fingerprint,
+		SortOverdue:  boolInt(!item.Overdue),
+		CreatedUnix:  item.CreatedUnix,
+		ActivityUnix: item.ActivityUnix,
+		TaskID:       item.TaskID,
+	})
+}
+
 func decodeCursor(value string) (pageCursor, error) {
 	payload, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
@@ -418,6 +489,11 @@ type RolloverResult struct {
 func RollForwardBatch(ctx context.Context, conn *gorm.DB, now time.Time, batchLimit int) (RolloverResult, error) {
 	if conn == nil {
 		return RolloverResult{}, fmt.Errorf("Daily Jira read model is not initialized")
+	}
+	if conn.Dialector.Name() == "postgres" {
+		// PostgreSQL derives time buckets from CURRENT_DATE in each repeatable
+		// read transaction, so it does not require a persisted rollover job.
+		return RolloverResult{Done: true}, nil
 	}
 	if now.IsZero() {
 		now = time.Now()
