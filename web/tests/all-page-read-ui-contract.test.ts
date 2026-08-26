@@ -20,8 +20,9 @@ test('first-wave high-cardinality page consumers use the shared bounded resource
 });
 
 test('release filters are server scoped and both Jira lists have continuation', () => {
+  assert.match(deliveryPlan, /new URLSearchParams\(\{ view: releaseListView \}\)/);
   assert.match(deliveryPlan, /params\.set\('project_key'/);
-  assert.match(deliveryPlan, /params\.set\('status'/);
+  assert.doesNotMatch(deliveryPlan, /params\.set\('status'/);
   assert.match(deliveryPlan, /params\.set\('q'/);
   assert.doesNotMatch(deliveryPlan, /visibleItems\s*=\s*releaseState\.items\.filter/);
   assert.match(deliveryPlan, /candidateJiraResource\.loadMore\(\)/);

@@ -78,6 +78,14 @@ func TestReleaseLifecycleActionsAreAuditedAndGuarded(t *testing.T) {
 		t.Fatal("discard replay should return the existing lifecycle fact")
 	}
 
+	archiveDiscardedRR := authenticatedJSONRequest(t, srv, token, http.MethodPost,
+		"/api/releases/"+strconv.Itoa(int(planned.ID))+"/archive",
+		map[string]string{"reason": "已废弃版本转入归档列表"},
+	)
+	if archiveDiscardedRR.Code != http.StatusOK {
+		t.Fatalf("archive discarded status = %d, body=%s", archiveDiscardedRR.Code, archiveDiscardedRR.Body.String())
+	}
+
 	archiveRR := authenticatedJSONRequest(t, srv, token, http.MethodPost,
 		"/api/releases/"+strconv.Itoa(int(released.ID))+"/archive",
 		map[string]string{"reason": "版本维护周期结束"},
@@ -144,7 +152,7 @@ func TestReleaseLifecycleActionsAreAuditedAndGuarded(t *testing.T) {
 	}
 }
 
-func TestDeleteReleaseRejectsLinkedOrPublishedFacts(t *testing.T) {
+func TestDeleteReleaseRejectsNonArchivedOrLinkedFacts(t *testing.T) {
 	setupServerTestDB(t)
 	token := superAdminToken(t, "release-delete-guard@example.com", "Release Delete Guard", []string{
 		"delivery:read",
@@ -152,12 +160,19 @@ func TestDeleteReleaseRejectsLinkedOrPublishedFacts(t *testing.T) {
 	})
 	srv := NewServer(&config.Config{}, "")
 
+	planned := db.ReleaseVersion{
+		ProjectKey: "FMS",
+		Source:     "local",
+		ExternalID: "local-planned",
+		Name:       "FMS 5.7.0",
+		Status:     deliveryplanning.ReleasePlanned,
+	}
 	linked := db.ReleaseVersion{
 		ProjectKey: "FMS",
 		Source:     "local",
 		ExternalID: "local-linked",
 		Name:       "FMS 5.6.0",
-		Status:     deliveryplanning.ReleasePlanned,
+		Status:     deliveryplanning.ReleaseArchived,
 	}
 	released := db.ReleaseVersion{
 		ProjectKey: "FMS",
@@ -165,6 +180,9 @@ func TestDeleteReleaseRejectsLinkedOrPublishedFacts(t *testing.T) {
 		ExternalID: "local-published",
 		Name:       "FMS 5.3.0",
 		Status:     deliveryplanning.ReleaseReleased,
+	}
+	if err := db.DB.Create(&planned).Error; err != nil {
+		t.Fatalf("create planned release: %v", err)
 	}
 	if err := db.DB.Create(&linked).Error; err != nil {
 		t.Fatalf("create linked release: %v", err)
@@ -189,7 +207,8 @@ func TestDeleteReleaseRejectsLinkedOrPublishedFacts(t *testing.T) {
 		wantError   string
 		confirmName string
 	}{
-		{name: "linked", release: linked, wantError: "release_delete_blocked", confirmName: linked.Name},
+		{name: "not-archived", release: planned, wantError: "release_delete_forbidden", confirmName: planned.Name},
+		{name: "archived-linked", release: linked, wantError: "release_delete_blocked", confirmName: linked.Name},
 		{name: "published", release: released, wantError: "release_delete_forbidden", confirmName: released.Name},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

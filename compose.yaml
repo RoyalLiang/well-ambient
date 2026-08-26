@@ -7,48 +7,17 @@ x-default-logging: &default-logging
     max-file: "5"
 
 services:
-  postgres:
-    image: postgres:17.11-bookworm
-    environment:
-      # Bootstrap only the maintenance database. The setup service must observe
-      # that the application target does not exist and create it explicitly.
-      POSTGRES_DB: postgres
-      POSTGRES_TARGET_DB: ${POSTGRES_DB:-well_ambient}
-      POSTGRES_USER: ${POSTGRES_USER:-well_ambient}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      TZ: ${TZ:-Asia/Shanghai}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    restart: unless-stopped
-    logging: *default-logging
-    networks: [ambient]
-
   migrate:
-    image: well-ambient-server:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
-    build:
-      context: .
-      target: server
-      args:
-        VERSION: ${WELL_AMBIENT_VERSION}
-        COMMIT: ${WELL_AMBIENT_COMMIT:-unknown}
-        BUILD_TIME: ${WELL_AMBIENT_BUILD_TIME:-unknown}
+    image: ${WELL_AMBIENT_SERVER_IMAGE:?WELL_AMBIENT_SERVER_IMAGE is required}:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     command: ["--config", "/etc/well-ambient/config.yaml", "--migrate-only"]
     environment:
-      WELL_AMBIENT_DATABASE_DSN: postgres://${POSTGRES_USER:-well_ambient}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-well_ambient}?sslmode=disable
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./deploy/runtime:/etc/well-ambient
       - ./deploy/runtime/data:/var/lib/well-ambient
-    depends_on:
-      postgres:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: "no"
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
@@ -56,18 +25,10 @@ services:
     networks: [ambient]
 
   server:
-    image: well-ambient-server:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
-    build:
-      context: .
-      target: server
-      args:
-        VERSION: ${WELL_AMBIENT_VERSION}
-        COMMIT: ${WELL_AMBIENT_COMMIT:-unknown}
-        BUILD_TIME: ${WELL_AMBIENT_BUILD_TIME:-unknown}
+    image: ${WELL_AMBIENT_SERVER_IMAGE:?WELL_AMBIENT_SERVER_IMAGE is required}:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     command: ["--config", "/etc/well-ambient/config.yaml", "--skip-migrate"]
     environment:
-      WELL_AMBIENT_DATABASE_DSN: postgres://${POSTGRES_USER:-well_ambient}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-well_ambient}?sslmode=disable
       WELL_AMBIENT_SETUP_TOKEN: ${WELL_AMBIENT_SETUP_TOKEN:?WELL_AMBIENT_SETUP_TOKEN is required}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
@@ -85,16 +46,15 @@ services:
     cap_drop: [ALL]
     tmpfs:
       - /tmp:size=128m,mode=1777
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     stop_grace_period: 30s
     restart: unless-stopped
     logging: *default-logging
     networks: [ambient]
 
   web:
-    image: well-ambient-web:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
-    build:
-      context: .
-      target: web
+    image: ${WELL_AMBIENT_WEB_IMAGE:?WELL_AMBIENT_WEB_IMAGE is required}:${WELL_AMBIENT_VERSION:?WELL_AMBIENT_VERSION is required}
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
     depends_on:
@@ -114,9 +74,6 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks: [ambient]
-
-volumes:
-  postgres_data:
 
 networks:
   ambient:

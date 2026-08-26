@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-08-23T15:36:00+08:00",
+  "updated_at": "2026-08-24T21:46:30+08:00",
   "active_task": {
-    "goal": "Keep Daily Jira assignee changes automatically synchronized even while Jira performance history replay is slow",
-    "intent": "daily_jira_worker_isolation",
+    "goal": "Remove elliptical focus borders from every Decision list dropdown while preserving one accessible field-shaped focus ring",
+    "intent": "decision_filter_focus_geometry",
     "complexity": "multi_step",
     "continuity": "new_related_task",
-    "freshness": "live_restart_checkpoint_plus_mock_worker_regression",
-    "risk": "medium",
-    "phase": "runtime_verified_ready_to_commit",
+    "freshness": "authenticated_browser_desktop_760_390",
+    "risk": "low",
+    "phase": "verified_reflection_gate_pending",
     "loaded_modules": [
       "core-lite",
       "state-lite",
@@ -17,10 +17,39 @@
       "runtime/memory",
       "diagnosing-bugs",
       "planning-with-files",
-      "self-improving"
+      "self-improving",
+      "impeccable",
+      "design-taste-frontend",
+      "finesse-ui",
+      "browser"
     ]
   },
   "warm_memory": {
+    "decision_filter_focus_geometry": {
+      "status": "verified_reflection_gate_pending",
+      "findings": [
+        "The visible ellipse came from the nested searchable input inheriting the global 999px input radius and focus-visible outline; every outer Select and MultiSelect trigger already stayed at 10px.",
+        "Shared Select and MultiSelect now keep nested inputs at 8px with no outline and delegate one visible focus outline to the stable 10px trigger.",
+        "Decision summary-mode MultiSelect now overrides its 38px component height at max-width 800px so all three filters remain 44px on tablet and phone."
+      ],
+      "validation": [
+        "Authenticated browser: default, non-default selected, open, and focus states passed at desktop, 760px, and 390px with zero document overflow; temporary values and viewport were restored.",
+        "Frontend contracts 114/114, svelte-check zero errors with 87 existing warnings, production build, targeted diff check, Impeccable empty findings, and Finesse strict no P0 all passed.",
+        "Browser logs contain only Vite debug/HMR entries and no warning or error entries."
+      ],
+      "touched_files": [
+        "web/src/components/shared/Select.svelte",
+        "web/src/components/shared/MultiSelect.svelte",
+        "web/src/components/DecisionDashboard.svelte",
+        "web/tests/select-focus-geometry-contract.test.ts",
+        ".learnings/LEARNINGS.md",
+        "task_plan.md",
+        "findings.md",
+        "progress.md",
+        ".agents/state.json"
+      ],
+      "next_action": "Run the mandatory pre-delivery reflection gate, incorporate user feedback if any, then deliver the verified change."
+    },
     "summary": "Jira inbound synchronization now reconciles items that leave the primary JQL, advances durable cycle and per-item watermarks only after success, treats comments as a current projection, emits each changed task immediately without burst loss, and refreshes all Jira-backed product views through one event scheduler while retaining polling fallback.",
     "current_summary": "Daily Jira now uses a trigger-maintained bounded read model with counter summaries, generation-bound row-value keyset pagination, indexed server search, bounded Top-N enrichment, virtual rendering, and same-generation atomic multi-page refresh. A disposable 10M-row warm benchmark keeps reader page p95 below 0.9ms; full tests and authenticated browser validation pass. Main migration, restart, and production HTTP concurrency telemetry remain pending.",
     "daily_jira_worker_isolation": {

@@ -933,8 +933,6 @@
   }
 
   @media (max-width: 860px) {
-    :global(.workspace-frame.viewport-fit-frame .functional-workspace),
-    :global(.workspace-frame.viewport-fit-frame .workspace-content),
     :global(.workspace-frame.viewport-fit-frame .workspace-content > .decision-admin),
     :global(.workspace-frame.viewport-fit-frame .workspace-content > .daily-jira),
     :global(.workspace-frame.viewport-fit-frame .workspace-content > .kanban-section),
@@ -942,6 +940,42 @@
     :global(.workspace-frame.viewport-fit-frame .workspace-content > .console-functional-stack > :last-child) {
       height: auto;
       overflow: visible;
+    }
+  }
+
+  /* Final viewport page-height contract: every viewport-fit route receives the
+     same bounded content row; route content, not the document, owns overflow. */
+  :global(.workspace-frame.viewport-fit-frame .functional-workspace) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame .workspace-content) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame.daily-jira-frame .workspace-content > .decision-center) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :global(.workspace-frame.viewport-fit-frame.daily-jira-frame .workspace-content > .decision-center > .daily-jira) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  @media (max-width: 860px) {
+    :global(.workspace-frame.viewport-fit-frame .workspace-content) {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    :global(.workspace-frame.viewport-fit-frame.daily-jira-frame .workspace-content) {
+      overflow-y: hidden;
     }
   }
 </style>

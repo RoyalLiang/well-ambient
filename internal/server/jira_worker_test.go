@@ -255,6 +255,35 @@ func TestBuildJQL(t *testing.T) {
 	}
 }
 
+func TestBuildJiraQueryScopesSeparatesProjectsTopLevelCustomBranchesAndVersions(t *testing.T) {
+	projectScopes := buildJiraQueryScopes(&config.JiraConfig{
+		SyncProjects: []string{"DG", "BAD"},
+		SyncUsers:    []string{"Alice"},
+	})
+	projectJQLs := make([]string, 0, len(projectScopes))
+	for _, scope := range projectScopes {
+		projectJQLs = append(projectJQLs, scope.JQL)
+	}
+	if strings.Join(projectJQLs, "\n") != "project = \"DG\" AND assignee in (\"Alice\")\nproject = \"BAD\" AND assignee in (\"Alice\")" {
+		t.Fatalf("project scopes = %#v", projectScopes)
+	}
+
+	customScopes := buildJiraQueryScopes(&config.JiraConfig{
+		BaseURL:   "https://jira.example.com",
+		CustomJQL: `(project = "DG" AND (labels is empty OR labels not in (hold))) OR key = FMS-20660`,
+		VersionSources: []config.JiraVersionSource{{
+			ProjectKey: "REL", VersionURL: "https://jira.example.com/projects/REL/versions/13622",
+		}},
+	})
+	customJQLs := make([]string, 0, len(customScopes))
+	for _, scope := range customScopes {
+		customJQLs = append(customJQLs, scope.JQL)
+	}
+	if strings.Join(customJQLs, "\n") != "project = \"DG\" AND (labels is empty OR labels not in (hold))\nkey = FMS-20660\n(project = \"REL\" AND fixVersion = 13622)" {
+		t.Fatalf("custom/version scopes = %#v", customScopes)
+	}
+}
+
 func TestBuildPerformanceJiraHistoryJQLUsesAssessmentScope(t *testing.T) {
 	cfg := &config.Config{
 		Jira: config.JiraConfig{
@@ -997,6 +1026,71 @@ func TestJiraSyncEmptyScopeRecordsVisibleFailure(t *testing.T) {
 	}
 	if !checkpoint.LastSucceededAt.IsZero() || !checkpoint.SuccessfulThrough.IsZero() {
 		t.Fatalf("empty Jira scope advanced success watermark: %+v", checkpoint)
+	}
+}
+
+func TestJiraSyncContinuesValidScopeWhenAnotherScopeFails(t *testing.T) {
+	setupServerTestDB(t)
+
+	oldKanbanPath := kanban.KanbanFilePath
+	kanban.KanbanFilePath = filepath.Join(t.TempDir(), "task_status.md")
+	t.Cleanup(func() { kanban.KanbanFilePath = oldKanbanPath })
+
+	const issueKey = "DG-394"
+	if err := db.DB.Create(&db.TaskTelemetry{
+		TaskID: issueKey, ProjectKey: "DG", Source: "jira", ExternalKey: issueKey,
+		PlanningState: deliveryplanning.PlanningReady, Title: "Scope isolation",
+		Repo: "-", Assignee: "张路路", Branch: "-", LastCommit: "-",
+		Status: "backlog", IssueType: "requirement", TaskCreatedAt: time.Now().Add(-24 * time.Hour),
+		LastUpdate: time.Now().Add(-time.Hour), SourceUpdatedAt: time.Now().Add(-time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("seed Jira task: %v", err)
+	}
+
+	jira := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/rest/api/2/search":
+			jql := r.URL.Query().Get("jql")
+			if strings.Contains(jql, "BAD") {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"errorMessages":["project has no value BAD"]}`)
+				return
+			}
+			if strings.Contains(jql, `project = "DG"`) {
+				fmt.Fprint(w, `{"total":1,"issues":[{"key":"DG-394","fields":{"summary":"Scope isolation","created":"2026-08-20T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhanglulu","displayName":"张路路"},"status":{"name":"Done"},"project":{"key":"DG","name":"DG"},"fixVersions":[],"versions":[],"updated":"2026-08-24T18:35:10.000+0800"}}]}`)
+				return
+			}
+			fmt.Fprint(w, `{"total":0,"issues":[]}`)
+		case strings.HasSuffix(r.URL.Path, "/comment"):
+			fmt.Fprint(w, `{"comments":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jira.Close()
+
+	server := NewServer(&config.Config{Jira: config.JiraConfig{
+		Enabled: true, BaseURL: jira.URL, SyncProjects: []string{"DG", "BAD"},
+	}}, "")
+	server.syncJiraTasks()
+
+	var refreshed db.TaskTelemetry
+	if err := db.DB.Where("task_id = ?", issueKey).First(&refreshed).Error; err != nil {
+		t.Fatalf("load refreshed Jira task: %v", err)
+	}
+	if refreshed.Status != "done" {
+		t.Fatalf("valid Jira scope did not update task after peer failure: status = %q", refreshed.Status)
+	}
+	var checkpoint db.JiraInboundSyncState
+	if err := db.DB.Where("scope = ?", jiraInboundSyncScope).First(&checkpoint).Error; err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+	if checkpoint.LastChangedCount != 1 || !strings.Contains(checkpoint.LastError, "BAD") {
+		t.Fatalf("partial failure checkpoint = %+v", checkpoint)
+	}
+	if !checkpoint.SuccessfulThrough.IsZero() || !checkpoint.LastSucceededAt.IsZero() {
+		t.Fatalf("partial failure advanced success watermark: %+v", checkpoint)
 	}
 }
 

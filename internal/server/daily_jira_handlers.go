@@ -84,12 +84,14 @@ type dailyJiraAuditResponse struct {
 }
 
 type dailyJiraPageMeta struct {
-	Bucket     dailyJiraBucketKey `json:"bucket"`
-	Limit      int                `json:"limit"`
-	Generation int64              `json:"generation"`
-	SearchMode string             `json:"search_mode"`
-	NextCursor string             `json:"next_cursor,omitempty"`
-	HasMore    bool               `json:"has_more"`
+	Bucket         dailyJiraBucketKey `json:"bucket"`
+	Limit          int                `json:"limit"`
+	Generation     int64              `json:"generation"`
+	SearchMode     string             `json:"search_mode"`
+	PreviousCursor string             `json:"previous_cursor,omitempty"`
+	HasPrevious    bool               `json:"has_previous"`
+	NextCursor     string             `json:"next_cursor,omitempty"`
+	HasMore        bool               `json:"has_more"`
 }
 
 type dailyJiraReviewRequest struct {
@@ -118,6 +120,17 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	bucket := parseDailyJiraBucket(r.URL.Query().Get("bucket"))
+	direction := dailyjira.DirectionNext
+	if rawDirection := strings.TrimSpace(r.URL.Query().Get("direction")); rawDirection != "" {
+		switch rawDirection {
+		case string(dailyjira.DirectionNext):
+		case string(dailyjira.DirectionPrevious):
+			direction = dailyjira.DirectionPrevious
+		default:
+			http.Error(w, "direction must be next or previous", http.StatusBadRequest)
+			return
+		}
+	}
 	limit := 100
 	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
 		parsed, parseErr := strconv.Atoi(rawLimit)
@@ -128,10 +141,11 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 		limit = parsed
 	}
 	page, err := dailyjira.NewReader(db.DB).ReadPage(r.Context(), dailyjira.Query{
-		Bucket: dailyJiraReadBucket(bucket),
-		Search: r.URL.Query().Get("search"),
-		Cursor: strings.TrimSpace(r.URL.Query().Get("cursor")),
-		Limit:  limit,
+		Bucket:    dailyJiraReadBucket(bucket),
+		Search:    r.URL.Query().Get("search"),
+		Cursor:    strings.TrimSpace(r.URL.Query().Get("cursor")),
+		Direction: direction,
+		Limit:     limit,
 		Scope: dailyjira.Scope{
 			ProjectKeys:     projectKeys,
 			Assignees:       dailyJiraVisibilityAssignees(visibility),
@@ -180,12 +194,14 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	response.Page = dailyJiraPageMeta{
-		Bucket:     bucket,
-		Limit:      min(limit, 100),
-		Generation: page.Generation,
-		SearchMode: page.SearchMode,
-		NextCursor: page.NextCursor,
-		HasMore:    page.HasMore,
+		Bucket:         bucket,
+		Limit:          min(limit, 100),
+		Generation:     page.Generation,
+		SearchMode:     page.SearchMode,
+		PreviousCursor: page.PreviousCursor,
+		HasPrevious:    page.HasPrevious,
+		NextCursor:     page.NextCursor,
+		HasMore:        page.HasMore,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {

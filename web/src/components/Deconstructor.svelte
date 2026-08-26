@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import type { AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS } from '../lib/admin-console/contract';
+  import type { DeconstructorCompletedSnapshot } from '../lib/deconstructor-session';
   import { readDeconstructStream } from '../lib/deconstruct-stream';
   import { fetchDeliveryDirectory } from '../lib/delivery-directory';
   import { showToast } from '../lib/toast';
@@ -14,13 +15,16 @@
   export let initialDemandId = '';
   export let embedded = false;
   export let compact = false;
+  export let onGenerationChange: (active: boolean) => void = () => {};
+  export let initialCompletedSnapshot: DeconstructorCompletedSnapshot<DeconstructResult> | null = null;
+  export let onCompletedSnapshotChange: (snapshot: DeconstructorCompletedSnapshot<DeconstructResult>) => void = () => {};
 
   function hasPermission(permission: string) {
     return currentUserPermissions.includes(permission);
   }
 
-  let demandTitle = initialTitle;
-  let inputText = initialDescription || initialText;
+  let demandTitle = initialCompletedSnapshot?.demandTitle || initialTitle;
+  let inputText = initialCompletedSnapshot?.inputText || initialDescription || initialText;
   type IntentMode = 'intent' | 'summary';
   type IntentInsight = {
     intent: string;
@@ -35,13 +39,48 @@
 
   let isLoading = false;
   let streamMessage = '正在建立 AI 流式连接…';
-  let hasResult = false;
+  let streamedOutput = '';
+  let pendingStreamOutput = '';
+  let streamFrameHandle: number | null = null;
+  let deconstructController: AbortController | null = null;
+  let hasResult = Boolean(initialCompletedSnapshot);
   let isAIEnabled = false;
   let intentInputText = '';
   let intentMode: IntentMode = 'intent';
   let intentLoading = false;
   let intentError = '';
   let intentResult: IntentInsight | null = null;
+
+  function setGenerationActive(active: boolean) {
+    if (isLoading === active) return;
+    isLoading = active;
+    onGenerationChange(active);
+  }
+
+  function flushStreamOutput() {
+    if (pendingStreamOutput) {
+      streamedOutput += pendingStreamOutput;
+      pendingStreamOutput = '';
+    }
+    streamFrameHandle = null;
+  }
+
+  function clearStreamFrame() {
+    if (streamFrameHandle === null) return;
+    cancelAnimationFrame(streamFrameHandle);
+    streamFrameHandle = null;
+  }
+
+  export function hasActiveGeneration() {
+    return Boolean(deconstructController && !deconstructController.signal.aborted && isLoading);
+  }
+
+  export function cancelActiveGeneration() {
+    if (!deconstructController || deconstructController.signal.aborted) return;
+    deconstructController.abort();
+    clearStreamFrame();
+    setGenerationActive(false);
+  }
 
   type DeconstructAnalysis = {
     completeness_score: number;
@@ -101,6 +140,14 @@
     period_days: number;
   };
 
+  type DeconstructResult = {
+    mappedRepos: string[];
+    tasks: GeneratedTask[];
+    analysis: DeconstructAnalysis;
+    context_pack_id: number;
+    attachment_ids: number[];
+  };
+
   const deconstructColumns: AdminTableColumn[] = [
     { key: 'task', label: '任务标题', width: '30%' },
     { key: 'repo', label: '代码库', width: '15%' },
@@ -111,20 +158,22 @@
     { key: 'evidence', label: '检查项', width: '10%' }
   ];
 
-  let result = {
-    mappedRepos: [] as string[],
-    tasks: [] as GeneratedTask[],
-    analysis: emptyAnalysis(),
-    context_pack_id: 0,
-    attachment_ids: [] as number[]
-  };
+  let result: DeconstructResult = initialCompletedSnapshot?.result
+    ? JSON.parse(JSON.stringify(initialCompletedSnapshot.result)) as DeconstructResult
+    : {
+        mappedRepos: [],
+        tasks: [],
+        analysis: emptyAnalysis(),
+        context_pack_id: 0,
+        attachment_ids: []
+      };
 
   let assigneesList: string[] = [];
-  let currentTaskGroupId = '';
-  let activeGeneratedTaskId = '';
+  let currentTaskGroupId = initialCompletedSnapshot?.taskGroupId || '';
+  let activeGeneratedTaskId = initialCompletedSnapshot?.activeTaskId || '';
   let selectedGeneratedTask: GeneratedTask | null = null;
 
-  let isMockResponse = false;
+  let isMockResponse = initialCompletedSnapshot?.isMockResponse || false;
 
   let isDragging = false;
   let uploadedFiles: File[] = [];
@@ -132,10 +181,10 @@
   let isImporting = false;
 
   let activeDemands: any[] = [];
-  let selectedDemandId = '';
+  let selectedDemandId = initialCompletedSnapshot?.linkedDemandId || '';
   let showDemandDropdown = false;
   let demandSearchText = '';
-  let selectedDemandTitle = '选择要关联的产品需求 (可选)';
+  let selectedDemandTitle = initialCompletedSnapshot?.linkedDemandTitle || '选择要关联的产品需求 (可选)';
 
   $: filteredActiveDemands = activeDemands.filter((demand: any) => {
     const query = demandSearchText.trim().toLowerCase();
@@ -152,6 +201,18 @@
     activeGeneratedTaskId = '';
   }
   $: selectedGeneratedTask = result.tasks.find(task => task.id === activeGeneratedTaskId) || null;
+  $: if (hasResult && !isLoading) {
+    onCompletedSnapshotChange({
+      result,
+      taskGroupId: currentTaskGroupId,
+      activeTaskId: activeGeneratedTaskId,
+      isMockResponse,
+      linkedDemandId: selectedDemandId,
+      linkedDemandTitle: selectedDemandTitle,
+      demandTitle,
+      inputText
+    });
+  }
   $: deconstructMetrics = [
     {
       label: 'AI 服务',
@@ -665,17 +726,24 @@
     };
   });
 
+  onDestroy(() => {
+    cancelActiveGeneration();
+    clearStreamFrame();
+  });
+
   async function handleDeconstruct() {
     if (!inputText.trim() && !demandTitle.trim() && uploadedFiles.length === 0) {
       displayToast('请填写需求标题、需求内容或上传需求附件', 'error');
       return;
     }
 
-    isLoading = true;
+    cancelActiveGeneration();
+    const controller = new AbortController();
+    deconstructController = controller;
+    setGenerationActive(true);
     streamMessage = '正在建立 AI 流式连接…';
-    hasResult = false;
-    isMockResponse = false;
-    currentTaskGroupId = '';
+    streamedOutput = '';
+    pendingStreamOutput = '';
 
     const structuredDemandText = [
       '【需求标题】',
@@ -707,7 +775,12 @@
         });
       }
 
-      const res = await fetch('/api/deconstruct', { method: 'POST', headers: requestHeaders, body: requestBody });
+      const res = await fetch('/api/deconstruct', {
+        method: 'POST',
+        headers: requestHeaders,
+        body: requestBody,
+        signal: deconstructController.signal
+      });
 
       if (!res.ok) {
         const errText = await res.text();
@@ -716,8 +789,20 @@
 
       const data: any = await readDeconstructStream(res, (event) => {
         if (event.type === 'status' && event.message) streamMessage = event.message;
-        if (event.type === 'provider_delta') streamMessage = '正在接收并校验模型输出…';
-      });
+        if (event.type === 'provider_delta' && event.delta) {
+          streamMessage = '正在接收模型输出…';
+          pendingStreamOutput += event.delta;
+          if (streamFrameHandle === null) {
+            streamFrameHandle = requestAnimationFrame(() => {
+              streamedOutput += pendingStreamOutput;
+              pendingStreamOutput = '';
+              streamFrameHandle = null;
+            });
+          }
+        }
+      }, { signal: deconstructController.signal });
+      clearStreamFrame();
+      flushStreamOutput();
       const rawTasks = data.tasks || [];
 
       // 规范化负责人：模糊匹配共享交付目录中的核心成员，不符合的强制指派
@@ -758,10 +843,17 @@
       isMockResponse = !!data.is_mock;
       hasResult = true;
     } catch (e: any) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        streamMessage = '已停止生成';
+        return;
+      }
       console.error('AI Deconstruct failed:', e);
       displayToast(`AI 解构失败: ${e.message}`, 'error');
     } finally {
-      isLoading = false;
+      if (deconstructController === controller) {
+        deconstructController = null;
+        setGenerationActive(false);
+      }
     }
   }
 
@@ -935,8 +1027,7 @@
         class="wa-admin-action primary"
       >
         {#if isLoading}
-          <span class="spinner-small"></span>
-          解构分析中
+          正在解构
         {:else}
           生成解构
         {/if}
@@ -1234,21 +1325,19 @@
     </div>
   {/if}
 
-  {#if !compact || isLoading || hasResult}
   <div class="deconstructor-main-grid">
     {#if compact}
       <section class="compact-result-panel wa-admin-card" aria-label="AI 解构结果">
         <div class="deconstructor-table-head">
           <div>
             <span class="eyebrow">解构结果</span>
-            <h3>{isLoading ? '正在生成任务建议' : `${result.tasks.length} 个任务建议`}</h3>
+            <h3>{isLoading ? '正在生成任务建议' : hasResult ? `${result.tasks.length} 个任务建议` : '等待生成任务建议'}</h3>
           </div>
           {#if hasResult}<span class="wa-admin-pill tone-info">完整性 {percentLabel(result.analysis.completeness_score)}</span>{/if}
         </div>
-        {#if isLoading}
-          <div class="compact-loading"><span class="spinner-small"></span><span>{streamMessage}</span></div>
-        {:else}
-          <div class="compact-task-list">
+        <div class="compact-result-body" class:is-streaming={isLoading}>
+          {#if hasResult}
+            <div class="compact-task-list" class:is-muted={isLoading}>
             {#each result.tasks as task (task.id)}
               <button type="button" class="compact-task-row" class:is-selected={activeGeneratedTaskId === task.id} on:click={() => selectGeneratedTask(task)}>
                 <span class="compact-task-index font-mono">{task.id}</span>
@@ -1256,8 +1345,23 @@
                 <span class="compact-task-meta"><em>{getHoursLabel(task.estimated_hours)}</em><em>{difficultyLabel(task.difficulty)}</em></span>
               </button>
             {/each}
-          </div>
-        {/if}
+            </div>
+          {:else}
+            <div class="compact-result-empty">
+              <strong>等待任务建议</strong>
+              <span>生成后会在这里按任务展示代码库、负责人、工时与难度。</span>
+            </div>
+          {/if}
+          {#if isLoading}
+            <div class="streaming-output-shell" aria-live="polite" aria-label="AI 正在流式生成解构结果">
+              <div class="streaming-output-status">
+                <span class="streaming-live-dot" aria-hidden="true"></span>
+                <span>{streamMessage}</span>
+              </div>
+              <pre class="streaming-output">{streamedOutput || '等待模型返回首个内容片段'}<span class="streaming-cursor" aria-hidden="true"></span></pre>
+            </div>
+          {/if}
+        </div>
       </section>
     {:else}
     <section class="deconstructor-table-stack wa-admin-section" aria-label="任务证据列表">
@@ -1271,9 +1375,12 @@
         </div>
 
         {#if isLoading}
-          <div class="state-panel">
-            <div class="spinner-large"></div>
-            <p class="loading-text">{streamMessage}</p>
+          <div class="state-panel streaming-state" aria-live="polite">
+            <div class="streaming-output-status">
+              <span class="streaming-live-dot" aria-hidden="true"></span>
+              <span>{streamMessage}</span>
+            </div>
+            <pre class="streaming-output">{streamedOutput || '等待模型返回首个内容片段'}<span class="streaming-cursor" aria-hidden="true"></span></pre>
           </div>
         {:else if !hasResult}
           <div class="state-panel">
@@ -1664,7 +1771,6 @@
       {/if}
     </aside>
   </div>
-  {/if}
 
 </section>
 
@@ -3783,17 +3889,111 @@
     box-shadow: none;
   }
 
-  .compact-loading {
-    min-height: 92px;
+  .compact-result-body {
+    position: relative;
+    min-width: 0;
+    min-height: 220px;
+    overflow: hidden;
+    border-top: 1px solid var(--wa-border-soft);
+  }
+
+  .compact-result-empty {
+    min-height: 220px;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--wa-space-2);
+    padding: var(--wa-space-4);
+    color: var(--wa-text-muted);
+    text-align: center;
+  }
+
+  .compact-result-empty strong {
+    color: var(--wa-text-strong);
+    font-size: 13px;
+  }
+
+  .compact-result-empty span {
+    max-width: 34ch;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .compact-task-list.is-muted {
+    opacity: 0.22;
+    pointer-events: none;
+  }
+
+  .streaming-output-shell {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    min-width: 0;
+    min-height: 220px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--wa-space-3);
+    padding: var(--wa-space-4);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-md);
+    background: color-mix(in srgb, var(--wa-surface-inset) 94%, var(--wa-accent-soft));
+    box-sizing: border-box;
+  }
+
+  .streaming-output-status {
+    min-width: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 9px;
-    border: 1px dashed var(--wa-border-soft);
-    border-radius: 11px;
-    background: var(--wa-surface-inset);
+    gap: var(--wa-space-2);
     color: var(--wa-text-muted);
     font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .streaming-live-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
+    border-radius: 999px;
+    background: var(--wa-accent-strong);
+  }
+
+  .streaming-output {
+    min-width: 0;
+    min-height: 0;
+    max-height: 250px;
+    margin: 0;
+    overflow: auto;
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    word-break: break-word;
+    scrollbar-gutter: stable;
+  }
+
+  .streaming-cursor {
+    display: inline-block;
+    width: 0.6em;
+    height: 1.05em;
+    margin-left: 2px;
+    vertical-align: -0.16em;
+    border-radius: 1px;
+    background: var(--wa-accent-strong);
+    animation: streamCursorBlink 900ms steps(1, end) infinite;
+  }
+
+  .streaming-state {
+    align-content: stretch;
+    justify-items: stretch;
+    text-align: left;
+  }
+
+  @keyframes streamCursorBlink {
+    0%, 52% { opacity: 1; }
+    53%, 100% { opacity: 0; }
   }
 
   .compact-task-list {
@@ -3877,7 +4077,12 @@
      single workbench surface. Compact sections use dividers and rows instead
      of stacking another card at every level. */
   .deconstructor-workbench.compact.embedded {
-    gap: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "entry result"
+      "alert result";
+    align-items: start;
+    gap: 0 22px;
   }
 
   .deconstructor-workbench.compact.embedded .deconstructor-entry-card,
@@ -3890,7 +4095,12 @@
   }
 
   .deconstructor-workbench.compact.embedded .deconstructor-entry-card {
+    grid-area: entry;
     padding: 0;
+  }
+
+  .deconstructor-workbench.compact.embedded .mock-alert-banner {
+    grid-area: alert;
   }
 
   .deconstructor-workbench.compact.embedded .entry-card-head {
@@ -3898,7 +4108,13 @@
     border-bottom: 1px solid var(--wa-border-soft);
   }
 
+  .deconstructor-workbench.compact.embedded .entry-card-head .wa-admin-action {
+    min-height: var(--wa-touch-h, 44px);
+    white-space: nowrap;
+  }
+
   .deconstructor-workbench.compact.embedded .compact-demand-link {
+    grid-template-columns: minmax(0, 1fr);
     padding: 12px 2px;
     border: 0;
     border-bottom: 1px solid var(--wa-border-soft);
@@ -3931,12 +4147,16 @@
   }
 
   .deconstructor-workbench.compact.embedded .deconstructor-main-grid {
+    grid-area: result;
+    align-self: stretch;
     gap: 0;
+    padding-left: 22px;
+    border-left: 1px solid var(--wa-border-soft);
   }
 
   .deconstructor-workbench.compact.embedded .compact-result-panel {
-    padding: 16px 2px 4px;
-    border-top: 1px solid var(--wa-border-soft);
+    padding: 2px 2px 4px;
+    border-top: 0;
   }
 
   .deconstructor-workbench.compact.embedded .compact-task-list {
@@ -4013,6 +4233,22 @@
   }
 
   @media (max-width: 900px) {
+    .deconstructor-workbench.compact.embedded {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "entry"
+        "alert"
+        "result";
+      gap: 0;
+    }
+
+    .deconstructor-workbench.compact.embedded .deconstructor-main-grid {
+      margin-top: 16px;
+      padding: 16px 0 0;
+      border-top: 1px solid var(--wa-border-soft);
+      border-left: 0;
+    }
+
     .deconstructor-workbench.embedded .deconstructor-metrics {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -4036,8 +4272,13 @@
   @media (prefers-reduced-motion: reduce) {
     .spinner,
     .loading-spinner,
-    .modal-overlay {
+    .modal-overlay,
+    .streaming-cursor {
       animation: none !important;
+    }
+
+    .streaming-cursor {
+      opacity: 1;
     }
   }
 </style>

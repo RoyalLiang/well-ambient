@@ -77,9 +77,14 @@ type releaseLifecycleRequest struct {
 func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	projectKey := deliveryplanning.NormalizeProjectKey(r.URL.Query().Get("project_key"))
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	view := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("view")))
 	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	if status != "" && !validReleaseStatus(status) {
 		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_status", "release status must be planned, released, archived, or discarded")
+		return
+	}
+	if view != "" && view != "current" && view != "archived" {
+		writeDeliveryError(w, http.StatusUnprocessableEntity, "invalid_release_view", "release view must be current or archived")
 		return
 	}
 
@@ -93,7 +98,7 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 	err := db.DB.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
 		window, err := readmodel.OpenPage(r.Context(), tx, readmodel.PageRequest{
 			Dataset: "release_facts", Contract: "releases",
-			Scope:  map[string]string{"project_key": projectKey, "status": status, "q": search},
+			Scope:  map[string]string{"project_key": projectKey, "status": status, "view": view, "q": search},
 			Cursor: r.URL.Query().Get("cursor"), Limit: r.URL.Query().Get("limit"), DefaultLimit: 50, MaxLimit: 100,
 		}, &position)
 		if err != nil {
@@ -106,6 +111,10 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 		}
 		if status != "" {
 			query = query.Where("status = ?", status)
+		} else if view == "archived" {
+			query = query.Where("status = ?", deliveryplanning.ReleaseArchived)
+		} else if view == "current" {
+			query = query.Where("status <> ?", deliveryplanning.ReleaseArchived)
 		}
 		if search != "" {
 			like := "%" + search + "%"
@@ -1367,18 +1376,18 @@ func validReleaseStatus(value string) bool {
 func releaseLifecycleFor(release db.ReleaseVersion, activeWorkItemLinks, jiraLinks int64) releaseLifecycleCapabilities {
 	local := strings.EqualFold(strings.TrimSpace(release.Source), "local")
 	capabilities := releaseLifecycleCapabilities{
-		CanPublish: local && release.Status == deliveryplanning.ReleasePlanned,
-		CanArchive: local && release.Status == deliveryplanning.ReleaseReleased,
-		CanDiscard: local && release.Status == deliveryplanning.ReleasePlanned,
-		CanDelete:  local && (release.Status == deliveryplanning.ReleasePlanned || release.Status == deliveryplanning.ReleaseDiscarded),
+		CanPublish: false,
+		CanArchive: local && release.Status != deliveryplanning.ReleaseArchived,
+		CanDiscard: false,
+		CanDelete:  local && release.Status == deliveryplanning.ReleaseArchived,
 	}
 	if capabilities.CanDelete && (activeWorkItemLinks > 0 || jiraLinks > 0) {
 		capabilities.CanDelete = false
 		capabilities.DeleteBlockReason = "请先移除已关联的 Jira 事项或 Jira 版本后再删除"
 	} else if !local {
 		capabilities.DeleteBlockReason = "Jira 来源版本只能在来源系统中维护"
-	} else if release.Status == deliveryplanning.ReleaseReleased || release.Status == deliveryplanning.ReleaseArchived {
-		capabilities.DeleteBlockReason = "已发布或已归档版本作为发布事实永久保留"
+	} else if release.Status != deliveryplanning.ReleaseArchived {
+		capabilities.DeleteBlockReason = "请先归档版本，再到归档版本列表删除"
 	}
 	return capabilities
 }

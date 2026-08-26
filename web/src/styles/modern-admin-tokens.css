@@ -101,6 +101,16 @@
   --wa-shadow-panel: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 16px 42px rgba(30, 46, 64, 0.075);
   --wa-shadow-glow: 0 0 0 1px rgba(1, 139, 141, 0.08), 0 14px 30px rgba(1, 139, 141, 0.1);
 
+  /* Shared standalone AdminDataList surface contract. Keep adjacent list
+     controls on this material instead of creating a second card language. */
+  --wa-admin-list-surface-background: var(--wa-glass-panel);
+  --wa-admin-list-surface-border: var(--wa-glass-outline);
+  --wa-admin-list-surface-border-top: var(--wa-glass-highlight);
+  --wa-admin-list-surface-radius: var(--wa-radius-md);
+  --wa-admin-list-surface-shadow: var(--wa-shadow-glass);
+  --wa-admin-list-surface-filter: blur(16px) saturate(128%);
+  --wa-admin-list-surface-solid-background: var(--wa-surface-overlay);
+
   --wa-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --wa-duration-fast: 140ms;
   --wa-duration: 200ms;
@@ -109,7 +119,6 @@
 
 html {
   background: var(--wa-bg-ambient), var(--wa-bg-page);
-  scrollbar-color: rgba(1, 139, 141, 0.4) rgba(121, 139, 159, 0.12);
 }
 
 body {
@@ -118,30 +127,17 @@ body {
   font-family: var(--wa-font-sans);
 }
 
+/* Global hidden-scrollbar contract: retain every scroll owner and interaction,
+   but remove browser scrollbar chrome consistently across all app entrypoints. */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(1, 139, 141, 0.38) rgba(121, 139, 159, 0.1);
+  scrollbar-width: none !important;
+  -ms-overflow-style: none;
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-*::-webkit-scrollbar-track,
-*::-webkit-scrollbar-corner {
-  background: rgba(121, 139, 159, 0.08);
-}
-
-*::-webkit-scrollbar-thumb {
-  min-height: 44px;
-  border: 2px solid rgba(255, 255, 255, 0.72);
-  border-radius: 999px;
-  background: rgba(1, 139, 141, 0.36);
-}
-
-*::-webkit-scrollbar-thumb:hover {
-  background: rgba(1, 139, 141, 0.54);
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 .wa-icon {

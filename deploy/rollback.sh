@@ -31,19 +31,13 @@ if [[ ! "$http_port" =~ ^[0-9]+$ ]] || ((http_port < 1 || http_port > 65535)); t
   echo "HTTP_PORT must be an integer between 1 and 65535" >&2
   exit 2
 fi
-export APP_UID=${APP_UID:-$(id -u)}
-export APP_GID=${APP_GID:-$(id -g)}
 export WELL_AMBIENT_VERSION=$(tr -d '[:space:]' <"$state_dir/previous-version")
 if [[ ! "$WELL_AMBIENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ || "$WELL_AMBIENT_VERSION" == "latest" ]]; then
   echo "recorded previous version is not a valid immutable Docker tag" >&2
   exit 2
 fi
-export WELL_AMBIENT_COMMIT=rollback
-export WELL_AMBIENT_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
 compose=(docker compose --env-file "$env_file" -f "$project_root/compose.yaml" --project-directory "$project_root")
-docker image inspect "well-ambient-server:$WELL_AMBIENT_VERSION" >/dev/null
-docker image inspect "well-ambient-web:$WELL_AMBIENT_VERSION" >/dev/null
+"${compose[@]}" config --quiet
 "${compose[@]}" up -d --no-deps server web
 curl --retry 20 --retry-delay 2 --retry-connrefused --fail --silent --show-error \
   "http://127.0.0.1:$http_port/ready" >/dev/null

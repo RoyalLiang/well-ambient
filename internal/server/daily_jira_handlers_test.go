@@ -148,6 +148,54 @@ func TestDailyJiraAuditReadsOnlyTheBoundedProjectionPage(t *testing.T) {
 	if !audit.Page.HasMore || audit.Page.NextCursor == "" || audit.Page.Limit != 25 || audit.Page.SearchMode == "" {
 		t.Fatalf("Daily Jira page metadata is incomplete: %+v", audit.Page)
 	}
+	firstPageTaskIDs := make([]string, len(sevenDay.Items))
+	for index, item := range sevenDay.Items {
+		firstPageTaskIDs[index] = item.TaskID
+	}
+
+	nextRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/decision/daily-jira?bucket=seven_day&limit=25&cursor="+audit.Page.NextCursor,
+		nil,
+	)
+	nextRequest.Header.Set("Authorization", "Bearer "+token)
+	nextResponse := httptest.NewRecorder()
+	server.mux.ServeHTTP(nextResponse, nextRequest)
+	if nextResponse.Code != http.StatusOK {
+		t.Fatalf("Daily Jira next-page status = %d body %s", nextResponse.Code, nextResponse.Body.String())
+	}
+	var nextAudit dailyJiraAuditResponse
+	if err := json.NewDecoder(nextResponse.Body).Decode(&nextAudit); err != nil {
+		t.Fatalf("decode Daily Jira next page: %v", err)
+	}
+	if !nextAudit.Page.HasPrevious || nextAudit.Page.PreviousCursor == "" {
+		t.Fatalf("Daily Jira next page did not expose a previous cursor: %+v", nextAudit.Page)
+	}
+
+	previousRequest := httptest.NewRequest(
+		http.MethodGet,
+		"/api/decision/daily-jira?bucket=seven_day&limit=25&direction=previous&cursor="+nextAudit.Page.PreviousCursor,
+		nil,
+	)
+	previousRequest.Header.Set("Authorization", "Bearer "+token)
+	previousResponse := httptest.NewRecorder()
+	server.mux.ServeHTTP(previousResponse, previousRequest)
+	if previousResponse.Code != http.StatusOK {
+		t.Fatalf("Daily Jira previous-page status = %d body %s", previousResponse.Code, previousResponse.Body.String())
+	}
+	var previousAudit dailyJiraAuditResponse
+	if err := json.NewDecoder(previousResponse.Body).Decode(&previousAudit); err != nil {
+		t.Fatalf("decode Daily Jira previous page: %v", err)
+	}
+	previousItems := previousAudit.Buckets[2].Items
+	if len(previousItems) != len(firstPageTaskIDs) {
+		t.Fatalf("Daily Jira previous-page row count = %d, want %d", len(previousItems), len(firstPageTaskIDs))
+	}
+	for index, item := range previousItems {
+		if item.TaskID != firstPageTaskIDs[index] {
+			t.Fatalf("Daily Jira previous-page item %d = %s, want %s", index, item.TaskID, firstPageTaskIDs[index])
+		}
+	}
 }
 
 func TestResolvedDailyJiraStatusMatchesDatabaseReadPredicate(t *testing.T) {

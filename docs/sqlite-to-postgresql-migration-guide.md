@@ -10,7 +10,7 @@ database:
   legacy_sqlite_path: /var/lib/well-ambient/legacy/well-ambient.db
 ```
 
-Compose 对应宿主机路径为 `deploy/runtime/data/legacy/well-ambient.db`。
+Compose 对应宿主机路径为 `deploy/runtime/data/legacy/well-ambient.db`。PostgreSQL 不由该 Compose 创建；安装页连接的是服务器已经部署或可通过受控网络访问的外部 PostgreSQL。
 
 自动迁移覆盖当前版本 `db.RequiredSchemaModels()` 声明的应用事实表，不复制 SQLite 专用派生表、未知旧表、`sqlite_sequence`、`daily_jira_audit_*` 或 `read_model_generations`。附件文件不在 SQLite 内，必须单独复制并验收。开发机没有真实 PostgreSQL 服务，因此上线前仍须在 Linux staging 用生产快照完整演练。
 

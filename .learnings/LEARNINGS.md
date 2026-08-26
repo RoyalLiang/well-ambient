@@ -1,3 +1,99 @@
+## [LRN-20260824-001] correction
+
+**Logged**: 2026-08-24T00:00:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+A sibling filter component must inherit the `AdminDataList` surface contract, not merely share generic project tokens.
+
+### Details
+The functional split correctly kept page filters outside the reusable list, but `AdminListFilterBar` used the stronger glass panel, a different shadow and saturation, plus a root `focus-within` glow. The list used the standard glass panel and glass shadow. Contract and geometry checks passed while the two siblings still looked like unrelated components, which the user correctly rejected.
+
+### Suggested Action
+Define one versioned list-surface token contract, require both roots to consume it, forbid a second filter-bar material, and compare browser computed background, border, radius, shadow and backdrop filter at component preview breakpoints.
+
+### Metadata
+- Source: user_feedback
+- Related Files: web/src/components/admin-console/AdminDataList.svelte, web/src/components/admin-console/AdminListFilterBar.svelte, web/src/styles/modern-admin-tokens.css
+- Tags: shared-component, surface-contract, visual-consistency, user-feedback
+- Pattern-Key: ui.shared_surface_contract_not_generic_tokens
+- Recurrence-Count: 1
+- First-Seen: 2026-08-24
+- Last-Seen: 2026-08-24
+
+### Resolution
+- Added one shared, versioned AdminDataList surface token contract and required both sibling components to consume it.
+- Removed the filter root focus glow while preserving focus-visible behavior on its real controls.
+- Verified computed surface equality in the signed preview at 1440/768/390/320 and on both authenticated business pages.
+
+---
+
+## [LRN-20260824-003] correction
+
+**Logged**: 2026-08-24T22:00:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+When a segmented switch already shows per-option counts, do not repeat the active count in a separate summary row.
+
+### Details
+Daily Jira correctly placed each bucket count beside its switch label, but the filter surface also rendered an active-bucket summary with visible and total counts below the controls. The duplicated fact increased toolbar height and made the component look less compact, even though both values were technically correct.
+
+### Suggested Action
+Keep each label and tabular count together in the switch, remove the repeated active-count meta row, and place only non-redundant freshness information inline with secondary actions. On narrow screens, let secondary freshness text disappear before primary controls wrap.
+
+### Metadata
+- Source: user_feedback
+- Related Files: web/src/components/DailyJiraAudit.svelte, web/tests/admin-list-filter-bar-contract.test.ts
+- Tags: segmented-control, count, duplicate-summary, toolbar-density, responsive
+- See Also: LRN-20260824-001
+- Pattern-Key: ui.segmented_count_no_duplicate_summary
+- Recurrence-Count: 1
+- First-Seen: 2026-08-24
+- Last-Seen: 2026-08-24
+
+### Resolution
+- **Resolved**: 2026-08-24T22:14:00+08:00
+- **Notes**: Removed the Daily Jira duplicate meta row, kept each bucket count inside its segmented switch, moved freshness text inline on desktop, and hid it before narrow layouts could wrap. Added a 320px spacing contract and verified all three switches, lazy loading, 115 frontend contracts, zero-error checks, production build, both design detectors, and authenticated browser breakpoints.
+
+---
+
+## [LRN-20260824-002] correction
+
+**Logged**: 2026-08-24T21:32:14+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+List-filter selection state must not change a Select or MultiSelect trigger from a field shape into an elliptical bordered pill.
+
+### Details
+The list/filter surfaces were aligned, but the dropdown triggers were not validated across their value-bearing states. A control can match the surrounding component at rest and still drift into a pill after an assignee, project, or column summary is selected. Geometry is part of the state contract, not merely a screenshot detail.
+
+### Suggested Action
+Give shared Select/MultiSelect an explicit list-filter field shape owned by the component, require the decision filters to opt in, and assert identical height, border width, and radius across default, selected, open, and focus-visible states in both source contracts and the authenticated browser.
+
+### Metadata
+- Source: user_feedback
+- Related Files: web/src/components/shared/Select.svelte, web/src/components/shared/MultiSelect.svelte, web/src/components/DecisionDashboard.svelte
+- Tags: select, multiselect, selected-state, geometry, pill-drift, visual-regression
+- See Also: LRN-20260824-001
+- Pattern-Key: ui.select_state_geometry_stability
+- Recurrence-Count: 1
+- First-Seen: 2026-08-24
+- Last-Seen: 2026-08-24
+
+### Resolution
+- **Resolved**: 2026-08-24T21:46:30+08:00
+- **Notes**: Shared Select and MultiSelect now suppress their nested search-input focus outline, keep the input at an 8px radius, and render one accessible 10px trigger outline. Decision summary-mode controls now keep the same 44px tablet/phone height as the other filters. Verified in the authenticated browser at desktop, 760px, and 390px plus 114 frontend contracts, zero-error checks, production build, and both design detectors.
+
+---
+
 ## [LRN-20260720-004] correction
 
 **Logged**: 2026-07-20T19:24:00+08:00

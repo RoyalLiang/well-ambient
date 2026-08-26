@@ -8,7 +8,10 @@ function read(relativePath: string) {
 
 const app = read('src/App.svelte');
 const setup = read('src/components/DatabaseSetup.svelte');
+const compose = read('../compose.yaml');
 const deployment = read('../deploy/deploy.sh');
+const makefile = read('../Makefile');
+const productionEnv = read('../deploy/.env.production.example');
 
 test('the application resolves database setup before rendering login or authenticated workspaces', () => {
   assert.match(app, /type SetupGateState = 'checking' \| 'required' \| 'configured' \| 'unavailable'/);
@@ -60,10 +63,24 @@ test('database setup polls migration progress and recovers across restart', () =
   assert.match(setup, /服务重启时间超过预期/);
 });
 
+test('server compose requires external PostgreSQL and prebuilt application images', () => {
+  assert.doesNotMatch(compose, /^\s{2}postgres:\s*$/m);
+  assert.doesNotMatch(compose, /postgres_data|postgres:5432|POSTGRES_PASSWORD|\bbuild:/);
+  assert.match(compose, /WELL_AMBIENT_SERVER_IMAGE/);
+  assert.match(compose, /WELL_AMBIENT_WEB_IMAGE/);
+  assert.match(compose, /host\.docker\.internal:host-gateway/);
+  assert.match(productionEnv, /^WELL_AMBIENT_SERVER_IMAGE=/m);
+  assert.match(productionEnv, /^WELL_AMBIENT_WEB_IMAGE=/m);
+  assert.doesNotMatch(productionEnv, /^POSTGRES_(?:DB|USER|PASSWORD)=/m);
+  assert.doesNotMatch(deployment, /export APP_(?:UID|GID)=/);
+  assert.match(makefile, /^compose-bundle:/m);
+  assert.match(makefile, /well-ambient-compose-\$\(VERSION\)\.tar\.gz/);
+});
+
 test('external PostgreSQL upgrades fail closed until an upstream backup is referenced', () => {
-  assert.match(deployment, /database_endpoint=\$\{database_dsn#\*@\}/);
-  assert.match(deployment, /database_endpoint" == "postgres:5432"/);
   assert.match(deployment, /WELL_AMBIENT_EXTERNAL_BACKUP_REFERENCE/);
-  assert.match(deployment, /external PostgreSQL detected; create and verify an upstream snapshot first/);
+  assert.match(deployment, /external PostgreSQL requires a verified upstream snapshot before migration/);
   assert.match(deployment, /external_database_endpoint=%s\\nbackup_reference=%s/);
+  assert.doesNotMatch(deployment, /exec -T postgres|\bpg_dump\b|\bpg_restore\b/);
+  assert.doesNotMatch(deployment, /"\$\{compose\[@\]\}" up [^\n]*\bpostgres\b/);
 });

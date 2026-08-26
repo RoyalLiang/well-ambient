@@ -23,6 +23,7 @@ const workItemDonePredicate = `LOWER(TRIM(status)) IN ('done','closed','resolved
 const workItemActivePredicate = `(status IS NULL OR NOT (` + workItemDonePredicate + `))`
 const workItemReviewPredicate = `LOWER(TRIM(status)) IN ('verification','review','testing','in_review','验收','评审','测试')`
 const workItemProgressPredicate = `LOWER(TRIM(status)) IN ('in_progress','progress','active','doing','进行中','处理中','排查')`
+const workItemBugPredicate = `LOWER(TRIM(issue_type)) IN ('bug','defect','缺陷','故障')`
 
 func NewService(conn *gorm.DB) *Service {
 	return &Service{
@@ -105,11 +106,13 @@ func (s *Service) QueryPlan(ctx context.Context, query PlanQuery) (PlanSnapshot,
 		COALESCE(SUM(CASE WHEN %[4]s AND NOT (%[2]s) AND NOT (%[3]s) THEN 1 ELSE 0 END), 0) AS backlog,
 		COALESCE(SUM(CASE WHEN %[3]s THEN 1 ELSE 0 END), 0) AS progress,
 		COALESCE(SUM(CASE WHEN %[2]s THEN 1 ELSE 0 END), 0) AS review,
-		COALESCE(SUM(CASE WHEN LOWER(TRIM(issue_type)) IN ('bug','defect','缺陷','故障') THEN 0 ELSE 1 END), 0) AS requirements,
-		COALESCE(SUM(CASE WHEN LOWER(TRIM(issue_type)) IN ('bug','defect','缺陷','故障') THEN 1 ELSE 0 END), 0) AS bugs,
+		COALESCE(SUM(CASE WHEN %[5]s THEN 0 ELSE 1 END), 0) AS requirements,
+		COALESCE(SUM(CASE WHEN %[5]s THEN 1 ELSE 0 END), 0) AS bugs,
+		COALESCE(SUM(CASE WHEN %[4]s AND NOT (%[5]s) THEN 1 ELSE 0 END), 0) AS active_requirements,
+		COALESCE(SUM(CASE WHEN %[4]s AND %[5]s THEN 1 ELSE 0 END), 0) AS active_bugs,
 		COALESCE(SUM(CASE WHEN TRIM(project_key) <> '' THEN 1 ELSE 0 END), 0) AS planned,
 		COALESCE(SUM(CASE WHEN TRIM(project_key) = '' THEN 1 ELSE 0 END), 0) AS unplanned
-	`, workItemDonePredicate, workItemReviewPredicate, workItemProgressPredicate, workItemActivePredicate)
+	`, workItemDonePredicate, workItemReviewPredicate, workItemProgressPredicate, workItemActivePredicate, workItemBugPredicate)
 	if err := conn.Session(&gorm.Session{}).Select(summaryProjection).Scan(&summary).Error; err != nil {
 		return PlanSnapshot{}, err
 	}

@@ -12,6 +12,7 @@
   import AIConfig from './config/AIConfig.svelte';
   import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
   import { showToast } from '../lib/toast';
+  import { responseErrorMessage } from '../lib/http-error';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import { resetSettingsWorkspaceScroll } from '../lib/settings-ui';
   import {
@@ -226,9 +227,7 @@
   let rollbackLoadingID: number | null = null;
 
   $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(activeSection);
-  $: visibleConfigVersions = isIntegrationSection
-    ? configVersions.filter(v => configVersionTouchesSection(v, activeSection))
-    : configVersions;
+  $: visibleConfigVersions = configVersions;
   $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
   function canAccessSection(section: SettingsSection) {
@@ -463,7 +462,9 @@
   let lastUpdatedBySection = {} as Record<SettingsSection, string>;
   let settingsInspector: AdminInspectorRecord;
   $: lastUpdatedBySection = SETTINGS_NAV_ITEMS.reduce((result, item) => {
-    result[item.id] = configVersions.find(version => configVersionTouchesSection(version, item.id))?.created_at || '';
+    result[item.id] = item.id === 'versions'
+      ? configVersions[0]?.created_at || ''
+      : configVersions.find(version => configVersionTouchesSection(version, item.id))?.created_at || '';
     return result;
   }, {} as Record<SettingsSection, string>);
   $: {
@@ -649,7 +650,11 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig)
       });
-      if (!res.ok) throw new Error('Failed to save config');
+      if (!res.ok) {
+        saveError = '保存配置失败: ' + await responseErrorMessage(res, `HTTP ${res.status}`);
+        showToast(saveError, { type: 'error', title: '保存失败' });
+        return;
+      }
       const result = await res.json();
       if (result.success) {
         globalConfig = newConfig;
@@ -700,6 +705,7 @@
     if (section === 'jira') return jiraStatus;
     if (section === 'performance') return performanceStatus;
     if (section === 'ai') return aiStatus;
+    if (section === 'versions') return currentUserPermissions.includes('config:read') ? 'online' : 'warning';
     if (section === 'solution_prompts') return currentUserPermissions.includes('solution_prompt:manage') ? 'online' : 'warning';
     if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning';
     if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read') ? 'online' : 'warning';
@@ -723,6 +729,7 @@
     if (section === 'performance') return globalConfig.performance_brain?.enabled ? '后台计算已启用' : '后台计算未启用';
     if (section === 'projects') return `${globalConfig.jira?.sync_projects?.length || 0} 个映射`;
     if (section === 'ai') return globalConfig.ai?.model || '模型待配置';
+    if (section === 'versions') return `${configVersions.length} 个版本`;
     if (section === 'solution_prompts') return globalConfig.server?.public_url ? '链接地址已配置' : '链接地址待配置';
     if (section === 'ai_context') return globalConfig.ai?.project_architecture ? '语料已就绪' : '语料待配置';
     if (section === 'users') return `${users.length} 位成员`;
@@ -738,7 +745,7 @@
   }
 
   function requiredPermissionLabel(section: SettingsSection) {
-    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(section)) return '配置只读';
+    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'versions'].includes(section)) return '配置只读';
     if (section === 'solution_prompts') return '全局超管';
     if (section === 'ai_context') return '语料只读';
     return '成员只读';
@@ -754,8 +761,9 @@
   }
 
   function sectionApiLinks(section: SettingsSection) {
+    if (section === 'versions') return ['/api/config/versions', '/api/config/versions/{id}/rollback'];
     if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'].includes(section)) {
-      return ['/api/config', '/api/config/versions'];
+      return ['/api/config'];
     }
     if (section === 'solution_prompts') return ['/api/solution-prompts', '/api/config'];
     if (section === 'users') return ['/api/users', '/api/groups'];
@@ -1381,25 +1389,32 @@
           </div>
         </div>
 
-        <div class="settings-content-header">
+        <div class="settings-content-header" class:single-column={isIntegrationSection}>
           <div class="settings-title-copy">
             <span class="settings-kicker">{activeSectionMeta.domain}</span>
             <h1 id="settings-content-title" bind:this={settingsTitleEl} tabindex="-1">{activeSectionMeta.label}</h1>
             <p>{activeSectionMeta.summary}</p>
           </div>
-          <dl class="settings-content-facts">
-            {#each settingsInspector.facts.slice(1) as fact}
-              <div>
-                <dt>{fact.label}</dt>
-                <dd>{fact.value}</dd>
-              </div>
-            {/each}
-          </dl>
+          {#if !isIntegrationSection}
+            <dl class="settings-content-facts">
+              {#each settingsInspector.facts.slice(1) as fact}
+                <div>
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value}</dd>
+                </div>
+              {/each}
+            </dl>
+          {/if}
         </div>
       </header>
 
       <div class="settings-module-panel">
-        <div class="settings-workbench-grid" class:without-audit={!isIntegrationSection}>
+        <div
+          class="settings-workbench-grid"
+          class:without-audit={!isIntegrationSection}
+          class:with-context={isIntegrationSection}
+          class:compact-config={isIntegrationSection}
+        >
           <div class="settings-primary-pane" class:integration-surface={isIntegrationSection || activeSection === 'ai_context'}>
     {#if activeSection === 'gitlab'}
             <GitLabConfig config={globalConfig.gitlab} lastUpdated={lastUpdatedBySection.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
@@ -1423,6 +1438,84 @@
             <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} />
     {:else if activeSection === 'ai'}
             <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} {currentUserPermissions} />
+    {:else if activeSection === 'versions'}
+            <section class="config-version-workbench" aria-label="全部配置版本">
+              <div class="config-version-toolbar">
+                <div>
+                  <span class="audit-kicker font-mono">版本管理</span>
+                  <h2>全部配置版本</h2>
+                  <p>集中查看功能配置的保存快照、字段差异和回滚来源。</p>
+                </div>
+                <Button size="small" variant="secondary" on:click={() => fetchConfigVersions()}>刷新记录</Button>
+              </div>
+
+              {#if configVersionError}
+                <div class="config-version-error">{configVersionError}</div>
+              {/if}
+
+              {#if configVersions.length === 0}
+                <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
+              {:else}
+                <div class="version-layout">
+                  <div class="version-list" role="list" aria-label="配置版本">
+                    {#each visibleConfigVersions as version}
+                      <button
+                        type="button"
+                        class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
+                        on:click={() => selectedConfigVersionID = version.id}
+                      >
+                        <span class="version-title">v{version.version}</span>
+                        <span class="version-meta">{formatDateTime(version.created_at)}</span>
+                        <span class="version-sections">{formatChangedSections(version.changed_sections || [])}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  {#if selectedConfigVersion}
+                    <div class="version-detail">
+                      <div class="version-detail-header">
+                        <div>
+                          <span class="version-title">版本 v{selectedConfigVersion.version}</span>
+                          <p>{selectedConfigVersion.actor_name || selectedConfigVersion.actor_id || 'system'} · {selectedConfigVersion.source || 'manual'}</p>
+                        </div>
+                        <Button
+                          size="small"
+                          variant="danger"
+                          loading={rollbackLoadingID === selectedConfigVersion.id}
+                          disabled={rollbackLoadingID !== null || selectedConfigVersion.id === configVersions[0]?.id}
+                          on:click={() => rollbackConfigVersion(selectedConfigVersion)}
+                        >
+                          回滚到此版本
+                        </Button>
+                      </div>
+
+                      {#if selectedConfigVersion.rollback_from_version_id}
+                        <div class="rollback-note">由 v{selectedConfigVersion.rollback_from_version_id} 回滚生成</div>
+                      {/if}
+
+                      <div class="diff-table">
+                        {#each selectedConfigVersion.diff || [] as diff}
+                          <div class="diff-row">
+                            <span class="diff-path font-mono">{diff.path}</span>
+                            <div class="diff-value before">
+                              <span>变更前</span>
+                              <pre class="font-mono">{formatDiffValue(diff.before)}</pre>
+                            </div>
+                            <span class="diff-arrow">→</span>
+                            <div class="diff-value after">
+                              <span>变更后</span>
+                              <pre class="font-mono">{formatDiffValue(diff.after)}</pre>
+                            </div>
+                          </div>
+                        {:else}
+                          <div class="diff-empty">该版本为初始快照或无字段差异。</div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            </section>
     {:else if activeSection === 'solution_prompts'}
             <SolutionPromptConfig publicURL={globalConfig.server?.public_url || ''} onSavePublicURL={saveSolutionPublicURL} />
     {:else if activeSection === 'ai_context'}
@@ -2068,88 +2161,42 @@
     {/if}
           </div>
 
-    {#if isIntegrationSection}
-          <aside class="settings-audit-pane" aria-label="配置版本审计">
-            <section class="config-audit-panel">
-              <div class="config-audit-header">
+          {#if isIntegrationSection}
+            <aside class="settings-context-pane" aria-label="配置上下文检查器">
+              <div class="settings-context-pane-header">
                 <div>
-                  <span class="audit-kicker font-mono">版本审计</span>
-                  <h3>配置版本审计与回滚 <span class="audit-scope">{activeSectionMeta.label}</span></h3>
+                  <h2>{settingsInspector.title}</h2>
                 </div>
-                <Button size="small" variant="ghost" on:click={() => fetchConfigVersions()}>刷新记录</Button>
+                <span class="wa-admin-pill {ADMIN_TONE_CLASS[settingsInspector.tone || 'neutral']}">{settingsInspector.status}</span>
               </div>
 
-              {#if configVersionError}
-                <div class="config-version-error">{configVersionError}</div>
-              {/if}
-
-              {#if configVersions.length === 0}
-                <div class="empty-version-state">暂无数据库配置版本。首次保存后会自动生成可审计快照。</div>
-              {:else if visibleConfigVersions.length === 0}
-                <div class="empty-version-state">当前配置页暂无独立版本记录。</div>
-              {:else}
-                <div class="version-layout">
-                  <div class="version-list" role="list" aria-label="配置版本">
-                    {#each visibleConfigVersions as version}
-                      <button
-                        type="button"
-                        class="version-item {selectedConfigVersion?.id === version.id ? 'active' : ''}"
-                        on:click={() => selectedConfigVersionID = version.id}
-                      >
-                        <span class="version-title">v{version.version}</span>
-                        <span class="version-meta">{formatDateTime(version.created_at)}</span>
-                        <span class="version-sections">{formatChangedSections(version.changed_sections || [])}</span>
-                      </button>
-                    {/each}
+              <dl class="settings-context-pane-facts">
+                {#each settingsInspector.facts as fact}
+                  <div>
+                    <dt>{fact.label}</dt>
+                    <dd>{fact.value}</dd>
                   </div>
+                {/each}
+              </dl>
 
-                  {#if selectedConfigVersion}
-                    <div class="version-detail">
-                      <div class="version-detail-header">
-                        <div>
-                          <span class="version-title">版本 v{selectedConfigVersion.version}</span>
-                          <p>{selectedConfigVersion.actor_name || selectedConfigVersion.actor_id || 'system'} · {selectedConfigVersion.source || 'manual'}</p>
-                        </div>
-                        <Button
-                          size="small"
-                          variant="danger"
-                          loading={rollbackLoadingID === selectedConfigVersion.id}
-                          disabled={rollbackLoadingID !== null || selectedConfigVersion.id === configVersions[0]?.id}
-                          on:click={() => rollbackConfigVersion(selectedConfigVersion)}
-                        >
-                          回滚到此版本
-                        </Button>
-                      </div>
-
-                      {#if selectedConfigVersion.rollback_from_version_id}
-                        <div class="rollback-note">由 v{selectedConfigVersion.rollback_from_version_id} 回滚生成</div>
-                      {/if}
-
-                      <div class="diff-table">
-                        {#each selectedConfigVersion.diff || [] as diff}
-                          <div class="diff-row">
-                            <span class="diff-path font-mono">{diff.path}</span>
-                            <div class="diff-value before">
-                              <span>变更前</span>
-                              <pre class="font-mono">{formatDiffValue(diff.before)}</pre>
-                            </div>
-                            <span class="diff-arrow">→</span>
-                            <div class="diff-value after">
-                              <span>变更后</span>
-                              <pre class="font-mono">{formatDiffValue(diff.after)}</pre>
-                            </div>
-                          </div>
-                        {:else}
-                          <div class="diff-empty">该版本为初始快照或无字段差异。</div>
-                        {/each}
-                      </div>
-                    </div>
+              {#each settingsInspector.sections as section}
+                <section class="settings-context-pane-section">
+                  <h3>{section.title}</h3>
+                  {#if section.body}
+                    <p>{section.body}</p>
                   {/if}
-                </div>
-              {/if}
-            </section>
-          </aside>
-            {/if}
+                  {#if section.items?.length}
+                    <ul class="settings-context-api-list">
+                      {#each section.items as item}
+                        <li><span class="font-mono">{item}</span></li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </section>
+              {/each}
+            </aside>
+          {/if}
+
           </div>
       </div>
     </section>
@@ -8446,6 +8493,300 @@
       transition-duration: 0.01ms !important;
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
+    }
+  }
+
+  /* Unified configuration-version ownership and compact edit rhythm. */
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config .settings-primary-pane {
+    width: min(100%, 1280px);
+    margin: 0 auto;
+    padding: 16px !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-workbench),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.gitlab-workbench) {
+    gap: 14px;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-overview),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-editor),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-step-body),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-form-stack) {
+    gap: 14px;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-header),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.overview-header) {
+    min-height: 54px;
+    padding-bottom: 12px !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-section),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-info),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-credential),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-summary),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-native-fieldset),
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-code-section) {
+    padding: 14px 0;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.compact-config :global(.scw-actions) {
+    padding-top: 12px;
+  }
+
+  .config-version-workbench {
+    min-width: 0;
+    display: grid;
+    gap: 14px;
+  }
+
+  .config-version-toolbar {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--settings-line);
+  }
+
+  .config-version-toolbar h2 {
+    margin: 3px 0 0;
+    color: var(--settings-ink);
+    font-size: 17px;
+    line-height: 1.3;
+  }
+
+  .config-version-toolbar p {
+    margin: 5px 0 0;
+    color: var(--settings-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  #settings-unified-root.settings-unified .config-version-workbench .version-layout {
+    min-height: 520px;
+    height: min(680px, calc(100dvh - 330px)) !important;
+    display: grid !important;
+    grid-template-columns: minmax(230px, 300px) minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    overflow: hidden !important;
+    border: 1px solid var(--settings-line);
+    border-radius: 10px;
+    background: rgba(246, 250, 251, 0.72);
+  }
+
+  #settings-unified-root.settings-unified .config-version-workbench .version-list {
+    min-height: 0;
+    max-height: none !important;
+    padding: 8px !important;
+    overflow: auto !important;
+    border-right: 1px solid var(--settings-line) !important;
+    border-bottom: 0 !important;
+    scrollbar-gutter: stable;
+  }
+
+  #settings-unified-root.settings-unified .config-version-workbench .version-detail {
+    min-height: 0;
+    padding: 16px !important;
+    overflow: hidden !important;
+  }
+
+  #settings-unified-root.settings-unified .config-version-workbench .diff-table {
+    min-height: 0;
+    max-height: calc(100% - 72px) !important;
+    overflow: auto !important;
+    scrollbar-gutter: stable;
+  }
+
+  @media (max-width: 760px) {
+    #settings-unified-root.settings-unified .settings-workbench-grid.compact-config .settings-primary-pane {
+      width: 100%;
+      padding: 14px !important;
+    }
+
+    .config-version-toolbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    #settings-unified-root.settings-unified .config-version-workbench .version-layout {
+      min-height: 0;
+      height: auto !important;
+      grid-template-columns: minmax(0, 1fr) !important;
+      grid-template-rows: auto auto !important;
+      overflow: visible !important;
+    }
+
+    #settings-unified-root.settings-unified .config-version-workbench .version-list {
+      max-height: 240px !important;
+      border-right: 0 !important;
+      border-bottom: 1px solid var(--settings-line) !important;
+    }
+
+    #settings-unified-root.settings-unified .config-version-workbench .version-detail {
+      padding: 14px !important;
+      overflow: visible !important;
+    }
+  }
+
+  /* Ordinary configuration routes keep a contextual inspector; version history owns its own full-width route. */
+  .settings-unified .settings-content-header.single-column {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.with-context {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 340px) !important;
+    align-items: start !important;
+    gap: 16px !important;
+  }
+
+  #settings-unified-root.settings-unified .settings-workbench-grid.with-context .settings-primary-pane {
+    width: 100%;
+    margin: 0;
+  }
+
+  .settings-unified .settings-context-pane {
+    min-width: 0;
+    position: sticky;
+    top: 12px;
+    align-self: start;
+    max-height: min(640px, calc(100dvh - 112px));
+    overflow: auto;
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.78);
+    border-radius: 14px;
+    background: var(--settings-glass-strong);
+    background-clip: padding-box;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.88),
+      0 14px 30px rgba(29, 54, 72, 0.065);
+    -webkit-backdrop-filter: blur(18px) saturate(124%);
+    backdrop-filter: blur(18px) saturate(124%);
+    scrollbar-gutter: stable;
+  }
+
+  .settings-context-pane-header {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--settings-line);
+  }
+
+  .settings-context-pane-header > div {
+    min-width: 0;
+  }
+
+  .settings-context-pane-header h2 {
+    margin: 0;
+    color: var(--settings-ink);
+    font-size: 17px;
+    font-weight: 780;
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+  }
+
+  .settings-context-pane-facts {
+    min-width: 0;
+    display: grid;
+    margin: 0;
+  }
+
+  .settings-context-pane-facts div {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--settings-line);
+  }
+
+  .settings-context-pane-facts dt,
+  .settings-context-pane-facts dd {
+    min-width: 0;
+    margin: 0;
+  }
+
+  .settings-context-pane-facts dt {
+    color: var(--settings-muted);
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .settings-context-pane-facts dd {
+    overflow: hidden;
+    color: var(--settings-ink);
+    font-size: 12px;
+    font-weight: 740;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-context-pane-section {
+    min-width: 0;
+    padding-top: 14px;
+  }
+
+  .settings-context-pane-section + .settings-context-pane-section {
+    margin-top: 14px;
+    border-top: 1px solid var(--settings-line);
+  }
+
+  .settings-context-pane-section h3 {
+    margin: 0;
+    color: var(--settings-ink);
+    font-size: 12px;
+    font-weight: 780;
+  }
+
+  .settings-context-pane-section p {
+    margin: 7px 0 0;
+    color: var(--settings-muted);
+    font-size: 11px;
+    line-height: 1.55;
+  }
+
+  .settings-context-api-list {
+    min-width: 0;
+    display: grid;
+    gap: 7px;
+    margin: 9px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .settings-context-api-list li {
+    min-width: 0;
+    padding-left: 10px;
+    border-left: 1px solid rgba(0, 143, 150, 0.24);
+    color: var(--settings-subtle);
+    font-size: 10px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  @container (max-width: 1180px) {
+    #settings-unified-root.settings-unified .settings-workbench-grid.with-context {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .settings-unified .settings-context-pane {
+      position: static;
+      top: auto;
+      width: 100%;
+      max-height: none;
+      overflow: visible;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .settings-unified .settings-context-pane {
+      padding: 14px;
     }
   }
 </style>

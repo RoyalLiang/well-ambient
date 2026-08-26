@@ -186,8 +186,14 @@
     review: number;
     requirements: number;
     bugs: number;
+    active_requirements: number;
+    active_bugs: number;
     planned: number;
     unplanned: number;
+  }
+
+  interface TaskSummaryMetric extends AdminMetric {
+    surface?: 'accent';
   }
 
   interface WorkItemCompletionResponse {
@@ -255,6 +261,8 @@
       review: 0,
       requirements: 0,
       bugs: 0,
+      active_requirements: 0,
+      active_bugs: 0,
       planned: 0,
       unplanned: 0
     };
@@ -296,8 +304,8 @@
     }, 200);
   }
   let executionRiskFilter: ExecutionRiskFilter = 'all';
-  let taskAdminMetrics: AdminMetric[] = [];
-  let executionAdminMetrics: AdminMetric[] = [];
+  let taskAdminMetrics: TaskSummaryMetric[] = [];
+  let executionAdminMetrics: TaskSummaryMetric[] = [];
 
   let collapsedAssignees: Record<string, boolean> = {};
   let userToggledAssignees: Record<string, boolean> = {};
@@ -522,11 +530,6 @@
     label: option.label,
     meta: option.department || ''
   }));
-  $: selectedProjectSummary = selectedProjects.length === 0
-    ? '全部项目'
-    : selectedProjects.length === 1
-      ? (projectNamesMap[selectedProjects[0].toUpperCase()] || selectedProjects[0])
-      : `已选 ${selectedProjects.length} 个项目`;
   $: selectedAssigneeSummary = selectedAssignees.length === 0
     ? '全部负责人'
     : selectedAssignees.length === 1
@@ -567,21 +570,20 @@
   $: focusTaskDelayDays = focusTask ? getDelayDays(focusTask.taskCreatedAt, focusTask.status) : 0;
   $: evidenceLinkedTasks = filteredTasks.filter(t => getEvidenceStatus(t).class === 'badge-has-code').length;
   $: evidenceCoverage = filteredTasks.length > 0 ? Math.round((evidenceLinkedTasks / filteredTasks.length) * 100) : 0;
-  $: taskMetricTotal = taskDataLoaded ? workItemSummary.total : filteredTasks.length;
   $: taskMetricActive = taskDataLoaded ? workItemSummary.active : activeTasks.length;
-  $: taskMetricDone = taskDataLoaded ? workItemSummary.done : done.length;
-  $: requirementCount = taskDataLoaded ? workItemSummary.requirements : filteredTasks.filter(t => t.issueType !== 'bug').length;
-  $: bugCount = taskDataLoaded ? workItemSummary.bugs : filteredTasks.filter(t => t.issueType === 'bug').length;
-  $: plannedWorkItems = taskDataLoaded ? workItemSummary.planned : filteredTasks.filter(t => Boolean(t.projectKey)).length;
-  $: unplannedWorkItems = taskDataLoaded ? workItemSummary.unplanned : filteredTasks.length - plannedWorkItems;
+  $: activeRequirementCount = taskDataLoaded
+    ? (workItemSummary.active_requirements ?? activeTasks.filter(t => t.issueType !== 'bug').length)
+    : activeTasks.filter(t => t.issueType !== 'bug').length;
+  $: activeBugCount = taskDataLoaded
+    ? (workItemSummary.active_bugs ?? activeTasks.filter(t => t.issueType === 'bug').length)
+    : activeTasks.filter(t => t.issueType === 'bug').length;
   $: taskFlowStages = [
     { key: 'backlog', label: '待办', value: taskDataLoaded ? workItemSummary.backlog : backlog.length, tone: 'neutral' },
     { key: 'progress', label: '进行中', value: taskDataLoaded ? workItemSummary.progress : inProgress.length, tone: 'info' },
-    { key: 'review', label: '评审', value: taskDataLoaded ? workItemSummary.review : inReview.length, tone: 'warning' },
-    { key: 'done', label: '完成', value: taskMetricDone, tone: 'success' }
+    { key: 'review', label: '评审', value: taskDataLoaded ? workItemSummary.review : inReview.length, tone: 'warning' }
   ].map(stage => ({
     ...stage,
-    percent: taskMetricTotal > 0 ? Math.round((stage.value / taskMetricTotal) * 100) : 0
+    percent: taskMetricActive > 0 ? Math.round((stage.value / taskMetricActive) * 100) : 0
   }));
   $: filteredExecutionItems = executionItems
     .filter(item => matchesExecutionFilters(
@@ -617,9 +619,8 @@
     });
     return map;
   })();
-  $: taskCompletionRate = taskMetricTotal > 0 ? Math.round((taskMetricDone / taskMetricTotal) * 100) : 0;
   $: {
-    const _taskMetricDependencies = [taskMetricTotal, taskMetricActive, taskMetricDone, requirementCount, bugCount, plannedWorkItems, unplannedWorkItems, taskCompletionRate, workItemSummary.review, workItemSummary.progress, selectedProjectSummary];
+    const _taskMetricDependencies = [taskMetricActive, activeRequirementCount, activeBugCount];
     taskAdminMetrics = buildTaskAdminMetrics();
   }
   $: {
@@ -643,38 +644,28 @@
   $: selectedExecutionItem = filteredExecutionItems.find(item => item.task_id === selectedExecutionTaskId) || executionFocusItem;
   $: executionInspector = selectedExecutionItem ? mapExecutionInspector(selectedExecutionItem) : null;
 
-  function buildTaskAdminMetrics(): AdminMetric[] {
+  function buildTaskAdminMetrics(): TaskSummaryMetric[] {
     return [
       {
-        label: '交付事项',
-        value: taskMetricTotal,
-        helper: `活跃 ${taskMetricActive} / 完成 ${taskMetricDone}`,
-        delta: selectedProjectSummary,
+        label: '活跃事项',
+        value: taskMetricActive,
+        tone: 'info',
+        surface: 'accent'
+      },
+      {
+        label: '活跃需求',
+        value: activeRequirementCount,
         tone: 'info'
       },
       {
-        label: '需求 / Bug',
-        value: requirementCount,
-        helper: `Bug ${bugCount} 条`,
-        tone: bugCount > 0 ? 'warning' : 'info'
-      },
-      {
-        label: '已归项目',
-        value: plannedWorkItems,
-        helper: `未归项目 ${unplannedWorkItems} 条`,
-        delta: unplannedWorkItems > 0 ? '待规划' : '完整',
-        tone: unplannedWorkItems > 0 ? 'warning' : 'success'
-      },
-      {
-        label: '闭环率',
-        value: `${taskCompletionRate}%`,
-        helper: `评审 ${taskDataLoaded ? workItemSummary.review : inReview.length} / 进行中 ${taskDataLoaded ? workItemSummary.progress : inProgress.length}`,
-        tone: taskCompletionRate >= 70 ? 'success' : 'info'
+        label: '活跃 Bug',
+        value: activeBugCount,
+        tone: 'danger'
       }
     ];
   }
 
-  function buildExecutionAdminMetrics(): AdminMetric[] {
+  function buildExecutionAdminMetrics(): TaskSummaryMetric[] {
     return [
       {
         label: '执行任务',
@@ -1634,31 +1625,37 @@
 {/snippet}
 
 <section class="kanban-section task-console" class:view-execution={currentView === 'execution'}>
-  <div class="phase41-metric-grid" aria-label="任务指标">
+  <div
+    class="phase41-summary-strip wa-admin-card"
+    class:is-status={currentView !== 'execution'}
+    class:is-execution={currentView === 'execution'}
+    aria-label="任务指标与状态"
+  >
     {#each activeAdminMetrics as metric}
-      <article class="wa-admin-card wa-admin-metric phase41-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}">
+      <article
+        class="phase41-metric {ADMIN_TONE_CLASS[metric.tone || 'neutral']}"
+        class:surface-accent={metric.surface === 'accent'}
+      >
         <span>{metric.label}</span>
         <strong>{metric.value}</strong>
-        <small>{metric.helper}</small>
+        {#if metric.helper}
+          <small>{metric.helper}</small>
+        {/if}
         {#if metric.delta}
           <em>{metric.delta}</em>
         {/if}
       </article>
     {/each}
-  </div>
 
-  {#if currentView !== 'execution'}
-    <div class="phase41-stage-strip" aria-label="任务阶段统计">
+    {#if currentView !== 'execution'}
       {#each taskFlowStages as stage}
-        <button class="phase41-stage-card wa-admin-card tone-{stage.tone}" type="button" on:click={() => setTaskView('status')}>
+        <button class="phase41-stage-card tone-{stage.tone}" type="button" on:click={() => setTaskView('status')}>
           <span>{stage.label}</span>
           <strong>{stage.value}</strong>
-          <em>{stage.percent}%</em>
-          <i style="width: {stage.percent}%"></i>
         </button>
       {/each}
-    </div>
-  {/if}
+    {/if}
+  </div>
 
   {#if false}
   <div class="task-command-surface">
@@ -5795,15 +5792,78 @@
     background: var(--wa-accent-soft);
   }
 
-  .phase41-metric-grid {
+  .phase41-summary-strip {
+    min-width: 0;
+    min-height: 72px;
     display: grid;
+    gap: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--wa-glass-outline);
+    border-radius: var(--wa-radius-lg, 14px);
+    background: var(--wa-glass-panel);
+    box-shadow: var(--wa-shadow-glass);
+    -webkit-backdrop-filter: blur(16px) saturate(128%);
+    backdrop-filter: blur(16px) saturate(128%);
+  }
+
+  .phase41-summary-strip.is-status {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .phase41-summary-strip.is-execution {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--wa-space-3);
+  }
+
+  .phase41-summary-strip > .phase41-metric,
+  .phase41-summary-strip > .phase41-stage-card {
+    min-height: 72px;
+    border: 0;
+    border-right: 1px solid var(--wa-border-divider);
+    border-radius: 0;
+    background: var(--task-cell-background, var(--wa-neutral-soft));
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .phase41-summary-strip > :last-child {
+    border-right: 0;
   }
 
   .phase41-metric {
-    border-radius: var(--wa-radius-md);
-    min-height: 112px;
+    min-width: 0;
+    padding: 9px 12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-content: center;
+    gap: 3px 8px;
+  }
+
+  .phase41-metric > span,
+  .phase41-metric > small,
+  .phase41-metric > em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase41-metric > strong {
+    color: var(--wa-text-strong);
+    font-size: 20px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .phase41-metric > small {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .phase41-metric > em {
+    justify-self: end;
   }
 
   .phase41-metric em {
@@ -5813,33 +5873,32 @@
     font-weight: 720;
   }
 
-  .phase41-stage-strip {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--wa-space-3);
-  }
-
   .phase41-stage-card {
     min-width: 0;
-    min-height: 72px;
-    border-radius: var(--wa-radius-md);
-    padding: var(--wa-space-3);
+    padding: 9px 10px;
     display: grid;
     grid-template-columns: 1fr auto;
     align-items: center;
     gap: 6px var(--wa-space-2);
     text-align: left;
     cursor: pointer;
+    transition:
+      background-color var(--wa-duration-fast) var(--wa-ease),
+      color var(--wa-duration-fast) var(--wa-ease);
   }
 
   .phase41-stage-card span {
+    min-width: 0;
+    overflow: hidden;
     color: var(--wa-text-main);
     font-size: 13px;
     font-weight: 760;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .phase41-stage-card strong {
-    color: var(--wa-text-strong);
+    color: var(--task-tone, var(--wa-text-strong));
     font-size: 20px;
     font-variant-numeric: tabular-nums;
   }
@@ -5855,7 +5914,17 @@
     height: 3px;
     min-width: 3px;
     border-radius: 999px;
-    background: currentColor;
+    background: var(--task-tone, var(--wa-text-subtle));
+  }
+
+  @media (hover: hover) {
+    .phase41-stage-card:hover {
+      background: var(--wa-row-hover);
+    }
+  }
+
+  .phase41-stage-card:active {
+    background: var(--wa-row-active);
   }
 
   .phase41-workbench {
@@ -6408,6 +6477,10 @@
     outline-offset: 2px;
   }
 
+  .task-console .phase41-summary-strip .phase41-stage-card:focus-visible {
+    outline-offset: -3px;
+  }
+
   .task-console .swimlane,
   .task-console .swimlane-column {
     border-color: var(--wa-border-soft);
@@ -6482,9 +6555,23 @@
       top: auto;
     }
 
-    .phase41-metric-grid,
-    .phase41-stage-strip {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .phase41-summary-strip {
+      overflow-x: auto;
+      overflow-y: hidden;
+      overscroll-behavior-inline: contain;
+      scrollbar-width: none;
+    }
+
+    .phase41-summary-strip.is-status {
+      grid-template-columns: repeat(6, minmax(112px, 1fr));
+    }
+
+    .phase41-summary-strip.is-execution {
+      grid-template-columns: repeat(4, minmax(104px, 1fr));
+    }
+
+    .phase41-summary-strip::-webkit-scrollbar {
+      display: none;
     }
 
     .phase41-execution-controls {
@@ -6524,8 +6611,6 @@
     }
 
     .phase41-toolbar-filters,
-    .phase41-metric-grid,
-    .phase41-stage-strip,
     .phase41-execution-controls,
     .phase41-fact-grid {
       grid-template-columns: 1fr;
@@ -6547,6 +6632,17 @@
 
     .phase41-filter-multi {
       --multi-select-dropdown-min: 100%;
+    }
+
+    .phase41-filter-multi :global(input),
+    .phase41-filter-multi :global(.multi-select-chevron),
+    .phase41-table-toolbar .wa-admin-action,
+    .phase41-toolbar-actions .wa-admin-action {
+      min-height: 44px;
+    }
+
+    .phase41-filter-multi :global(.multi-select-chevron) {
+      min-width: 44px;
     }
 
     .phase41-execution-controls .phase41-risk-strip,
@@ -6937,14 +7033,8 @@
   .task-console .phase41-metric,
   .task-console .phase41-stage-card {
     --task-tone: var(--wa-border-strong);
-    border-color: var(--wa-glass-outline);
-    border-top-color: var(--wa-glass-highlight);
-    border-radius: var(--wa-radius-lg, 14px);
-    background: var(--wa-glass-panel);
+    --task-cell-background: var(--wa-neutral-soft);
     color: var(--wa-text-main);
-    box-shadow: var(--wa-shadow-glass);
-    -webkit-backdrop-filter: blur(16px) saturate(128%);
-    backdrop-filter: blur(16px) saturate(128%);
   }
 
   .task-console .phase41-table-toolbar,
@@ -6972,33 +7062,43 @@
   .task-console .phase41-metric.tone-info,
   .task-console .phase41-stage-card.tone-info {
     --task-tone: var(--wa-info);
+    --task-cell-background: var(--wa-info-soft);
   }
 
   .task-console .phase41-metric.tone-success,
   .task-console .phase41-stage-card.tone-success {
     --task-tone: var(--wa-success);
+    --task-cell-background: var(--wa-success-soft);
   }
 
   .task-console .phase41-metric.tone-warning,
   .task-console .phase41-stage-card.tone-warning {
     --task-tone: var(--wa-warning);
+    --task-cell-background: var(--wa-warning-soft);
   }
 
   .task-console .phase41-metric.tone-danger,
   .task-console .phase41-stage-card.tone-danger {
     --task-tone: var(--wa-danger);
+    --task-cell-background: var(--wa-danger-soft);
   }
 
   .task-console .phase41-metric.tone-neutral,
   .task-console .phase41-stage-card.tone-neutral {
     --task-tone: var(--wa-text-subtle);
+    --task-cell-background: var(--wa-neutral-soft);
+  }
+
+  .task-console .phase41-summary-strip .surface-accent {
+    --task-tone: var(--wa-accent-strong);
+    --task-cell-background: var(--wa-accent-soft);
   }
 
   @media (min-width: 1181px) {
     .task-console {
       height: 100%;
       min-height: 0;
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
       overflow: hidden !important;
     }
 
@@ -7386,4 +7486,15 @@
       width: 100%;
     }
   }
+
+  @media (max-width: 1180px) {
+    .task-console,
+    .task-console.view-execution {
+      align-self: start;
+      height: auto !important;
+      grid-template-rows: auto auto;
+      overflow: visible !important;
+    }
+  }
+
 </style>

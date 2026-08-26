@@ -53,7 +53,8 @@
     delete_block_reason?: string;
   }
 
-  type LifecycleAction = 'archive' | 'discard' | 'delete';
+  type LifecycleAction = 'archive' | 'delete';
+  type ReleaseListView = 'current' | 'archived';
 
   interface JiraIssue {
     work_item_id: string;
@@ -95,19 +96,11 @@
     project_name: string;
   }
 
-  const statusOptions = [
-    { value: '', label: '全部状态' },
-    { value: 'planned', label: '计划中' },
-    { value: 'released', label: '已发布' },
-    { value: 'archived', label: '已归档' },
-    { value: 'discarded', label: '已废弃' }
-  ];
-
   let items: ReleasePlanItem[] = [];
   let projects: ProjectConfig[] = [];
   let selectedID = 0;
   let projectFilter = '';
-  let statusFilter = '';
+  let releaseListView: ReleaseListView = 'current';
   let search = '';
   let loading = false;
   let loadingMore = false;
@@ -156,13 +149,14 @@
   $: selectedLifecycle = selectedItem ? lifecycleCapabilities(selectedItem) : null;
   $: selectedReleaseEditable = selectedItem?.release.status === 'planned';
   $: normalizedSearch = search.trim().toLowerCase();
-  $: hasActiveFilters = Boolean(normalizedSearch || projectFilter || statusFilter);
+  $: hasActiveFilters = Boolean(normalizedSearch || projectFilter);
   $: visibleItems = items;
   $: metrics = {
     total: visibleItems.length,
     unbound: visibleItems.filter((item) => !item.release.project_key).length,
     unlinked: visibleItems.filter((item) => !item.jira_issue_count).length,
-    planned: visibleItems.filter((item) => item.release.status === 'planned').length
+    planned: visibleItems.filter((item) => item.release.status === 'planned').length,
+    archived: visibleItems.filter((item) => item.release.status === 'archived').length
   };
   $: projectOptions = [
     { value: '', label: '全部项目' },
@@ -193,9 +187,8 @@
   }
 
   function releaseEndpoint(): string {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ view: releaseListView });
     if (projectFilter) params.set('project_key', projectFilter);
-    if (statusFilter) params.set('status', statusFilter);
     if (normalizedSearch) params.set('q', normalizedSearch);
     const query = params.toString();
     return query ? `/api/releases?${query}` : '/api/releases';
@@ -214,8 +207,11 @@
     void loadVersions(false);
   }
 
-  function applyStatusFilter(value: string) {
-    statusFilter = value;
+  function switchReleaseListView(view: ReleaseListView) {
+    if (releaseListView === view) return;
+    releaseListView = view;
+    selectedID = 0;
+    syncDraft(null);
     void loadVersions(false);
   }
 
@@ -236,12 +232,11 @@
   function lifecycleCapabilities(item: ReleasePlanItem): ReleaseLifecycleCapabilities {
     if (item.lifecycle) return item.lifecycle;
     const local = item.release.source === 'local';
-    const deletableStatus = item.release.status === 'planned' || item.release.status === 'discarded';
     return {
-      can_publish: local && item.release.status === 'planned',
-      can_archive: local && item.release.status === 'released',
-      can_discard: local && item.release.status === 'planned',
-      can_delete: local && deletableStatus && item.jira_issue_count === 0,
+      can_publish: false,
+      can_archive: local && item.release.status !== 'archived',
+      can_discard: false,
+      can_delete: local && item.release.status === 'archived' && item.jira_issue_count === 0,
       delete_block_reason: item.jira_issue_count > 0 ? '请先移除已关联的 Jira 事项后再删除' : ''
     };
   }
@@ -310,7 +305,6 @@
   function clearFilters() {
     search = '';
     projectFilter = '';
-    statusFilter = '';
     if (releaseFilterTimer) {
       clearTimeout(releaseFilterTimer);
       releaseFilterTimer = null;
@@ -457,14 +451,12 @@
 
   function lifecycleActionTitle(action: LifecycleAction): string {
     if (action === 'archive') return '归档版本';
-    if (action === 'discard') return '废弃版本';
     return '删除版本';
   }
 
   function lifecycleActionDescription(action: LifecycleAction): string {
-    if (action === 'archive') return '归档后版本继续作为历史发布事实保留，项目与 Jira 范围保持只读。';
-    if (action === 'discard') return '废弃用于终止尚未发布的版本计划；关联事实仍会保留，且不能继续编辑。';
-    return '删除只移除空的本地版本目录项；审计记录仍会保留，操作不能从页面恢复。';
+    if (action === 'archive') return '归档后版本会移入“归档版本”列表，项目与 Jira 范围保持只读。';
+    return '删除会把版本从归档列表移除；审计记录仍会保留，操作不能从页面恢复。';
   }
 
   function lifecycleErrorMessage(payload: any, action: LifecycleAction): string {
@@ -472,7 +464,7 @@
     if (code === 'reason_required') return `请填写${lifecycleActionTitle(action)}原因。`;
     if (code === 'release_delete_confirmation_mismatch') return '输入的版本名称与当前版本不一致。';
     if (code === 'release_delete_blocked') return '请先移除版本关联的 Jira 事项或 Jira 版本。';
-    if (code === 'release_delete_forbidden') return '已发布或已归档版本作为发布事实永久保留，不能删除。';
+    if (code === 'release_delete_forbidden') return '只有归档版本可以删除，请先完成归档。';
     if (code === 'external_release_read_only') return 'Jira 来源版本只能在来源系统中维护。';
     if (code === 'invalid_release_transition') return '版本状态已变化，请刷新后重试。';
     if (code === 'release_state_conflict') return '版本状态已发生并发变化，请刷新后重试。';
@@ -482,7 +474,6 @@
   function openLifecycleConfirmation(action: LifecycleAction, event: MouseEvent) {
     if (!selectedItem || !selectedLifecycle || !canManageReleases || applyingLifecycleAction) return;
     if (action === 'archive' && !selectedLifecycle.can_archive) return;
-    if (action === 'discard' && !selectedLifecycle.can_discard) return;
     if (action === 'delete' && !selectedLifecycle.can_delete) return;
     lifecycleReturnFocus = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     lifecycleAction = action;
@@ -532,12 +523,10 @@
       if (!response.ok) throw new Error(lifecycleErrorMessage(payload, action));
 
       clearLifecycleConfirmation();
-      const title = action === 'archive' ? '版本已归档' : action === 'discard' ? '版本已废弃' : '版本已删除';
+      const title = action === 'archive' ? '版本已归档' : '版本已删除';
       const message = action === 'archive'
-        ? `版本“${releaseName}”已归档并保留历史发布事实。`
-        : action === 'discard'
-          ? `版本“${releaseName}”已废弃，后续不再接受范围调整。`
-          : `版本“${releaseName}”已从版本目录移除，审计记录仍保留。`;
+        ? `版本“${releaseName}”已移入归档版本列表。`
+        : `版本“${releaseName}”已从归档列表移除，审计记录仍保留。`;
       showToast(message, { title });
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('well-ambient:release-lifecycle-changed', {
@@ -792,6 +781,22 @@
     <header class="plan-toolbar wa-admin-toolbar">
       <div class="toolbar-heading">
         <strong>现有版本与 Jira 事项</strong>
+        <div class="release-view-tabs" role="tablist" aria-label="版本列表视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={releaseListView === 'current'}
+            class:active={releaseListView === 'current'}
+            on:click={() => switchReleaseListView('current')}
+          >当前版本</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={releaseListView === 'archived'}
+            class:active={releaseListView === 'archived'}
+            on:click={() => switchReleaseListView('archived')}
+          >归档版本</button>
+        </div>
       </div>
       <div class="toolbar-filter-group" role="group" aria-label="版本筛选">
         <label class="search-field">
@@ -807,22 +812,13 @@
           ariaLabel="筛选项目"
           on:change={(event) => applyProjectFilter(event.detail)}
         />
-        <Select
-          value={statusFilter}
-          options={statusOptions}
-          compact={true}
-          searchable={false}
-          shadowless={true}
-          ariaLabel="筛选版本状态"
-          on:change={(event) => applyStatusFilter(event.detail)}
-        />
         {#if hasActiveFilters}
           <Button variant="ghost" size="small" on:click={clearFilters}>重置</Button>
         {/if}
       </div>
       <div class="toolbar-actions">
         <Button variant="secondary" size="small" on:click={() => loadVersions(true)} disabled={loading}>刷新</Button>
-        {#if canManageReleases}
+        {#if canManageReleases && releaseListView === 'current'}
           <Button variant="primary" size="small" on:click={openCreateRelease}>创建版本</Button>
         {/if}
       </div>
@@ -833,17 +829,17 @@
     {/if}
 
     <div class="plan-metrics" aria-label="版本计划摘要">
-      <div><span>现有版本</span><strong>{metrics.total}</strong></div>
+      <div><span>{releaseListView === 'archived' ? '归档版本' : '当前版本'}</span><strong>{metrics.total}</strong></div>
       <div class:attention={metrics.unbound > 0}><span>未绑定项目</span><strong>{metrics.unbound}</strong></div>
       <div class:attention={metrics.unlinked > 0}><span>未关联 Jira 事项</span><strong>{metrics.unlinked}</strong></div>
-      <div><span>计划中</span><strong>{metrics.planned}</strong></div>
+      <div><span>{releaseListView === 'archived' ? '已归档' : '计划中'}</span><strong>{releaseListView === 'archived' ? metrics.archived : metrics.planned}</strong></div>
     </div>
 
     <div class="plan-workbench">
-      <section class="release-list" aria-label="现有版本列表" aria-busy={loading}>
+      <section class="release-list" aria-label={releaseListView === 'archived' ? '归档版本列表' : '当前版本列表'} aria-busy={loading}>
         <header>
           <div>
-            <strong>版本事实</strong>
+            <strong>{releaseListView === 'archived' ? '归档版本事实' : '当前版本事实'}</strong>
           </div>
           <span>版本关联 Jira 事项，不创建或修改 Jira 版本</span>
         </header>
@@ -866,9 +862,11 @@
                 <tr>
                   <td colspan="6" class="empty-row">
                     {items.length === 0
-                      ? canManageReleases
-                        ? '当前还没有版本，请点击“创建版本”录入第一条版本事实。'
-                        : '当前还没有可查看的版本。'
+                      ? releaseListView === 'archived'
+                        ? '当前还没有归档版本。'
+                        : canManageReleases
+                          ? '当前还没有版本，请点击“创建版本”录入第一条版本事实。'
+                          : '当前还没有可查看的版本。'
                       : '当前筛选下没有匹配版本。'}
                   </td>
                 </tr>
@@ -921,47 +919,21 @@
             </div>
             <div class="inspector-header-actions">
               <span class="status status-{selectedItem.release.status}">{statusLabel(selectedItem.release.status)}</span>
-              {#if canManageReleases && selectedItem.release.source === 'local' && selectedItem.release.status === 'planned'}
-                <Button variant="primary" size="small" on:click={openPublishConfirmation}>发布版本</Button>
-              {:else if canManageReleases && selectedLifecycle?.can_archive}
+              {#if canManageReleases && releaseListView === 'current' && selectedLifecycle?.can_archive}
                 <Button variant="secondary" size="small" on:click={(event) => openLifecycleConfirmation('archive', event)}>归档版本</Button>
+              {/if}
+              {#if canManageReleases && releaseListView === 'archived'}
+                <Button
+                  variant="danger"
+                  size="small"
+                  disabled={!selectedLifecycle?.can_delete}
+                  on:click={(event) => openLifecycleConfirmation('delete', event)}
+                >删除版本</Button>
               {/if}
             </div>
           </header>
 
           <div class="inspector-body">
-            {#if publishConfirming}
-              <section class="publish-confirmation" aria-labelledby="publish-release-title">
-                <div class="publish-confirmation-heading">
-                  <div>
-                    <h3 id="publish-release-title">确认发布版本</h3>
-                    <p>发布后将锁定项目与 Jira 范围，并写入可追溯的发布事实。</p>
-                  </div>
-                  <button type="button" aria-label="取消发布确认" disabled={publishingRelease} on:click={cancelPublishConfirmation}>×</button>
-                </div>
-                <DatePicker
-                  id="publish-release-date"
-                  label="实际发布日期"
-                  value={publishReleaseDate}
-                  required={true}
-                  clearable={false}
-                  shadowless={true}
-                  on:change={(event) => publishReleaseDate = event.detail}
-                />
-                <label class="publish-reason-field">
-                  <span>发布说明 <em>*</em></span>
-                  <textarea bind:value={publishReason} rows="3" maxlength="500" aria-required="true"></textarea>
-                </label>
-                {#if publishError}
-                  <Alert type="error" message={publishError} />
-                {/if}
-                <div class="section-actions publish-actions">
-                  <Button variant="secondary" size="small" disabled={publishingRelease} on:click={cancelPublishConfirmation}>取消</Button>
-                  <Button variant="primary" size="small" loading={publishingRelease} on:click={publishRelease}>确认发布</Button>
-                </div>
-              </section>
-            {/if}
-
             {#if lifecycleAction}
               <section
                 class="lifecycle-confirmation"
@@ -1169,29 +1141,8 @@
               {/if}
             </section>
 
-            {#if canManageReleases && selectedItem.release.source === 'local' && (selectedLifecycle?.can_discard || selectedItem.release.status === 'planned' || selectedItem.release.status === 'discarded')}
-              <section class="inspector-section release-management" aria-labelledby="release-management-title">
-                <div class="section-heading">
-                  <div>
-                    <h3 id="release-management-title">版本管理</h3>
-                    <p>废弃会关闭计划；删除只允许无关联的计划中或已废弃版本。</p>
-                  </div>
-                </div>
-                <div class="release-management-actions">
-                  {#if selectedLifecycle?.can_discard}
-                    <Button variant="secondary" size="small" on:click={(event) => openLifecycleConfirmation('discard', event)}>废弃版本</Button>
-                  {/if}
-                  <Button
-                    variant="danger"
-                    size="small"
-                    disabled={!selectedLifecycle?.can_delete}
-                    on:click={(event) => openLifecycleConfirmation('delete', event)}
-                  >删除版本</Button>
-                </div>
-                {#if !selectedLifecycle?.can_delete && selectedLifecycle?.delete_block_reason}
-                  <p class="delete-block-reason">{selectedLifecycle.delete_block_reason}</p>
-                {/if}
-              </section>
+            {#if canManageReleases && releaseListView === 'archived' && !selectedLifecycle?.can_delete && selectedLifecycle?.delete_block_reason}
+              <Alert type="info" message={selectedLifecycle.delete_block_reason} />
             {/if}
           </div>
         {:else}
@@ -1377,6 +1328,41 @@
     font-size: 15px;
   }
 
+  .release-view-tabs {
+    width: fit-content;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.2));
+    border-radius: var(--wa-radius-pill, 999px);
+    background: var(--wa-surface-inset, rgba(232, 241, 244, 0.72));
+  }
+
+  .release-view-tabs button {
+    min-height: 28px;
+    padding: 0 11px;
+    border: 0;
+    border-radius: var(--wa-radius-pill, 999px);
+    background: transparent;
+    color: var(--wa-text-muted, #667789);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 740;
+    cursor: pointer;
+  }
+
+  .release-view-tabs button.active {
+    background: var(--wa-surface-flat, #fbfdfe);
+    color: var(--wa-accent-strong, #006f76);
+    box-shadow: 0 1px 3px rgba(28, 54, 67, 0.1);
+  }
+
+  .release-view-tabs button:focus-visible {
+    outline: 2px solid var(--wa-border-focus, rgba(0, 143, 150, 0.86));
+    outline-offset: 2px;
+  }
+
   .toolbar-heading small {
     color: var(--wa-text-muted, #667789);
     font-size: 9px;
@@ -1386,7 +1372,7 @@
   .toolbar-filter-group {
     min-width: 0;
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) minmax(132px, 168px) minmax(132px, 168px) auto;
+    grid-template-columns: minmax(180px, 1fr) minmax(132px, 168px) auto;
     gap: 8px;
   }
 
@@ -2262,11 +2248,11 @@
       grid-row: auto;
       min-width: 0;
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
-        "search search"
-        "project status"
-        "reset reset";
+        "search"
+        "project"
+        "reset";
     }
 
     .search-field {
@@ -2275,10 +2261,6 @@
 
     .toolbar-filter-group :global(.select-group):first-of-type {
       grid-area: project;
-    }
-
-    .toolbar-filter-group :global(.select-group):nth-of-type(2) {
-      grid-area: status;
     }
 
     .toolbar-filter-group :global(.btn) {
@@ -2299,9 +2281,16 @@
 
     .toolbar-filter-group input,
     .toolbar-filter-group :global(.select-trigger),
+    .toolbar-filter-group :global(.select-inline-input),
+    .toolbar-filter-group :global(.select-toggle),
     .toolbar-filter-group :global(.btn),
-    .toolbar-actions :global(.btn) {
+    .toolbar-actions :global(.btn),
+    .release-view-tabs button {
       min-height: 44px;
+    }
+
+    .toolbar-filter-group :global(.select-toggle) {
+      min-width: 44px;
     }
 
     .toolbar-actions :global(.btn) {

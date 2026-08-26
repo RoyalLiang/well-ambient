@@ -102,6 +102,43 @@ func TestHandleSaveConfigRejectsInvalidJiraVersionSourceBeforeApply(t *testing.T
 	}
 }
 
+func TestHandleSaveConfigRejectsInvalidJiraQueryBeforeApply(t *testing.T) {
+	jira := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/api/2/search" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"errorMessages":["project has no value FMS-20660"]}`))
+	}))
+	defer jira.Close()
+
+	current := &config.Config{Jira: config.JiraConfig{Enabled: false, BaseURL: jira.URL}}
+	s := &Server{config: current}
+	newConfig := config.Config{Jira: config.JiraConfig{
+		Enabled: true, BaseURL: jira.URL, CustomJQL: `project = "FMS-20660"`,
+	}}
+	body, err := json.Marshal(newConfig)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	s.handleSaveConfig(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	if current.Jira.Enabled || current.Jira.CustomJQL != "" {
+		t.Fatalf("invalid Jira query was applied: %#v", current.Jira)
+	}
+	if !strings.Contains(rr.Body.String(), "FMS-20660") || !strings.Contains(rr.Body.String(), "配置未保存") {
+		t.Fatalf("response was not actionable: %s", rr.Body.String())
+	}
+}
+
 func TestRedactConfigForArchiveHashesSecrets(t *testing.T) {
 	cfg := config.Config{
 		GitLab: config.GitLabConfig{

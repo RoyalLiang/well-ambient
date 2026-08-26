@@ -1,3 +1,47 @@
+# Session: 2026-08-26 - 编辑方案保存时 Toast 统一与闪烁修复
+
+- 已读取项目冷启动规则、复杂编码/内存约束、planning-with-files、diagnosing-bugs、项目 Impeccable、design-taste-frontend 与 finesse-ui 主技能；大型技能首次聚合读取被截断，随后分块完整读取并记录错误。
+- 已运行 Impeccable 上下文探测；项目无 PRODUCT.md，但有 DESIGN.md，按 scoped fix 路径继续，不进入 from-scratch init。
+- 已查看并文字化用户截图：弹窗正文顶部绿色内联成功提示与全局 Toast 基线不一致；编辑器还存在“内容已保存”状态，需建立两个症状各自可证伪的回归。
+- 已快速复核相关项目记忆，确认历史共享反馈 owner 为 ToastHost/showToast；当前尚未编辑任何 frontend 文件。
+- 已完成 Impeccable、design-taste-frontend、finesse-ui 三方会审并写入任务计划：共享 Toast 统一反馈，MarkdownWorkbench 保存期间持续挂载，只有可恢复的冲突/放弃状态保留内联。此节点后才允许编辑 frontend/test 文件。
+- 已在 `solution-entry-contract.test.ts` 建立保存症状级红灯（9/10），随后修改 `SolutionWorkspace.svelte`：保存成功/普通失败改走全局 Toast，移除编辑 modal 内成功条幅，冲突保留可恢复内联块。
+- 首轮绿灯发现 `saveDraft` 仍清空旧 `notice`，回归有意保持红色；删除无渲染用途的耦合后目标合同 10/10 通过。下一步运行相关/全量前端、类型、构建与设计检测。
+
+# Session: 2026-08-26 - 任务跟踪第二行长条卡片样式统一
+
+# Session: 2026-08-26 - 任务跟踪活跃事项摘要与语义底色
+
+- 已读取项目 mandatory UI gate、Impeccable 产品约束、design-taste-frontend preserve 约束、Finesse 组件范围/产品 UI/产品配色/重设计/移动底线，以及 planning-with-files 和 Self-Improving。
+- 已查看用户原始 3840×1736 截图，确认历史总量与完成量占据最高视觉权重、活跃数被截断、需求/Bug 口径混排、子项缺少语义底色。
+- 已完成相关项目记忆快速复核：共享改动应落在 `TaskKanban.svelte`；活跃数必须复用 QueryPlan 的 ActiveOnly 聚合，不能恢复全历史加载。
+- 当前只更新计划/发现/进展记录，尚未编辑任何 UI/frontend 文件；下一步核对当前源码的数据字段、排期治理同类底色和项目 token，再完成三方会审。
+- token 搜索首轮因模式以 `--wa-` 开头被 `rg` 当作选项；已记录并切换到 `rg --`，不重复失败形式。
+- 已完成共享组件、后端 QueryPlan 聚合、现有排期治理带与 `--wa-*` token 审计；确认需求/Bug 当前是全历史聚合，阶段数是活跃聚合但百分比错误地以历史总量为分母。
+- 三方 UI 审查已写入任务计划并一致通过：状态页收敛为 6 项纯活跃摘要，复用既有 soft token 底色；执行追踪保留 4 项原语义。本节点以后才允许编辑 UI/frontend 文件。
+- 已先修改定向服务/UI 合同建立红灯；首次执行分别被 Go 默认缓存写权限和缺失 tsx runner 阻断，尚未进入产品断言。已记录并改走 `/tmp` Go cache 与项目现有测试脚本。
+- 第二轮环境核对显示 Go 还需要可写/可读模块缓存，Node 22 需要显式 TypeScript strip flag；继续先解析仓库已验证命令，不把环境失败误报为测试红灯。
+- 已取得真实红灯：Go 编译失败于两个 active 类型字段不存在；UI 目标合同失败于仍为 8 列透明摘要。实施后两者均转绿，Go 定向 1/1、管理台目标合同 4/4。
+- 实施边界为 5 个目标文件：deliveryplanning summary model/query/test、TaskKanban 共享条带、管理台源码合同。历史 `requirements/bugs` 字段保留，新 UI 使用新增 active 聚合；执行追踪指标语义不变但复用新的 soft 背景规则。
+- 定向 Go 包、目标/全量前端合同、Svelte/TypeScript、production build、diff hygiene 和两套设计检测均已通过：1/1、4/4、146/146、0 errors、Impeccable `[]`、Finesse P0=0。
+- Chrome 的两个本地页面均为未登录状态，输入框没有安全预填；已停止在认证边界前，等待用户在现有标签页完成登录后继续真实任务表/人员负载/执行追踪与 1440/1024/760/390/320 验收。
+
+---
+
+# Session: 2026-08-26 - 任务跟踪第二行长条卡片样式统一（上一任务）
+
+- 已完成项目冷启动规则、复杂编码/规划/交付约束读取，并使用 planning-with-files 维护当前任务证据。
+- 已完成 Impeccable、design-taste-frontend、finesse-ui 三方审查；共同方向是共享 wrapper 单一玻璃表面、透明分隔单元、单行高密度与条带内横向滚动。
+- 已在 `TaskKanban.svelte` 共享 owner 落地任务表/执行追踪统一条带，并在既有管理台契约测试中锁定结构、8/4 列、透明子项、72px、阶段标签单行和窄屏滚动。
+- 端口探测第一次误用 zsh 只读变量 `status`；已按 Self-Improving 做有界复盘并切换变量名，产品与服务未受影响。
+- 目标契约 4/4、全量前端 141/141、`pnpm check` 0 errors、production build、diff hygiene、Impeccable `[]` 均通过；Finesse `p0=0`，剩余均为目标区外既有 P2。
+- 已登录 Chrome 对照排期治理并验证任务表、执行追踪：1440/1024/760/390/最小移动宽度均为单层 72px 条带，子项透明且无圆角/阴影，横向溢出只留在条带内，document 无横溢，console error=0。
+- 移动端首轮发现阶段标签换行导致 status 84px；补充精确红灯并实施 `nowrap/ellipsis` 后复验为 72px。临时后端、数据库快照与配置已停止并从 `/tmp` 删除，主库及外部系统未修改。
+- 当前代码和运行态证据已完成，进入一次性交付反思门禁等待用户反馈。
+- 用户已确认只要求样式同步、无需单元数量同步；现有 8/4 项结构符合边界，无需追加代码，反思门禁已完成。
+
+---
+
 # Session: 2026-08-23 - Daily Jira 负责人变更自动退出列表
 
 - 已加载项目冷启动、复杂编码/内存规则、CONTEXT、相关 Jira ADR，以及 diagnosing-bugs、planning-with-files；Serena 已激活并读取初始说明。
@@ -3166,3 +3210,265 @@
 - `codex-cli 0.149.0` 的 `codex mcp list/get serena` 已确认 Serena 为 enabled STDIO server，命令、Codex context、15/120 秒超时和 writes 审批配置均正确。
 - 临时只读 `codex exec` 会话实际通过 Serena 激活当前项目、读取初始指令，并成功读取 Go `main` 符号；随后补齐项目 Serena `go + svelte` 双语言配置，第二次真实调用成功解析 `DemandKanban.svelte`。
 - 仅保留可版本化的 `.serena/project.yml` 与 `.serena/.gitignore`；已删除此次验证生成的符号缓存和本机覆盖文件。
+
+## 2026-08-23 通用列表组件 / finesse-skill
+
+- 已完成项目冷启动规则、复杂编码/设计/工具路由、skill-installer、planning-with-files、Impeccable、旧版 finesse 入口和浏览器技能加载。
+- 已通过官方 GitHub 搜索确认上游为 `mouse-lin/finesse-skill`；首次 installer 临时安装未产出文件，已记录失败并切换验证路径。
+- 已确认官方 `main` 最新提交为 `5050b6c71e27b829d1b3087d2be889d29c60db00`；稀疏 checkout 仍需在授权网络环境完成对象拉取。
+- 已将全局 finesse 从 `0.2.0` 升级到 `0.20.0`；官方 56 文件逐项一致，旧目录已从临时隔离区删除（不可恢复，但官方旧版仍可按历史提交重新安装），项目工作树未做清理。
+- 已完整加载升级后的 finesse 入口、`component-scope.md`、Impeccable 入口/product register 与 design-taste-frontend；接下来定位项目现有 tokens、列表/分页模式和预览所有权。
+- Serena 已在 `/Users/eddie/Workspace/well-ambient` 激活；当前语言服务仅报告 Go，Svelte 语义检查将以现有 Svelte 工具链和精确搜索补足。
+- 已实现 `AdminDataList.svelte`、`AdminPagination.svelte`、分页纯函数、独立 Vite preview 入口与 7 个契约/算法回归；真实调用方可传列、单元格、行操作和分页组件。
+- 浏览器验证中补齐方向键横向滚动与 10px 外壳圆角，并生成桌面、状态、760/480/320 及窄屏操作列 8 张真实预览图。
+- 实现后三方会审最终均 PASS；7/7 测试、0-error Svelte check、production build、Impeccable `[]`、Finesse `p0=0` 和 diff hygiene 全部通过。
+- 已停止本地 Vite、删除错误/原始截图、临时 build、finesse 稀疏升级仓库和旧版隔离备份；只保留升级后的全局 skill、生产组件、preview 源码、测试与交付预览图。
+- 用户反馈直接打开预览为空白；已用 diagnosing-bugs 建立自包含 HTML 红灯，确认根因是源码入口依赖 Vite 转译。
+- 已新增 `web/scripts/build-admin-data-list-preview.mjs` 与 package script，把同一 Svelte 入口输出为 88 KB 单文件预览；两次生成哈希一致。
+- 8/8 定向测试、0-error Svelte check、production build、浏览器分页/操作/零控制台错误全部通过；已停止临时 4174 预览服务并保留新的修复截图。
+
+## 2026-08-24 通用列表懒加载与 Daily Jira 接入
+
+- 已完成冷启动分类：coding.complex、continuation、frontend shared-module integration；启用 planning-with-files 与 codebase-design。
+- 已读取 Daily Jira 相关记忆，锁定唯一左表 scroll owner、稳定 snapshot/selection 与服务端 cursor/generation 约束。
+- 已建立五阶段计划；当前处于 Phase 1，前端编辑门禁未解除。
+- Serena 针对 Svelte 的定向恢复仍失败，已按项目规则回退到精确 `rg`、分段源码读取、Svelte check 与浏览器证据；未修改用户现有 `.serena` 状态。
+- 已确认 Daily Jira 当前由页面自行维护虚拟窗口、近底触发与 ResizeObserver；服务端 cursor/generation、同代刷新与合并逻辑可原样保留。
+- 已向现有 Impeccable、design-taste-frontend、finesse-ui 三个会审角色发送只读评审，等待共同方向与分歧收敛；尚未编辑前端代码。
+- 三方会审已收敛并写入计划：single scroll owner、embedded surface、fixed-row virtualization、edge-trigger load-more、native table + real row button、responsive column priority，以及 Daily Jira request generation/epoch 提交校验。
+- 按 finesse Design Read 门禁暂停在实现前，等待用户确认 preserve-mode 方向；前端编辑仍未开始。
+- 用户已确认开始实现；前端门禁解除，Phase 2 进入症状级回归编写。
+- 新增虚拟窗口、近底触发、去重、共享组件 API、Daily Jira 委托与 stale generation 提交校验回归；修正测试运行器后得到真实业务红灯，目标能力尚未实现。
+- 已实现共享列表虚拟化/懒加载与 Daily Jira 接入；定向回归 17/17、Svelte check 0 errors。当前进入全量契约、构建、UI 检测与运行态浏览器阶段。
+- 通用预览运行态完成 100→200、失败保持、显式重试、连续追加至 1000/1000；同一 load key 无重复请求，DOM 始终约 25 条数据行。
+- Chrome 在 1440/1024/760/480/390/320 六断点验证无 document 横向溢出，窄屏列优先级正确、操作控件最小高度 44px；预览截图已保存。
+- 当前应用会话只到登录页，未使用或猜测凭据；真实 Daily Jira 登录态滚动仍是环境缺口，不能用静态结果冒充。
+- 最终定向回归 20/20、全量前端契约 93/93、Svelte/TypeScript 0 errors、生产构建、单文件预览构建、Impeccable `[]`、Finesse `p0=0` 与 diff hygiene 均通过；本地 Vite 已停止。
+- 用户确认继续解决 JS 行数组累计问题；已完成新一轮 Impeccable、design-taste-frontend、finesse-ui 会审并锁定服务端双向 keyset cursor + 前端 3 页有界窗口，不采用同样会无界增长的 cursor history 栈。
+- 服务端已实现 `previous_cursor/has_previous` 与 `direction=previous`，读模型及 HTTP handler 的 next/previous 往返回归通过；Daily Jira 页面改为最多 3×100 行的双向页窗口。
+- 浏览器首次仍加载旧的内联预览包，重建单文件后确认新逻辑；进一步发现虚拟器声明 48px、浏览器实际 59px 的几何偏差，已在 virtual 模式把数据行严格锁到声明高度。
+- 真实分段滚动完成 `1–300 → 101–400 → 1–300 → 101–400`；向下淘汰锚点 `WA-0290` 的 y 偏移保持 `-31px`，窗口固定 300 行、DOM 固定 25 行，方向切换不再被旧消费键阻塞。
+- 上一页失败、固定边界错误、可访问重试和恢复均通过；1440/1024/760/480/390/320 无 document 横溢，44px 控件不换行。新截图保存为 `artifacts/admin-data-list-bounded-window-preview.png`。
+- 最终 Go 两包全量测试、前端 96/96、0-error check、production/single-file build、Impeccable、Finesse `p0=0` 与 diff hygiene 全通过；本地服务和临时浏览器标签已关闭。实际应用路由仍被登录页阻断，未使用或猜测凭据。
+
+## 2026-08-24 决策面板 / Daily Jira 筛选区拆分
+
+- 已完成项目规则、相关历史记忆、planning-with-files、Impeccable、design-taste-frontend 与 finesse-ui 主入口加载；继续遵守不调用 Serena 的既定要求。
+- 已运行 Impeccable 上下文解析并确认范围化已有产品改造路径；当前进入三方会审与现状 DOM/令牌核对，尚未编辑前端文件。
+- 一次计划记录补丁因锚点取自 `task_plan.md` 而非目标文件末尾而被拒绝，未产生文件改动；已改为每次先读取目标文件真实尾部再构造精确 patch。
+- 已完整加载 Finesse redesign/product/palette/mobile 参考与最接近的轻色侧栏 dashboard 示例，并核对 `DESIGN.md` 与 `modern-admin-tokens.css`；颜色、导航和信息架构均列为保护项。
+- 已定位两个页面的现有筛选、列表和断点样式：两者都需要抽取共享筛选表面合同，但保留页面自身状态、处理器、结果文案和业务控件。
+- 已新增失败合同并实现 `AdminListFilterBar.svelte`；Decision 与 Daily Jira 均迁移为共享筛选组件紧邻 standalone `AdminDataList`，原父容器改为透明布局 owner。
+- 19/19 定向合同通过；一次正则把 CSS `grid-template-columns` 误判为 Props 的 `columns`，收窄到接口块后通过，未掩盖实现错误。
+- `pnpm check` 0 errors / 87 条既有 warnings、production build、110/110 全量前端合同和目标文件 diff hygiene 均通过。
+- 已在登录态 Decision 与 Daily Jira 页面完成桌面、平板和移动断点验证；两个筛选区均是共享组件，列表内不含业务筛选，空搜索与真实键盘清空恢复通过。
+- Daily Jira 真实滚动由 100 项补齐到 183 项，DOM 挂载行维持约 32–33，回到顶部后首批数据正常回补；没有触发“同步 Jira”写操作。
+- 320/375/414/768 与既定 1440/1024/760/390 均无 document 横向溢出；预览页 11 个共享列表实例正常渲染，console error 为 0。
+- Impeccable detector 返回 `[]`；Finesse strict 返回 `p0=0`，仅报告页面级既有 build-stamp/色值 P2。
+- Finesse 768px floor 首轮量化显示 document 不横溢但部分筛选控件只有 30–36px；已把 Decision/Daily Jira 的筛选控件触控下限扩至 800px，并新增合同。认证会话随后过期，修复后的 768px 由源码合同、Svelte check 和 production build覆盖，未冒充已有第二张登录态截图。
+- 浏览器验证中两次定位器能力假设不成立（Daily 搜索框误按 placeholder 作为可访问名、locator 无 `inputValue`）；均改为唯一业务选择器与只读 DOM value，没有产品代码改动。直接从预览导航回应用使临时验证页签的内存登录态失效，未读取或猜测凭据；此前完整登录态证据已保存于本轮输出。
+
+## 2026-08-24 用户反馈：筛选条必须按列表组件样式生成
+
+- 已复核反馈并确认不是主观差异：两个共享组件实际引用了不同背景、阴影、饱和度与根级焦点状态。
+- 已完成 Impeccable、design-taste-frontend preserve、finesse-ui product-component 三方会审；共同裁决为保留筛选/列表职责分离，但共享一个 `AdminDataList` 表面合同，不再把筛选条做成第二种玻璃工具条。
+- 已排序三个可证伪假设；下一步先补失败合同，再集中抽取表面令牌并做真实组件预览的计算样式对照。
+- 新增共享 `--wa-admin-list-surface-*` 令牌和 `admin-data-list-surface/v1` DOM 合同；`AdminDataList` 与 `AdminListFilterBar` 均只消费该合同，筛选条根级 `focus-within` 已移除。
+- 签入预览改为直接渲染真实筛选组件和真实列表组件，并提供搜索、项目筛选、重置与结果摘要；768px 实测发现并修复 36px 触控高度，最终 768/390/320 均为 44px。
+- 真实预览 1440/768/390/320 的六项计算表面属性完全一致，document 横溢为 0；真实搜索 `WA-263` 只显示目标行，聚焦不再改变筛选外壳。
+- 登录态决策事项和每日 Jira 当前源码均验证为 sibling、相同表面合同和相同计算样式；Daily Jira 仍为 100/183 数据窗口、约 30 个挂载行，没有执行同步 Jira。
+- 最终 112/112 前端合同、0-error check、单文件预览/production build、Impeccable `[]`、Finesse `p0=0` 与 diff hygiene 通过；临时预览服务和验证标签已关闭，原 2133×902 业务标签保留。
+
+## 2026-08-24 决策事项筛选选择态椭圆边框
+
+- 已将任务分类为中风险前端回归，加载 diagnosing-bugs、Impeccable、design-taste-frontend、finesse-ui、planning-with-files 与 self-improvement。
+- 已在修改前完成三方会审并记录共同方向、分歧裁决、组件所有权、响应式与验证范围；下一步先在登录态真实页面建立选择态几何红灯。
+- 记录文件首次联合补丁因 `findings.md` 上下文不匹配而原子失败；改为读取真实 EOF 后分别追加，未触及产品源码。
+- 已在真实登录态页面逐项点击三个下拉并建立红灯：负责人、项目、显示列的内部搜索输入全部在聚焦时绘制 999px 椭圆 outline，而外层 trigger 保持 10px；开始进入源码根因定位。
+- 首轮定向合同 2/2 后复验发现单选仍有嵌套小焦点框；已收紧回归合同，要求内部 input 的 outline 显式压过页面全局 focus 规则，仅由外层 trigger 显示可见焦点。
+- 第二轮定向合同 2/2，桌面三个下拉的内部 outline 均消失；非默认负责人/项目选择态也保持 10px 外框。760px 实测发现显示列高度未跟随其他两个下拉，已把该断点一致性加入失败合同。
+- 新断点合同经一次 false-positive 修正后如期变红；增加 max-800 summary-mode 特异规则并删除冗余 max-640 重复后恢复 2/2。760/390 三下拉均约 44px、无内部 outline/椭圆且无 document 横溢，原浏览器视口与默认筛选已恢复。
+- 交付级验证完成：114/114 前端合同、0-error check、production build、目标 diff hygiene、Impeccable `[]`、Finesse strict `p0=0`；登录态控制台无 error/warn，仅有 Vite debug/HMR 日志。
+
+## 2026-08-24 Daily Jira 数量收拢到切换项
+
+- 已重新加载 Impeccable、design-taste-frontend、finesse-ui product/component、planning-with-files、self-improvement 与浏览器验证规范；design-taste-frontend 明确只采用 preserve-mode。
+- 三方会审已写入计划：切换项内部保留数量并强制单行，删除重复 meta 行，检查时间移入桌面首行且窄屏让位；共享列表和数据窗口不改。
+- 已从截图、源码和登录态页面确认红灯结构：页面同时存在含数量的三个 tab 与独立 `.filter-meta` 第二行，下一步补失败合同后实施最小调整。
+- 新合同在旧源码上 7/8，失败内容精确指向 Daily Jira 的 meta snippet；实现后 8/8。当前进入全量检查、设计检测与登录态断点复验。
+- 登录态 2133×902 已完成首轮绿灯与视觉截图：筛选高度减少约 33px，无第二行，数量无换行，检查时间同行，列表仍挂载约 29 个虚拟行且 `aria-rowcount=184`。
+- 1024×900 已通过：筛选条仍为单层表面，switch 数量无换行/无溢出，检查时间按响应式优先级隐藏，document overflow=0。
+- 760×900、390×780 已通过：响应式仅保留两组主控件行，无重复数量 meta；三项 switch 高约 44px且数量同行，document overflow=0。
+- 390px 三个 bucket 已逐个切换验证，列表分别显示对应总量并恢复到“7 日及以上 183”；切换前后数量始终同一行，未触发同步 Jira。
+- 懒加载复验第一次直接赋值 `scrollTop` 被浏览器页面代理拒绝；已记录为工具限制，下一步改用 `scrollTo()` 完成相同验证，产品页面未发生错误或业务写操作。
+- 改用 `scrollTo()` 后 390px 懒加载通过：虚拟范围从 5305px 扩至 9612px、DOM 数据行固定 23、总量 184（含表头）、无 meta/横溢；工具错误已标记 resolved。
+- 浏览器状态已恢复到 2133×902、列表顶部和“7 日及以上 183”；最终日志零 error/warn，仅有 Vite debug/HMR。
+- 320px 最窄屏补充回归先捕获最长 tab 的 2px 内部挤压，加入 max-360 精调后定向 8/8，真实运行三个 tab 均零溢出且保持 44px/12px。
+- 最终交付级验证完成：115/115 前端合同、0-error check（87 个既有 warnings）、production build、diff hygiene、Impeccable `[]` 与 Finesse strict `p0=0`；登录态 2133/1024/760/390/320、三 bucket、近底懒加载和最终 console 均通过，页面已恢复默认视图。
+
+## 2026-08-24 面板高度统一与排期治理列表/设置优化
+
+- 已按 coding.complex + continuation + UI layout 回归分类，加载项目冷启动、planning、diagnosing-bugs、Impeccable layout/product、design-taste-frontend 与 finesse product/workflow/palette；当前未编辑产品 UI。
+- 已记录实现前三方会审：统一 shell 几何合同，DemandKanban 列表迁移共享 `AdminDataList`，inspector 只重组强关联短字段；颜色、导航、业务状态与保存链路均受保护。
+- Impeccable 要求的隔离机械预扫描完成：目标组件 detector `[]`、无 arbitrary Tailwind spacing/z-index。人工布局评估仍在独立进行。
+- 下一步连接现有登录态页面，量出三页工作区、列表与 inspector 真实几何，建立红灯后再补合同和实现。
+- 登录态红灯确认 Decision 多一个空 grid row，造成列表底线比 Daily Jira 高 12px；修正后两页根底线完全一致、列表底线差约 0.00003px，均无 document overflow。
+- 排期治理已删除手写 table/虚拟 spacer/页面 scroll handler，直接使用共享 `AdminDataList`；104 条只挂载 28 行，列表和右 inspector 桌面高度均为 570.03px。
+- 右侧排期设置收敛为两行：负责人+工时+难度、完成日+任务组；editor scrollHeight 从 665 降至 601，控件尺寸未缩小。
+- 浏览器验收发现路由切换时 editable-demand 映射晚到会留下空表单，补上响应式回补条件后负责人、日期、任务组均恢复；列表行选择、代码轨迹联动与控制台均通过。
+- 最终 121/121 前端合同、0-error check（87 个既有 warning）、production build、diff check、Impeccable `[]`、Finesse `p0=0` 通过；登录态桌面和 1138px 堆叠布局已验证。
+
+## 2026-08-24 Jira scope 隔离与 DG-394 同步恢复
+
+- 使用登录态 Jira 页面确认 `DG-394=Done` 与精确更新时间；使用只读 SQLite 查询确认本地仍为 backlog、入站 worker 持续报 `FMS-20660` 项目 400。
+- 临时 worker 回归得到红/绿对照：坏 project scope 阻断 `DG-394`；修复 scope 后 reconciliation 将其更新为 done。临时诊断测试已删除。
+- 现有 `TestBuildJQL`、绩效 JQL、已完成事项 reconciliation 与完成态覆盖回归全部通过，证明非状态映射缺陷。
+- 已完成 planning-with-files 与 codebase-design 设计记录；进入 Phase 1 正式失败回归与 query-scope interface 实现。
+- 正式红灯先因 `ValidateJQL/buildJiraQueryScopes` 尚不存在而编译失败；实现后轻量校验、范围拆分、坏范围隔离、保存前拒绝四组回归全部转绿。
+- 已实现 worker 局部失败继续、失败水位保护、配置保存前 live JQL 校验、结构化 400，以及两个设置入口保留后端具体错误；没有新增 UI 结构或 CSS。
+- 完整 `go test ./...` 通过；前端错误传播合同 2/2、`pnpm check` 0 error / 87 个既有 warning、production build、Impeccable `[]`、Finesse `p0=0` 均通过。
+- 本地后端已用新代码重启并健康监听 8080；当前旧配置仍触发真实 Jira 400。登录态在准备 UI 保存时过期，且安全审查拒绝任何管理员认证绕过，Phase 3 等待用户在已打开的 `localhost:5173` 登录页重新登录。
+
+## 2026-08-24 排期卡片、弹窗与刷新稳定性
+
+- 已加载 UI/诊断/文件计划技能和项目产品设计约束；未把截图内容当作用户请求之外的指令。
+- 已在登录态排期治理页记录当前摘要与表单结构；列表滚到中段后跨 40 秒自动刷新保持 `scrollTop=1800`。
+- 已点击真实“刷新”并以 100ms 采样：loading 期间列表顶边从 `310.75px` 下移至 `354.74px`，完成后回位；`window.scrollY` 与内部 scrollTop 均不变，当前根因反馈环已建立。
+- 新增排期摘要、AI modal workspace scope、retained-data 状态 overlay 三组红灯；旧实现 6 项失败，完成最小实现后相关回归 24/24、全量前端合同 127/127。
+- `pnpm --dir web check` 为 0 error / 87 个既有 warning，production build 成功，`git diff --check` 通过，Impeccable detector 返回 `[]`。
+- 登录态桌面完成卡片与两类弹窗视觉对照；列表滚到末段后刷新期间首个可见事项保持 `WLY-353`，loading 状态已真实出现；760/390 卡片与 390 AI modal 已完成截图和 DOM 核验，视口已恢复默认。
+
+## 2026-08-25 AI 解构流式稳定性与生成中关闭保护
+
+- 已加载 diagnosing-bugs、planning-with-files、Impeccable、design-taste-frontend 与 finesse-ui，并完成实现前三方 UI 会审；Taste 仅按 preserve-mode 使用。
+- 已查证既有浏览器流合同为 NDJSON `ReadableStream`，并记录 fixture-only 的安全验证边界；下一步进入源码 seam 与红灯复现。
+- 已定位第一条确定性缺陷：provider delta 在消费层被丢弃；同时发现 compact 结果区 loading/list 节点互换和 fetch/reader 无取消句柄。现在先把这三项写成失败回归，再继续验证假设排序。
+- 已建立 6 项定向红灯：1 项证明 parser 本身能提前交付 delta，另外 5 项准确卡住 abort/release、UI 增量、稳定容器、组件取消能力和统一退出确认；假设排序已向用户公开。
+- H1/H3/H4 已确认，H5 已由逐事件 Flush 证据排除；H2 源码分支确认，待浏览器量化后进入实现。
+- 登录态基线确认 result panel 空闲时完全不存在，外层 modal/body 几何已记录；五项假设闭环完成，Phase 1 可转入实现。
+- 已实现增量文本缓冲+rAF 批量刷新、常驻结果 owner、fetch/reader 双层取消、reader lock 释放，以及统一 request/confirm/force-close 状态机；定向 6/6 转绿。
+- 相关弹窗/排期回归合计 15/15、全量前端合同 133/133，`pnpm --dir web check` 0 error / 87 个既有 warning，production build 与 diff hygiene 通过。
+- Impeccable detector 无 finding；Finesse `p0=0`。报告的纯白、transition-all、直写色值和缺少整页 stamp 都来自目标大组件既有区域，未由本轮新增代码引入。
+- 登录态桌面验证中，生成前后 modal 几何固定为 980x682.2；流式内容持续增长，result body 常驻。760/390 断点无 document 横向溢出，关闭按钮约 44px。
+- 使用验证后删除的本地慢流夹具完成关闭状态机实测：继续等待保持流增长；确认停止并关闭调用底层 `ReadableStream.cancel()`，然后卸载两层 dialog。未发送真实 Jira 内容。
+- 浏览器测试页已恢复默认视口；临时夹具源码已删除，最终构建基于正式代码。当前进入交付前双问题自审。
+- Finesse 精确断点补测捕获并修复 compact“生成解构”按钮 36px 触控高度；320/375/414/768 复验均约 44px、nowrap、零横溢、单栏。最终再跑 133/133、check/build、Impeccable/Finesse 与 diff check 全通过。
+
+## 2026-08-25 AI 解构完成结果关闭后恢复
+
+- 已加载 diagnosing-bugs、planning-with-files、项目 Impeccable、design-taste-frontend 与 finesse-ui；三方会审裁决为保持 UI 不变，把最后一次完整结果从瞬时弹窗提升到排期页会话层。
+- 当前尚未编辑产品源码。下一步先审计现有任务组/需求 identity 与 mount/close 路径，建立同需求恢复、跨需求隔离、未完成不覆盖三类红灯。
+- Finesse product、AI console 与 redesign 参考已完整加载；共同约束再次确认：完成产物属于工作流过去时，但本轮仅修复状态所有权，不扩展为历史中心、不改视觉结构。
+- 已确认关闭函数没有主动清空字段，根因是子组件卸载；同时发现服务端有最新解构归档读取接口，但其权限高于生成接口。本轮先以父层会话快照保证所有生成用户可恢复，不把修复绑定到额外权限。
+- 已审计结果修改入口：负责人/优先级/难度/工时/删除都会更新 `result.tasks`；快照应在“有完整结果且当前未生成”时统一发布，才能保留用户对完整结果的本地修订，并避免逐个遗漏 mutation。
+- 定向红灯已建立并得到 0/3：会话模块、子组件完成态合同、父组件隔离缓存三层均按预期失败；现在进入最小实现。
+- 已实现有界会话缓存、稳定 demand/draft key、克隆式恢复、子组件初始 hydrate 与完整空闲态发布、父组件按上下文注入；新一轮生成不再清空上次完整结果的组 ID/mock 标志。正在运行定向回归。
+- 定向相关回归 10/10；`pnpm --dir web check` 0 error、87 个既有 warning。下一步进入浏览器 fixture 的完成→关闭→重开与跨需求隔离验证。
+- 已连接现有登录态排期页（梁志远）并确认列表/inspector 正常；现只在 `import.meta.env.DEV + deconstruct_fixture=retention` 下加入可删除的本地完成流，确保真实点击链不发送 Jira 内容或调用模型。
+- 首次验证沿用了不支持的 `goTo` 大小写，未发生导航；已查到当前客户端合同为 `tab.goto()` 并更新既有工具学习记录，产品代码未受影响。
+- 登录态 fixture 核心链通过：HR-4202 完成→关闭→重开直接恢复；ZPU-2769 打开为空，不串结果；再回 HR-4202 仍恢复。下一步补窄屏几何与生成中取消兼容检查，然后删除夹具。
+- 390px 恢复结果通过：DOM 横溢 0、工作台横溢 0、结果单列且滚动 owner 正常；截图已确认任务建议、88% 完整性与分析均可见。补测取消时裸 `history` 不可用，未点击业务控件，已改为 `window.history`。
+- 页面沙箱最终不支持任何 history owner，改用根节点 dataset；随后父组件 HMR 正常关闭了 modal，旧定位器无匹配且未执行操作。已记录工具学习，重新从当前排期页建立验证状态。
+- 完整结果已重新建立。直接 dataset 赋值又被页面代理拒绝，仍未启动新生成；验证方式收敛到已证明可用的 DOM 方法 `setAttribute`。
+- 根元素 `setAttribute` 也不在页面代理能力内，仍未启动新生成。最终改为用真实可见输入 `[fixture:slow]` 选择慢流，避免任何浏览器内部状态写入；HMR 后将按正常 UI 重建最后一轮状态。
+- `fill()` 未传播 Svelte 绑定，慢流未启动、空闲关闭直接生效；脚本虽已计算确认不存在却仍继续点击，产生无匹配错误。现已拆成条件化阶段，改用真实键盘序列并先读回输入值。
+- 键盘值虽可读回，仍未确定性切换提交分支；夹具最终改为同页第一次完成、第二次慢流的固定序列。下一轮从新加载页面开始，避免继承任何旧调用计数。
+- 确定序列绿灯：第一次完整、第二次慢流、关闭确认、确认取消、重开恢复第一次结果全部通过；临时 fixture 文件、import 与 fetch 分支已删除，正式代码不含验证入口。
+- 最终全量前端合同 137/137，`pnpm --dir web check` 为 0 errors / 87 个既有 warnings，production build 成功；Impeccable `[]`、Finesse strict `p0=0`、目标 diff hygiene 均通过。
+- 浏览器已导航回 `http://localhost:5173/` 并恢复登录态排期看板，验证参数已清理；最终 reload 后 console error/warn 为 0。
+
+## 2026-08-25 排期/版本/任务/配置四页面收敛
+
+- 已启用 planning-with-files，并加载项目 Impeccable、design-taste-frontend preserve、finesse-ui product/workflow/redesign 门禁；当前尚未编辑产品源码。
+- Design Read 固定为现有浅色 teal 研发管理台，低动效、高密度、零图片；任务/排期以列表为中心，配置版本改为共享列表管理，不引入新卡片系统。
+- 下一步先审计风险日历、版本动作、TaskKanban 共享布局和 SettingsPanel/各配置版本所有权，再以四条症状级合同建立红灯。
+- 已完成三方会审与登录态基线：风险日历占右栏底部 110px；版本前后端生命周期与目标相反；任务表顶部卡片合计约 235px、执行追踪 116px；逐配置版本侧栏宽约 391px 且随表单拉到近 2000px。
+- 共同实现方向已写入任务计划：排期停止挂载/请求风险日历；版本增加 current/archive tab 且生命周期收敛为 archive→delete；任务两页统一紧凑 summary strip；配置版本独立路由，普通配置页单列并收紧表单节奏。
+- 四条失败合同已转绿；版本服务端补齐 planned/released/discarded→archived、仅 archived 删除、current/archive 列表隔离和能力矩阵回归，旧生命周期测试同步更新。
+- 全量 Go 测试在允许本地 `httptest` 监听后全部通过；前端 141/141 合同、`svelte-check` 0 error、production build 与目标 `git diff --check` 通过。
+- Impeccable detector 为 `[]`；Finesse 无 P0，仅报告目标大组件既有直写色值、transition/build-stamp P2，未扩大为主题重写。
+- 登录态桌面验证：排期风险日历节点 0；任务表/执行追踪 summary 均 73px，工作区 y=235；普通配置页无版本 aside，统一版本页显示 27 个版本；版本页有 current/archive Tab 且当前页无发布/删除入口。
+- 751/350px 真实断点发现并修复任务摘要塌陷、版本筛选旧网格位和 28–40px 触控目标；最终四页面均无 document 横溢，350px 操作控件为 44px，浏览器 console error/warn 为 0，视口已恢复默认。
+- 用户指出配置页失去右侧面板后，新增失败合同并恢复普通集成配置的上下文检查器；独立配置版本页继续全宽，检查器不包含版本列表、diff 或回滚。
+- 只读浏览器预览复验桌面 1368px + 340px 双栏、751/350px 顺序堆叠和零横溢；GitLab/Jira/AI 均通过。最终 141/141 前端合同、0-error check、production build、Impeccable 与 Finesse P0 门禁通过。
+## 2026-08-26 Linux/PostgreSQL 一键部署与风险收口
+
+- 已完成：读取项目冷启动/设计/规划规则，启用 `planning-with-files` 与 `codebase-design`。
+- 已完成：只读盘点数据库初始化、配置版本、健康检查、前端同源接口、产物平台、Git/CI/部署文件和持久化路径。
+- 已确认：用户授权数据库配置化、生产 PostgreSQL、Linux 目标、示例凭据清理及剩余部署风险修复。
+- 当前阶段：Phase 0，准备建立配置/数据库/迁移安全合同；尚未修改生产业务代码或当前数据库。
+- 已触及：仅追加 `task_plan.md`、`findings.md`、`progress.md` 当前任务记录；未覆盖既有任务内容。
+- 已完成 PostgreSQL dialect 初查：定位 26 个 SQLite 相关生产文件；下一步先锁定在线请求/worker 必需的 `dailyjira`、`readmodel` 与不可变数据资产兼容面，离线 SQLite 工具保持显式单用途。
+- 环境检查：Docker CLI 不可用、PostgreSQL adapter 未缓存；已记录验证边界，不将静态 Dockerfile 检查冒充真实镜像运行。
+- 已完成：加入 `gorm.io/driver/postgres v1.6.0` 与 pgx 依赖；首次沙箱 DNS 失败已按审批流程成功恢复。
+- 已实现第一批配置安全改造：数据库 bootstrap 配置解析/校验/连接池默认、API/版本档案排除、保存与回滚保留；示例 token/secret 值已机械替换为不可用占位符并加入本地 SQLite 数据库示例。
+- 定向验证：`internal/config` 与 `internal/server` 的数据库配置/bootstrap 版本测试通过；隔离依赖缓存首次缺包问题已记录并恢复。
+- 已实现数据库 adapter 初始化骨架、连接池/ping/close、独立 migration interface；`cmd/server` 已接入数据库配置、migration-only/skip-migrate、构建信息和优雅服务生命周期。编译与方言迁移验证待下一步完成。
+- 数据库/服务骨架定向编译测试已通过；已选定 PostgreSQL Daily Jira adapter 方案，开始实现 PostgreSQL read generation trigger 与直接分页查询。
+- 一次 Daily Jira 广补丁因事务上下文假设错误而原子失败、未产生部分修改；已按失败复盘拆分，完成 PostgreSQL migration dispatch 与 repeatable-read 代际读取。
+- 已完成 PostgreSQL Daily Jira 直接读取 adapter：保留 scope、search、bucket、双向 keyset cursor、summary 与 generation stale 检测；PostgreSQL 时间桶在 repeatable-read 内按 CURRENT_DATE 推导，不运行 SQLite rollover。
+- 测试诊断：非 server 目标包通过；server 全量在 bulk planning 卡住。90 秒超时堆栈确认是本轮 SQLite 单连接池默认导致的嵌套读取等待，已进入 adapter 级修复，不是业务测试随机慢。
+- SQLite adapter 已改为共享内存 DSN、4/2 小型连接池、5 秒 busy timeout、foreign keys，文件库启用 WAL；原卡住的 `TestBulkPlanningIsAtomicAndDecodesPlanningFields` 现于 0.42s 通过。
+- PostgreSQL read generation 使用 statement-level trigger 并把 generation/时间戳列设为 BIGINT；data-asset 五类追加式表已补 PostgreSQL update/delete/replace 数据库 guard。相关 readmodel/dailyjira/db 测试通过。
+- 已完成配置前端调用链审计；下一步仅改后端响应/保存/测试解析，不触碰 UI 文件，避免触发不必要的视觉改造面。
+- 配置秘密保护已实现并定向通过：`GET /api/config` 不再返回数据库 DSN 或六类集成秘密，只返回 `__configured__`；保存、连接测试和 GitLab 项目读取会在服务端恢复真实值，显式空值仍可清除秘密。
+- 已增加 liveness/readiness/build identity 回归；已拆开 read generation 的写入迁移与只读运行验收，避免 `--skip-migrate` 仍隐式修改 schema。
+- Linux 基础镜像标签已按官方当前标签核对；准备生成多阶段 server/web 镜像与 PostgreSQL 17 Compose 交付面。
+- 已完成 PostgreSQL 在线兼容面：配置化 adapter、连接池/ping/close、显式迁移、Daily Jira 直接分页/summary、PostgreSQL generation trigger、数据资产 guard、跨方言二进制列与 solution catalog epoch 查询。
+- 已完成配置秘密收口：公开配置 marker、保存/测试继承、数据库 bootstrap 隔离、配置版本明文清洗；示例六类敏感字段的 placeholder-only 静态门禁通过。
+- 已完成 Linux 交付文件：多阶段 Dockerfile、PostgreSQL/server/migrate/web Compose、Nginx 同源代理、生产示例、Makefile、部署/回滚脚本、Linux 手册和时序数据库 ADR。
+- 已从 Git 索引移除 `well-ambient.db`，本地 375MiB 数据库文件保留未改；未重写历史、未连接生产、未搬迁当前 SQLite 数据。
+- 交付验证：`go test ./...` 全通过；`go vet ./...` 通过；Go module verify 通过；Linux AMD64/ARM64 交叉构建生成静态 ELF；`pnpm -C web check` 0 error/148 个既有 warning，production build 通过。
+- 静态部署门禁：两份 bash 脚本 `bash -n`、可执行位、Compose/YAML 结构合同、敏感示例门禁、DB 不再 tracked、目标 `git diff --check` 全通过。
+- 隔离生命周期烟测：`/live=OK`、数据库 `/ready=OK`、version/commit 注入正确、SIGTERM 优雅退出成功。
+- 环境缺口：本机无 Docker/PostgreSQL，未冒充完成真实镜像、Compose 或 PostgreSQL 集成验证；这些步骤及 SQLite 历史数据迁移已写入 staging 门禁。
+
+## 2026-08-26 初次上线数据库引导与迁移指南
+
+- 已启用 planning-with-files、codebase-design、Impeccable onboarding/product、design-taste-frontend、finesse-ui、docs-write；尚未编辑 frontend 或业务启动代码。
+- 已确定核心安全方向：显式一次性 setup 状态 + token 授权 + 空库初始化/既有库验收分流 + 0600 bootstrap YAML 持久化；数据库断连不进入 setup。
+- 当前进入 Phase 0，继续加载完整 UI 技能并审计 App/auth、配置写入、server main 与 Compose 首次启动路径。
+- 已实现显式 `database.driver: setup` 启动分支；setup server 不初始化业务数据库、不挂载普通 API，成功后把 URL-safe PostgreSQL DSN 原子写入 `0600` runtime YAML 并退出，由 Compose 重启正常服务。
+- 已实现 token 保护的数据库 test/apply、PostgreSQL 14+ 检查、空 schema/完整当前 schema/未知 schema 三态识别，以及空库初始化和已迁移库接入两条互斥路径。
+- 已把首次安装接入 Linux Compose 与部署脚本；首次部署在 setup ready 后退出供管理员配置，后续内部 PG 自动 custom dump，外部 PG 没有明确备份引用则 fail-closed。
+- 已实现 `App.svelte` 启动前 setup probe 与 `DatabaseSetup.svelte` 一次性表单；密码/token 不进浏览器缓存，信息变化强制重测，成功后清理秘密并等待服务重启。
+- 已新增 SQLite → PostgreSQL 上线迁移指南，并更新 Linux 部署手册：覆盖停写快照、完整性/外键检查、附件哈希、显式字段映射、sequence、读模型重建、验收、切流与回滚；明确当前没有生产可用的自动搬迁器。
+- 定向 setup/config/schema 单元测试、全量 `go test ./...`（获批本地 httptest 监听）、`go vet ./...`、`go mod verify`、146 项前端合同、`pnpm check`（0 error/148 既有 warning）、production build、bash/YAML/diff 静态门禁均通过。
+- Impeccable 目标扫描返回 `[]`；Finesse 无 P0。浏览器完成 setup、normal、recovery 三态，以及 1280/768/414/320px、键盘焦点、44px 目标、秘密不回显和零横溢验证。
+- 当前进入交付前反思门禁。真实 PostgreSQL/Compose/SSL/权限与生产 SQLite 数据迁移尚未运行，必须在 Linux staging 独立验收。
+
+## 2026-08-26 首次安装本地 SQLite 一次性迁移决策
+
+- 已重新加载 planning-with-files、codebase-design、项目 Impeccable、design-taste-frontend 与 finesse-ui，并完成新范围的三方 UI 会审；尚未编辑产品或迁移源码。
+- 已确认现有安装页已具备 token 保护的真实 PostgreSQL 连接测试，但仍是单页；新范围将改为连接测试 → 本地数据决策/最终执行两步。
+- 已确认根目录存在 `well-ambient.db`，而生产容器当前不挂载该文件；计划通过显式受控 runtime legacy 路径检测，不扩大为目录扫描或任意路径探测。
+- 已确认当前仓库无可直接生产使用的 SQLite → PostgreSQL mover；`RequiredSchemaModels()` 可提供 owned-table 白名单和顺序，但 seed、guard、sequence、read generation 与大库时长仍需新合同和 staging 证据。
+- 下一步按 finesse 门禁先提交 Design Read 等待用户确认；确认前不编辑 frontend。
+- 用户已确认开始实施，并明确目标数据库在全新 PG 中应不存在；三方 UI 方向门禁解除。
+- 后端已实现维护库探测、缺库/建库权限事实、显式 `CREATE DATABASE ... TEMPLATE template0`、一次性 SQLite 选择与异步安装状态；setup 专项测试通过。
+- 数据层已实现只读 SQLite 快照校验、owned-table 分批复制、事务回滚、逐表行数验证、PG sequence 重置、read model/seed 收口和 `ANALYZE`；小型 SQLite→SQLite 方言模拟通过，用于验证复制算法，不冒充真实 PG。
+- PG 专用索引清单和方言跳过合同已落地；`internal/db`、`internal/config` 定向包测试通过。
+- 前端两步页已完成：第一步连接测试明确“目标数据库不存在”，第二步按服务端快照事实只提示一次迁移选择，并轮询表/行进度。`pnpm check` 0 error、production build 成功，输出仅含仓库既有 warnings/chunk 提示。
+- Compose 现只预建维护库 `postgres`；部署 runtime 新增 legacy 目录，文档已改为当前自动迁移合同与 staging 门禁；`config.example.yaml` 已清除真实组织/项目/JQL/人员上下文。
+- 当前进入完整本地 SQLite 快照模拟、全量测试、静态/设计检测、浏览器断点验证和精确 Git 提交阶段。
+- 真实根目录 SQLite 快照最终模拟通过：按 owned-table 白名单从受控只读文件复制 466,555 行、63 张表；该结果只证明迁移算法和事务路径，不冒充真实 PostgreSQL 方言验收。
+- 最终验证通过：全量 Go 测试与 vet、148 项前端合同、Svelte 0-error 检查、production build、bash/YAML/敏感示例/diff 门禁；浏览器覆盖缺库、一次性迁移选择、失败重试、正常入口与 1280/768/414/320px 零横溢。
+- 已精确暂存本任务数据库/部署/安装页文件，保留 Jira、交付计划、管理台等无关脏改动；从 Git index 导出的独立临时树完成全 Go 编译、相关 Go 测试、setup 7 项合同、Svelte 检查和生产构建。
+- 已创建提交 `3a447f7 feat: add guided postgres setup and legacy migration`；提交后新增行凭据扫描为 clean，无关工作树修改仍未暂存、未提交。
+
+## 2026-08-26 外置 PostgreSQL Compose 改造
+
+- 已启用 planning-with-files 与 docs-write，读取当前 Compose、生产示例、部署脚本和 Linux 手册。
+- 已确认目标为纯应用 Compose：用户现有 PostgreSQL 留在 Compose 外部，不执行任何数据库远程操作。
+- 已确认仅移动当前 Compose 不足以启动，因为镜像仍依赖本地源码构建；下一步改为可配置的预构建镜像引用，并同步部署脚本和搬运清单。
+- `docs-write` 声明的共享风格指南文件在安装目录中缺失，已按 self-improving 归因为技能资源问题并记录；本轮继续遵循主技能中的行动优先、占位符、可执行示例和格式规则。
+- 已完成强制前端三方门禁：三方共同裁决为 UI、层级、组件所有权和响应式全部不变，只更新部署合同测试；浏览器视觉回归不在本次必要范围。
+- `compose.yaml` 已删除 postgres service、postgres_data、内部 DSN、build context 和依赖，保留 migrate/server/web；server/migrate 增加 Linux `host.docker.internal:host-gateway` 映射。
+- `.env.production.example` 已改为预构建 server/web 镜像、不可变版本和运行 UID/GID；Makefile 支持本地构建与离线 image bundle。
+- `deploy.sh` 已移除内部 PG 启动和 `pg_dump` 分支，首次安装直接启动应用，后续迁移必须提供外部备份 ID；`rollback.sh` 不再假设本地固定镜像名。
+- 新增 `make compose-bundle`，生成只含 Compose、生产环境模板、运行配置模板和部署/回滚脚本的可上传压缩包；镜像可独立走仓库或 `make image-bundle` 离线导入。
+- 修复部署脚本覆盖 `.env.production` 中 `APP_UID/APP_GID` 的风险；以 root 执行脚本时不再隐式把应用容器改为 root 用户。
+- Linux 手册已给出打包、`scp`、服务器解压、镜像推送/离线导入、环境初始化、Compose 校验与首次启动命令，并明确同机 PG 使用 `host.docker.internal` 而非容器内 `127.0.0.1`。
+- 验证完成：shell 语法、YAML 三服务/无 PG/无本地 build 合同、部署包内容、示例占位符、可执行位和精确 diff 通过；数据库安装定向合同 8/8、前端全量合同 149/149、Svelte 0 error（148 个既有 warning）、production build 通过。
+- 当前开发机仍没有 Docker/PostgreSQL，因此没有伪装完成目标服务器上的真实拉取、Compose 启动或容器到现有 PG 的网络/SSL/权限验收；服务器操作清单已写入手册。
+- 已生成可直接上传的 `deploy/bundles/well-ambient-compose-2026.08.26-1.tar.gz`（4.6K，SHA-256 `479d8fe3e990e5e3c215162324449bf9ba74076346ddf3c28a561e2ad7d814e2`）；该目录已忽略，不进入 Git 提交。

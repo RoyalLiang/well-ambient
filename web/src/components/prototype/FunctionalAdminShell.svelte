@@ -672,6 +672,7 @@
         class="workspace-frame"
         class:flow-frame={activeRoute === 'schedule' && (activeScheduleView === 'board' || activeScheduleView === 'projects')}
         class:viewport-fit-frame={['decision', 'schedule', 'solutions', 'evidence', 'tasks'].includes(activeRoute)}
+        class:daily-jira-frame={activeRoute === 'decision' && activeDecisionView === 'daily_jira'}
         bind:this={workspaceFrameEl}
       >
         <slot />
@@ -2358,27 +2359,39 @@
     }
   }
 
+  /* Final viewport container contract: the browser shell never grows with a
+     route. Overflow remains inside the fixed workspace hierarchy. */
   @media (max-width: 860px) {
     .functional-console,
     .functional-console.rail-collapsed {
-      height: auto !important;
+      height: 100dvh !important;
       min-height: 100dvh;
-      overflow: visible !important;
+      overflow: hidden !important;
     }
 
     .console-main {
-      height: auto !important;
-      min-height: 100dvh !important;
-      overflow: visible !important;
+      height: 100dvh !important;
+      min-height: 0 !important;
+      overflow: hidden !important;
     }
 
-    .workspace-stage,
+    .workspace-stage {
+      height: auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+
     .workspace-frame,
     .workspace-frame.flow-frame,
     .workspace-frame.viewport-fit-frame {
-      height: auto;
+      height: 100%;
       min-height: 0;
-      overflow: visible;
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .workspace-frame.viewport-fit-frame {
+      overflow-y: hidden;
     }
   }
 </style>

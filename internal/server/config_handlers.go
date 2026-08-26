@@ -2,15 +2,18 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 	"well-ambient/internal/config"
+	"well-ambient/internal/telemetry"
 )
 
 const configuredSecretPlaceholder = "__configured__"
@@ -77,6 +80,14 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	previous := *s.config
+	if newCfg.Jira.Enabled && !reflect.DeepEqual(previous.Jira, newCfg.Jira) {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if err := validateJiraSyncScopes(ctx, &newCfg.Jira); err != nil {
+			writeConfigSaveError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := s.applyConfig(newCfg); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -97,6 +108,31 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		"version": configVersionDTO(version),
 	}); err != nil {
 		log.Printf("Error encoding save config response: %v", err)
+	}
+}
+
+func validateJiraSyncScopes(ctx context.Context, cfg *config.JiraConfig) error {
+	scopes := buildJiraQueryScopes(cfg)
+	if len(scopes) == 0 {
+		return fmt.Errorf("Jira 同步范围为空，配置未保存。请填写项目、用户、状态、自定义 JQL 或版本来源")
+	}
+	client := telemetry.NewJiraClient(cfg)
+	for _, scope := range scopes {
+		if err := client.ValidateJQL(ctx, scope.JQL); err != nil {
+			return fmt.Errorf("Jira 查询范围 %q 无效，配置未保存。请检查 project、issue key 或版本条件：%w", scope.Name, err)
+		}
+	}
+	return nil
+}
+
+func writeConfigSaveError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"message": message,
+	}); err != nil {
+		log.Printf("Error encoding config validation response: %v", err)
 	}
 }
 

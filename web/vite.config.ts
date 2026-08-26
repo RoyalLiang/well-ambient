@@ -12,7 +12,8 @@ export default defineConfig({
       input: {
         app: fileURLToPath(new URL('./index.html', import.meta.url)),
         prototype: fileURLToPath(new URL('./prototype.html', import.meta.url)),
-        settingsPreview: fileURLToPath(new URL('./settings-preview.html', import.meta.url))
+        settingsPreview: fileURLToPath(new URL('./settings-preview.html', import.meta.url)),
+        adminDataListPreview: fileURLToPath(new URL('./admin-data-list-preview.html', import.meta.url))
       }
     }
   },

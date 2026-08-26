@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import type {
+    AdminCellValue,
     AdminInspectorRecord,
     AdminMetric,
     AdminTableColumn,
@@ -13,7 +14,8 @@
     toneForRisk,
     toneForStatus
   } from '../lib/admin-console/contract';
-  import Alert from './shared/Alert.svelte';
+  import AdminDataList from './admin-console/AdminDataList.svelte';
+  import AdminListFilterBar from './admin-console/AdminListFilterBar.svelte';
   import DatePicker from './shared/DatePicker.svelte';
   import IssueTypeMark from './shared/IssueTypeMark.svelte';
   import Modal from './shared/Modal.svelte';
@@ -152,6 +154,7 @@
     activity: 116,
     status: 96
   };
+  const agendaVirtualOptions = { rowHeight: 48, overscan: 8, loadAheadRows: 8 };
   const configurableAgendaColumnOptions = agendaColumns
     .filter((column) => column.key !== 'task_id')
     .map((column) => ({ value: column.key, label: column.label }));
@@ -307,10 +310,18 @@
   }
   $: agendaRows = filteredItems.map(adaptAgendaRow);
   $: visibleAgendaColumns = agendaColumns.filter((column) => visibleAgendaColumnKeys.includes(column.key));
-  $: agendaTableMinWidth = `${Math.max(760, 36 + visibleAgendaColumns.reduce(
+  $: agendaTableMinWidth = `${Math.max(760, visibleAgendaColumns.reduce(
     (width, column) => width + (agendaColumnMinWidths[column.key] || 112),
     0
   ))}px`;
+  $: agendaListResetKey = [
+    currentFilter,
+    selectedAssignee,
+    selectedRepo,
+    showRiskLevel,
+    searchText.trim().toLowerCase(),
+    visibleAgendaColumnKeys.join(',')
+  ].join('|');
   $: configurableVisibleAgendaColumnKeys = visibleAgendaColumnKeys.filter((key) => key !== 'task_id');
   $: inspectorRecord = selectedItem ? adaptInspectorRecord(selectedItem) : null;
   $: currentDueDate = selectedItem?.due_date ? formatAdminDate(selectedItem.due_date) : '';
@@ -616,12 +627,6 @@
     if (detailDrawerReturnEl?.isConnected) {
       detailDrawerReturnEl.focus();
     }
-  }
-
-  function handleRowKeydown(event: KeyboardEvent, item: AgendaItem) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    openDetailDrawer(item, event);
   }
 
   function syncInterventionDraft(item: AgendaItem) {
@@ -1086,6 +1091,45 @@
   });
 </script>
 
+{#snippet renderAgendaCell(row: AgendaAdminRow, column: AdminTableColumn, value: AdminCellValue)}
+  {#if column.key === 'task_id'}
+    {@const jiraUrl = getJiraUrl(row.id)}
+    <div class="issue-id-cell">
+      <IssueTypeMark issueType={row.source.issue_type} />
+      {#if jiraUrl}
+        <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer">
+          {String(value ?? row.id)}
+        </a>
+      {:else}
+        <span class="table-id">{String(value ?? row.id)}</span>
+      {/if}
+    </div>
+  {:else if column.key === 'title'}
+    <button
+      type="button"
+      class="decision-title-button"
+      aria-haspopup="dialog"
+      aria-label={`查看 ${row.id}：${row.title}`}
+      on:click={(event) => openDetailDrawer(row.source, event)}
+    >
+      <strong>{row.title}</strong>
+    </button>
+  {:else if column.key === 'risk'}
+    <span class="wa-admin-pill {toneClass(row.tone)}">{row.risk}</span>
+  {:else if column.key === 'status'}
+    <span class="wa-admin-pill {getStatusToneClass(row.status)}">{row.status}</span>
+  {:else}
+    <span class="decision-cell-value" title={String(value ?? '-')}>{String(value ?? '-')}</span>
+  {/if}
+{/snippet}
+
+{#snippet renderAgendaEmpty()}
+  <div class="decision-list-empty">
+    <strong>当前条件下没有可见决策事项</strong>
+    <span>可调整风险、类型、负责人、项目或搜索条件。</span>
+  </div>
+{/snippet}
+
 <svelte:window on:keydown={handleDrawerKeydown} />
 
 <div class="decision-admin">
@@ -1152,142 +1196,86 @@
   </section>
 
   <div class="decision-main-grid">
-    <section class="wa-admin-section decision-table-section" class:has-feedback={!!errorMsg} aria-label="决策事项列表">
-      <div class="wa-admin-toolbar decision-toolbar">
-        <div class="toolbar-copy">
-          <span>Selection</span>
-          <strong>事项选择列表</strong>
-          {#if loading}
-            <small>正在刷新</small>
-          {:else}
-            <small>{agendaRows.length} / {filteredAgendaItems.length} 条可见事项</small>
-          {/if}
-        </div>
-
-        <div class="toolbar-controls">
-          <input class="wa-control search-control" type="search" bind:value={searchText} placeholder="搜索编号、标题、负责人" />
-          <div class="toolbar-select">
-            <Select
-              bind:value={selectedAssignee}
-              options={assigneeOptions}
-              placeholder="全部负责人"
-              searchPlaceholder="搜索负责人"
-              compact={true}
-              shadowless={true}
-            />
-          </div>
-          <div class="toolbar-select project-select">
-            <Select
-              bind:value={selectedRepo}
-              options={projectOptions}
-              placeholder="全部项目"
-              searchPlaceholder="搜索项目名"
-              compact={true}
-              shadowless={true}
-            />
-          </div>
-          <div class="toolbar-select column-select">
-            <MultiSelect
-              values={configurableVisibleAgendaColumnKeys}
-              options={configurableAgendaColumnOptions}
-              placeholder="选择显示列"
-              searchPlaceholder="搜索列"
-              controlLabel="显示列"
-              ariaLabel="配置事项列表显示列"
-              summaryMode={true}
-              overlay={true}
-              shadowless={true}
-              compact={true}
-              on:change={handleAgendaColumnsChange}
-            />
-            <span class="column-preference-state" class:error={!!columnPreferenceError} aria-live="polite">
-              {columnPreferenceSaving ? '正在保存显示列' : columnPreferenceError}
-            </span>
-          </div>
-          <button class="wa-admin-action secondary" type="button" on:click={() => fetchAgenda(true)} disabled={loading}>
-            刷新
-          </button>
-        </div>
-      </div>
-
-      {#if errorMsg}
-        <Alert type="error" message={errorMsg} />
-      {/if}
-
-      <div class="wa-admin-table-shell decision-table-shell">
-        <table class="wa-admin-table" style:min-width={agendaTableMinWidth}>
-          <thead>
-            <tr>
-              <th class="select-col" aria-label="选择"></th>
-              {#each visibleAgendaColumns as column}
-                <th
-                  class:sticky-status-col={column.key === 'status'}
-                  style={column.width ? `width: ${column.width}` : undefined}
-                >
-                  {column.label}
-                </th>
-              {/each}
-            </tr>
-          </thead>
-          <tbody>
-            {#if loading && agendaRows.length === 0}
-              <tr>
-                <td colspan={visibleAgendaColumns.length + 1}>
-                  <div class="table-state">正在加载真实 Agenda 数据...</div>
-                </td>
-              </tr>
-            {:else if agendaRows.length === 0}
-              <tr>
-                <td colspan={visibleAgendaColumns.length + 1}>
-                  <div class="table-state">当前过滤条件下没有可见决策事项。</div>
-                </td>
-              </tr>
+    <section class="decision-table-section" aria-label="决策事项列表">
+      <AdminListFilterBar label="决策事项筛选" className="decision-filter-bar">
+        {#snippet leading()}
+          <div class="toolbar-copy">
+            <strong>事项选择列表</strong>
+            {#if loading}
+              <small>正在刷新</small>
             {:else}
-              {#each agendaRows as row}
-                <tr
-                  class:is-selected={selectedItem?.task_id === row.id}
-                  on:click={(event) => openDetailDrawer(row.source, event)}
-                  on:keydown={(event) => handleRowKeydown(event, row.source)}
-                  role="button"
-                  tabindex="0"
-                  aria-haspopup="dialog"
-                >
-                  <td class="select-col">
-                    <span class="row-check" class:checked={selectedItem?.task_id === row.id}></span>
-                  </td>
-                  {#each visibleAgendaColumns as column}
-                    <td class="cell-{column.key}" class:sticky-status-col={column.key === 'status'}>
-                      {#if column.key === 'task_id'}
-                        {@const jiraUrl = getJiraUrl(row.id)}
-                        <div class="issue-id-cell">
-                          <IssueTypeMark issueType={row.source.issue_type} />
-                          {#if jiraUrl}
-                            <a class="table-link" href={jiraUrl} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                              {row.cells.task_id}
-                            </a>
-                          {:else}
-                            <span class="table-id">{row.cells.task_id}</span>
-                          {/if}
-                        </div>
-                      {:else if column.key === 'title'}
-                        <div class="title-stack">
-                          <strong>{row.title}</strong>
-                        </div>
-                      {:else if column.key === 'risk'}
-                        <span class="wa-admin-pill {toneClass(row.tone)}">{row.risk}</span>
-                      {:else if column.key === 'status'}
-                        <span class="wa-admin-pill {getStatusToneClass(row.status)}">{row.status}</span>
-                      {:else}
-                        <span>{row.cells[column.key]}</span>
-                      {/if}
-                    </td>
-                  {/each}
-                </tr>
-              {/each}
+              <small>{agendaRows.length} / {filteredAgendaItems.length} 条可见事项</small>
             {/if}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        {/snippet}
+
+        {#snippet controls()}
+          <div class="toolbar-controls">
+            <input class="wa-control search-control" type="search" bind:value={searchText} placeholder="搜索编号、标题、负责人" />
+            <div class="toolbar-select">
+              <Select
+                bind:value={selectedAssignee}
+                options={assigneeOptions}
+                placeholder="全部负责人"
+                searchPlaceholder="搜索负责人"
+                compact={true}
+                shadowless={true}
+              />
+            </div>
+            <div class="toolbar-select project-select">
+              <Select
+                bind:value={selectedRepo}
+                options={projectOptions}
+                placeholder="全部项目"
+                searchPlaceholder="搜索项目名"
+                compact={true}
+                shadowless={true}
+              />
+            </div>
+            <div class="toolbar-select column-select">
+              <MultiSelect
+                values={configurableVisibleAgendaColumnKeys}
+                options={configurableAgendaColumnOptions}
+                placeholder="选择显示列"
+                searchPlaceholder="搜索列"
+                controlLabel="显示列"
+                ariaLabel="配置事项列表显示列"
+                summaryMode={true}
+                overlay={true}
+                shadowless={true}
+                compact={true}
+                on:change={handleAgendaColumnsChange}
+              />
+              <span class="column-preference-state" class:error={!!columnPreferenceError} aria-live="polite">
+                {columnPreferenceSaving ? '正在保存显示列' : columnPreferenceError}
+              </span>
+            </div>
+            <button class="wa-admin-action secondary" type="button" on:click={() => fetchAgenda(true)} disabled={loading}>
+              刷新
+            </button>
+          </div>
+        {/snippet}
+      </AdminListFilterBar>
+
+      <AdminDataList
+        columns={visibleAgendaColumns}
+        rows={agendaRows}
+        caption="决策事项选择列表"
+        cell={renderAgendaCell}
+        empty={renderAgendaEmpty}
+        {loading}
+        error={errorMsg}
+        onRetry={() => fetchAgenda(true)}
+        skeletonRows={6}
+        className="decision-agenda-list"
+        scrollRegionId="decision-agenda-list-content"
+        tableMinWidth={agendaTableMinWidth}
+        compactTableMinWidth={agendaTableMinWidth}
+        virtual={agendaVirtualOptions}
+        totalRowCount={agendaRows.length}
+        selectedRowId={selectedItem?.task_id || ''}
+        resetKey={agendaListResetKey}
+      />
     </section>
   </div>
 
@@ -1850,45 +1838,21 @@
     max-height: none;
     min-height: 0;
     box-sizing: border-box;
-    padding: 14px;
     overflow: visible;
-    border: 1px solid rgba(255, 255, 255, 0.66);
-    border-radius: var(--decision-radius-panel);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(245, 250, 252, 0.56)),
-      var(--wa-chrome-2);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.86),
-      0 16px 42px rgba(30, 46, 64, 0.08);
-    backdrop-filter: blur(18px) saturate(126%);
-    -webkit-backdrop-filter: blur(18px) saturate(126%);
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 10px;
   }
 
-  .decision-table-section.has-feedback {
-    grid-template-rows: auto auto minmax(0, 1fr);
-  }
-
   .decision-table-section:focus-within {
     z-index: 80;
-  }
-
-  .decision-toolbar {
-    position: relative;
-    z-index: 45;
-    display: grid;
-    grid-template-columns: minmax(220px, 0.72fr) minmax(640px, 1.28fr);
-    align-items: center;
-    gap: 14px;
-    overflow: visible;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
 
   .toolbar-copy {
@@ -1986,91 +1950,12 @@
     white-space: nowrap;
   }
 
-  .decision-table-shell {
+  :global(.decision-agenda-list.admin-data-list) {
     position: relative;
     z-index: 1;
     grid-row: auto;
-    height: auto;
-    max-height: none;
+    height: 100%;
     min-height: 0;
-    overflow: auto;
-    border-color: rgba(123, 143, 160, 0.18);
-    border-radius: var(--decision-radius-card);
-    background: rgba(255, 255, 255, 0.64);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.82),
-      0 10px 26px rgba(30, 46, 64, 0.05);
-    backdrop-filter: blur(14px) saturate(118%);
-    -webkit-backdrop-filter: blur(14px) saturate(118%);
-    scrollbar-gutter: stable;
-  }
-
-  .decision-table-shell .wa-admin-table {
-    min-width: 760px;
-  }
-
-  .decision-table-shell .wa-admin-table th {
-    padding: 10px 12px;
-    color: var(--wa-text-muted);
-    font-size: 12px;
-    letter-spacing: 0;
-    background:
-      linear-gradient(180deg, rgba(250, 253, 255, 0.98), rgba(244, 249, 252, 0.94));
-  }
-
-  .decision-table-shell .wa-admin-table td {
-    height: 48px;
-    padding: 10px 12px;
-    background: var(--decision-row-bg, var(--wa-surface-flat, #fbfdfe));
-    color: var(--wa-text-main);
-  }
-
-  .decision-table-shell .sticky-status-col {
-    position: sticky;
-    right: 0;
-    z-index: 3;
-    background: var(--decision-row-bg, var(--wa-surface-flat, #fbfdfe));
-    box-shadow: none;
-  }
-
-  .decision-table-shell thead .sticky-status-col {
-    z-index: 5;
-    background: var(--wa-surface-inset, #f5f8fb);
-  }
-
-  .decision-table-shell .wa-admin-table tbody tr:hover {
-    --decision-row-bg: var(--wa-row-hover, #f1f6f8);
-  }
-
-  .decision-table-shell .wa-admin-table tbody tr.is-selected {
-    --decision-row-bg: var(--wa-row-active, #e9f5f4);
-    background: var(--decision-row-bg);
-    box-shadow:
-      inset 3px 0 0 var(--wa-accent),
-      inset 0 0 0 1px rgba(0, 143, 150, 0.14);
-  }
-
-  .select-col {
-    width: 36px;
-    text-align: center;
-  }
-
-  .row-check {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--wa-border-soft);
-    border-radius: var(--wa-radius-xs);
-    background: var(--wa-surface-flat, #fbfdff);
-    vertical-align: middle;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  }
-
-  .row-check.checked {
-    border-color: var(--wa-accent);
-    background:
-      linear-gradient(135deg, transparent 0 42%, var(--wa-accent-ink) 42% 56%, transparent 56%),
-      var(--wa-accent);
   }
 
   .table-link,
@@ -2101,26 +1986,64 @@
     gap: 7px;
   }
 
-  .title-stack {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
+  .issue-id-cell .table-link,
+  .issue-id-cell .table-id {
+    white-space: nowrap;
   }
 
-  .title-stack strong {
-    color: var(--wa-text-strong);
+  .decision-title-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .decision-title-button strong,
+  .decision-cell-value {
+    display: block;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .decision-title-button strong {
+    color: var(--wa-text-strong);
     font-size: 13px;
     line-height: 1.28;
     font-weight: 780;
   }
 
-  .table-state {
+  .decision-title-button:focus-visible {
+    outline: 2px solid var(--wa-border-focus, var(--wa-accent));
+    outline-offset: 2px;
+  }
+
+  .decision-list-empty {
+    min-height: 220px;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: var(--wa-space-2);
     padding: var(--wa-space-8);
-    color: var(--wa-text-muted);
     text-align: center;
+  }
+
+  .decision-list-empty strong {
+    color: var(--wa-text-strong);
+    font-size: 16px;
+  }
+
+  .decision-list-empty span {
+    color: var(--wa-text-muted);
+    font-size: 13px;
   }
 
   .inspector-kicker {
@@ -2652,12 +2575,6 @@
   }
 
   @media (max-width: 900px) {
-    .decision-toolbar {
-      grid-template-columns: 1fr;
-      align-items: stretch;
-      gap: 8px;
-    }
-
     .toolbar-controls {
       grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
     }
@@ -2669,6 +2586,24 @@
     .search-control,
     .toolbar-select {
       width: 100%;
+    }
+  }
+
+  @media (max-width: 800px) {
+    .search-control,
+    .toolbar-select :global(.select-trigger),
+    .toolbar-select :global(.select-inline-input),
+    .toolbar-select :global(.select-toggle),
+    .toolbar-select :global(.multi-select-trigger),
+    .toolbar-select :global(.multi-select-chevron),
+    .toolbar-controls .wa-admin-action {
+      min-height: var(--wa-touch-h, 44px);
+      height: var(--wa-touch-h, 44px);
+    }
+
+    .column-select :global(.multi-select-group.summary-mode .multi-select-trigger) {
+      min-height: var(--wa-touch-h, 44px);
+      height: var(--wa-touch-h, 44px);
     }
   }
 
@@ -2688,13 +2623,14 @@
       padding-block: 7px;
     }
 
-    .decision-table-section {
-      padding: 10px;
-    }
-
-    .column-select :global(.multi-select-group.summary-mode .multi-select-trigger) {
-      height: 44px;
-      min-height: 44px;
+    .search-control,
+    .toolbar-select :global(.select-trigger),
+    .toolbar-select :global(.select-inline-input),
+    .toolbar-select :global(.select-toggle),
+    .toolbar-select :global(.multi-select-trigger),
+    .toolbar-select :global(.multi-select-chevron) {
+      min-height: var(--wa-touch-h, 44px);
+      height: var(--wa-touch-h, 44px);
     }
 
     .requirement-drawer-body {
@@ -2848,7 +2784,7 @@
     --wa-shadow-glass: none;
     --wa-shadow-panel: none;
     --wa-shadow-glow: none;
-    grid-template-rows: 116px auto minmax(0, 1fr);
+    grid-template-rows: 116px minmax(0, 1fr);
     background: transparent;
   }
 
@@ -2940,39 +2876,13 @@
   }
 
   .decision-table-section {
-    padding: 14px 16px 0;
-    border: 1px solid var(--wa-glass-outline, rgba(72, 98, 118, 0.18));
-    border-top-color: var(--wa-glass-highlight, rgba(255, 255, 255, 0.82));
-    border-radius: var(--decision-radius-panel);
-    background: var(--wa-glass-panel, rgba(250, 253, 255, 0.76));
-    box-shadow: none;
-    -webkit-backdrop-filter: blur(16px) saturate(128%);
-    backdrop-filter: blur(16px) saturate(128%);
-  }
-
-  .decision-toolbar {
-    padding-bottom: 12px;
-  }
-
-  .decision-table-shell {
+    padding: 0;
     border: 0;
-    border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
     border-radius: 0;
     background: transparent;
     box-shadow: none;
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
-  }
-
-  .decision-table-shell .wa-admin-table th,
-  .decision-table-shell thead .sticky-status-col {
-    background: var(--wa-surface-inset, #f5f8fb);
-    background-image: none;
-  }
-
-  .decision-table-shell .wa-admin-table tbody tr {
-    --decision-row-bg: var(--wa-surface-flat, #fbfdfe);
-    background: var(--decision-row-bg);
+    backdrop-filter: none;
   }
 
   .release-fact-strip {
@@ -3062,10 +2972,6 @@
     box-shadow: none !important;
   }
 
-  .decision-admin :global(*) {
-    box-shadow: none !important;
-  }
-
   .decision-admin :global(:focus-visible) {
     outline: 2px solid rgba(0, 143, 150, 0.24);
     outline-offset: 2px;
@@ -3088,10 +2994,6 @@
     .decision-summary-panel .decision-metric:nth-child(n + 3),
     .decision-summary-panel .stage-chip:nth-child(n + 3) {
       border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
-    }
-
-    .decision-table-section {
-      padding: 12px 12px 0;
     }
 
     .release-fact-strip {

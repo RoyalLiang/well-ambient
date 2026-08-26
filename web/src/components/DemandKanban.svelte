@@ -2,9 +2,15 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import { slide } from 'svelte/transition';
-  import type { AdminInspectorRecord, AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
+  import type { AdminCellValue, AdminInspectorRecord, AdminMetric, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS, formatAdminDate, toneForRisk, toneForStatus } from '../lib/admin-console/contract';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
+  import {
+    buildDeconstructorSessionKey,
+    rememberDeconstructorSnapshot,
+    restoreDeconstructorSnapshot,
+    type DeconstructorCompletedSnapshot
+  } from '../lib/deconstructor-session';
   import { readDeconstructStream } from '../lib/deconstruct-stream';
   import { showToast } from '../lib/toast';
   import {
@@ -12,9 +18,11 @@
     type DeliveryProjectOption
   } from '../lib/delivery-directory';
   import CommitTelemetryPanel from './CommitTelemetryPanel.svelte';
+  import AdminDataList from './admin-console/AdminDataList.svelte';
   import Deconstructor from './Deconstructor.svelte';
   import DemandDeliveryControl from './DemandDeliveryControl.svelte';
   import SolutionWorkspace from './SolutionWorkspace.svelte';
+  import Modal from './shared/Modal.svelte';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import Select from './shared/Select.svelte';
 
@@ -104,44 +112,14 @@
     project_priority?: string;
   }
 
+  interface ScheduleAdminRow extends AdminTableRow {
+    item: ScheduleItem;
+  }
+
   interface ScheduleResponse {
     generated_at: string;
     summary: ScheduleSummary;
     items: ScheduleItem[];
-  }
-
-  type ScheduleRiskBucketKey = 'this_week' | 'next_week' | 'later';
-
-  interface ScheduleRiskCalendarCounts {
-    total: number;
-    overdue: number;
-    due_soon: number;
-    stale: number;
-    unscheduled: number;
-  }
-
-  interface ScheduleRiskCalendarEvent {
-    id?: string;
-    demand_id: string;
-    title: string;
-    assignee: string;
-    project_key: string;
-    week_key?: string;
-    risk_type?: string;
-    risk_level: string;
-    risk_label: string;
-    risk_reason: string;
-    due_date: string;
-    days_remaining: number;
-  }
-
-  interface ScheduleRiskCalendarBucket {
-    key: ScheduleRiskBucketKey;
-    label: string;
-    window_label: string;
-    counts: ScheduleRiskCalendarCounts;
-    events: ScheduleRiskCalendarEvent[];
-    event_ids?: string[];
   }
 
   interface DeconstructEstimateResponse {
@@ -165,19 +143,6 @@
     { value: 'done', label: '已交付' }
   ];
 
-  const riskCalendarRiskTypes: Array<{ value: ScheduleRiskFilter; label: string }> = [
-    { value: 'overdue', label: '逾期' },
-    { value: 'due_soon', label: '临期' },
-    { value: 'stale', label: '滞后' },
-    { value: 'unscheduled', label: '待排期' }
-  ];
-
-  const riskCalendarBucketMeta: Array<{ key: ScheduleRiskBucketKey; label: string; window_label: string }> = [
-    { key: 'this_week', label: '本周', window_label: '本周截止与已逾期' },
-    { key: 'next_week', label: '下周', window_label: '下周到期风险' },
-    { key: 'later', label: '后续', window_label: '未排期与远期风险' }
-  ];
-
   const scheduleSortModes: Array<{ value: ScheduleSortMode; label: string }> = [
     { value: 'risk', label: '风险优先' },
     { value: 'due', label: '截止日' },
@@ -185,14 +150,19 @@
   ];
 
   const scheduleTableColumns: AdminTableColumn[] = [
-    { key: 'demand', label: '需求', width: '28%' },
-    { key: 'priority', label: '优先级', width: '8%', align: 'center' },
-    { key: 'owner', label: '负责人', width: '11%' },
-    { key: 'risk', label: '风险', width: '14%' },
-    { key: 'dueDate', label: '计划日', width: '12%' },
+    { key: 'demand', label: '需求', width: '34%' },
+    { key: 'priority', label: '优先级', width: '8%', align: 'center', priority: 'secondary' },
+    { key: 'owner', label: '负责人', width: '11%', priority: 'secondary' },
+    { key: 'risk', label: '风险', width: '15%' },
+    { key: 'dueDate', label: '计划日', width: '12%', priority: 'secondary' },
     { key: 'status', label: '状态', width: '10%', align: 'center' },
-    { key: 'evidence', label: '检查', width: '7%', align: 'center' }
+    { key: 'evidence', label: '检查', width: '10%', align: 'center', priority: 'secondary' }
   ];
+
+  const scheduleVirtualOptions = {
+    rowHeight: 48,
+    overscan: 8
+  };
 
   const difficultyOptions: Array<{ value: string; label: string }> = [
     { value: '', label: '未设置' },
@@ -213,24 +183,6 @@
       due_soon: 0,
       stale: 0
     };
-  }
-
-  function createEmptyRiskCalendarCounts(): ScheduleRiskCalendarCounts {
-    return {
-      total: 0,
-      overdue: 0,
-      due_soon: 0,
-      stale: 0,
-      unscheduled: 0
-    };
-  }
-
-  function createEmptyRiskCalendarBuckets(): ScheduleRiskCalendarBucket[] {
-    return riskCalendarBucketMeta.map((bucket) => ({
-      ...bucket,
-      counts: createEmptyRiskCalendarCounts(),
-      events: []
-    }));
   }
 
   function canManageDemand(item: Demand): boolean {
@@ -343,12 +295,6 @@
   let scheduleGeneratedAt = '';
   let scheduleLoading = false;
   let scheduleErrorMsg = '';
-  let riskCalendarBuckets: ScheduleRiskCalendarBucket[] = createEmptyRiskCalendarBuckets();
-  let riskCalendarGeneratedAt = '';
-  let riskCalendarLoading = false;
-  let riskCalendarErrorMsg = '';
-  let riskCalendarUsingFallback = false;
-  let riskCalendarRequestSeq = 0;
   let scheduleSearch = '';
   let scheduleSearchInput = '';
   let scheduleSearchDebounceTimer: any;
@@ -420,14 +366,7 @@
     return map;
   })();
 
-  let scheduleScrollTop = 0;
-  let scheduleContainerHeight = 550;
-  let scheduleContainerEl: HTMLDivElement;
   let scheduleWorkbenchEl: HTMLDivElement;
-  let scheduleTablePanelEl: HTMLDivElement;
-  const scheduleItemHeight = 48;
-  const scheduleTableHeaderHeight = 40;
-  const scheduleEmptyStateHeight = 96;
   let lastScheduleLayoutSignature = '';
   let scheduleLayoutStabilizeSeq = 0;
 
@@ -557,7 +496,6 @@
 
   function buildScheduleInspectorRecord(item: ScheduleItem | null | undefined): AdminInspectorRecord | null {
     if (!item) return null;
-    const priority = item.project_priority || getProjectPriority(item.demand_id);
     const progress = getScheduleProgress(item);
     return {
       id: item.demand_id,
@@ -565,14 +503,8 @@
       status: getScheduleStatusLabel(item),
       tone: getScheduleStatusTone(item),
       facts: [
-        { label: '负责人', value: item.assignee || '未指派' },
         { label: '提出日期', value: formatAdminDate(item.created_at) },
-        { label: '计划完成日期', value: formatAdminDate(item.due_date) },
-        { label: '所属项目', value: getScheduleProjectLabel(item) },
-        { label: '关联目标', value: priority || 'P2' },
-        { label: '当前阶段', value: getScheduleStatusLabel(item) },
-        { label: '预计工作量', value: formatScheduleEffort(item) },
-        { label: '任务组', value: item.task_group_id || '未绑定' }
+        { label: '计划完成日期', value: formatAdminDate(item.due_date) }
       ],
       sections: [
         {
@@ -603,51 +535,32 @@
     };
   }
 
-  $: flatRenderList = (() => {
+  $: scheduleDataListRows = (() => {
     const sorted = [...filteredScheduleItems];
     sorted.sort((a, b) => compareScheduleItems(a, b));
 
-    return sorted.map((item) => ({
-      type: 'item',
-      projectKey: item.project_key || getProjectKey(item.demand_id),
-      data: item,
-      row: buildScheduleTableRow(item),
-      id: item.demand_id
+    return sorted.map((item): ScheduleAdminRow => ({
+      ...buildScheduleTableRow(item),
+      item
     }));
   })();
 
-  $: scheduleStartIndex = Math.max(0, Math.floor(scheduleScrollTop / scheduleItemHeight) - 2);
-  $: scheduleViewportHeight = scheduleContainerHeight > 0 ? scheduleContainerHeight : 550;
-  $: scheduleVirtualRowCount = flatRenderList.length;
-  $: scheduleTableContentHeight = scheduleTableHeaderHeight + (scheduleVirtualRowCount > 0 ? scheduleVirtualRowCount * scheduleItemHeight : scheduleEmptyStateHeight);
+  $: scheduleListResetKey = [
+    scheduleRiskFilter,
+    scheduleAssigneeFilter,
+    scheduleTypeFilter,
+    scheduleProjectFilter,
+    scheduleSortMode,
+    scheduleSearch
+  ].join(':');
   $: scheduleLayoutSignature = [
     activeDemandView,
     scheduleLoading ? 'schedule-loading' : 'schedule-idle',
     scheduleErrorMsg ? 'schedule-error' : 'schedule-ok',
-    riskCalendarLoading ? 'risk-loading' : 'risk-idle',
-    riskCalendarUsingFallback ? 'fallback' : 'live',
-    riskCalendarErrorMsg ? 'risk-error' : 'risk-ok',
     scheduleItems.length,
-    scheduleVirtualRowCount,
-    scheduleTableContentHeight,
-    riskCalendarBuckets.map((bucket) => `${bucket.key}:${bucket.counts.total}:${bucket.events.length}`).join('|')
+    scheduleDataListRows.length
   ].join('~');
   $: stabilizeScheduleLayout(scheduleLayoutSignature);
-  $: scheduleMaxScrollTop = Math.max(0, scheduleVirtualRowCount * scheduleItemHeight - scheduleViewportHeight);
-  $: if (scheduleContainerEl && scheduleScrollTop > scheduleMaxScrollTop) {
-    scheduleScrollTop = scheduleMaxScrollTop;
-    scheduleContainerEl.scrollTop = scheduleMaxScrollTop;
-  }
-  $: scheduleEndIndex = Math.min(flatRenderList.length, Math.ceil((scheduleScrollTop + scheduleViewportHeight) / scheduleItemHeight) + 2);
-  $: visibleScheduleRows = flatRenderList.slice(scheduleStartIndex, scheduleEndIndex);
-  $: scheduleTopPadding = scheduleStartIndex * scheduleItemHeight;
-  $: scheduleBottomPadding = (flatRenderList.length - scheduleEndIndex) * scheduleItemHeight;
-
-  function handleScheduleScroll(e: Event) {
-    const target = e.target as HTMLDivElement;
-    scheduleContainerHeight = target.clientHeight || scheduleContainerHeight;
-    scheduleScrollTop = target.scrollTop;
-  }
 
   async function stabilizeScheduleLayout(nextSignature: string) {
     if (!isMounted || activeDemandView !== 'schedule' || !scheduleWorkbenchEl || typeof window === 'undefined') {
@@ -658,8 +571,7 @@
 
     const scrollBefore = window.scrollY || document.documentElement.scrollTop || 0;
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-    const tableRectBefore = scheduleTablePanelEl?.getBoundingClientRect();
-    const anchorEl = tableRectBefore && tableRectBefore.top < viewportHeight ? scheduleTablePanelEl : scheduleWorkbenchEl;
+    const anchorEl = scheduleWorkbenchEl;
     const rectBefore = anchorEl.getBoundingClientRect();
     const shouldPreserveViewport = rectBefore.top < viewportHeight;
 
@@ -788,6 +700,14 @@
   let deconstructorContextLabel = '需求解构';
   let deconstructorPresentation: 'modal' | 'companion' = 'modal';
   let deconstructorHost: 'none' | 'create' | 'schedule' | 'details' = 'none';
+  let deconstructorWorkbench: Deconstructor;
+  let deconstructorGenerationActive = false;
+  let showDeconstructorCloseConfirm = false;
+  let pendingDeconstructorCloseHost: 'none' | 'create' | 'schedule' | 'details' = 'none';
+  let pendingDeconstructorRestoreFocus = true;
+  let deconstructorCompletedSnapshots = new Map<string, DeconstructorCompletedSnapshot<any>>();
+  let deconstructorSessionKey = '';
+  let deconstructorInitialSnapshot: DeconstructorCompletedSnapshot<any> | null = null;
   let companionHostHeight = 560;
   let manualModalScrollLocked = false;
   let detailDrawerEl: HTMLElement;
@@ -1225,7 +1145,10 @@
     || ['bug', '缺陷', '故障', 'defect'].includes((selectedScheduleItem.issue_type || '').toLowerCase())
     || !canEditScheduleItem(selectedScheduleItem);
   $: if (activeDemandView === 'schedule' && selectedScheduleItem && selectedScheduleItem.demand_id !== scheduleDraftDemandId) {
-    loadScheduleEditor(selectedScheduleItem);
+    const editorDemandReady = demandsById.has(selectedScheduleItem.demand_id);
+    if (editorDemandReady || !loading) {
+      loadScheduleEditor(selectedScheduleItem);
+    }
   }
   $: if (activeDemandView === 'schedule' && !selectedScheduleItem && scheduleDraftDemandId) {
     selectedDemand = null;
@@ -1352,260 +1275,6 @@
     return 'attention';
   }
 
-  function isCalendarRiskLevel(value?: string): boolean {
-    const level = normalizeRiskLevel(value);
-    return level === 'overdue' || level === 'due_soon' || level === 'stale' || level === 'unscheduled';
-  }
-
-  function getRiskSeverityWeight(value?: string): number {
-    const level = normalizeRiskLevel(value);
-    if (level === 'overdue') return 500;
-    if (level === 'due_soon') return 400;
-    if (level === 'stale') return 300;
-    if (level === 'unscheduled') return 200;
-    return 0;
-  }
-
-  function sortRiskCalendarEvents(events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarEvent[] {
-    return [...events].sort((a, b) => {
-      const severityDiff = getRiskSeverityWeight(b.risk_level) - getRiskSeverityWeight(a.risk_level);
-      if (severityDiff !== 0) return severityDiff;
-      const dayDiff = a.days_remaining - b.days_remaining;
-      if (Number.isFinite(dayDiff) && dayDiff !== 0) return dayDiff;
-      return a.demand_id.localeCompare(b.demand_id);
-    });
-  }
-
-  function normalizeRiskCalendarEvent(raw: any): ScheduleRiskCalendarEvent {
-    const demandID = raw?.demand_id || raw?.task_id || raw?.id || '';
-    const riskLevel = normalizeRiskLevel(raw?.risk_type || raw?.risk_level || raw?.risk || raw?.level);
-    return {
-      id: raw?.id || `${riskLevel}:${demandID}`,
-      demand_id: demandID,
-      title: raw?.title || raw?.summary || demandID || '未命名需求',
-      assignee: raw?.assignee || raw?.owner || '未指派',
-      project_key: raw?.project_key || getProjectKey(demandID),
-      week_key: raw?.week_key || raw?.weekKey || '',
-      risk_type: raw?.risk_type || raw?.type || '',
-      risk_level: riskLevel,
-      risk_label: raw?.risk_label || raw?.label || getRiskLevelLabel(riskLevel),
-      risk_reason: raw?.risk_reason || raw?.reason || '',
-      due_date: raw?.due_date || raw?.deadline || '',
-      days_remaining: Number.isFinite(Number(raw?.days_remaining)) ? Number(raw.days_remaining) : 999
-    };
-  }
-
-  function normalizeRiskCalendarCounts(raw: any, events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarCounts {
-    const counts = createEmptyRiskCalendarCounts();
-    const source = raw || {};
-    counts.overdue = Number.isFinite(Number(source.overdue)) ? Number(source.overdue) : 0;
-    counts.due_soon = Number.isFinite(Number(source.due_soon)) ? Number(source.due_soon) : 0;
-    counts.stale = Number.isFinite(Number(source.stale)) ? Number(source.stale) : 0;
-    counts.unscheduled = Number.isFinite(Number(source.unscheduled))
-      ? Number(source.unscheduled)
-      : Number.isFinite(Number(source.missing_schedule))
-        ? Number(source.missing_schedule)
-        : 0;
-
-    if (counts.overdue + counts.due_soon + counts.stale + counts.unscheduled === 0 && events.length > 0) {
-      for (const event of events) {
-        const level = normalizeRiskLevel(event.risk_level);
-        if (level === 'overdue') counts.overdue += 1;
-        if (level === 'due_soon') counts.due_soon += 1;
-        if (level === 'stale') counts.stale += 1;
-        if (level === 'unscheduled') counts.unscheduled += 1;
-      }
-    }
-
-    const derivedTotal = counts.overdue + counts.due_soon + counts.stale + counts.unscheduled;
-    counts.total = Number.isFinite(Number(source.total)) && Number(source.total) > 0 ? Number(source.total) : derivedTotal;
-    return counts;
-  }
-
-  function normalizeRiskBucketKey(value: unknown, index: number): ScheduleRiskBucketKey {
-    const key = String(value || '').trim().toLowerCase().replace(/-/g, '_');
-    if (key.includes('this') || key.includes('current') || key.includes('week_0') || key.includes('本周')) return 'this_week';
-    if (key.includes('next') || key.includes('week_1') || key.includes('下周')) return 'next_week';
-    if (key.includes('later') || key.includes('future') || key.includes('upcoming') || key.includes('后续')) return 'later';
-    return riskCalendarBucketMeta[Math.min(index, riskCalendarBucketMeta.length - 1)].key;
-  }
-
-  function normalizeRiskCalendarBucket(raw: any, meta: { key: ScheduleRiskBucketKey; label: string; window_label: string }): ScheduleRiskCalendarBucket {
-    const rawEvents = raw?.events || raw?.items || raw?.risks || [];
-    const events = Array.isArray(rawEvents)
-      ? sortRiskCalendarEvents(rawEvents.map(normalizeRiskCalendarEvent).filter((event) => isCalendarRiskLevel(event.risk_level)))
-      : [];
-    const rawCounts = raw?.counts || raw?.summary || raw;
-    return {
-      key: meta.key,
-      label: raw?.label || meta.label,
-      window_label: raw?.window_label || raw?.range_label || raw?.window || meta.window_label,
-      counts: normalizeRiskCalendarCounts(rawCounts, events),
-      events,
-      event_ids: Array.isArray(raw?.event_ids) ? raw.event_ids : []
-    };
-  }
-
-  function buildRiskCalendarBucketsFromEvents(events: ScheduleRiskCalendarEvent[]): ScheduleRiskCalendarBucket[] {
-    const buckets = createEmptyRiskCalendarBuckets();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const weekday = (today.getDay() + 6) % 7;
-    const thisWeekStart = new Date(today);
-    thisWeekStart.setDate(today.getDate() - weekday);
-    const nextWeekStart = new Date(thisWeekStart);
-    nextWeekStart.setDate(thisWeekStart.getDate() + 7);
-    const laterStart = new Date(nextWeekStart);
-    laterStart.setDate(nextWeekStart.getDate() + 7);
-
-    for (const event of events) {
-      if (!isCalendarRiskLevel(event.risk_level)) continue;
-      let bucketKey: ScheduleRiskBucketKey = 'later';
-      const riskLevel = normalizeRiskLevel(event.risk_level);
-      const dueDate = parseDateValue(event.due_date ? event.due_date.slice(0, 10) : '');
-      if (riskLevel === 'overdue') {
-        bucketKey = 'this_week';
-      } else if (dueDate && dueDate < nextWeekStart) {
-        bucketKey = 'this_week';
-      } else if (dueDate && dueDate < laterStart) {
-        bucketKey = 'next_week';
-      }
-
-      const bucket = buckets.find((candidate) => candidate.key === bucketKey);
-      if (!bucket) continue;
-      const level = normalizeRiskLevel(event.risk_level);
-      if (level === 'overdue') bucket.counts.overdue += 1;
-      if (level === 'due_soon') bucket.counts.due_soon += 1;
-      if (level === 'stale') bucket.counts.stale += 1;
-      if (level === 'unscheduled') bucket.counts.unscheduled += 1;
-      bucket.counts.total += 1;
-      bucket.events.push(event);
-    }
-
-    return buckets.map((bucket) => ({
-      ...bucket,
-      events: sortRiskCalendarEvents(bucket.events)
-    }));
-  }
-
-  function buildFallbackRiskCalendarBuckets(): ScheduleRiskCalendarBucket[] {
-    return buildRiskCalendarBucketsFromEvents(scheduleItems.map(normalizeRiskCalendarEvent));
-  }
-
-  function normalizeRiskCalendarResponse(data: any): ScheduleRiskCalendarBucket[] {
-    const allEvents = Array.isArray(data?.events)
-      ? sortRiskCalendarEvents(data.events.map(normalizeRiskCalendarEvent).filter((event: ScheduleRiskCalendarEvent) => isCalendarRiskLevel(event.risk_level)))
-      : [];
-    const bucketArray = Array.isArray(data?.buckets)
-      ? data.buckets
-      : Array.isArray(data?.weeks)
-        ? data.weeks
-        : Array.isArray(data?.calendar)
-          ? data.calendar
-          : [];
-
-    if (bucketArray.length > 0) {
-      const bucketsByKey = new Map<ScheduleRiskBucketKey, any>();
-      bucketArray.forEach((bucket: any, index: number) => {
-        bucketsByKey.set(normalizeRiskBucketKey(bucket?.key || bucket?.bucket || bucket?.name || bucket?.label, index), bucket);
-      });
-      return riskCalendarBucketMeta.map((meta, index) => {
-        const raw = bucketsByKey.get(meta.key) || bucketArray[index] || {};
-        const bucket = normalizeRiskCalendarBucket(raw, meta);
-        if (bucket.events.length === 0 && allEvents.length > 0) {
-          const ids = new Set(bucket.event_ids || []);
-          bucket.events = sortRiskCalendarEvents(allEvents.filter((event) => {
-            if (ids.size > 0 && event.id && ids.has(event.id)) return true;
-            return raw?.key && event.week_key === raw.key;
-          })).slice(0, 4);
-        }
-        return bucket;
-      });
-    }
-
-    const directBuckets = riskCalendarBucketMeta.map((meta) => data?.[meta.key]);
-    if (directBuckets.some(Boolean)) {
-      return riskCalendarBucketMeta.map((meta, index) => normalizeRiskCalendarBucket(directBuckets[index] || {}, meta));
-    }
-
-    const rawEvents = data?.events || data?.items || data?.risks || [];
-    if (Array.isArray(rawEvents)) {
-      return buildRiskCalendarBucketsFromEvents(rawEvents.map(normalizeRiskCalendarEvent));
-    }
-
-    return createEmptyRiskCalendarBuckets();
-  }
-
-  function getBucketRiskCount(bucket: ScheduleRiskCalendarBucket, risk: ScheduleRiskFilter): number {
-    if (risk === 'overdue') return bucket.counts.overdue;
-    if (risk === 'due_soon') return bucket.counts.due_soon;
-    if (risk === 'stale') return bucket.counts.stale;
-    if (risk === 'unscheduled') return bucket.counts.unscheduled;
-    return bucket.counts.total;
-  }
-
-  function getRiskCalendarTotal(risk: ScheduleRiskFilter): number {
-    return riskCalendarBuckets.reduce((sum, bucket) => sum + getBucketRiskCount(bucket, risk), 0);
-  }
-
-  function buildRiskCalendarFocus(): string {
-    const overdue = getRiskCalendarTotal('overdue');
-    const dueSoon = getRiskCalendarTotal('due_soon');
-    const stale = getRiskCalendarTotal('stale');
-    const unscheduled = getRiskCalendarTotal('unscheduled');
-    if (overdue > 0) return `${overdue} 个逾期项优先处理`;
-    if (dueSoon > 0) return `${dueSoon} 个临期项需要锁定交付口径`;
-    if (stale > 0) return `${stale} 个停滞项需要补推进证据`;
-    if (unscheduled > 0) return `${unscheduled} 个需求等待排期`;
-    return '当前排期风险平稳';
-  }
-
-  function selectScheduleRiskFromCalendar(risk: ScheduleRiskFilter) {
-    scheduleRiskFilter = risk;
-    showRiskDropdown = false;
-  }
-
-  function formatRiskEventMeta(event: ScheduleRiskCalendarEvent): string {
-    const dueText = event.due_date ? formatScheduleDate(event.due_date) : '未排期';
-    return `${event.assignee || '未指派'} · ${dueText}`;
-  }
-
-  $: riskCalendarHasAny = riskCalendarBuckets.some((bucket) => bucket.counts.total > 0 || bucket.events.length > 0);
-  $: riskCalendarTotalCount = riskCalendarBuckets.reduce((sum, bucket) => sum + bucket.counts.total, 0);
-  $: riskCalendarFocus = buildRiskCalendarFocus();
-
-  async function fetchRiskCalendar() {
-    const requestSeq = ++riskCalendarRequestSeq;
-    riskCalendarLoading = true;
-    riskCalendarErrorMsg = '';
-    riskCalendarUsingFallback = false;
-    const token = localStorage.getItem('jwt_token');
-
-    try {
-      const res = await fetch('/api/schedule/risk-calendar' + buildScheduleQuery(false), {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) {
-        throw new Error('风险日历接口暂不可用');
-      }
-      const data = await res.json();
-      if (requestSeq !== riskCalendarRequestSeq) return;
-      riskCalendarBuckets = normalizeRiskCalendarResponse(data);
-      riskCalendarGeneratedAt = data?.generated_at || scheduleGeneratedAt || '';
-    } catch (err: any) {
-      if (requestSeq !== riskCalendarRequestSeq) return;
-      riskCalendarErrorMsg = err.message || '风险日历接口暂不可用';
-      riskCalendarUsingFallback = true;
-      riskCalendarGeneratedAt = scheduleGeneratedAt;
-      riskCalendarBuckets = buildFallbackRiskCalendarBuckets();
-    } finally {
-      if (requestSeq === riskCalendarRequestSeq) {
-        riskCalendarLoading = false;
-      }
-    }
-  }
-
-
   async function fetchSchedule() {
     scheduleLoading = true;
     scheduleErrorMsg = '';
@@ -1636,7 +1305,6 @@
       scheduleSummary = data.summary || createEmptyScheduleSummary();
       scheduleGeneratedAt = data.generated_at || '';
       void openLinkedDemandIfReady();
-      fetchRiskCalendar();
     } catch (err: any) {
       scheduleErrorMsg = err.message || '获取排期表失败';
     } finally {
@@ -1766,7 +1434,7 @@
 
   function closeCreateDemandModal() {
     if (deconstructorPresentation === 'companion' && deconstructorHost === 'create') {
-      closeDeconstructorWorkspace();
+      if (!requestCloseDeconstructorWorkspace(false, 'create')) return;
     }
     showCreateModal = false;
     showAssigneeDropdown = false;
@@ -1896,7 +1564,7 @@
 
   function closeScheduleModal() {
     if (deconstructorPresentation === 'companion' && deconstructorHost === 'schedule') {
-      closeDeconstructorWorkspace();
+      if (!requestCloseDeconstructorWorkspace(false, 'schedule')) return;
     }
     showScheduleModal = false;
     selectedDemand = null;
@@ -1949,7 +1617,7 @@
 
   function closeDemandDetails(restoreFocus = true) {
     if (deconstructorPresentation === 'companion' && deconstructorHost === 'details') {
-      closeDeconstructorWorkspace(false);
+      if (!requestCloseDeconstructorWorkspace(false, 'details')) return;
     }
     showDemandDetailsModal = false;
     detailDemand = null;
@@ -1969,7 +1637,7 @@
       event.preventDefault();
       event.stopPropagation();
       if (showDeconstructorModal && deconstructorPresentation === 'companion' && deconstructorHost === 'details') {
-        closeDeconstructorWorkspace();
+        requestCloseDeconstructorWorkspace();
       } else {
         closeDemandDetails();
       }
@@ -2007,19 +1675,34 @@
     const title = item?.title || newTitle.trim();
     const description = item?.description || newDescription.trim();
     const demandRef = item as (Partial<Demand> & Partial<ScheduleItem>) | null | undefined;
+    deconstructorSessionKey = buildDeconstructorSessionKey({
+      demandId: demandRef?.task_id || demandRef?.demand_id || '',
+      title,
+      description,
+      host: presentation === 'companion' ? host : 'modal'
+    });
+    deconstructorInitialSnapshot = restoreDeconstructorSnapshot(
+      deconstructorCompletedSnapshots,
+      deconstructorSessionKey
+    );
     deconstructorTitle = title;
     deconstructorDescription = description;
     deconstructorDemandId = demandRef?.task_id || demandRef?.demand_id || '';
     deconstructorContextLabel = contextLabel;
     deconstructorPresentation = presentation;
     deconstructorHost = presentation === 'companion' ? host : 'none';
+    deconstructorGenerationActive = false;
+    showDeconstructorCloseConfirm = false;
+    pendingDeconstructorCloseHost = 'none';
     showDeconstructorModal = true;
     await tick();
     deconstructorCloseButton?.focus();
   }
 
-  function closeDeconstructorWorkspace(restoreFocus = true) {
+  function forceCloseDeconstructorWorkspace(restoreFocus = true) {
+    showDeconstructorCloseConfirm = false;
     showDeconstructorModal = false;
+    deconstructorGenerationActive = false;
     deconstructorPresentation = 'modal';
     deconstructorHost = 'none';
     const focusTarget = restoreFocus ? deconstructorReturnFocus : null;
@@ -2029,15 +1712,67 @@
     }
   }
 
+  function requestCloseDeconstructorWorkspace(
+    restoreFocus = true,
+    closeHost: 'none' | 'create' | 'schedule' | 'details' = 'none'
+  ) {
+    const activeGeneration = deconstructorGenerationActive || deconstructorWorkbench?.hasActiveGeneration();
+    if (activeGeneration) {
+      pendingDeconstructorRestoreFocus = restoreFocus;
+      pendingDeconstructorCloseHost = closeHost;
+      showDeconstructorCloseConfirm = true;
+      return false;
+    }
+    forceCloseDeconstructorWorkspace(restoreFocus);
+    return true;
+  }
+
+  function cancelDeconstructorClose() {
+    showDeconstructorCloseConfirm = false;
+    pendingDeconstructorCloseHost = 'none';
+    pendingDeconstructorRestoreFocus = true;
+    void tick().then(() => deconstructorCloseButton?.focus());
+  }
+
+  function confirmAndCloseDeconstructorWorkspace() {
+    const closeHost = pendingDeconstructorCloseHost;
+    const restoreFocus = pendingDeconstructorRestoreFocus;
+    deconstructorWorkbench?.cancelActiveGeneration();
+    pendingDeconstructorCloseHost = 'none';
+    pendingDeconstructorRestoreFocus = true;
+    forceCloseDeconstructorWorkspace(restoreFocus);
+
+    if (closeHost === 'create') closeCreateDemandModal();
+    else if (closeHost === 'schedule') closeScheduleModal();
+    else if (closeHost === 'details') closeDemandDetails();
+  }
+
+  function handleDeconstructorGenerationChange(active: boolean) {
+    deconstructorGenerationActive = active;
+  }
+
+  function handleDeconstructorCompletedSnapshotChange(snapshot: DeconstructorCompletedSnapshot<any>) {
+    if (!deconstructorSessionKey) return;
+    deconstructorCompletedSnapshots = rememberDeconstructorSnapshot(
+      deconstructorCompletedSnapshots,
+      deconstructorSessionKey,
+      snapshot
+    );
+    deconstructorInitialSnapshot = restoreDeconstructorSnapshot(
+      deconstructorCompletedSnapshots,
+      deconstructorSessionKey
+    );
+  }
+
   function handleDeconstructorBackdropClick(event: MouseEvent) {
-    if (event.target === event.currentTarget) closeDeconstructorWorkspace();
+    if (event.target === event.currentTarget) requestCloseDeconstructorWorkspace();
   }
 
   function handleDeconstructorKeydown(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
-    closeDeconstructorWorkspace();
+    requestCloseDeconstructorWorkspace();
   }
 
   function getJiraIssueUrl(taskId: string) {
@@ -2358,6 +2093,96 @@
   }
 </script>
 
+{#snippet renderScheduleCell(row: ScheduleAdminRow, column: AdminTableColumn, value: AdminCellValue)}
+  {@const item = row.item}
+  {#if column.key === 'demand'}
+    <div class="schedule-demand-line" title={`${row.title} · ${row.cells.project}`}>
+      {#if getJiraIssueUrl(item.demand_id)}
+        <a
+          class="schedule-id font-mono jira-id-link"
+          href={getJiraIssueUrl(item.demand_id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`在 Jira 中打开 ${item.demand_id}`}
+        >{item.demand_id}</a>
+      {:else}
+        <span class="schedule-id font-mono">{item.demand_id}</span>
+      {/if}
+      <button
+        type="button"
+        class="schedule-row-select"
+        aria-pressed={selectedScheduleItem?.demand_id === item.demand_id}
+        aria-label={`查看 ${item.demand_id}：${item.title}`}
+        on:click={() => selectScheduleItem(item)}
+      >
+        <strong class="schedule-demand-title">{row.title}</strong>
+        <span class="schedule-project-inline">· {row.cells.project}</span>
+      </button>
+      <span
+        class="schedule-type-dot {getScheduleIssueTypeLabel(item) === '缺陷' ? 'is-bug' : 'is-demand'}"
+        role="img"
+        aria-label={getScheduleIssueTypeLabel(item)}
+        title={getScheduleIssueTypeLabel(item)}
+      ></span>
+    </div>
+  {:else if column.key === 'priority'}
+    {#if row.priority}
+      <span class="priority-badge wa-admin-pill {ADMIN_TONE_CLASS[getPriorityTone(row.priority)]}">{row.priority}</span>
+    {:else}
+      <span class="schedule-row-muted">-</span>
+    {/if}
+  {:else if column.key === 'owner'}
+    <div class="owner-stack"><strong>{row.owner}</strong></div>
+  {:else if column.key === 'risk'}
+    <span
+      class="schedule-risk-pill wa-admin-pill schedule-risk-{normalizeRiskLevel(item.risk_level)} {ADMIN_TONE_CLASS[getScheduleRiskTone(item.risk_level)]}"
+      title={item.risk_reason || ''}
+    >{formatScheduleRiskPill(item, row.risk || getRiskLevelLabel(item.risk_level))}</span>
+  {:else if column.key === 'dueDate'}
+    <div class="plan-stack"><strong class="font-mono" title={formatScheduleDue(item)}>{row.dueDate}</strong></div>
+  {:else if column.key === 'status'}
+    <span class="status-chip wa-admin-pill status-{getScheduleStatusClass(item)} {ADMIN_TONE_CLASS[row.tone || 'neutral']}">{row.status}</span>
+  {:else if column.key === 'evidence'}
+    {@const progress = getScheduleProgress(item)}
+    <div class="subtask-stack">
+      <div class="subtask-meter" title="AI 解构任务进度: {row.cells.subtasks}">
+        <span style="width: {progress}%"></span>
+        <small class="subtask-percentage-text">{row.cells.subtasks}</small>
+      </div>
+    </div>
+  {:else}
+    <span>{String(value ?? '-')}</span>
+  {/if}
+{/snippet}
+
+{#snippet renderScheduleActions(row: ScheduleAdminRow, disabled: boolean)}
+  <div class="schedule-actions-cell">
+    {#if hasPermission('solution:read')}
+      <button
+        type="button"
+        class="schedule-row-action wa-admin-action secondary is-solution font-mono"
+        aria-label={`在右侧查看 ${row.item.demand_id} 的解决方案`}
+        {disabled}
+        on:click={() => selectScheduleItem(row.item, 'solution')}
+      >方案</button>
+    {/if}
+    <button
+      type="button"
+      class="schedule-row-action wa-admin-action secondary is-telemetry font-mono"
+      aria-label={`在右侧查看 ${row.item.demand_id} 的代码轨迹`}
+      {disabled}
+      on:click={() => selectScheduleItem(row.item, 'telemetry')}
+    >轨迹</button>
+  </div>
+{/snippet}
+
+{#snippet renderScheduleEmpty()}
+  <div class="schedule-empty-state">
+    <strong>当前筛选下暂无排期数据</strong>
+    <span>可调整关注范围、类型、负责人、项目或搜索条件。</span>
+  </div>
+{/snippet}
+
 <div
   class="demand-dashboard font-sans"
   class:flow-dashboard={activeDemandView === 'board'}
@@ -2406,7 +2231,7 @@
                   class="dropdown-trigger-input schedule-trigger-override dropdown-trigger-btn"
                   on:click|stopPropagation={() => showRiskDropdown = !showRiskDropdown}
                 >
-                  {scheduleRiskFilters.find(f => f.value === scheduleRiskFilter)?.label || '风险筛选'}
+                  {scheduleRiskFilters.find(f => f.value === scheduleRiskFilter)?.label || '风险筛选'} {scheduleDataListRows.length}
                 </button>
                 <span class="arrow-icon {showRiskDropdown ? 'open' : ''}">▼</span>
               </div>
@@ -2593,132 +2418,28 @@
             {/if}
           </div>
 
-          {#if scheduleLoading && scheduleItems.length === 0}
-            <div class="state-msg">加载排期表中...</div>
-          {:else if scheduleErrorMsg}
-            <div class="state-msg error-msg font-mono">{scheduleErrorMsg}</div>
-          {:else}
-            <div class="schedule-table-panel wa-admin-card" bind:this={scheduleTablePanelEl}>
-              <div class="schedule-table-head">
-                <div>
-                  <span class="eyebrow">需求队列</span>
-                  <h3>排期治理总表</h3>
-                </div>
-                <span class="schedule-count font-mono">{filteredScheduleItems.length} / {scheduleItems.length}</span>
-              </div>
-              <div class="schedule-table-wrapper wa-admin-table-shell" style="--schedule-content-height: {scheduleTableContentHeight}px;" on:scroll={handleScheduleScroll} bind:this={scheduleContainerEl} bind:clientHeight={scheduleContainerHeight}>
-                <table class="wa-admin-table schedule-admin-table">
-                  <colgroup>
-                    {#each scheduleTableColumns as column}
-                      <col style="width: {column.width || 'auto'}" />
-                    {/each}
-                    <col style="width: 10%" />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      {#each scheduleTableColumns as column}
-                        <th class:align-center={column.align === 'center'} class:align-right={column.align === 'right'}>{column.label}</th>
-                      {/each}
-                      <th class="align-center action-col">查看</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#if scheduleTopPadding > 0}
-                      <tr class="schedule-spacer-row" aria-hidden="true">
-                        <td colspan={scheduleTableColumns.length + 1} style="height: {scheduleTopPadding}px;"></td>
-                      </tr>
-                    {/if}
-                    {#each visibleScheduleRows as row (row.id)}
-                      {@const item = row.data}
-                      {@const adminRow = row.row}
-                      {@const progress = getScheduleProgress(item)}
-                      {@const priority = item.project_priority || getProjectPriority(item.demand_id)}
-                      <tr
-                        class="schedule-admin-row"
-                        class:is-selected={selectedScheduleItem?.demand_id === item.demand_id}
-                        on:click={() => selectScheduleItem(item)}
-                      >
-                        <td class="schedule-demand-cell">
-                          <div class="schedule-demand-line" title={`${adminRow.title} · ${adminRow.cells.project}`}>
-                            {#if getJiraIssueUrl(item.demand_id)}
-                              <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(item.demand_id)} target="_blank" rel="noopener noreferrer" on:click|stopPropagation>
-                                {item.demand_id}
-                              </a>
-                            {:else}
-                              <span class="schedule-id font-mono">{item.demand_id}</span>
-                            {/if}
-                            <strong class="schedule-demand-title">{adminRow.title}</strong>
-                            <span class="schedule-project-inline">· {adminRow.cells.project}</span>
-                            <span
-                              class="schedule-type-dot {getScheduleIssueTypeLabel(item) === '缺陷' ? 'is-bug' : 'is-demand'}"
-                              role="img"
-                              aria-label={getScheduleIssueTypeLabel(item)}
-                              title={getScheduleIssueTypeLabel(item)}
-                            ></span>
-                          </div>
-                        </td>
-                        <td class="align-center">
-                          {#if priority}
-                            <span class="priority-badge wa-admin-pill {ADMIN_TONE_CLASS[getPriorityTone(priority)]}">{priority}</span>
-                          {:else}
-                            <span class="schedule-row-muted">-</span>
-                          {/if}
-                        </td>
-                        <td>
-                          <div class="owner-stack">
-                            <strong>{adminRow.owner}</strong>
-                          </div>
-                        </td>
-                        <td>
-                          <span class="schedule-risk-pill wa-admin-pill schedule-risk-{normalizeRiskLevel(item.risk_level)} {ADMIN_TONE_CLASS[getScheduleRiskTone(item.risk_level)]}" title={item.risk_reason || ''}>{formatScheduleRiskPill(item, adminRow.risk || getRiskLevelLabel(item.risk_level))}</span>
-                        </td>
-                        <td>
-                          <div class="plan-stack">
-                            <strong class="font-mono" title={formatScheduleDue(item)}>{adminRow.dueDate}</strong>
-                          </div>
-                        </td>
-                        <td class="align-center">
-                          <span class="status-chip wa-admin-pill status-{getScheduleStatusClass(item)} {ADMIN_TONE_CLASS[adminRow.tone || 'neutral']}">{adminRow.status}</span>
-                        </td>
-                        <td class="align-center">
-                          <div class="subtask-stack">
-                            <div class="subtask-meter" title="AI 解构任务进度: {adminRow.cells.subtasks}">
-                              <span style="width: {progress}%"></span>
-                              <small class="subtask-percentage-text">{adminRow.cells.subtasks}</small>
-                            </div>
-                          </div>
-                        </td>
-                        <td class="align-center action-col">
-                          <div class="schedule-actions-cell">
-                            {#if hasPermission('solution:read')}
-                              <button
-                                class="schedule-row-action wa-admin-action secondary is-solution font-mono"
-                                aria-label={`在右侧查看 ${item.demand_id} 的解决方案`}
-                                on:click|stopPropagation={() => selectScheduleItem(item, 'solution')}
-                              >方案</button>
-                            {/if}
-                            <button
-                              class="schedule-row-action wa-admin-action secondary is-telemetry font-mono"
-                              aria-label={`在右侧查看 ${item.demand_id} 的代码轨迹`}
-                              on:click|stopPropagation={() => selectScheduleItem(item, 'telemetry')}
-                            >轨迹</button>
-                          </div>
-                        </td>
-                      </tr>
-                    {/each}
-                    {#if scheduleBottomPadding > 0}
-                      <tr class="schedule-spacer-row" aria-hidden="true">
-                        <td colspan={scheduleTableColumns.length + 1} style="height: {scheduleBottomPadding}px;"></td>
-                      </tr>
-                    {/if}
-                  </tbody>
-                </table>
-                {#if filteredScheduleItems.length === 0}
-                  <div class="schedule-empty-state font-mono">当前筛选下暂无排期数据</div>
-                {/if}
-              </div>
-            </div>
-          {/if}
+          <AdminDataList
+            columns={scheduleTableColumns}
+            rows={scheduleDataListRows}
+            caption="排期治理需求列表"
+            cell={renderScheduleCell}
+            actions={renderScheduleActions}
+            empty={renderScheduleEmpty}
+            loading={scheduleLoading}
+            error={scheduleErrorMsg}
+            onRetry={fetchSchedule}
+            skeletonRows={7}
+            className="schedule-data-list"
+            scrollRegionId="schedule-data-list-content"
+            tableMinWidth="820px"
+            compactTableMinWidth="0px"
+            actionsLabel="查看"
+            actionsWidth="116px"
+            virtual={scheduleVirtualOptions}
+            totalRowCount={scheduleDataListRows.length}
+            selectedRowId={selectedScheduleItem?.demand_id || ''}
+            resetKey={scheduleListResetKey}
+          />
         </section>
 
         <aside class="schedule-inspector-panel wa-admin-card wa-admin-inspector" aria-label="需求详情与检查项">
@@ -2726,17 +2447,30 @@
             {@const descriptionSection = scheduleInspectorRecord.sections.find((section) => section.title === '需求描述')}
             {@const checklistSection = scheduleInspectorRecord.sections.find((section) => section.title === '验收标准')}
             {@const riskSection = scheduleInspectorRecord.sections.find((section) => section.title === '风险说明')}
+            {@const scheduleProjectPriority = selectedScheduleItem.project_priority || getProjectPriority(selectedScheduleItem.demand_id) || 'P2'}
+            {@const scheduleProject = getScheduleProjectLabel(selectedScheduleItem)}
             <div class="schedule-inspector-head">
-              <div class="inspector-title-row">
-                <span class="wa-admin-pill {scheduleInspectorMode === 'solution' ? ADMIN_TONE_CLASS.info : ADMIN_TONE_CLASS[scheduleInspectorRecord.tone || 'neutral']}">
-                  {scheduleInspectorMode === 'solution' ? '解决方案' : scheduleInspectorRecord.status}
-                </span>
-                {#if getJiraIssueUrl(scheduleInspectorRecord.id)}
-                  <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(scheduleInspectorRecord.id)} target="_blank" rel="noopener noreferrer">
-                    {scheduleInspectorRecord.id}
-                  </a>
+              <div class="inspector-title-row schedule-inspector-meta">
+                {#if scheduleInspectorMode === 'solution'}
+                  <span class="wa-admin-pill {ADMIN_TONE_CLASS.info}">解决方案</span>
+                  {#if getJiraIssueUrl(scheduleInspectorRecord.id)}
+                    <a class="schedule-id font-mono jira-id-link" href={getJiraIssueUrl(scheduleInspectorRecord.id)} target="_blank" rel="noopener noreferrer">
+                      {scheduleInspectorRecord.id}
+                    </a>
+                  {:else}
+                    <span class="schedule-id font-mono">{scheduleInspectorRecord.id}</span>
+                  {/if}
                 {:else}
-                  <span class="schedule-id font-mono">{scheduleInspectorRecord.id}</span>
+                  <div class="schedule-inspector-meta-primary">
+                    <span class="wa-admin-pill {ADMIN_TONE_CLASS.info} schedule-ai-progress-pill">
+                      <span>AI 解构</span>
+                      <strong class="font-mono">{getScheduleProgress(selectedScheduleItem)}%</strong>
+                    </span>
+                    <span class="wa-admin-pill {ADMIN_TONE_CLASS[getPriorityTone(scheduleProjectPriority)]} schedule-priority-pill">
+                      {scheduleProjectPriority}
+                    </span>
+                  </div>
+                  <span class="schedule-id schedule-project-label font-mono" title={scheduleProject}>{scheduleProject}</span>
                 {/if}
               </div>
               <h3>{scheduleInspectorRecord.title}</h3>
@@ -2814,8 +2548,8 @@
                 aria-labelledby="schedule-inspector-tab-schedule"
                 tabindex="0"
               >
-                <div class="schedule-inspector-facts">
-                  {#each scheduleInspectorRecord.facts.slice(1, 6) as fact}
+                <div class="schedule-date-pills" aria-label="排期日期">
+                  {#each scheduleInspectorRecord.facts as fact}
                     <div>
                       <span>{fact.label}</span>
                       <strong>{fact.value}</strong>
@@ -2824,19 +2558,9 @@
                 </div>
 
                 <section class="schedule-editor-section" aria-labelledby="schedule-editor-title">
-                  <div class="schedule-editor-heading">
-                    <div>
-                      <strong id="schedule-editor-title">开发排期</strong>
-                      <span>{scheduleEditorReadOnly ? '当前记录只读' : '修改后直接保存到当前需求'}</span>
-                    </div>
-                    <div class="schedule-editor-progress">
-                      <span>AI 解构</span>
-                      <strong class="font-mono">{getScheduleProgress(selectedScheduleItem)}%</strong>
-                    </div>
-                  </div>
 
                   <div class="schedule-editor-grid">
-                    <div class="schedule-editor-field is-wide">
+                    <div class="schedule-editor-field is-assignee">
                       <span>负责人</span>
                       <Select
                         id="schedule-inline-assignee"
@@ -2854,7 +2578,7 @@
                       />
                     </div>
 
-                    <label class="schedule-editor-field" for="schedule-inline-hours">
+                    <label class="schedule-editor-field is-hours" for="schedule-inline-hours">
                       <span>预估工时</span>
                       <input
                         id="schedule-inline-hours"
@@ -2869,7 +2593,7 @@
                       />
                     </label>
 
-                    <div class="schedule-editor-field">
+                    <div class="schedule-editor-field is-difficulty">
                       <span>难度</span>
                       <Select
                         id="schedule-inline-difficulty"
@@ -2884,7 +2608,7 @@
                       />
                     </div>
 
-                    <label class="schedule-editor-field" for="schedule-inline-due">
+                    <label class="schedule-editor-field is-due" for="schedule-inline-due">
                       <span>计划完成日</span>
                       <input
                         id="schedule-inline-due"
@@ -2895,7 +2619,7 @@
                       />
                     </label>
 
-                    <div class="schedule-editor-field">
+                    <div class="schedule-editor-field is-task-group">
                       <span>AI 解构任务组</span>
                       <output class="schedule-editor-output font-mono" for="schedule-inline-hours">{schedTaskGroupID}</output>
                     </div>
@@ -2959,41 +2683,6 @@
                   </section>
                 </div>
 
-                <section class="schedule-risk-inline" aria-label="风险日历">
-                  <div class="inspector-section-head">
-                    <div>
-                      <strong>风险日历</strong>
-                      <span>{riskCalendarFocus}</span>
-                    </div>
-                    <button type="button" class="wa-admin-action secondary" on:click={fetchRiskCalendar} disabled={riskCalendarLoading}>
-                      {riskCalendarLoading ? '刷新中' : '刷新'}
-                    </button>
-                  </div>
-                  {#if riskCalendarErrorMsg && riskCalendarUsingFallback}
-                    <div class="risk-calendar-warning font-mono">{riskCalendarErrorMsg}，已使用当前排期表生成临时视图。</div>
-                  {/if}
-                  <div class="inspector-risk-toolbar">
-                    <button
-                      type="button"
-                      class:active={scheduleRiskFilter === 'attention'}
-                      on:click={() => selectScheduleRiskFromCalendar('attention')}
-                    >
-                      <span>全部</span>
-                      <strong class="font-mono">{riskCalendarTotalCount}</strong>
-                    </button>
-                    {#each riskCalendarRiskTypes as risk}
-                      <button
-                        type="button"
-                        class="risk-{risk.value}"
-                        class:active={scheduleRiskFilter === risk.value}
-                        on:click={() => selectScheduleRiskFromCalendar(risk.value)}
-                      >
-                        <span>{risk.label}</span>
-                        <strong class="font-mono">{getRiskCalendarTotal(risk.value)}</strong>
-                      </button>
-                    {/each}
-                  </div>
-                </section>
               </div>
             {/if}
           {:else}
@@ -3783,9 +3472,10 @@
 
   {#if showDeconstructorModal}
     <div
-      use:portalToWorkspaceStage={deconstructorPresentation === 'companion' && deconstructorHost === 'create'}
+      use:portalToWorkspaceStage={deconstructorPresentation === 'modal' || (deconstructorPresentation === 'companion' && deconstructorHost === 'create')}
       use:portalToConsole={deconstructorPresentation === 'companion' && deconstructorHost === 'details'}
       class="modal-backdrop deconstructor-backdrop"
+      class:is-workspace-scoped={deconstructorPresentation === 'modal'}
       class:is-companion={deconstructorPresentation === 'companion'}
       class:detail-companion={deconstructorPresentation === 'companion' && deconstructorHost === 'details'}
       class:create-companion={deconstructorPresentation === 'companion' && deconstructorHost === 'create'}
@@ -3808,21 +3498,51 @@
             <span class="deconstructor-context">AI 解构工作台</span>
             <h3 id="deconstructor-modal-title">{deconstructorContextLabel}</h3>
           </div>
-          <OverlayCloseButton label="关闭 AI 解构工作台" bind:this={deconstructorCloseButton} on:click={() => closeDeconstructorWorkspace()} />
+          <OverlayCloseButton label="关闭 AI 解构工作台" bind:this={deconstructorCloseButton} on:click={() => requestCloseDeconstructorWorkspace()} />
         </div>
         <div class="deconstructor-modal-body">
           <Deconstructor
+            bind:this={deconstructorWorkbench}
             {currentUserPermissions}
             initialTitle={deconstructorTitle}
             initialDescription={deconstructorDescription}
             initialDemandId={deconstructorDemandId}
             embedded={true}
             compact={true}
+            onGenerationChange={handleDeconstructorGenerationChange}
+            initialCompletedSnapshot={deconstructorInitialSnapshot}
+            onCompletedSnapshotChange={handleDeconstructorCompletedSnapshotChange}
           />
         </div>
       </div>
     </div>
   {/if}
+
+  <Modal
+    show={showDeconstructorCloseConfirm}
+    title="正在生成解构结果"
+    closeLabel="取消关闭 AI 解构工作台"
+    layer="critical"
+    on:close={cancelDeconstructorClose}
+  >
+    <div class="deconstructor-close-confirm">
+      <div class="deconstructor-close-status">
+        <span class="deconstructor-close-live-dot" aria-hidden="true"></span>
+        <div>
+          <strong>AI 仍在输出任务建议</strong>
+          <p>确认后将立即停止当前生成并释放流式连接，尚未完成的输出不会保留。</p>
+        </div>
+      </div>
+      <dl class="deconstructor-close-facts">
+        <div><dt>当前连接</dt><dd>{deconstructorGenerationActive ? '生成中' : '刚刚完成'}</dd></div>
+        <div><dt>确认后</dt><dd>停止生成并关闭工作台</dd></div>
+      </dl>
+    </div>
+    <div slot="footer" class="deconstructor-close-actions">
+      <button type="button" class="wa-admin-action secondary" on:click={cancelDeconstructorClose}>继续等待</button>
+      <button type="button" class="wa-admin-action danger" on:click={confirmAndCloseDeconstructorWorkspace}>确认停止并关闭</button>
+    </div>
+  </Modal>
 
   <!-- Confirm Modal -->
   {#if showConfirmModal}
@@ -7870,61 +7590,6 @@
     border-color: rgba(255, 255, 255, 0.72);
   }
 
-  .schedule-admin-table {
-    min-width: 1080px;
-    background: transparent;
-  }
-
-  .schedule-admin-table th {
-    height: 42px;
-    color: var(--schedule-muted);
-    background: rgba(248, 251, 254, 0.96);
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  .schedule-admin-table td {
-    height: 76px;
-    color: var(--schedule-text);
-  }
-
-  .schedule-admin-table .align-center {
-    text-align: center;
-  }
-
-  .schedule-admin-table .align-right {
-    text-align: right;
-  }
-
-  .schedule-admin-row {
-    cursor: pointer;
-  }
-
-  .schedule-admin-row:hover {
-    background: var(--wa-row-hover, #f2f8fb);
-  }
-
-  .schedule-spacer-row td {
-    height: auto;
-    padding: 0 !important;
-    border: 0 !important;
-    background: transparent;
-  }
-
-  .schedule-admin-table th.action-col,
-  .schedule-admin-table td.action-col {
-    position: sticky;
-    right: 0;
-    z-index: 2;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: -12px 0 18px rgba(26, 41, 58, 0.06);
-  }
-
-  .schedule-admin-table thead th.action-col {
-    z-index: 3;
-    background: rgba(248, 251, 254, 0.98);
-  }
-
   .schedule-id-stack,
   .schedule-title-stack,
   .owner-stack,
@@ -8608,25 +8273,6 @@
     border-radius: 0;
     background: rgba(255, 255, 255, 0.64);
     overflow-anchor: none;
-  }
-
-  .schedule-admin-table {
-    min-width: 980px;
-    table-layout: fixed;
-  }
-
-  .schedule-admin-table th {
-    height: 40px;
-    padding: 9px 10px;
-    font-size: 12px;
-    background:
-      linear-gradient(180deg, rgba(250, 253, 255, 0.98), rgba(244, 249, 252, 0.94));
-  }
-
-  .schedule-admin-table td {
-    height: 68px;
-    padding: 8px 10px;
-    font-size: 12.5px;
   }
 
   .schedule-title-stack,
@@ -10303,29 +9949,6 @@
     scrollbar-gutter: stable;
   }
 
-  .schedule-admin-table {
-    width: 100%;
-    min-width: 0;
-    table-layout: fixed;
-  }
-
-  .schedule-admin-table th,
-  .schedule-admin-table td {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .schedule-admin-table td {
-    height: 48px;
-    padding: 6px 8px;
-    vertical-align: middle;
-  }
-
-  .schedule-demand-cell {
-    position: relative;
-  }
-
   .schedule-demand-line {
     display: flex;
     min-width: 0;
@@ -10382,24 +10005,6 @@
   .schedule-type-dot.is-bug {
     color: #b42318;
     background: #d84b3e;
-  }
-
-  .schedule-admin-table .owner-stack,
-  .schedule-admin-table .plan-stack,
-  .schedule-admin-table .subtask-stack {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 0;
-  }
-
-  .schedule-admin-table .owner-stack strong,
-  .schedule-admin-table .plan-stack strong {
-    width: 100%;
-    overflow: hidden;
-    line-height: 1;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .priority-badge.wa-admin-pill {
@@ -10524,6 +10129,7 @@
 
   @media (min-width: 861px) {
     .demand-create-backdrop,
+    .deconstructor-backdrop.is-workspace-scoped,
     .deconstructor-backdrop.create-companion {
       position: absolute;
       inset: 0;
@@ -10535,10 +10141,15 @@
       width: min(680px, 100%);
       max-height: 100%;
     }
+
+    .deconstructor-backdrop.is-workspace-scoped > .deconstructor-modal {
+      max-height: calc(100% - 36px);
+    }
   }
 
   @media (max-width: 860px) {
     .demand-create-backdrop,
+    .deconstructor-backdrop.is-workspace-scoped,
     .deconstructor-backdrop.create-companion {
       position: fixed;
       top: var(--wa-main-content-top, 0px);
@@ -10547,6 +10158,10 @@
       left: 0;
       width: auto;
       height: auto;
+    }
+
+    .deconstructor-backdrop.is-workspace-scoped > .deconstructor-modal {
+      max-height: 100%;
     }
   }
 
@@ -10569,10 +10184,94 @@
 
   .deconstructor-modal-body {
     min-height: 0;
-    padding: 16px 18px 20px;
+    padding: 18px 22px 20px;
     overflow: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+  }
+
+  .deconstructor-close-confirm {
+    display: grid;
+    gap: var(--wa-space-4, 16px);
+  }
+
+  .deconstructor-close-status {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr);
+    align-items: start;
+    gap: var(--wa-space-3, 12px);
+  }
+
+  .deconstructor-close-live-dot {
+    width: 10px;
+    height: 10px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: var(--wa-warning, #d88700);
+    box-shadow: 0 0 0 4px var(--wa-warning-soft, rgba(216, 135, 0, 0.12));
+  }
+
+  .deconstructor-close-status strong {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 14px;
+  }
+
+  .deconstructor-close-status p {
+    margin: var(--wa-space-1, 4px) 0 0;
+    color: var(--wa-text-muted, #5e7182);
+    font-size: 13px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+
+  .deconstructor-close-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.14));
+    border-radius: var(--wa-radius-md, 10px);
+    background: var(--wa-surface-inset, #f2f6f9);
+  }
+
+  .deconstructor-close-facts > div {
+    min-width: 0;
+    display: grid;
+    gap: var(--wa-space-1, 4px);
+    padding: var(--wa-space-3, 12px);
+  }
+
+  .deconstructor-close-facts > div + div {
+    border-left: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.14));
+  }
+
+  .deconstructor-close-facts dt,
+  .deconstructor-close-facts dd {
+    margin: 0;
+  }
+
+  .deconstructor-close-facts dt {
+    color: var(--wa-text-muted, #5e7182);
+    font-size: 11px;
+  }
+
+  .deconstructor-close-facts dd {
+    color: var(--wa-text-strong, #0d1722);
+    font-size: 13px;
+    font-weight: 760;
+    overflow-wrap: anywhere;
+  }
+
+  .deconstructor-close-actions {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--wa-space-2, 8px);
+  }
+
+  .deconstructor-close-actions .wa-admin-action {
+    min-height: var(--wa-touch-h, 44px);
   }
 
   .deconstructor-backdrop.is-companion,
@@ -10679,6 +10378,28 @@
       height: 100dvh;
       max-height: 100dvh;
       border-radius: 0;
+    }
+
+    .deconstructor-close-facts,
+    .deconstructor-close-actions {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .deconstructor-close-facts {
+      display: grid;
+    }
+
+    .deconstructor-close-facts > div + div {
+      border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, 0.14));
+      border-left: 0;
+    }
+
+    .deconstructor-close-actions {
+      display: grid;
+    }
+
+    .deconstructor-close-actions .wa-admin-action {
+      width: 100%;
     }
   }
 
@@ -11008,8 +10729,7 @@
   }
 
   .schedule-editor-section,
-  .schedule-editor-context,
-  .schedule-risk-inline {
+  .schedule-editor-context {
     border-top: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
   }
 
@@ -11192,50 +10912,6 @@
     box-shadow: none;
   }
 
-  .schedule-risk-inline {
-    display: grid;
-    gap: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
-  }
-
-  .schedule-risk-inline .inspector-section-head > div {
-    min-width: 0;
-    display: grid;
-    gap: 2px;
-  }
-
-  .schedule-risk-inline .inspector-section-head > div > span {
-    overflow: hidden;
-    font-size: 0.64rem;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .schedule-risk-inline .wa-admin-action {
-    min-height: 30px;
-    padding-inline: 9px;
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 4px;
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar button {
-    min-height: 36px;
-    gap: 2px;
-    border-radius: var(--wa-radius-sm, 6px);
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar span {
-    font-size: 0.61rem;
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar strong {
-    font-size: 0.76rem;
-  }
-
   @media (min-width: 1281px) {
     .schedule-dashboard .schedule-workbench {
       grid-template-rows: auto minmax(0, 1fr);
@@ -11382,38 +11058,60 @@
       line-clamp: 1;
     }
 
-    .schedule-risk-inline {
-      grid-template-columns: minmax(126px, 0.72fr) minmax(0, 2.28fr);
-      align-items: center;
-      gap: 8px;
-      margin-top: 7px;
-      padding-top: 7px;
-    }
-
-    .schedule-risk-inline .inspector-section-head {
-      gap: 6px;
-    }
-
-    .schedule-risk-inline .inspector-section-head > div {
-      gap: 0;
-    }
-
-    .schedule-risk-inline .wa-admin-action {
-      min-width: 46px;
-      min-height: 28px;
-      padding-inline: 7px;
-      white-space: nowrap;
-    }
-
-    .schedule-risk-inline .inspector-risk-toolbar button {
-      min-height: 30px;
-    }
   }
 
   /* Final schedule inspector contract: shared desktop row height, content-owned scrolling. */
   .schedule-dashboard .schedule-main-grid {
     grid-template-columns: minmax(580px, 1fr) clamp(420px, 34vw, 560px);
     align-items: stretch;
+  }
+
+  :global(.schedule-data-list.admin-data-list) {
+    grid-area: table;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .schedule-row-select {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-2, 8px);
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .schedule-row-select:focus-visible {
+    outline: 2px solid var(--wa-accent, #008f96);
+    outline-offset: 2px;
+  }
+
+  .schedule-demand-line {
+    position: relative;
+    padding-right: 0;
+  }
+
+  .schedule-type-dot {
+    position: static;
+    flex: 0 0 auto;
+  }
+
+  .schedule-empty-state {
+    display: grid;
+    justify-items: center;
+    gap: var(--wa-space-1, 4px);
+    text-align: center;
+  }
+
+  .schedule-empty-state strong {
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .schedule-dashboard .schedule-inspector-panel.wa-admin-inspector {
@@ -11443,6 +11141,44 @@
     line-clamp: 3;
     font-size: 0.76rem;
     line-height: 1.5;
+  }
+
+  .schedule-inspector-meta {
+    min-width: 0;
+  }
+
+  .schedule-inspector-meta-primary {
+    min-width: 0;
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--wa-space-2, 8px);
+  }
+
+  .schedule-ai-progress-pill,
+  .schedule-priority-pill {
+    flex: 0 0 auto;
+    min-height: 26px;
+    border-radius: 999px;
+  }
+
+  .schedule-ai-progress-pill {
+    gap: var(--wa-space-1, 4px);
+  }
+
+  .schedule-ai-progress-pill strong {
+    color: inherit;
+    font-size: inherit;
+  }
+
+  .schedule-project-label {
+    min-width: 0;
+    max-width: 52%;
+    overflow: hidden;
+    color: var(--schedule-accent-strong);
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .schedule-inspector-tabs {
@@ -11475,6 +11211,44 @@
   .schedule-solution-inline:focus-visible {
     outline: 2px solid rgba(0, 143, 150, 0.3);
     outline-offset: -2px;
+  }
+
+  .schedule-date-pills {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wa-space-2, 8px);
+    margin-bottom: var(--wa-space-3, 12px);
+  }
+
+  .schedule-date-pills > div {
+    min-width: 0;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-2, 8px);
+    padding: var(--wa-space-1, 4px) var(--wa-space-3, 12px);
+    border: 1px solid var(--wa-border-divider, rgba(123, 143, 160, 0.18));
+    border-radius: 999px;
+    background: var(--wa-surface-inset, #f2f6f9);
+  }
+
+  .schedule-date-pills span,
+  .schedule-date-pills strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .schedule-date-pills span {
+    color: var(--schedule-muted);
+    font-size: 0.67rem;
+  }
+
+  .schedule-date-pills strong {
+    color: var(--schedule-strong);
+    font-size: 0.72rem;
   }
 
   .schedule-dashboard .schedule-inspector-facts {
@@ -11535,7 +11309,7 @@
   }
 
   .schedule-editor-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.7fr) minmax(0, 0.85fr);
     gap: var(--wa-space-3, 12px);
   }
 
@@ -11543,8 +11317,8 @@
     gap: var(--wa-space-1, 4px);
   }
 
-  .schedule-editor-field.is-wide {
-    grid-column: 1 / -1;
+  .schedule-editor-field.is-task-group {
+    grid-column: 2 / -1;
   }
 
   .schedule-editor-field input,
@@ -11612,37 +11386,6 @@
     line-height: 1.5;
   }
 
-  .schedule-risk-inline {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-    gap: var(--wa-space-3, 12px);
-    margin-top: var(--wa-space-4, 16px);
-    padding-top: var(--wa-space-4, 16px);
-  }
-
-  .schedule-risk-inline .inspector-section-head {
-    gap: var(--wa-space-3, 12px);
-  }
-
-  .schedule-risk-inline .inspector-section-head > div {
-    gap: var(--wa-space-1, 4px);
-  }
-
-  .schedule-risk-inline .wa-admin-action {
-    min-height: var(--wa-control-h, 36px);
-    padding-inline: var(--wa-space-3, 12px);
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: var(--wa-space-2, 8px);
-  }
-
-  .schedule-risk-inline .inspector-risk-toolbar button {
-    min-height: var(--wa-touch-h, 44px);
-    gap: var(--wa-space-1, 4px);
-  }
-
   @media (max-width: 1280px) {
     .schedule-dashboard .schedule-main-grid {
       grid-template-columns: minmax(0, 1fr);
@@ -11691,6 +11434,26 @@
       padding-inline: var(--wa-space-3, 12px);
     }
 
+    .schedule-inspector-meta {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .schedule-project-label {
+      flex: 1 1 100%;
+      max-width: 100%;
+      text-align: left;
+    }
+
+    .schedule-date-pills {
+      gap: var(--wa-space-1, 4px);
+    }
+
+    .schedule-date-pills > div {
+      min-height: var(--wa-touch-h, 44px);
+      padding-inline: var(--wa-space-2, 8px);
+    }
+
     .schedule-dashboard .schedule-inspector-facts {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -11714,12 +11477,19 @@
       border-left: 0;
     }
 
-    .schedule-editor-grid,
+    .schedule-editor-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .schedule-editor-context {
       grid-template-columns: minmax(0, 1fr);
     }
 
-    .schedule-editor-field.is-wide {
+    .schedule-editor-field.is-assignee {
+      grid-column: 1 / -1;
+    }
+
+    .schedule-editor-field.is-task-group {
       grid-column: auto;
     }
 
@@ -11727,8 +11497,7 @@
     .schedule-editor-output,
     .schedule-editor-field :global(.select-trigger),
     .schedule-editor-actions .wa-admin-action,
-    .schedule-editor-secondary-actions .wa-admin-action,
-    .schedule-risk-inline .wa-admin-action {
+    .schedule-editor-secondary-actions .wa-admin-action {
       min-height: var(--wa-touch-h, 44px);
     }
 
@@ -11746,8 +11515,5 @@
       width: 100%;
     }
 
-    .schedule-risk-inline .inspector-risk-toolbar {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
   }
 </style>

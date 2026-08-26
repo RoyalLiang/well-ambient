@@ -11,6 +11,7 @@
   export let closeLabel = '关闭弹窗';
   export let shadowless = false;
   export let hideBodyScrollbar = false;
+  export let layer: 'default' | 'critical' = 'default';
 
   let backdropEl: HTMLDivElement;
   let modalContainer: HTMLDivElement;
@@ -117,6 +118,7 @@
     class="modal-backdrop"
     class:is-workspace-scoped={workspaceScoped}
     class:is-drawer={variant === 'drawer'}
+    class:is-critical={layer === 'critical'}
     bind:this={backdropEl} 
     on:mousedown={handleMousedown} 
     on:mouseup={handleMouseup}
@@ -177,6 +179,10 @@
     background: rgba(24, 38, 51, 0.18);
     -webkit-backdrop-filter: blur(8px) saturate(108%);
     backdrop-filter: blur(8px) saturate(108%);
+  }
+
+  .modal-backdrop.is-critical {
+    z-index: 2100;
   }
 
   .modal-container {

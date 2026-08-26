@@ -160,6 +160,9 @@ func TestQueryPlanActiveScopeKeepsHistoryOutOfRowsAndInAggregates(t *testing.T) 
 	if snapshot.Summary.Requirements != 1002 || snapshot.Summary.Bugs != 1 {
 		t.Fatalf("unexpected issue-kind summary: %+v", snapshot.Summary)
 	}
+	if snapshot.Summary.ActiveRequirements != 2 || snapshot.Summary.ActiveBugs != 1 {
+		t.Fatalf("unexpected active issue-kind summary: %+v", snapshot.Summary)
+	}
 }
 
 func TestApplyPlanningChangeIsAtomicAndCreatesAuditAndOutbox(t *testing.T) {

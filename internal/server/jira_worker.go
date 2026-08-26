@@ -120,31 +120,38 @@ func (s *Server) syncJiraTasks() {
 		log.Printf("Jira sync: failed to persist cycle start: %v", err)
 	}
 
-	jql := buildJQL(&s.config.Jira)
-	if jql == "" {
+	scopes := buildJiraQueryScopes(&s.config.Jira)
+	if len(scopes) == 0 {
 		finishJiraInboundCycle(checkpoint, cycleStartedAt, 0, 0, []error{errors.New("Jira inbound sync scope is empty")})
 		return
 	}
 	jc := telemetry.NewJiraClient(&s.config.Jira)
 
-	issues, err := jc.SearchIssues(jql)
-	if err != nil {
-		log.Printf("Jira sync: failed to search issues: %v", err)
-		finishJiraInboundCycle(checkpoint, cycleStartedAt, 0, 0, []error{err})
-		return
+	mergedIssues := make(map[string]telemetry.JiraIssue)
+	primaryKeys := make(map[string]struct{})
+	cycleErrors := make([]error, 0)
+	successfulScopes := 0
+	for _, scope := range scopes {
+		issues, err := jc.SearchIssues(scope.JQL)
+		if err != nil {
+			log.Printf("Jira sync: scope %s failed: %v", scope.Name, err)
+			cycleErrors = append(cycleErrors, fmt.Errorf("Jira scope %s: %w", scope.Name, err))
+			continue
+		}
+		successfulScopes++
+		log.Printf("Jira sync: scope %s retrieved %d issues matching JQL: %s", scope.Name, len(issues), scope.JQL)
+		for _, issue := range issues {
+			mergeJiraIssue(mergedIssues, issue)
+			primaryKeys[strings.ToUpper(strings.TrimSpace(issue.Key))] = struct{}{}
+		}
 	}
-
-	log.Printf("Jira sync: retrieved %d issues matching JQL: %s", len(issues), jql)
-	mergedIssues := make(map[string]telemetry.JiraIssue, len(issues))
-	primaryKeys := make(map[string]struct{}, len(issues))
-	for _, issue := range issues {
-		mergeJiraIssue(mergedIssues, issue)
-		primaryKeys[strings.ToUpper(strings.TrimSpace(issue.Key))] = struct{}{}
+	if successfulScopes == 0 {
+		finishJiraInboundCycle(checkpoint, cycleStartedAt, 0, 0, cycleErrors)
+		return
 	}
 
 	var activeLocalTasks []db.TaskTelemetry
 	knownLocalKeys := make(map[string]struct{})
-	cycleErrors := make([]error, 0)
 	if queryErr := db.DB.
 		Where("task_id LIKE ? AND (source IS NULL OR TRIM(source) = '' OR LOWER(TRIM(source)) = ?)", "%-%", "jira").
 		Find(&activeLocalTasks).Error; queryErr != nil {
@@ -1002,6 +1009,168 @@ func buildJQL(cfg *config.JiraConfig) string {
 	default:
 		return ordinaryJQL
 	}
+}
+
+type jiraQueryScope struct {
+	Name string
+	JQL  string
+}
+
+// buildJiraQueryScopes keeps independently owned Jira sources independently
+// executable. This prevents one unavailable project/version from suppressing
+// results already available from the remaining configured scopes.
+func buildJiraQueryScopes(cfg *config.JiraConfig) []jiraQueryScope {
+	if cfg == nil {
+		return nil
+	}
+
+	scopes := make([]jiraQueryScope, 0)
+	appendScope := func(name, jql string) {
+		jql = strings.TrimSpace(jql)
+		if jql == "" {
+			return
+		}
+		for _, existing := range scopes {
+			if existing.JQL == jql {
+				return
+			}
+		}
+		scopes = append(scopes, jiraQueryScope{Name: name, JQL: jql})
+	}
+
+	if customJQL := strings.TrimSpace(cfg.CustomJQL); customJQL != "" {
+		for index, branch := range splitTopLevelJIRAOr(customJQL) {
+			appendScope(fmt.Sprintf("custom-%d", index+1), trimOuterJIRAParentheses(branch))
+		}
+	} else {
+		users := normalizeJIRAScopeValues(cfg.SyncUsers, false)
+		statuses := normalizeJIRAScopeValues(cfg.SyncStatuses, false)
+		shared := make([]string, 0, 2)
+		if len(users) > 0 {
+			shared = append(shared, fmt.Sprintf("assignee in (%s)", quoteJIRAValues(users)))
+		}
+		if len(statuses) > 0 {
+			shared = append(shared, fmt.Sprintf("status in (%s)", quoteJIRAValues(statuses)))
+		}
+		projects := normalizeJIRAScopeValues(cfg.SyncProjects, false)
+		if len(projects) == 0 {
+			appendScope("filters", strings.Join(shared, " AND "))
+		} else {
+			for _, project := range projects {
+				parts := append([]string{fmt.Sprintf("project = %s", quoteJIRAValues([]string{project}))}, shared...)
+				appendScope("project-"+strings.ToUpper(project), strings.Join(parts, " AND "))
+			}
+		}
+	}
+
+	for _, ref := range config.JiraVersionReferences(cfg) {
+		appendScope(
+			fmt.Sprintf("version-%s-%s", ref.ProjectKey, ref.VersionID),
+			fmt.Sprintf(`(project = %q AND fixVersion = %s)`, ref.ProjectKey, ref.VersionID),
+		)
+	}
+	return scopes
+}
+
+func splitTopLevelJIRAOr(jql string) []string {
+	start := 0
+	depth := 0
+	var quote byte
+	escaped := false
+	parts := make([]string, 0, 2)
+	for index := 0; index < len(jql); index++ {
+		char := jql[index]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 && index+2 <= len(jql) && strings.EqualFold(jql[index:index+2], "OR") &&
+				(index == 0 || !isJIRAIdentifierByte(jql[index-1])) &&
+				(index+2 == len(jql) || !isJIRAIdentifierByte(jql[index+2])) {
+				if part := strings.TrimSpace(jql[start:index]); part != "" {
+					parts = append(parts, part)
+				}
+				index++
+				start = index + 1
+			}
+		}
+	}
+	if part := strings.TrimSpace(jql[start:]); part != "" {
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return []string{strings.TrimSpace(jql)}
+	}
+	return parts
+}
+
+func isJIRAIdentifierByte(char byte) bool {
+	return char == '_' || char >= '0' && char <= '9' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z'
+}
+
+func trimOuterJIRAParentheses(jql string) string {
+	jql = strings.TrimSpace(jql)
+	for len(jql) >= 2 && jql[0] == '(' && jql[len(jql)-1] == ')' {
+		depth := 0
+		wrapsWholeExpression := true
+		var quote byte
+		escaped := false
+		for index := 0; index < len(jql); index++ {
+			char := jql[index]
+			if quote != 0 {
+				if escaped {
+					escaped = false
+					continue
+				}
+				if char == '\\' {
+					escaped = true
+					continue
+				}
+				if char == quote {
+					quote = 0
+				}
+				continue
+			}
+			if char == '\'' || char == '"' {
+				quote = char
+				continue
+			}
+			if char == '(' {
+				depth++
+			} else if char == ')' {
+				depth--
+				if depth == 0 && index != len(jql)-1 {
+					wrapsWholeExpression = false
+					break
+				}
+			}
+		}
+		if !wrapsWholeExpression || depth != 0 {
+			break
+		}
+		jql = strings.TrimSpace(jql[1 : len(jql)-1])
+	}
+	return jql
 }
 
 func buildJiraVersionJQL(cfg *config.JiraConfig) string {

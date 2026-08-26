@@ -478,12 +478,25 @@
     min-height: calc(var(--wa-control-h, 38px) - 2px);
     padding: 0;
     border: 0;
+    border-radius: var(--wa-radius-sm, 8px);
     outline: 0;
     background: transparent;
     color: var(--wa-text-strong, #0d1722);
     font: inherit;
     font-size: 13px;
     font-weight: 660;
+  }
+
+  .select-inline-input:focus,
+  .select-inline-input:focus-visible {
+    border-color: transparent;
+    outline: none !important;
+    outline-offset: 0;
+  }
+
+  .select-input-shell:has(.select-inline-input:focus-visible) {
+    outline: 2px solid var(--wa-border-focus, rgba(0, 143, 150, 0.86));
+    outline-offset: 2px;
   }
 
   .select-inline-input::placeholder {

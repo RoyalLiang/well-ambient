@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { reconcileSolutionEditor, type SolutionEditorSyncState } from '../lib/solution-editor-sync';
+  import { showToast } from '../lib/toast';
   import MarkdownWorkbench from './shared/MarkdownWorkbench.svelte';
   import Modal from './shared/Modal.svelte';
 
@@ -137,10 +138,10 @@
   async function saveDraft() {
     if (!workspace?.working || !editorState.dirty) return true;
     if (workspace.working.status !== 'draft') {
-      error = '当前方案尚未准备为可编辑草稿。';
+      showToast('当前方案尚未准备为可编辑草稿。', { type: 'error', title: '无法保存' });
       return false;
     }
-    action = 'save'; error = ''; notice = ''; conflict = false;
+    action = 'save'; error = ''; conflict = false;
     try {
       const response = await api('/api/solutions/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -151,11 +152,15 @@
       });
       editorState = { ...editorState, dirty: false, remoteUpdateAvailable: false };
       acceptWorkspace(response.workspace);
-      notice = '方案已保存。';
+      if (!publishFlow) showToast('方案已保存。', { title: '保存成功' });
       return true;
     } catch (requestError: any) {
       conflict = requestError.status === 409;
-      error = conflict ? '方案已被其他人更新。本地内容仍保留，请复制后再加载远端内容。' : (requestError.message || '保存方案失败');
+      const saveError = conflict
+        ? '方案已被其他人更新。本地内容仍保留，请复制后再加载远端内容。'
+        : (requestError.message || '保存方案失败');
+      error = '';
+      showToast(saveError, { type: 'error', title: conflict ? '检测到远端更新' : '保存失败' });
       return false;
     } finally { action = ''; }
   }
@@ -387,7 +392,6 @@
           </div>
         {/if}
         {#if error}<div class="solution-message error" role="alert">{error}</div>{/if}
-        {#if notice}<div class="solution-message success" aria-live="polite">{notice}</div>{/if}
         {#if conflict || editorState.remoteUpdateAvailable}
           <div class="solution-conflict" role="alert">
             <div><strong>检测到远端更新</strong><span>当前未保存内容没有被替换。</span></div>

@@ -203,6 +203,30 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 	return allIssues, nil
 }
 
+// ValidateJQL asks Jira to parse and authorize a query without downloading the
+// full issue/changelog payload used by the synchronization worker.
+func (jc *JiraClient) ValidateJQL(ctx context.Context, jql string) error {
+	path := fmt.Sprintf(
+		"/rest/api/2/search?jql=%s&startAt=0&maxResults=1&fields=key",
+		url.QueryEscape(strings.TrimSpace(jql)),
+	)
+	req, err := jc.newRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	req = req.WithContext(ctx)
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Jira search failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	return nil
+}
+
 func (jc *JiraClient) ListProjectReleases(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error) {
 	projectKey = deliveryplanning.NormalizeProjectKey(projectKey)
 	if projectKey == "" {

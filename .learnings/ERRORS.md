@@ -20,6 +20,38 @@ Capability is not available: console
 
 ---
 
+## [ERR-20260824-001] browser-page-proxy-scrolltop-setter
+
+**Logged**: 2026-08-24T22:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+The browser page proxy exposed `scrollTop` as getter-only during authenticated Daily Jira lazy-load validation.
+
+### Error
+```text
+TypeError: Cannot set property scrollTop of [object Object] which has only a getter
+```
+
+### Context
+- The failure occurred inside browser page evaluation while trying to scroll `#daily-jira-table-content` to its bottom.
+- The page itself remained healthy and no Jira synchronization or write action was triggered.
+
+### Suggested Fix
+Use the element's native `scrollTo()` method (or a supported locator scroll action) instead of assigning through the proxy property.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DailyJiraAudit.svelte
+
+### Resolution
+- **Resolved**: 2026-08-24T22:09:00+08:00
+- **Notes**: Replaced direct property assignment with the element's native `scrollTo()` method. The authenticated list then lazy-loaded from a 5305px to a 9612px virtual extent while keeping 23 DOM data rows.
+
+---
+
 ## [ERR-20260821-004] daily-jira-trigger-template-argument-mismatch
 
 **Logged**: 2026-08-21T19:08:00+08:00
@@ -461,7 +493,7 @@ Rerun the same read-only Go test command with managed local-network test permiss
 ## [ERR-20260813-003] findings-context-mismatch
 
 **Logged**: 2026-08-13T13:05:00+08:00
-**Priority**: low
+**Priority**: medium
 **Status**: resolved
 **Area**: docs
 
@@ -483,12 +515,12 @@ Read the bounded file tail after compaction and patch against the exact current 
 ### Metadata
 - Reproducible: yes
 - Related Files: findings.md, progress.md
-- Recurrence-Count: 2
-- Last-Seen: 2026-08-13T14:18:00+08:00
+- Recurrence-Count: 5
+- Last-Seen: 2026-08-25T00:00:00+08:00
 
 ### Resolution
 - **Resolved**: 2026-08-13T13:05:00+08:00
-- **Notes**: Re-read each target file independently and applied bounded patches against exact live content.
+- **Notes**: Re-read each target file independently and applied bounded patches against exact live content. Two further 2026-08-25 attempts reused a cross-file context reconstructed from truncated output and failed without partial writes; recovery again split the update into file-local bounded hunks. Future planning updates must not combine targets unless every anchor was read verbatim in the immediately preceding output.
 
 ---
 
@@ -517,6 +549,8 @@ Use direct numeric conversion from computed CSS values in browser read-only eval
 ### Metadata
 - Reproducible: yes
 - Related Files: web/src/components/TaskKanban.svelte
+- Recurrence-Count: 2
+- Last-Seen: 2026-08-25T00:00:00+08:00
 
 ### Resolution
 - **Resolved**: 2026-08-13T09:38:52+08:00
@@ -1394,7 +1428,7 @@ Create the tab with `tabs.new()`, navigate with `tab.goto()`, wait briefly for a
 
 ### Resolution
 - **Resolved**: 2026-07-20T18:13:00+08:00
-- **Notes**: A fresh authenticated tab navigated through Task Tracking to Execution Tracking and returned an empty tab-scoped console error list.
+- **Notes**: A fresh authenticated tab navigated through Task Tracking to Execution Tracking and returned an empty tab-scoped console error list. The 2026-08-25 recurrence was the same casing mistake (`goTo` instead of supported `goto`); no navigation occurred before correction.
 
 ---
 
@@ -4728,5 +4762,231 @@ Use the documented supported tab-opening or user-tab connection path for this br
 ### Resolution
 - **Resolved**: 2026-08-14T17:16:00+08:00
 - **Notes**: Read the current browser-client API, named the session, passed the exact fresh `openTabs()` object to `chrome.user.claimTab(...)`, and connected successfully. Current methods are `browser.user.claimTab(...)` and `browser.tabs.new()`.
+
+---
+
+## [ERR-20260825-001] browser-evaluate-bare-history-global
+
+**Logged**: 2026-08-25T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The browser page-evaluation sandbox did not expose the bare `history` global while preparing a query-only fixture mode switch.
+
+### Error
+```text
+TypeError: Cannot read properties of undefined (reading 'replaceState')
+```
+
+### Context
+- The evaluation attempted `history.replaceState(...)` before any product button was clicked.
+- The authenticated page, completed AI result, and backend state were unchanged.
+
+### Suggested Fix
+Do not depend on history mutation, proxy property assignment, or root-element attribute methods in this page sandbox. Drive temporary fixture modes through an actual visible form input and the normal UI interaction path.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/lib/deconstruct-retention-fixture.ts
+
+### Resolution
+- **Resolved**: 2026-08-25T00:00:00+08:00
+- **Notes**: Bare `history`, `window.history`, direct dataset assignment, and root `setAttribute` were unavailable. Switched the temporary slow-stream mode to a visible input marker consumed only by the development fixture, then continued without navigation or business writes.
+
+---
+
+## [ERR-20260825-002] browser-locator-after-parent-hmr
+
+**Logged**: 2026-08-25T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The browser attempted to click the AI generate button after a parent-component HMR had already closed the modal.
+
+### Error
+```text
+Playwright selector deadline exceeded: no matches for button "生成解构"
+```
+
+### Context
+- A temporary fixture and parent callback were edited during browser validation.
+- A fresh DOM snapshot showed the schedule page healthy and the modal closed; no hidden node or business action was invoked.
+
+### Suggested Fix
+After any parent-component HMR, take a fresh DOM snapshot and reopen the target state before reusing locators.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/DemandKanban.svelte
+
+### Resolution
+- **Resolved**: 2026-08-25T00:00:00+08:00
+- **Notes**: Discarded the stale locator plan, confirmed the visible schedule page, and rebuilt the fixture state through normal UI actions.
+
+---
+
+## [ERR-20260825-003] browser-confirm-click-without-state-guard
+
+**Logged**: 2026-08-25T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The validation captured that a close confirmation was absent but still attempted to click its confirm button in the same script.
+
+### Error
+```text
+Playwright selector deadline exceeded: no matches for button "确认停止并关闭"
+```
+
+### Context
+- Wrapper `fill()` had not propagated the slow-fixture marker through the Svelte input binding, so the run completed immediately and idle close removed the modal.
+- No confirmation existed and no real AI request or business write occurred.
+
+### Suggested Fix
+Verify the rendered running state before clicking confirmation. For a two-run lifecycle fixture, use a deterministic module-local call sequence instead of depending on UI text propagation to choose the second response mode.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/Deconstructor.svelte
+
+### Resolution
+- **Resolved**: 2026-08-25T00:00:00+08:00
+- **Notes**: Split the flow into guarded stages. Keyboard input read back correctly in the DOM but did not deterministically select the response branch, so the final fixture uses first-call complete / second-call slow sequencing.
+
+---
+
+## [ERR-20260825-004] browser-task-view-combined-click-snapshot-timeout
+
+**Logged**: 2026-08-25T12:20:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The authenticated task-page baseline combined a navigation click, wait, and large DOM snapshot in one browser call and hit the short CDP evaluation timeout.
+
+### Error
+```text
+Timed out after 3000ms waiting for CDP command Runtime.evaluate.
+```
+
+### Context
+- Operation: switch from execution tracking to the task table and immediately serialize an 8.5k DOM snapshot.
+- The preceding page was healthy and the click did not submit or mutate business data.
+
+### Suggested Fix
+Split navigation and state inspection into separate calls, then measure only the owning containers needed for geometry validation.
+
+### Metadata
+- Reproducible: no
+- Related Files: web/src/components/TaskKanban.svelte
+- See Also: ERR-20260719-030
+
+### Resolution
+- **Resolved**: 2026-08-25T12:21:00+08:00
+- **Notes**: Continued with separate click, compact snapshot, and targeted geometry reads.
+
+---
+
+## [ERR-20260825-005] stale-settings-component-path
+
+**Logged**: 2026-08-25T17:12:35+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+The configuration-inspector revision initially targeted a stale nested component path instead of the repository's actual SettingsPanel location.
+
+### Error
+```text
+rg: web/src/lib/components/admin/SettingsPanel.svelte: No such file or directory
+```
+
+### Context
+- The attempted path came from an outdated component-layout assumption.
+- The current repository indexes the owner as `web/src/components/SettingsPanel.svelte`.
+
+### Suggested Fix
+Resolve target files with `rg --files` before using remembered component paths in a dirty, evolving workspace.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SettingsPanel.svelte
+
+### Resolution
+- **Resolved**: 2026-08-25T17:12:35+08:00
+- **Notes**: Re-indexed the workspace and continued against the actual SettingsPanel owner.
+
+---
+
+## [ERR-20260825-006] stale-chrome-tab-handle
+
+**Logged**: 2026-08-25T17:50:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+The preserved Chrome tab handle no longer referred to a live tab when responsive validation resumed.
+
+### Error
+```text
+No tab with id: 733588617.
+```
+
+### Context
+- The previous authenticated tab had closed between validation phases.
+- The Chrome session reported no claimable live tabs; a fresh tab opened at the login page because the prior login had expired.
+
+### Suggested Fix
+List live Chrome tabs before reusing a persisted handle, then use the repository's read-only preview when authentication is unavailable.
+
+### Metadata
+- Reproducible: no
+- Related Files: web/settings-preview.html, web/src/settings-preview-entry.ts
+
+### Resolution
+- **Resolved**: 2026-08-25T17:53:00+08:00
+- **Notes**: Opened the checked-in read-only Settings preview, completed desktop/tablet/phone validation without business writes, reset the viewport, and closed the validation tab.
+
+---
+
+## [ERR-20260825-007] node-repl-metric-expression-parenthesis
+
+**Logged**: 2026-08-25T17:54:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Two dense one-line browser metric expressions contained an extra closing parenthesis.
+
+### Error
+```text
+Unexpected token: ')'
+```
+
+### Context
+- Both expressions combined navigation, viewport changes, evaluation, and output serialization in one line.
+- No page state or business data was mutated.
+
+### Suggested Fix
+Assign browser evaluation results to a named variable, then emit that variable in a separate statement.
+
+### Metadata
+- Reproducible: yes
+- Related Files: web/src/components/SettingsPanel.svelte
+- See Also: ERR-20260825-004
+
+### Resolution
+- **Resolved**: 2026-08-25T17:55:00+08:00
+- **Notes**: Split the expressions into named metric assignments; all three responsive measurements completed.
 
 ---

@@ -46,17 +46,17 @@ type releaseLifecycleAssetPayload struct {
 }
 
 func (s *Service) ArchiveRelease(ctx context.Context, command ReleaseLifecycleCommand) (ReleaseLifecycleResult, error) {
-	return s.transitionRelease(ctx, command, ReleaseReleased, ReleaseArchived, "archived")
+	return s.transitionRelease(ctx, command, []string{ReleasePlanned, ReleaseReleased, ReleaseDiscarded}, ReleaseArchived, "archived")
 }
 
 func (s *Service) DiscardRelease(ctx context.Context, command ReleaseLifecycleCommand) (ReleaseLifecycleResult, error) {
-	return s.transitionRelease(ctx, command, ReleasePlanned, ReleaseDiscarded, "discarded")
+	return s.transitionRelease(ctx, command, []string{ReleasePlanned}, ReleaseDiscarded, "discarded")
 }
 
 func (s *Service) transitionRelease(
 	ctx context.Context,
 	command ReleaseLifecycleCommand,
-	requiredStatus string,
+	requiredStatuses []string,
 	targetStatus string,
 	action string,
 ) (ReleaseLifecycleResult, error) {
@@ -111,14 +111,17 @@ func (s *Service) transitionRelease(
 			}
 			return nil
 		}
-		if current.Status != requiredStatus {
+		statusAllowed := false
+		for _, status := range requiredStatuses {
+			if current.Status == status {
+				statusAllowed = true
+				break
+			}
+		}
+		if !statusAllowed {
 			return &DomainError{
-				Code: "invalid_release_transition",
-				Message: fmt.Sprintf(
-					"only a %s release can be marked as %s",
-					requiredStatus,
-					action,
-				),
+				Code:       "invalid_release_transition",
+				Message:    fmt.Sprintf("release status %s cannot be marked as %s", current.Status, action),
 				StatusCode: 409,
 			}
 		}
@@ -126,7 +129,7 @@ func (s *Service) transitionRelease(
 		before := current
 		now := s.now().UTC()
 		update := tx.Model(&db.ReleaseVersion{}).
-			Where("id = ? AND status = ?", current.ID, requiredStatus).
+			Where("id = ? AND status IN ?", current.ID, requiredStatuses).
 			Updates(map[string]any{"status": targetStatus, "updated_at": now})
 		if update.Error != nil {
 			return update.Error
@@ -204,10 +207,10 @@ func (s *Service) DeleteRelease(ctx context.Context, command DeleteReleaseComman
 		if !strings.EqualFold(strings.TrimSpace(current.Source), "local") {
 			return &DomainError{Code: "external_release_read_only", Message: "external releases cannot be deleted locally", StatusCode: 409}
 		}
-		if current.Status != ReleasePlanned && current.Status != ReleaseDiscarded {
+		if current.Status != ReleaseArchived {
 			return &DomainError{
 				Code:       "release_delete_forbidden",
-				Message:    "published or archived release facts cannot be deleted",
+				Message:    "only archived releases can be deleted",
 				StatusCode: 409,
 			}
 		}

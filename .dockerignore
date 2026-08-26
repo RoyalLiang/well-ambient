@@ -23,4 +23,5 @@ deploy/.env.production
 deploy/runtime
 deploy/backups
 deploy/.state
+deploy/bundles
 *.xlsx

@@ -13,7 +13,8 @@ const solutionWorkspace = component('SolutionWorkspace.svelte');
 test('solution button updates the existing right inspector without adding a third tab', () => {
   assert.match(demandKanban, /import SolutionWorkspace from '\.\/SolutionWorkspace\.svelte'/);
   assert.match(demandKanban, /type ScheduleInspectorMode = 'schedule' \| 'telemetry' \| 'solution'/);
-  assert.match(demandKanban, /on:click\|stopPropagation=\{\(\) => selectScheduleItem\(item, 'solution'\)\}/);
+  assert.match(demandKanban, /actions=\{renderScheduleActions\}/);
+  assert.match(demandKanban, /on:click=\{\(\) => selectScheduleItem\(row\.item, 'solution'\)\}/);
   assert.match(demandKanban, /<SolutionWorkspace\s+demand=\{solutionDemand\}/);
   assert.match(demandKanban, /selectedDemand\?\.task_id === selectedScheduleItem\.demand_id[\s\S]*?task_id: selectedScheduleItem\.demand_id/);
   assert.doesNotMatch(demandKanban, /id="schedule-inspector-tab-solution"/);
@@ -125,4 +126,20 @@ test('solution edit dialog protects dirty content and preserves backend revision
   assert.match(solutionWorkspace, /expected_revision: workspace\.asset\.revision/);
   assert.match(solutionWorkspace, /base_revision_id: workspace\.working\.id/);
   assert.match(solutionWorkspace, /editorState\.remoteUpdateAvailable/);
+});
+
+test('solution draft save uses the global toast without shifting or remounting the editor body', () => {
+  assert.match(solutionWorkspace, /import \{ showToast \} from '\.\.\/lib\/toast'/);
+
+  const saveDraft = solutionWorkspace.match(/async function saveDraft\(\)[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(saveDraft, /showToast\('方案已保存。',\s*\{\s*title:\s*'保存成功'\s*\}\)/);
+  assert.doesNotMatch(saveDraft, /notice\s*=/);
+
+  const editorModal = solutionWorkspace.match(/<Modal[\s\S]*?<\/Modal>/)?.[0] || '';
+  assert.doesNotMatch(editorModal, /\{#if notice\}<div class="solution-message success"/);
+  assert.doesNotMatch(solutionWorkspace, /\{#if action === 'save'\}[\s\S]*?<MarkdownWorkbench/);
+  assert.match(
+    solutionWorkspace,
+    /<MarkdownWorkbench[\s\S]*?mode="live"[\s\S]*?saving=\{action === 'save' \|\| action === 'publish'\}[\s\S]*?on:save=\{saveDraft\}/,
+  );
 });

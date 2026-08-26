@@ -2,6 +2,7 @@
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
   import StatusCard from './StatusCard.svelte';
   import Button from './shared/Button.svelte';
+  import { responseErrorMessage } from '../lib/http-error';
 
   const dispatch = createEventDispatcher();
 
@@ -139,7 +140,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig)
       });
-      if (!res.ok) throw new Error('Failed to save config');
+      if (!res.ok) {
+        saveError = '保存配置失败: ' + await responseErrorMessage(res, `HTTP ${res.status}`);
+        return;
+      }
       const result = await res.json();
       if (result.success) {
         globalConfig = newConfig;

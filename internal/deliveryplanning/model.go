@@ -162,16 +162,18 @@ type PlanQuery struct {
 }
 
 type PlanSummary struct {
-	Total        int64 `json:"total"`
-	Active       int64 `json:"active"`
-	Done         int64 `json:"done"`
-	Backlog      int64 `json:"backlog"`
-	Progress     int64 `json:"progress"`
-	Review       int64 `json:"review"`
-	Requirements int64 `json:"requirements"`
-	Bugs         int64 `json:"bugs"`
-	Planned      int64 `json:"planned"`
-	Unplanned    int64 `json:"unplanned"`
+	Total              int64 `json:"total"`
+	Active             int64 `json:"active"`
+	Done               int64 `json:"done"`
+	Backlog            int64 `json:"backlog"`
+	Progress           int64 `json:"progress"`
+	Review             int64 `json:"review"`
+	Requirements       int64 `json:"requirements"`
+	Bugs               int64 `json:"bugs"`
+	ActiveRequirements int64 `json:"active_requirements"`
+	ActiveBugs         int64 `json:"active_bugs"`
+	Planned            int64 `json:"planned"`
+	Unplanned          int64 `json:"unplanned"`
 }
 
 type PlanSnapshot struct {

@@ -4,6 +4,7 @@ export type SettingsSection =
   | 'jira'
   | 'performance'
   | 'projects'
+  | 'versions'
   | 'ai'
   | 'solution_prompts'
   | 'ai_context'
@@ -60,6 +61,14 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     label: '项目优先级',
     summary: '为已同步项目维护交付优先级与仓库映射。',
     domain: '项目映射',
+    permissions: ['config:read']
+  },
+  {
+    id: 'versions',
+    group: '集成设置',
+    label: '配置版本',
+    summary: '统一查看所有功能配置的版本、字段差异与回滚记录。',
+    domain: '版本管理',
     permissions: ['config:read']
   },
   {

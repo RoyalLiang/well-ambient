@@ -15,6 +15,7 @@ export interface AdminTableColumn {
   label: string;
   width?: string;
   align?: 'left' | 'center' | 'right';
+  priority?: 'essential' | 'secondary';
 }
 
 export interface AdminTableRow {

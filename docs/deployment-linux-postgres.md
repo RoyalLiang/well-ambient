@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-当前交付面面向单台 Linux 主机，使用 Docker Engine 与 Docker Compose。生产数据存储使用 PostgreSQL；SQLite 只保留给本地开发和测试。BuildKit 会按目标主机架构构建不依赖 CGO 的生产 server 二进制；首个正式环境仍应按实际 AMD64/ARM64 架构单独验收。
+当前交付面面向 Linux 主机，使用 Docker Engine 与 Docker Compose。Compose 只运行 `migrate`、`server` 和 `web`，不创建、启动、停止或备份 PostgreSQL。生产 PostgreSQL 由服务器现有实例、其他容器栈或托管服务提供；SQLite 只保留给本地开发、测试和首次历史数据迁移。
 
 首次安装页可以迁移一个由服务器固定路径指定的只读 SQLite 快照。该能力不搬附件，也没有在本开发机完成真实 PostgreSQL 验证；需要保留旧数据时，先完整执行 [SQLite → PostgreSQL 上线迁移指南](./sqlite-to-postgresql-migration-guide.md)，并在 Linux staging 用生产快照演练。
 
@@ -10,11 +10,46 @@
 
 主机需要：
 
-- Linux AMD64 或 ARM64、Docker Engine、Docker Compose v2、`curl`、`git`；
-- 至少为 PostgreSQL 数据卷、应用附件和备份预留三倍当前有效数据量；
-- 由宿主机或上游负载均衡器终止 TLS。Compose 只暴露应用 HTTP 端口，不暴露 PostgreSQL 端口。
+- Linux AMD64 或 ARM64、Docker Engine、Docker Compose v2 和 `curl`；
+- 已部署并已备份的 PostgreSQL 14+，应用容器能通过受控网络访问；
+- 可从镜像仓库拉取 server/web 镜像，或已通过 `docker load` 导入镜像；
+- 由宿主机或上游负载均衡器终止 TLS。Compose 只暴露应用 HTTP 端口。
 
-在项目根目录执行：
+服务器建议使用以下目录：
+
+```text
+/opt/well-ambient/
+├── compose.yaml
+└── deploy/
+    ├── .env.production
+    ├── config.production.example.yaml
+    ├── deploy.sh
+    ├── rollback.sh
+    └── runtime/
+        ├── config.yaml
+        └── data/
+            ├── attachments/
+            └── legacy/
+```
+
+推荐先在仓库根目录生成不含源码、数据库和秘密的 Compose 部署包：
+
+```bash
+make compose-bundle VERSION=2026.08.26-1
+scp deploy/bundles/well-ambient-compose-2026.08.26-1.tar.gz \
+  deploy@your-server:/tmp/
+```
+
+服务器上预先创建由部署用户持有的目录，然后解压：
+
+```bash
+sudo install -d -o deploy -g deploy -m 0750 /opt/well-ambient
+sudo -u deploy tar -xzf /tmp/well-ambient-compose-2026.08.26-1.tar.gz \
+  -C /opt/well-ambient
+cd /opt/well-ambient
+```
+
+若不使用部署包，也可按相同相对路径搬运 `compose.yaml`、`deploy/.env.production.example`、`deploy/config.production.example.yaml`、`deploy/deploy.sh` 和 `deploy/rollback.sh`。随后执行：
 
 ```bash
 cp deploy/.env.production.example deploy/.env.production
@@ -25,15 +60,61 @@ chmod 600 deploy/.env.production deploy/runtime/config.yaml
 
 编辑 `deploy/.env.production`：
 
-- `POSTGRES_PASSWORD` 必须改成足够长的随机值；为避免 DSN 转义歧义，只使用 `A-Z a-z 0-9 . _ ~ -`；
+- `WELL_AMBIENT_SERVER_IMAGE` 和 `WELL_AMBIENT_WEB_IMAGE` 指向服务器能取得的镜像仓库；离线导入时填写 `well-ambient-server` 和 `well-ambient-web`；
+- `WELL_AMBIENT_VERSION` 使用发布号或 commit SHA，不能使用 `latest`；
 - `WELL_AMBIENT_SETUP_TOKEN` 使用与数据库密码不同的高熵随机值，至少 32 个字符；它只授权首次数据库安装写操作；
+- `APP_UID`、`APP_GID` 应与服务器上 `deploy/runtime` 的所有者一致；
 - `HTTP_BIND` 默认是 `127.0.0.1`，供同机 TLS 反向代理使用；只有防火墙和 TLS 边界明确时才改为外部地址；
 - `HTTP_PORT` 是 Linux 主机暴露端口；
 - 不把这个文件提交到 Git。
 
 首次部署保持 `deploy/runtime/config.yaml` 中的 `database.driver: setup`。若需要迁移历史数据，把停写后的 SQLite 快照安装为 `deploy/runtime/data/legacy/well-ambient.db`，不要复制仍在写入的工作文件。数据库连接由浏览器安装页写入 bootstrap 配置；它不进入运行时配置 API、配置版本档案或镜像。GitLab、Jira、飞书和 AI 仍在登录后的配置中心按需开启。
 
-## 一键部署
+## 把镜像交付到服务器
+
+Compose 不再包含 `build:`，所以服务器不需要项目源码，但必须能取得相同版本的两个镜像。
+
+使用镜像仓库时，在构建机执行：
+
+```bash
+make images VERSION=2026.08.26-1 PLATFORM=linux/amd64 \
+  SERVER_IMAGE=registry.example.com/your-team/well-ambient-server \
+  WEB_IMAGE=registry.example.com/your-team/well-ambient-web
+docker push registry.example.com/your-team/well-ambient-server:2026.08.26-1
+docker push registry.example.com/your-team/well-ambient-web:2026.08.26-1
+```
+
+将真实仓库地址和相同版本写入服务器的 `.env.production`。使用离线交付时，在与服务器架构一致的构建机执行：
+
+```bash
+make image-bundle VERSION=2026.08.26-1 PLATFORM=linux/amd64
+scp deploy/bundles/well-ambient-images-2026.08.26-1.tar \
+  deploy@your-server:/opt/well-ambient/
+```
+
+然后在服务器导入：
+
+```bash
+docker load -i well-ambient-images-2026.08.26-1.tar
+```
+
+ARM64 服务器将 `PLATFORM` 改为 `linux/arm64`。不要把 AMD64 镜像搬到 ARM64 主机后再声明部署完成。
+
+## 首次用 Compose 启动
+
+先验证最终配置，不会启动容器：
+
+```bash
+docker compose --env-file deploy/.env.production config
+```
+
+首次启动只需要 server 和 web：
+
+```bash
+docker compose --env-file deploy/.env.production up -d --wait server web
+```
+
+也可以把 `deploy/deploy.sh` 一并搬到相同目录结构后执行一键部署：
 
 版本必须是不可变标识，例如 Git commit SHA 或发布号，不能使用 `latest`：
 
@@ -41,33 +122,33 @@ chmod 600 deploy/.env.production deploy/runtime/config.yaml
 ./deploy/deploy.sh 2026.08.26-1
 ```
 
-首次运行时，脚本依次执行：
+脚本依次执行：
 
-1. 校验工具、密钥占位符、端口和密码字符；
-2. 构建固定版本的 server/web 镜像；
-3. 启动并等待 PostgreSQL 维护库 `postgres` ready；内置容器不会预先创建应用目标库；
-4. 启动只提供健康检查和 `/api/setup/*` 的受限 server，以及同源 Web；
-5. `/ready` 返回 `SETUP` 后记录版本并退出脚本，等待管理员完成页面配置。
+1. 校验工具、镜像地址、版本、安装令牌和端口；
+2. 验证 Compose 渲染结果；
+3. 启动只提供健康检查和 `/api/setup/*` 的受限 server，以及同源 Web；
+4. `/ready` 返回 `SETUP` 后记录版本并退出，等待管理员完成页面配置。
 
 通过 HTTPS 管理入口或 SSH 隧道打开页面。普通登录页不会先闪现，页面会先检查数据库状态。第一步填写 PostgreSQL 主机、端口、目标库、维护库（通常为 `postgres`）、用户、密码、SSL 和 `WELL_AMBIENT_SETUP_TOKEN`：
 
 - 新环境的目标数据库应不存在。连接测试先连维护库，明确显示“目标数据库不存在”，同时检查当前角色是否具有 `CREATEDB`；
 - 若目标数据库已存在，服务只接受完全空的 schema 或当前核心表/列、读模型 generation 与 PostgreSQL trigger 均完整的 Well Ambient schema；
 - 必须先用当前表单完成连接测试，信息变化后要重新测试；
-- Compose 内置数据库默认主机为 `postgres`、端口为 `5432`；外部数据库建议 `verify-full`。CA 文件可放在 `deploy/runtime/ca.pem`，页面填写容器路径 `/etc/well-ambient/ca.pem`。
+- PostgreSQL 位于同一台 Linux 主机时，页面主机填写 `host.docker.internal`，不能填写 `127.0.0.1`；Compose 已将该名称映射到 host gateway。PostgreSQL 仍需监听容器可达地址，并在 `pg_hba.conf` 中只允许所需 Docker 网段和角色。
+- PostgreSQL 位于其他服务器或共享容器网络时，填写其受控 DNS/IP；生产环境建议 `verify-full`。CA 文件可放在 `deploy/runtime/ca.pem`，页面填写容器路径 `/etc/well-ambient/ca.pem`。
 
 第二步仅在服务器发现配置路径下的 SQLite 快照时询问一次“迁移本地数据”或“跳过本地数据”。选择会先持久化，刷新页面或迁移失败后不会重复询问。迁移任务在服务端异步执行，页面显示阶段、当前表、表数和行数；关闭页面不会取消任务。
 
 提交成功后，连接串原子写入 `deploy/runtime/config.yaml`，文件权限保持 `0600`。setup server 退出，由 Compose 重启为正常 server；安装 API 随即消失，页面刷新到登录入口。数据库短暂断连只会让 readiness 失败，不会重新开放安装页。
 
-后续版本部署时，脚本执行迁移前备份、一次性 `--migrate-only`、server/web 切换和 readiness 验收。内置 PostgreSQL 自动生成并检查 custom-format dump。若页面配置的是外部 PostgreSQL，脚本会先失败关闭；完成云厂商快照或上游备份并验证后，按本次备份 ID 显式重跑：
+后续版本部署前，必须先在现有 PostgreSQL 平台创建并验证快照或备份。应用脚本不会接管外部数据库备份；没有备份引用时会失败关闭。完成备份后按本次备份 ID 显式运行：
 
 ```bash
 WELL_AMBIENT_EXTERNAL_BACKUP_REFERENCE=provider-snapshot-20260826-001 \
   ./deploy/deploy.sh 2026.08.26-2
 ```
 
-脚本只记录外部备份引用，不会伪装成自己已备份外部数据库。
+脚本只记录外部备份引用，然后执行一次 `--migrate-only` 和 server/web 切换，不会伪装成自己已经备份 PostgreSQL。
 
 部署状态、运行配置和备份分别位于 `deploy/.state/`、`deploy/runtime/`、`deploy/backups/`，都已加入 `.gitignore`。容器日志默认轮转为单文件 20MiB、最多五份，避免长期运行耗尽系统盘。
 
@@ -78,7 +159,7 @@ curl -fsS http://127.0.0.1:8080/live
 curl -fsS http://127.0.0.1:8080/ready
 curl -fsS http://127.0.0.1:8080/api/status
 docker compose --env-file deploy/.env.production ps
-docker compose --env-file deploy/.env.production logs --tail=200 migrate server web postgres
+docker compose --env-file deploy/.env.production logs --tail=200 migrate server web
 ```
 
 - `/live` 只证明 HTTP 进程存活；
@@ -109,4 +190,4 @@ docker compose --env-file deploy/.env.production logs --tail=200 migrate server 
 
 ## 尚需在真实 Linux 环境完成的验收
 
-本开发机没有 Docker 和 PostgreSQL 服务，当前只能完成 Go/前端、脚本、YAML 与静态容器合同验证。首次投产前仍需在与生产同架构的 Linux staging 上完成镜像构建、Compose 启停、真实 PostgreSQL 迁移、备份恢复、SIGTERM 优雅退出、磁盘满/数据库断连和回滚演练。
+本开发机没有 Docker 和 PostgreSQL 服务，当前只能完成 Go/前端、脚本、YAML 与静态容器合同验证。首次投产前仍需在目标 Linux 主机完成镜像拉取或导入、Compose 启停、容器到现有 PostgreSQL 的网络连接、真实迁移、备份恢复、SIGTERM 优雅退出、磁盘满/数据库断连和回滚演练。

@@ -86,6 +86,32 @@ func TestJiraClientNewRequest(t *testing.T) {
 	}
 }
 
+func TestJiraClientValidateJQLUsesLightweightSearchAndReturnsJiraError(t *testing.T) {
+	client := NewJiraClient(&config.JiraConfig{BaseURL: "https://jira.example.com", APIToken: "token"})
+	client.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/rest/api/2/search" {
+			t.Fatalf("path = %q, want Jira search", request.URL.Path)
+		}
+		query := request.URL.Query()
+		if query.Get("jql") != `project = "FMS-20660"` {
+			t.Fatalf("jql = %q", query.Get("jql"))
+		}
+		if query.Get("maxResults") != "1" || query.Get("fields") != "key" || query.Has("expand") {
+			t.Fatalf("validation search was not lightweight: %s", request.URL.RawQuery)
+		}
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(`{"errorMessages":["project has no value FMS-20660"]}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	err := client.ValidateJQL(context.Background(), `project = "FMS-20660"`)
+	if err == nil || !strings.Contains(err.Error(), "project has no value FMS-20660") {
+		t.Fatalf("ValidateJQL error = %v", err)
+	}
+}
+
 func TestJiraClientUpdateDueDate(t *testing.T) {
 	var received map[string]map[string]string
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
