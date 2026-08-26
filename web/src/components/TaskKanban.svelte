@@ -632,6 +632,8 @@
   $: if (
     pendingRevealTaskId
     && currentView === 'status'
+    && !loading
+    && !taskRefreshing
     && taskTableShellEl
     && taskTableRows.some(row => row.id === pendingRevealTaskId)
     && revealScheduledTaskId !== pendingRevealTaskId

@@ -392,7 +392,6 @@
   }
 
   async function selectGlobalSearchResult(result: GlobalSearchResult) {
-    globalSearchQuery = result.id;
     showGlobalSearchResults = false;
     if (result.route === 'schedule') {
       onScheduleNavigate('schedule');

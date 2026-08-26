@@ -16,6 +16,29 @@ test('task status view loads the active working set and fetches a selected histo
   assert.match(component, /handleGlobalSearchClear/);
 });
 
+test('global search preserves the submitted query while routing by the selected work item id', () => {
+  const shell = source('../src/components/prototype/FunctionalAdminShell.svelte');
+  const selectionHandler = shell.slice(
+    shell.indexOf('async function selectGlobalSearchResult'),
+    shell.indexOf('function handleWindowClick')
+  );
+
+  assert.doesNotMatch(selectionHandler, /globalSearchQuery\s*=\s*result\.id/);
+  assert.match(selectionHandler, /detail:\s*\{\s*id:\s*result\.id,\s*route:\s*result\.route\s*\}/);
+});
+
+test('selected work item reveal waits for active workset loading to settle before consuming the pending id', () => {
+  const component = source('../src/components/TaskKanban.svelte');
+  const revealGate = component.slice(
+    component.indexOf('$: if (\n    pendingRevealTaskId'),
+    component.indexOf('$: selectedTaskForInspector')
+  );
+
+  assert.match(revealGate, /!loading/);
+  assert.match(revealGate, /!taskRefreshing/);
+  assert.match(revealGate, /void revealPendingTaskRow\(pendingRevealTaskId\)/);
+});
+
 test('agenda consumers use one shared resource and only the event center owns the polling fallback', () => {
   const dashboard = source('../src/components/DecisionDashboard.svelte');
   const eventCenter = source('../src/components/DecisionEventCenter.svelte');
