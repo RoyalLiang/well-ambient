@@ -100,7 +100,8 @@ type SolutionPromptTemplate struct {
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// SolutionJiraOutbox decouples local publication from Jira availability.
+// SolutionJiraOutbox is retained for schema compatibility with historical
+// publication records. New solution publications neither enqueue nor drain it.
 type SolutionJiraOutbox struct {
 	ID                 uint       `gorm:"primaryKey" json:"id"`
 	IdempotencyKey     string     `gorm:"uniqueIndex;size:255;not null;column:idempotency_key" json:"idempotency_key"`

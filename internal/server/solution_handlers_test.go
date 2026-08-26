@@ -16,10 +16,9 @@ import (
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/solutions"
-	"well-ambient/internal/telemetry"
 )
 
-func TestSolutionWorkerCreatesCandidateWithoutOverwritingDraftAndPublishesJiraLinkOnce(t *testing.T) {
+func TestSolutionWorkerCreatesCandidateWithoutOverwritingDraftAndDoesNotQueueJiraComment(t *testing.T) {
 	setupServerTestDB(t)
 	if err := db.DB.Create(&db.TaskTelemetry{
 		TaskID: "WA-901", ProjectKey: "WA", Title: "异步方案", Description: "保留人工事实",
@@ -71,31 +70,39 @@ func TestSolutionWorkerCreatesCandidateWithoutOverwritingDraftAndPublishesJiraLi
 	if err != nil {
 		t.Fatalf("apply candidate: %v", err)
 	}
-	link := solutionPublicLink(srv.config.Server.PublicURL, "WA-901")
 	workspace, err = srv.solutions.Publish(context.Background(), solutions.PublishCommand{
-		DemandID: "WA-901", ExpectedRevision: workspace.Asset.Revision, Actor: "Alice", Link: link,
+		DemandID: "WA-901", ExpectedRevision: workspace.Asset.Revision, Actor: "Alice",
 	})
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	var jiraComments []string
-	srv.solutionJiraPost = func(issueKey, comment string) error {
-		if issueKey != "WA-901" {
-			t.Fatalf("unexpected issue key: %s", issueKey)
-		}
-		jiraComments = append(jiraComments, comment)
-		return nil
+	var outboxCount int64
+	if err := db.DB.Model(&db.SolutionJiraOutbox{}).Where("demand_id = ?", "WA-901").Count(&outboxCount).Error; err != nil || outboxCount != 0 {
+		t.Fatalf("publish Jira outbox count=%d err=%v", outboxCount, err)
 	}
-	processed, err = srv.processOneSolutionOutbox(context.Background())
-	if err != nil || !processed {
-		t.Fatalf("process outbox: processed=%v err=%v", processed, err)
+}
+
+func TestSolutionWorkerIgnoresLegacyJiraPublicationOutbox(t *testing.T) {
+	setupServerTestDB(t)
+	srv := NewServer(&config.Config{}, "")
+	now := time.Now()
+	legacy := db.SolutionJiraOutbox{
+		IdempotencyKey: "legacy-solution-jira-publication", SolutionAssetID: 1, SolutionRevisionID: 1,
+		DemandID: "WA-LEGACY", Operation: "publish_solution_link", PayloadJSON: "{", Status: "pending",
+		CreatedAt: now, UpdatedAt: now,
 	}
-	processed, err = srv.processOneSolutionOutbox(context.Background())
-	if err != nil || processed {
-		t.Fatalf("outbox was not idempotently drained: processed=%v err=%v", processed, err)
+	if err := db.DB.Create(&legacy).Error; err != nil {
+		t.Fatalf("seed legacy outbox: %v", err)
 	}
-	if len(jiraComments) != 1 || !strings.Contains(jiraComments[0], "https://ambient.example.com/base/?demand=WA-901&solution=1&tab=schedule") || !strings.Contains(jiraComments[0], "WELL_AMBIENT_SOLUTION_LINK") {
-		t.Fatalf("Jira publication comment = %#v", jiraComments)
+
+	srv.processSolutionWork(context.Background())
+
+	var after db.SolutionJiraOutbox
+	if err := db.DB.First(&after, legacy.ID).Error; err != nil {
+		t.Fatalf("reload legacy outbox: %v", err)
+	}
+	if after.Status != "pending" || after.AttemptCount != 0 || after.LastError != "" {
+		t.Fatalf("solution worker touched legacy Jira outbox: %+v", after)
 	}
 }
 
@@ -175,7 +182,7 @@ func TestBrowserRequestOriginRejectsNonOriginValues(t *testing.T) {
 	}
 }
 
-func TestPublishSolutionRejectsRelativeJiraLink(t *testing.T) {
+func TestPublishSolutionDoesNotRequireJiraPublicLink(t *testing.T) {
 	setupServerTestDB(t)
 	if err := db.DB.Create(&db.TaskTelemetry{TaskID: "WA-902", Title: "缺少公网地址", LastUpdate: time.Now()}).Error; err != nil {
 		t.Fatalf("seed demand: %v", err)
@@ -188,12 +195,12 @@ func TestPublishSolutionRejectsRelativeJiraLink(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/solutions/publish", strings.NewReader(fmt.Sprintf(`{"demand_id":"WA-902","expected_revision":%d}`, workspace.Asset.Revision)))
 	recorder := httptest.NewRecorder()
 	srv.handlePublishSolution(recorder, request)
-	if recorder.Code != http.StatusUnprocessableEntity || !strings.Contains(recorder.Body.String(), "server.public_url") {
+	if recorder.Code != http.StatusOK {
 		t.Fatalf("publish status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	workspace, err = srv.solutions.GetWorkspace(context.Background(), "WA-902")
-	if err != nil || workspace.Working == nil || workspace.Working.Status != solutions.StatusDraft {
-		t.Fatalf("rejected publication changed draft: workspace=%+v err=%v", workspace, err)
+	if err != nil || workspace.Working == nil || workspace.Working.Status != solutions.StatusPublished {
+		t.Fatalf("publication without a public Jira link failed: workspace=%+v err=%v", workspace, err)
 	}
 	var outboxCount int64
 	if err := db.DB.Model(&db.SolutionJiraOutbox{}).Count(&outboxCount).Error; err != nil || outboxCount != 0 {
@@ -201,7 +208,7 @@ func TestPublishSolutionRejectsRelativeJiraLink(t *testing.T) {
 	}
 }
 
-func TestPublishSolutionUsesBrowserOriginWhenPublicURLIsNotConfigured(t *testing.T) {
+func TestPublishSolutionKeepsBrowserOriginLinkWithoutCreatingJiraOutbox(t *testing.T) {
 	setupServerTestDB(t)
 	if err := db.DB.Create(&db.TaskTelemetry{TaskID: "WA-905", Title: "浏览器来源发布", LastUpdate: time.Now()}).Error; err != nil {
 		t.Fatalf("seed demand: %v", err)
@@ -227,18 +234,9 @@ func TestPublishSolutionUsesBrowserOriginWhenPublicURLIsNotConfigured(t *testing
 	if response.Link != "https://ambient.example.com/?demand=WA-905&solution=1&tab=schedule" {
 		t.Fatalf("publish link=%q", response.Link)
 	}
-	var outbox db.SolutionJiraOutbox
-	if err := db.DB.Where("demand_id = ?", "WA-905").First(&outbox).Error; err != nil {
-		t.Fatalf("load Jira outbox: %v", err)
-	}
-	var payload struct {
-		Link string `json:"link"`
-	}
-	if err := json.Unmarshal([]byte(outbox.PayloadJSON), &payload); err != nil {
-		t.Fatalf("decode Jira outbox payload: %v", err)
-	}
-	if outbox.Status != "pending" || payload.Link != response.Link {
-		t.Fatalf("Jira outbox=%+v", outbox)
+	var outboxCount int64
+	if err := db.DB.Model(&db.SolutionJiraOutbox{}).Where("demand_id = ?", "WA-905").Count(&outboxCount).Error; err != nil || outboxCount != 0 {
+		t.Fatalf("publish Jira outbox count=%d err=%v", outboxCount, err)
 	}
 }
 
@@ -265,22 +263,6 @@ func TestSolutionResponsesUseHTTPGzipWhenAccepted(t *testing.T) {
 	}
 	if !strings.Contains(string(decoded), largeBody) || recorder.Body.Len() >= len(decoded) {
 		t.Fatalf("response was not losslessly compressed: compressed=%d decoded=%d", recorder.Body.Len(), len(decoded))
-	}
-}
-
-func TestEnsureSolutionJiraCommentSkipsExistingStableMarker(t *testing.T) {
-	reads := 0
-	srv := NewServer(&config.Config{Jira: config.JiraConfig{Enabled: true}}, "")
-	srv.solutionJiraRead = func(issueKey string) ([]telemetry.JiraComment, error) {
-		reads++
-		if issueKey != "WA-903" {
-			t.Fatalf("unexpected issue key: %s", issueKey)
-		}
-		return []telemetry.JiraComment{{ID: "7", Body: "<!-- WELL_AMBIENT_SOLUTION_LINK:42 -->\n方案 v3 已发布"}}, nil
-	}
-	err := srv.ensureSolutionJiraComment("WA-903", "<!-- WELL_AMBIENT_SOLUTION_LINK:42 -->", "duplicate")
-	if err != nil || reads != 1 {
-		t.Fatalf("deduplicate marker: reads=%d err=%v", reads, err)
 	}
 }
 

@@ -59,8 +59,6 @@ type Server struct {
 	jiraReleaseList     func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error)
 	jiraInboundSyncMu   sync.Mutex
 	solutionLLM         func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
-	solutionJiraPost    func(issueKey, comment string) error
-	solutionJiraRead    func(issueKey string) ([]telemetry.JiraComment, error)
 	solutions           *solutions.Module
 	solutionCatalog     *solutioncatalog.Module
 	performance         *performance.Module
@@ -96,13 +94,6 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	}
 	s.solutionLLM = func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 		return queryServerLLMContext(ctx, s.config, systemPrompt, userPrompt)
-	}
-	s.solutionJiraRead = func(issueKey string) ([]telemetry.JiraComment, error) {
-		return telemetry.NewJiraClient(&s.config.Jira).GetComments(issueKey)
-	}
-	s.solutionJiraPost = func(issueKey, comment string) error {
-		marker := strings.SplitN(comment, "\n", 2)[0]
-		return s.ensureSolutionJiraComment(issueKey, marker, comment)
 	}
 	s.routes()
 	if db.DB != nil {

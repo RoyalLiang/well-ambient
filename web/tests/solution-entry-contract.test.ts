@@ -101,9 +101,35 @@ test('solution defaults to preview and keeps save and publish inside one edit di
     /<Modal[\s\S]*?title="即时修改方案"[\s\S]*?<MarkdownWorkbench[\s\S]*?mode="live"[\s\S]*?on:save=\{saveDraft\}/,
   );
   assert.match(solutionWorkspace, /slot="footer"[\s\S]*?on:click=\{saveDraft\}[\s\S]*?'保存'/);
-  assert.match(solutionWorkspace, /slot="footer"[\s\S]*?on:click=\{saveAndPublish\}[\s\S]*?'发布'/);
+  assert.match(solutionWorkspace, /slot="footer"[\s\S]*?on:click=\{requestPublish\}[\s\S]*?>发布<\/button>/);
   assert.doesNotMatch(solutionWorkspace, />保存方案<\/button>|>发布方案<\/button>|>编辑新版本<\/button>/);
   assert.doesNotMatch(solutionWorkspace, /方案 v\{|历史版本 \{|远端新版本|加载远端版本/);
+});
+
+test('solution publish requires an in-place confirmation and reports through the global toast', () => {
+  assert.match(solutionWorkspace, /let publishPrompt = false/);
+  assert.match(solutionWorkspace, /function requestPublish\(\)[\s\S]*?publishPrompt = true/);
+  assert.match(solutionWorkspace, /function requestPublish\(\)[\s\S]*?notice = ''/);
+  assert.match(solutionWorkspace, /function cancelPublish\(\)[\s\S]*?publishPrompt = false/);
+  assert.match(
+    solutionWorkspace,
+    /slot="footer"[\s\S]*?确认发布当前方案[\s\S]*?不会自动回写 Jira 评论[\s\S]*?on:click=\{cancelPublish\}[\s\S]*?on:click=\{confirmPublish\}/,
+  );
+
+  const publishSolution = solutionWorkspace.match(/async function publishSolution\(\)[\s\S]*?\n  \}/)?.[0] || '';
+  assert.match(publishSolution, /showToast\('方案已发布。',\s*\{\s*title:\s*'发布成功'\s*\}\)/);
+  assert.match(publishSolution, /showToast\(publishError,\s*\{\s*type:\s*'error'/);
+  assert.doesNotMatch(publishSolution, /notice\s*=|回写队列/);
+  assert.doesNotMatch(solutionWorkspace, /方案已发布，并已进入 Jira 链接回写队列/);
+});
+
+test('an existing solution takes precedence over a historical failed generation job', () => {
+  assert.match(
+    solutionWorkspace,
+    /visiblePolishState = workspace\?\.working && polishState\?\.danger \? null : polishState/,
+  );
+  assert.match(solutionWorkspace, /\{#if visiblePolishState\}[\s\S]*?visiblePolishState\.label/);
+  assert.doesNotMatch(solutionWorkspace, /\{#if polishState\}[\s\S]*?polishState\.label/);
 });
 
 test('solution edit dialog presents the markdown content as the modal body instead of a nested card', () => {

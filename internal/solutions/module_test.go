@@ -84,7 +84,6 @@ func TestDraftCASCompressionAndPublishedFork(t *testing.T) {
 
 	published, err := module.Publish(ctx, PublishCommand{
 		DemandID: "WA-101", ExpectedRevision: saved.Asset.Revision, Actor: "Owner",
-		Link: "/solutions/1",
 	})
 	if err != nil {
 		t.Fatalf("publish: %v", err)
@@ -93,7 +92,7 @@ func TestDraftCASCompressionAndPublishedFork(t *testing.T) {
 		t.Fatalf("published pointers are inconsistent: %+v", published)
 	}
 	var outbox []db.SolutionJiraOutbox
-	if err := conn.Find(&outbox).Error; err != nil || len(outbox) != 1 || outbox[0].Status != "pending" {
+	if err := conn.Find(&outbox).Error; err != nil || len(outbox) != 0 {
 		t.Fatalf("publish outbox = %+v, err=%v", outbox, err)
 	}
 	var catalogJobs []db.SolutionCatalogSyncJob

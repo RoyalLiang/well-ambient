@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { reconcileSolutionEditor, type SolutionEditorSyncState } from '../lib/solution-editor-sync';
   import { showToast } from '../lib/toast';
   import MarkdownWorkbench from './shared/MarkdownWorkbench.svelte';
@@ -35,7 +35,10 @@
   let conflict = false;
   let editorOpen = false;
   let discardPrompt = false;
+  let publishPrompt = false;
   let publishFlow = false;
+  let publishButton: HTMLButtonElement | null = null;
+  let confirmPublishButton: HTMLButtonElement | null = null;
   let editorState: SolutionEditorSyncState = { markdown: '', baselineHash: '', dirty: false, remoteUpdateAvailable: false };
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -44,6 +47,7 @@
   $: canPublish = currentUserPermissions.includes('solution:publish');
   $: latestJob = workspace?.jobs[0] || null;
   $: polishState = polishStateFor(latestJob);
+  $: visiblePolishState = workspace?.working && polishState?.danger ? null : polishState;
   $: activeJob = polishState?.active ? latestJob : null;
   $: retryableFailedJob = canWrite && !workspace?.working && latestJob?.status === 'failed' ? latestJob : null;
   $: hasSolutionContent = !!workspace?.working || !!latestJob;
@@ -55,6 +59,7 @@
     conflict = false;
     editorOpen = false;
     discardPrompt = false;
+    publishPrompt = false;
     publishFlow = false;
     editorState = { markdown: '', baselineHash: '', dirty: false, remoteUpdateAvailable: false };
     void loadWorkspace();
@@ -185,17 +190,22 @@
 
   async function publishSolution() {
     if (!workspace?.working || editorState.dirty || workspace.working.status !== 'draft') return false;
-    action = 'publish'; error = ''; notice = '';
+    action = 'publish'; error = ''; conflict = false;
     try {
       const response = await api('/api/solutions/publish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ demand_id: demand.task_id, expected_revision: workspace.asset.revision })
       });
       acceptWorkspace(response.workspace);
-      notice = `方案已发布，并已进入 Jira 链接回写队列。`;
+      showToast('方案已发布。', { title: '发布成功' });
       return true;
     } catch (requestError: any) {
-      error = requestError.message || '发布方案失败';
+      conflict = requestError.status === 409;
+      const publishError = conflict
+        ? '方案已被其他人更新，请检查最新内容后重新发布。'
+        : (requestError.message || '发布方案失败');
+      error = '';
+      showToast(publishError, { type: 'error', title: conflict ? '检测到远端更新' : '发布失败' });
       return false;
     }
     finally { action = ''; }
@@ -207,12 +217,28 @@
     notice = '';
     conflict = false;
     discardPrompt = false;
+    publishPrompt = false;
     editorOpen = true;
     if (workspace.working.status === 'published') await forkPublished();
   }
 
-  async function saveAndPublish() {
-    if (!workspace?.working || workspace.working.status !== 'draft' || !canPublish) return;
+  async function requestPublish() {
+    if (!workspace?.working || workspace.working.status !== 'draft' || !canPublish || action) return;
+    notice = '';
+    discardPrompt = false;
+    publishPrompt = true;
+    await tick();
+    confirmPublishButton?.focus();
+  }
+
+  async function cancelPublish() {
+    publishPrompt = false;
+    await tick();
+    publishButton?.focus();
+  }
+
+  async function confirmPublish() {
+    if (!publishPrompt || !workspace?.working || workspace.working.status !== 'draft' || !canPublish) return;
     publishFlow = true;
     try {
       if (editorState.dirty && !(await saveDraft())) return;
@@ -222,10 +248,12 @@
       }
     } finally {
       publishFlow = false;
+      publishPrompt = false;
     }
   }
 
   function requestCloseEditor() {
+    publishPrompt = false;
     if (action) {
       notice = '操作正在处理中，请稍候。';
       return;
@@ -236,6 +264,7 @@
     }
     editorOpen = false;
     discardPrompt = false;
+    publishPrompt = false;
     error = '';
   }
 
@@ -249,6 +278,7 @@
     conflict = false;
     error = '';
     discardPrompt = false;
+    publishPrompt = false;
     editorOpen = false;
   }
 
@@ -256,6 +286,7 @@
     editorState = { ...editorState, dirty: false, remoteUpdateAvailable: false };
     conflict = false;
     discardPrompt = false;
+    publishPrompt = false;
     await loadWorkspace();
   }
 
@@ -320,17 +351,17 @@
     {:else}
       {#if error && !editorOpen}<div class="solution-message error" role="alert">{error}</div>{/if}
       {#if notice && !editorOpen}<div class="solution-message success" aria-live="polite">{notice}</div>{/if}
-      {#if polishState}
+      {#if visiblePolishState}
         <div
-          class:danger={polishState.danger}
+          class:danger={visiblePolishState.danger}
           class="solution-job-state"
-          role={polishState.danger ? 'alert' : undefined}
+          role={visiblePolishState.danger ? 'alert' : undefined}
           aria-live="polite"
           aria-busy={action === 'retry'}
         >
           <div class="solution-job-copy">
-            <strong>{polishState.label}</strong>
-            <span>{polishState.detail}</span>
+            <strong>{visiblePolishState.label}</strong>
+            <span>{visiblePolishState.detail}</span>
           </div>
           {#if retryableFailedJob}
             <button
@@ -341,10 +372,10 @@
               on:click={retryFailedSolution}
             >{action === 'retry' ? '重新排队中…' : '重新生成'}</button>
           {/if}
-          {#if polishState.technicalDetail}
+          {#if visiblePolishState.technicalDetail}
             <details class="solution-job-details">
               <summary>查看技术详情</summary>
-              <pre>{polishState.technicalDetail}</pre>
+              <pre>{visiblePolishState.technicalDetail}</pre>
             </details>
           {/if}
         </div>
@@ -427,21 +458,38 @@
     <div slot="footer" class="solution-editor-footer">
       {#if workspace?.working}
         <span aria-live="polite">
-          {#if action === 'fork'}正在准备编辑{:else if editorState.dirty}有未保存修改{:else}内容已保存{/if}
+          {#if publishPrompt}
+            确认发布当前方案？发布后将转为正式方案，不会自动回写 Jira 评论。
+          {:else if action === 'fork'}正在准备编辑{:else if editorState.dirty}有未保存修改{:else}内容已保存{/if}
         </span>
         <div class="solution-actions">
-          <button
-            type="button"
-            disabled={!editorState.dirty || !!action || workspace.working.status !== 'draft'}
-            on:click={saveDraft}
-          >{action === 'save' && !publishFlow ? '保存中…' : '保存'}</button>
-          {#if canPublish}
+          {#if publishPrompt}
+            <button type="button" disabled={!!action} on:click={cancelPublish}>取消</button>
+          {:else}
             <button
               type="button"
-              class="primary"
-              disabled={!!action || workspace.working.status !== 'draft'}
-              on:click={saveAndPublish}
-            >{action === 'publish' ? '发布中…' : action === 'save' && publishFlow ? '保存后发布…' : '发布'}</button>
+              disabled={!editorState.dirty || !!action || workspace.working.status !== 'draft'}
+              on:click={saveDraft}
+            >{action === 'save' && !publishFlow ? '保存中…' : '保存'}</button>
+          {/if}
+          {#if canPublish}
+            {#if publishPrompt}
+              <button
+                bind:this={confirmPublishButton}
+                type="button"
+                class="primary"
+                disabled={!!action || workspace.working.status !== 'draft'}
+                on:click={confirmPublish}
+              >{action === 'publish' ? '发布中…' : action === 'save' && publishFlow ? '保存后发布…' : '确认发布'}</button>
+            {:else}
+              <button
+                bind:this={publishButton}
+                type="button"
+                class="primary"
+                disabled={!!action || workspace.working.status !== 'draft'}
+                on:click={requestPublish}
+              >发布</button>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -495,7 +543,8 @@
   .solution-discard span { font-size:12px; }
   button.danger { border-color:rgba(200,22,29,.34); color:var(--wa-danger,#c8161d); }
   .solution-editor-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-  .solution-editor-footer>span { color:var(--wa-text-muted,#667789); font-size:12px; }
+  .solution-editor-footer>span { color:var(--wa-text-muted,#667789); font-size:12px; line-height:1.45; }
+  .solution-editor-footer button { min-height:44px; }
   @container (max-width: 700px) { .solution-toolbar,.solution-conflict { align-items:stretch; flex-direction:column; } .solution-actions button { flex:1 1 auto; } .solution-job-state { grid-template-columns:minmax(0,1fr); } .solution-job-copy { align-items:flex-start; flex-direction:column; gap:4px; } .solution-job-retry { width:100%; } }
   @media (max-width: 1280px) {
     .solution-workspace { flex:0 0 auto; }

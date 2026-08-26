@@ -835,7 +835,6 @@ type PublishCommand struct {
 	DemandID         string
 	ExpectedRevision uint
 	Actor            string
-	Link             string
 }
 
 func (module *Module) Publish(ctx context.Context, command PublishCommand) (Workspace, error) {
@@ -869,19 +868,6 @@ func (module *Module) Publish(ctx context.Context, command PublishCommand) (Work
 		}
 		if advance.RowsAffected == 0 {
 			return ErrConflict
-		}
-		payload, _ := json.Marshal(map[string]any{
-			"revision_id": current.ID, "version": current.Version, "link": strings.TrimSpace(command.Link),
-			"marker": fmt.Sprintf("<!-- WELL_AMBIENT_SOLUTION_LINK:%d -->", current.ID),
-		})
-		outbox := db.SolutionJiraOutbox{
-			IdempotencyKey:  fmt.Sprintf("solution:%d:revision:%d:publish_link", asset.ID, current.ID),
-			SolutionAssetID: asset.ID, SolutionRevisionID: current.ID, DemandID: asset.DemandID,
-			Operation: "publish_solution_link", PayloadJSON: string(payload), Status: "pending",
-			CreatedAt: now, UpdatedAt: now,
-		}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&outbox).Error; err != nil {
-			return err
 		}
 		return solutioncatalog.EnqueuePublished(tx, asset, current, now)
 	})

@@ -195,13 +195,9 @@ func (s *Server) handlePublishSolution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := solutionPublicLinkForRequest(s.config.Server.PublicURL, r, request.DemandID)
-	if s.config.Jira.Enabled && !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") {
-		http.Error(w, "server.public_url is required before publishing a Jira solution link", http.StatusUnprocessableEntity)
-		return
-	}
 	workspace, err := s.solutions.Publish(r.Context(), solutions.PublishCommand{
 		DemandID: request.DemandID, ExpectedRevision: request.ExpectedRevision,
-		Actor: authenticatedActor(r), Link: link,
+		Actor: authenticatedActor(r),
 	})
 	if err != nil {
 		writeSolutionError(w, err)
