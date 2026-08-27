@@ -1,5 +1,77 @@
 # Findings & Decisions
 
+## 2026-08-27 品牌图标替换发现
+
+- `web/index.html` 仍引用 Vite 默认的 `/favicon.svg`；该 SVG 是紫色闪电/渐变风格，与 Phase 41 的深色左轨和薄荷青品牌色不一致。
+- `web/src/components/prototype/FunctionalAdminShell.svelte` 是登录后所有主路由共享的左轨拥有者；左上角目前以纯文本 `wa` 作为 `.brand-mark`，并已有展开、折叠、移动侧栏三套布局合同。
+- 当前设计合同明确品牌信号只使用 `well-ambient`，基准色来自 `--wa-bg-rail: #020b13` 与 `--wa-accent-soft: rgba(113, 226, 209, ...)`；新品牌标记应沿用这组关系。
+- 用户已明确要求“生成品牌图”，因此允许使用内置 imagegen；资产必须复制进仓库，不能只留在 `$CODEX_HOME/generated_images`。
+- Imagegen 两轮都持续给薄荷底添加明暗渐变；最终保留其“三节点双弧”概念并收敛为可审计 SVG，确保只有 `#71e2d1` 与 `#020b13` 两色。
+- 实际原型浏览器证明标记在 16/32/42px、展开/折叠左轨、390/320 移动抽屉中可读且不改变容器几何；桌面原型控制台只有 Vite 连接日志。
+- 当前本地 8080 后端未运行，因此没有打开实际登录态主路由；本轮浏览器证据来自复用同一 `FunctionalAdminShell` 的项目原型，不把它伪报为登录态验收。
+
+## 2026-08-27 引导页减负、维护库渐进展示与 SQLite 迁移进度
+
+- 新截图证明真实失败发生在 `notifications`：operation 为 14/63、累计 42112 行；但后端把 `stage` 覆盖成 `failed`，前端未知阶段 fallback 到“检查目标库”和“数据库任务正在执行”，因此截图中的阶段与说明均不可信。
+- 运行 setup 进程没有输出根错误：目标连接设置了 `Silent=true`，`StartApply` 又只保留公开错误并丢弃内部 error；现有失败事后无法再还原 PostgreSQL SQLSTATE。修复必须先补安全可观测性，不能把猜测写成定位结论。
+- SQLite `notifications` 源表已排除结构缺失、NULL、超长、时间空值和文本 NUL：315 行、ID 1–315、所有七个文本字段均为 text 且非 NULL，时间范围 2026-06-19 至 2026-08-26。字段内容本身暂无静态证据解释失败。
+- 当前最强剩余假设是 PostgreSQL 专属插入/网络/服务端约束错误；既有迁移测试的目标仍是 SQLite，不能覆盖真实 PG SQLSTATE、statement timeout 或编码差异。这是验证缺口，不等同于已确认根因。
+- 实施前本地 `config.example.yaml` 显式默认 `driver: sqlite`，与用户要求“本地测试默认 PG”直接冲突；安全默认应进入 `driver: setup`，而不是在仓库硬编码可用 PostgreSQL 密码。
+- 进一步定位到原始根错误丢失的三层链路：setup 目标连接 `Silent=true`；`postgresSetupBackend.Apply` 用 `%v` 截断迁移 cause；service `Apply` 又提前公开化错误，`StartApply` 最后把 stage 改成 `failed`。现已用双 `%w` 保留真实 cause 到异步边界，只提取五位 SQLSTATE，operation 保留最后 stage/table/count，HTTP 不返回 DSN、密码或内部文本。
+- 浏览器中的 `22021` 只用于无写入失败态视觉夹具，不是本次真实迁移的错误码；原始进程已无法恢复真实 SQLSTATE，不能把 22021 写成现场根因。
+- 修复后的 failure 页面在 1280/390/320px 都把“迁移 SQLite”保持为 active，显示 `notifications`、14/63、42112 行，document overflow=0；验证结束后临时 stub 已停止，真实 setup 服务恢复。
+- SSL 触发器实测为原生 select、`appearance:none`、44px 高、40px 右内边距、箭头距右边 15px；1280/390/320px 宽度分别为 341/332/262px，箭头均在控件内且 document overflow=0。
+- `config.example.yaml` 现以 `driver: setup`、20/10 连接池和 30/5 分钟生命周期作为本地 PostgreSQL 安装默认；没有 DSN 或密码进入仓库。当前 5175 隔离环境仍为 setup mode，并识别 387.2 MiB / 68 表 SQLite 快照。
+
+- 用户指出三个独立症状：首屏无关说明过多；维护数据库不应默认占位；本地 SQLite 迁移入口和进度没有出现在实际引导中。
+- 当前任务属于既有多步产品工作流的定点重设计与功能诊断，不是 landing page；必须保留真实 setup API/状态机与 PostgreSQL 安装边界，所有美学调整服从完成任务速度。
+- 历史项目记忆没有本轮 setup 页的新条目，后续结论以当前源码、运行 setup status、固定 SQLite 路径和真实浏览器为准。
+- `DatabaseSetup.svelte` 已存在 SQLite 迁移决策、`/api/setup/database/operation` 轮询和行/表计数；不是后端能力完全缺失。
+- 当前进度百分比仅为 `tables_completed / tables_total`，`checking_database`、`creating_database`、`preparing_schema`、`verifying_counts`、`analyzing` 等阶段没有非零区间映射。
+- 当前本地 `18197` 服务不可连接；临时配置已被改写为 `database.driver: postgres`，且没有 `legacy_sqlite_path`，不能作为“首次安装 + SQLite 快照”的有效验证环境。
+- 仓库根目录存在有效 SQLite 主库及 WAL（主文件约 387 MiB）；验证环境应使用一致性只读副本，不直接把正在使用的主库交给迁移流程。
+- 最终首屏只保留标题、两步状态、6 个必填连接字段、默认关闭的高级选项、SQLite 检测事实和两个动作；品牌口号、安全说明块、重复步骤描述、字段常识提示及四项预检查卡均已删除。
+- 维护数据库、SSL 模式和根证书路径都在默认关闭的 `<details>` 内；真实浏览器 `open` 属性为空且维护库输入 `isVisible=false`。
+- 进度采用端到端阶段区间：排队 2%、检查 8%、建库 18%、建结构 28–34%、复制 35–80%、核对 90%、分析 96%、完成 100%；复制阶段仍使用后端真实表完成数插值。
+- 一致性 SQLite 副本通过 `PRAGMA quick_check=ok`，真实 setup status 返回 `available=true`、`406007808` 字节、`68` 张表、`prompt_required=true`。
+- 浏览器测试桩只用于无数据库写入地驱动状态机；第二步实测迁移选择，执行态实测 `task_telemetries`、12/68、4,821 行与 43%。桩随后已停止，最终页面恢复真实 setup 后端。
+- 默认桌面、390px 和 320px 均无 document 横向溢出；320px 卡片宽 292px、可见控件最小高度 44px、按钮保持单行。console error/warning 为 0。
+- 自动验证：目标合同 13/13、Svelte/TypeScript 0 errors、生产构建、SQLite/安装后端定向 Go 测试、Impeccable `[]`、Finesse P0=0。
+
+
+## 2026-08-27 正式居中引导、配置数据库化与 Docker 瘦身
+
+- 用户要求三条同时闭环：引导页去 AI 化并改为正式居中；所有配置页改为数据库配置并检查当前同步；两个 Docker 镜像从合计超过 1GB 的现状中定位并清理垃圾/误打包内容。
+- 项目 `DESIGN.md` 锁定 Phase 41 浅色 B 端管理台、共享 shell/token、无模块 hero、无卡片嵌套；配置中心仍需保留现有路由、权限、API、保存/测试/回滚行为和自然高度右侧上下文层级。
+- Impeccable 将引导整改路由为 `onboard + product`：少教、快到价值、1-3 个核心概念、清晰跳过；用户指出的“左边 AI、右边太多”与该原则直接冲突。
+- design-taste-frontend 对 dashboard/多步产品 UI 只适用 redesign-preserve：本轮不更换品牌、导航、字体或信息架构，不新增营销图像、hero 动效或模板化三卡。
+- finesse 将配置页识别为 product/workflow register：SPECTACLE 低、DENSITY 中高，保存配置必须维持现有 owner、反馈和移动折叠，不把管理台做成品牌页。
+- 工作区启动时已有 `Dockerfile`、`Makefile`、`task_status.md` 修改；其归属未知，必须先审查 diff，所有 Docker 修复需在这些用户改动之上做最小补丁。
+- 项目无 `PRODUCT.md`，但有有效 `DESIGN.md`；按 Impeccable 的 scoped existing-code 流程继续，不用 from-scratch init 阻塞本次任务。
+- 引导页真实 owner 是 `web/src/components/DatabaseSetup.svelte`：根容器在桌面使用左右双栏，左侧 34-54px 大标题、品牌块和安全说明，右侧最大 880px 的完整设置表单；不是抽象的 AI 文案问题，而是层级与并列信息量问题。
+- 配置中心当前只是“部分数据库化”：`ConfigVersion` 保存脱敏审计快照，启动时非敏感值可覆盖 YAML；但 `applyConfig` 仍调用 `config.SaveConfig`，密钥依靠 YAML 恢复，因此普通保存、重启恢复与“数据库为当前配置 owner”尚未成立。
+- 配置边界裁决：新增单例 current/runtime config 数据模型保存设置页可管理的完整配置；数据库连接配置仍保留在 bootstrap 文件中并在加载时注入，避免数据库依赖自身才能取得连接参数。`ConfigVersion` 继续只存脱敏版本历史，不降低现有秘密审计边界。
+- Docker 体积主因已由 diff 直接确认：builder 从旧 Go 版本升级本身不是问题，`server` 运行阶段却从 `debian:bookworm-slim` 改成了完整 `golang:1.26.1`，把工具链带入运行镜像；运行阶段的 `GOPROXY` 也没有用途。
+- 仓库本地约 8.7G，其中 `.git` 约 8.0G、数据库约 400M、`node_modules` 约 230M；但 `.dockerignore` 已排除 `.git`、数据库、`web/node_modules`、`web/dist`、输出/备份目录，因此这些垃圾不是镜像内容根因，也不应为瘦身做破坏性本地清理。
+- 本机不存在 Docker、Podman、nerdctl、Finch、Colima、Lima 或 OrbStack 可用命令；本轮可以证明 runtime base 与 build context 边界并运行构建合同，但不能把未实际 build 的最终镜像字节数伪报为已验证。
+- 引导页已收敛为一个居中列：介绍区/表单实测在 1440、1024、760、390、320 宽度都与 viewport 中线一致，document 宽度等于 viewport；桌面表单上限 840px，390/320 下分别为 362/292px，无按钮换行或横向溢出。
+- 隔离浏览器覆盖了待连接、失败、成功和第二步迁移选择；连接失败提示、连接成功提示、下一步启用、迁移/跳过选项与返回按钮 3px 可见焦点均通过，console error/warning 为 0。最终迁移动作未点击，避免把 UI 验收扩展成数据写入。
+- 设置中心的通用 section 统一通过 `/api/config`，现在由单例 `runtime_configs` 保存完整当前配置；`config_versions` 继续保存脱敏版本历史。方案提示词、项目映射、用户、用户组、权限、授权策略、审计和个人项目偏好原本已有独立数据库表/API，无需复制到通用 JSON 行。
+- 新启动语义是 database current row 优先于旧 YAML；数据库连接参数仍只从 bootstrap YAML 取得。手动保存和回滚在同一事务内写入脱敏历史与 current row，事务完成后才更新内存；运行设置不再改写 YAML。
+- 主数据库当前已有 28 个历史版本，但旧运行实例仍占用它，尚无 `runtime_configs`。在该库的精确临时副本上用新二进制执行真实 `--migrate-only` 后，日志确认 legacy v28 已同步；只读核验为 `runtime rows=1 / runtime version=28 / latest archive=28 / payload synchronized / database omitted`。
+- 主库未在线迁移或重启：当前 8080 仍是旧进程，受控 rollout 前“代码已具备同步能力”和“正在运行的主库已经同步”必须分开陈述。迁移命令现已把 schema migration 与配置同步绑在一起，部署时会 fail-closed。
+- Docker 最小修复只把 server 运行阶段恢复为 `debian:bookworm-slim`，并移除运行阶段无意义的 Go/GOPROXY；builder 的 Go 1.26.1 与 GOPROXY 用户改动被保留。web runtime 仍是 `nginx:1.28.3-alpine`，两个 runtime 都不含 Node/Go 构建工具链。
+- 最终验证：目标安装/Docker/迁移合同 11/11；`pnpm check` 0 errors（既有 warnings）、production build、`go test ./... -count=1`、`go vet ./...`、`git diff --check`、Impeccable `[]`、Finesse P0=0 均通过。
+
+### 相关资源
+
+- `DESIGN.md`
+- `.agents/skills/impeccable/reference/onboard.md`
+- `.agents/skills/impeccable/reference/product.md`
+- `/Users/eddie/.codex/skills/finesse-skill/references/redesign-mode.md`
+- `/Users/eddie/.codex/skills/finesse-skill/references/product-ui.md`
+- `/Users/eddie/.codex/skills/finesse-skill/references/workflow-ui.md`
+
 ## 2026-08-26 编辑方案保存时 Toast 统一与闪烁修复
 
 - 用户截图把“方案已保存。”渲染在“即时修改方案”弹窗正文顶部；这是页内 Alert 形态，不是项目统一的右上角全局 Toast。
@@ -2676,3 +2748,54 @@
 - 可搬运面不是孤立的 `compose.yaml`：最小部署包还必须保留生产环境模板、bootstrap 配置模板和部署脚本的相对路径；`make compose-bundle` 已固化该集合。
 - 同机 PostgreSQL 对容器而言不能使用 `127.0.0.1`；当前 Compose 为 server/migrate 提供 `host.docker.internal:host-gateway`，前提是 PG 监听容器可达地址且 `pg_hba.conf` 精确授权。
 - 镜像与 Compose 包分离：联网服务器使用不可变仓库标签，离线服务器先 `docker load` 同架构镜像包；Compose 不再要求服务器持有源码。
+# 2026-08-27 首次安装令牌自动生成
+
+- 当前安装入口直接读取 `WELL_AMBIENT_SETUP_TOKEN` 并传给 `NewSetupServer`；缺失或不足 32 字符会拒绝启动。
+- `compose.yaml` 当前用 required interpolation 强制令牌非空；Docker server 为只读根文件系统，但挂载了可写 `/tmp` tmpfs，适合受限临时令牌文件。
+- 部署脚本当前无条件校验令牌长度并提示从 `.env.production` 读取；需改为“空值允许自动生成，非空仍校验”。
+- 最小安全边界：只在 `database.driver: setup` 生效；显式令牌优先且不回显；生成令牌使用 `crypto/rand`；文件 `0600`；写入失败时清理；进程退出时清理。
+- `docs-write` 引用的 `../_shared/metabase-style-guide.md` 在当前技能安装中缺失；按技能正文的用户导向、动作优先、简洁写法继续。
+- `compose.yaml` 的 server 已有只读根文件系统和 `/tmp:size=128m,mode=1777` tmpfs；自动令牌无需增加持久卷。日志采用 `json-file`，最多约 100 MiB（20 MiB × 5），已按用户确认保留自动令牌的一次性完整输出。
+- 生产脚本只需把令牌校验改为“非空时至少 32 字符”；setup 分支启动后通过 `docker compose logs server` 告知令牌与路径，显式令牌则继续从 `.env.production` 使用且不会被程序回显。
+- 最终烟测证据：无环境令牌的独立 18198 setup 进程生成 64 位十六进制令牌；文件大小 65 字节（含换行）、权限 `0600`；`/ready` 返回 `SETUP`；SIGINT 后退出码 0 且文件消失。现有 18197 测试引导服务未重启。
+- 当前机器未安装 Docker CLI，因此无法在本机证明真实容器日志前缀和 `/tmp` tmpfs 路径；Compose YAML、shell 语法与部署源代码合同已通过，真实 Docker 启动仍需在有 Docker 的交付环境验收。
+# 2026-08-27 SQLite 迁移 PostgreSQL 22021
+
+- 进程级地址覆盖默认关闭，因此生产/普通启动仍遵循数据库中的 server 配置；只有 `dev-setup` 显式传入 127.0.0.1:18197，避免改变“配置页数据入库”的既有合同。
+- 当前原始 502 反馈循环已转绿：5175 `/`=200、5175 `/api/setup/status`=404、18197 `/ready`=200、8080 无旧 supervisor 监听。404 表示已进入正常模式且代理可达，不是失败。
+- 用户真实重试已完成迁移；刷新后 5175 HTML=200、同源 API=502、18197 无监听，而 8080 正式服务 `/ready=200`、setup status=404，证明迁移成功但代理目标漂移。
+- 临时 YAML 的 server 仍为 `127.0.0.1:18197`，端口变化来自 `BootstrapVersionedConfig` 恢复迁移进 PostgreSQL 的历史 runtime config（server.port=8080），不是 setup 保存丢字段。
+- 正确边界是可选进程级 HTTP 地址覆盖：默认行为继续使用数据库运行配置；`dev-setup` 显式传入 18197，并在 runtime config restore 后重新应用，保证 setup→normal 切换不改变 Vite 代理目标。
+- 最小修复已验证：`firstCommitLine` 在 80 字节上向前退到完整 rune 边界；迁移只修改内存中的反射批次，将非法 UTF-8 run 和 NUL 替换为 U+FFFD，并按“字段值”计数。
+- 真实快照全量模拟复制 470,518 行/64 表成功；目标使用隔离 SQLite 只为验证迁移所有权、批次、schema、核对与事务路径，尚不能替代用户 PostgreSQL 上的最终重试。
+- 只读全白名单扫描稳定复现红灯：仅 `notifications.message` 的 `id=277`、`id=284` 非法；数据库声明 UTF-8 且 `PRAGMA quick_check=ok`。
+- 两条均为 `semantic_link_review`，非法序列位于 `commit=` 摘要末尾：分别以缺少第三字节的 `e5 8c` 与 `e8 be` 结束。`firstCommitLine` 的 `line[:80]` 是按字节截断中文的确定性来源。
+- 迁移器 `copyLegacyTable` 当前把反射批次直接 `Create` 到 PostgreSQL，没有对 string 的非法 UTF-8 或 NUL 做边界修复；SQLite 接受这些字节，PostgreSQL TEXT 以 SQLSTATE 22021 拒绝。
+- 修复边界应同时覆盖：源头改为按 rune 截断；迁移批次在内存中修复历史非法文本后再写目标。不得原地修改只读 SQLite。
+- 假设状态：H1 字节截断已确认；H2 缺少迁移边界修复待红灯；H3 其他字段已证伪；H4 SQLite 结构/编码损坏已证伪；H5 并发写入与错误码关联证据不足、低优先级。
+- PostgreSQL SQLSTATE `22021` 表示字符不在目标编码 repertoire；最常见的迁移触发是 text/varchar 参数包含无效 UTF-8 或 `0x00`，但必须由当前日志与原始 SQLite 字节确认，不能仅凭错误码定案。
+- 先前记录明确真实 PostgreSQL 迁移未在旧交付环境验证；当前错误是补齐该运行时证据的第一条真实失败样本。
+
+# 2026-08-27 本地开发环境未进入引导页
+
+- 根因属于本地启动编排而非 UI gate：旧入口没有同时启动 setup backend，也没有把 Vite proxy 指向该后端；仓库根 `config.yaml` 的普通模式还会遮蔽 `config.example.yaml` 的 setup 示例。
+- `make dev-setup` 现使用隔离临时 YAML，不覆盖开发者现有 `config.yaml`；配置、二进制和自动生成的安装令牌文件均为 `0600`，退出时由各自生命周期清理。
+- 当前真实启动证据：Vite 监听 `127.0.0.1:5175`，setup server 监听 `127.0.0.1:18197`，同源 status 返回 `setup_required: true`，并识别 408,223,744 字节、69 表 SQLite 快照。
+
+- 用户当前直接观察到 5175 本地页面没有安装引导；这推翻了上一轮仅凭独立 18197/18198 服务状态作出的可用性结论。
+- 浏览器反馈循环必须同时断言可见 `DatabaseSetup` 内容和 `/api/setup/status` 响应，才能区分 UI gate 与代理/后端状态。
+- 项目记忆注册表没有命中 5175/setup 引导的可复用历史结论，本轮以当前运行态为准。
+- 浏览器新建临时标签访问 `http://127.0.0.1:5175/` 稳定得到 `net::ERR_CONNECTION_REFUSED`；当前最小红灯不是 DOM 分支，而是 Vite 入口未监听。
+- 当前没有 5175 或 18197 监听；仅有一个进程占用 8080。`web/vite.config.ts` 默认把 `/api` 代理到 `http://localhost:8080`，且仓库没有把 setup backend 与 Vite 一起启动的根级 dev 命令。
+- 未跟踪的本地 `config.yaml` 为 `database.driver: ""`、`server.port: 8080`，会进入旧的本地数据库正常模式；跟踪的 `config.example.yaml` 才是 `driver: setup`。因此即使单独启动 Vite，默认代理也可能落到普通 8080 服务而不是引导后端。
+- 默认 Vite 启动后，5175 HTML 可访问，但同源 `/api/setup/status` 稳定为 404；将 `VITE_API_PROXY_TARGET` 指向新启动的 18197 setup backend 后，同一命令返回 `setup_required: true`，并报告本地 SQLite 408,223,744 字节、69 张表、需要一次迁移决策。
+- 正确所有者是本地开发启动编排，不是 `App.svelte` 或 `DatabaseSetup.svelte`。持久修复应提供单一命令同时生成隔离 setup 配置、启动 backend、设置 Vite proxy，并在退出时清理。
+# 2026-08-27 自动发布元数据与一键部署发现
+
+- 上一版发布流程支持 `compose-bundle`、`image-bundle` 和 `deploy/deploy.sh`，但示例仍要求人工提供 `VERSION=2026.08.26-1` 或位置参数版本。
+- 外部 PostgreSQL 的 `WELL_AMBIENT_EXTERNAL_BACKUP_REFERENCE` 是部署安全门禁，不属于本次自动化的版本/批次输入，必须保留。
+- 已新增 `scripts/release-metadata.sh` 作为单一发布元数据源：默认从 Git 标签/提交日期/短提交号生成合法 Docker tag，从 Git 提交范围生成批次说明，并一次性固定 UTC 构建时间；显式环境变量仍可覆盖。
+- `make images`、`make image-bundle`、`make compose-bundle`、`make deploy` 共用 `deploy/generated/release.env`，避免 server/web 镜像、离线包与部署状态各自生成不同日期或版本。
+- 离线镜像包改为 `tar.gz`；Docker 构建上下文已排除 8.0G `.git`、约 400M SQLite 文件、约 230M `web/node_modules` 以及构建/运行产物，Dockerfile 仍为多阶段构建，构建工具链不会进入最终镜像。
+- 当前主机未安装 Docker CLI，因此无法在本机量出优化后的镜像层大小，也无法执行真实 `docker load` / `docker compose up`；这是环境验证缺口，不影响已通过的脚本、契约与构建验证。
+- 当前工作树包含多项未提交修改；自动版本会加 `dirty.<UTC timestamp>` 并在批次说明中列出文件，但不会默认阻止把这些修改打进正式发布物。

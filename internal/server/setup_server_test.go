@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	stdlog "log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,6 +32,13 @@ type fakeSetupBackend struct {
 	lastMode       string
 	lastLegacyPath string
 }
+
+type setupSQLStateError struct {
+	code string
+}
+
+func (e setupSQLStateError) Error() string    { return "unsafe database detail" }
+func (e setupSQLStateError) SQLState() string { return e.code }
 
 func (f *fakeSetupBackend) Inspect(_ context.Context, connection setupDatabaseConnection) (DatabaseSetupResult, error) {
 	f.inspectCalls++
@@ -235,6 +243,61 @@ func TestSetupApplyRunsAsPollableOperation(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("setup operation did not complete")
+}
+
+func TestSetupApplyFailureKeepsLastStageAndLogsOnlySafeDiagnostic(t *testing.T) {
+	backend := &fakeSetupBackend{
+		inspectResult: missingDatabaseResult(),
+		applyError:    wrapLegacyMigrationFailure(setupSQLStateError{code: "22021"}),
+	}
+	server := newTestSetupServer(t, backend)
+	server.service.persist = func(string, *config.Config) error { return nil }
+
+	var output bytes.Buffer
+	originalOutput := stdlog.Writer()
+	originalFlags := stdlog.Flags()
+	originalPrefix := stdlog.Prefix()
+	stdlog.SetOutput(&output)
+	stdlog.SetFlags(0)
+	stdlog.SetPrefix("")
+	t.Cleanup(func() {
+		stdlog.SetOutput(originalOutput)
+		stdlog.SetFlags(originalFlags)
+		stdlog.SetPrefix(originalPrefix)
+	})
+
+	request := DatabaseSetupRequest{
+		Host: "postgres", Port: 5432, Database: "well_ambient", MaintenanceDatabase: "postgres",
+		Username: "ambient", Password: "s3cret", SSLMode: "disable", Mode: "create_database",
+	}
+	if _, err := server.service.StartApply(request, nil); err != nil {
+		t.Fatalf("StartApply() error = %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		operation, ok := server.service.Operation()
+		if ok && operation.State == "failed" {
+			if operation.Stage != "copying_data" || operation.Table != "task_telemetries" {
+				t.Fatalf("failure lost last progress: %#v", operation)
+			}
+			if operation.Error == nil || !strings.Contains(operation.Error.Message, "PostgreSQL 错误码：22021") {
+				t.Fatalf("failure did not expose the safe SQLSTATE reference: %#v", operation.Error)
+			}
+			logged := output.String()
+			for _, fact := range []string{"code=legacy_migration_failed", "stage=copying_data", "table=task_telemetries", "sqlstate=22021"} {
+				if !strings.Contains(logged, fact) {
+					t.Fatalf("safe diagnostic missing %q: %s", fact, logged)
+				}
+			}
+			if strings.Contains(logged, "s3cret") || strings.Contains(logged, "unsafe database detail") {
+				t.Fatalf("setup failure log exposed sensitive detail: %s", logged)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("setup failure operation did not finish")
 }
 
 func TestLegacySQLiteDecisionIsPubliclyDiscoverableButRecordedOnlyOnce(t *testing.T) {

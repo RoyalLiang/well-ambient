@@ -370,6 +370,8 @@ func TestGetExecutionTasksFiltersNonCoreMemberData(t *testing.T) {
 }
 
 func TestConfigAPI(t *testing.T) {
+	setupServerTestDB(t)
+
 	// Create a temporary file for config.yaml
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
@@ -381,6 +383,9 @@ func TestConfigAPI(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{Port: 9000, Host: "127.0.0.1"},
 		GitLab: config.GitLabConfig{BaseURL: "https://example.com"},
+	}
+	if err := config.SaveConfig(tmpFile.Name(), cfg); err != nil {
+		t.Fatalf("Failed to seed bootstrap config file: %v", err)
 	}
 
 	srv := NewServer(cfg, tmpFile.Name())
@@ -456,13 +461,20 @@ func TestConfigAPI(t *testing.T) {
 		t.Errorf("Expected in-memory config update to %q, got %q", "https://new-gitlab.com", srv.config.GitLab.BaseURL)
 	}
 
-	// Verify write to disk
+	// Runtime settings persist in the database; bootstrap YAML remains unchanged.
 	savedCfg, err := config.LoadConfig(tmpFile.Name())
 	if err != nil {
-		t.Fatalf("Failed to read saved config file: %v", err)
+		t.Fatalf("Failed to read bootstrap config file: %v", err)
 	}
-	if savedCfg.GitLab.BaseURL != "https://new-gitlab.com" {
-		t.Errorf("Expected saved config update to %q, got %q", "https://new-gitlab.com", savedCfg.GitLab.BaseURL)
+	if savedCfg.GitLab.BaseURL != "https://example.com" {
+		t.Errorf("Expected bootstrap config to remain %q, got %q", "https://example.com", savedCfg.GitLab.BaseURL)
+	}
+	var runtimeConfig db.RuntimeConfig
+	if err := db.DB.First(&runtimeConfig, runtimeConfigSingletonID).Error; err != nil {
+		t.Fatalf("Failed to read current database config: %v", err)
+	}
+	if !strings.Contains(runtimeConfig.ConfigJSON, `"base_url":"https://new-gitlab.com"`) {
+		t.Errorf("Expected database config update, got %s", runtimeConfig.ConfigJSON)
 	}
 
 	// Test POST /api/config/test (invalid/unreachable url)

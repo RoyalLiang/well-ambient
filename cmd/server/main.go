@@ -2,8 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
+	"strings"
+
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/server"
@@ -17,6 +20,8 @@ var (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
+	httpHost := flag.String("http-host", "", "override HTTP listen host after runtime configuration restore")
+	httpPort := flag.Int("http-port", 0, "override HTTP listen port after runtime configuration restore")
 	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	skipMigrate := flag.Bool("skip-migrate", false, "start without applying database migrations")
 	flag.Parse()
@@ -38,18 +43,36 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config from %s: %v", *configPath, err)
 	}
+	if err := applyHTTPAddressOverride(cfg, *httpHost, *httpPort); err != nil {
+		log.Fatalf("Invalid HTTP address override: %v", err)
+	}
 	server.SetBuildInfo(version, commit, buildTime)
 	if cfg.Database.RequiresSetup() {
 		if *migrateOnly {
 			log.Fatal("database setup is incomplete; finish the browser setup before running --migrate-only")
 		}
-		setupServer, err := server.NewSetupServer(cfg, *configPath, os.Getenv(server.SetupTokenEnvironment))
+		setupToken, err := server.ProvisionSetupToken(os.Getenv(server.SetupTokenEnvironment))
 		if err != nil {
+			log.Fatalf("Failed to prepare database setup token: %v", err)
+		}
+		setupServer, err := server.NewSetupServer(cfg, *configPath, setupToken.Token)
+		if err != nil {
+			if cleanupErr := setupToken.Cleanup(); cleanupErr != nil {
+				log.Printf("Warning: %v", cleanupErr)
+			}
 			log.Fatalf("Failed to start database setup mode: %v", err)
 		}
+		if setupToken.Generated {
+			log.Printf("Generated one-time database setup token: %s", setupToken.Token)
+			log.Printf("Database setup token saved to %s (permissions 0600; removed when setup mode exits)", setupToken.FilePath)
+		}
 		log.Printf("Database setup mode is active; normal APIs remain disabled until PostgreSQL is configured")
-		if err := setupServer.Start(); err != nil {
-			log.Fatalf("Database setup server failed: %v", err)
+		startErr := setupServer.Start()
+		if cleanupErr := setupToken.Cleanup(); cleanupErr != nil {
+			log.Printf("Warning: %v", cleanupErr)
+		}
+		if startErr != nil {
+			log.Fatalf("Database setup server failed: %v", startErr)
 		}
 		if cfg.Database.RequiresSetup() {
 			log.Printf("Database setup server stopped before configuration was completed")
@@ -93,15 +116,38 @@ func main() {
 		}
 	}
 	if *migrateOnly {
-		log.Printf("Database migration completed successfully using %s", databaseConfig.Driver)
+		if err := server.BootstrapVersionedConfig(cfg); err != nil {
+			log.Fatalf("Database migration completed but configuration synchronization failed: %v", err)
+		}
+		log.Printf("Database migration and configuration synchronization completed successfully using %s", databaseConfig.Driver)
 		return
 	}
 	if err := server.BootstrapVersionedConfig(cfg); err != nil {
 		log.Fatalf("Failed to initialize versioned configuration: %v", err)
+	}
+	if err := applyHTTPAddressOverride(cfg, *httpHost, *httpPort); err != nil {
+		log.Fatalf("Invalid HTTP address override after runtime configuration restore: %v", err)
 	}
 
 	srv := server.NewServer(cfg, *configPath)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server startup failed: %v", err)
 	}
+}
+
+func applyHTTPAddressOverride(cfg *config.Config, host string, port int) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	host = strings.TrimSpace(host)
+	if port < 0 || port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if host != "" {
+		cfg.Server.Host = host
+	}
+	if port != 0 {
+		cfg.Server.Port = port
+	}
+	return nil
 }

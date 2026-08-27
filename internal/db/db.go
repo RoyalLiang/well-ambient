@@ -234,6 +234,18 @@ type ConfigVersion struct {
 	CreatedAt             time.Time `json:"created_at"`
 }
 
+// RuntimeConfig stores the single current configuration used by settings
+// pages. Bootstrap-only database connection settings are deliberately omitted
+// so the application never depends on this row to discover its own database.
+// ConfigVersion remains the redacted audit and rollback history.
+type RuntimeConfig struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Version    int       `gorm:"index" json:"version"`
+	ConfigJSON string    `gorm:"type:text" json:"config_json"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // GitCommitLog tracks detailed git activities for tasks (one task to many commits/repos)
 type GitCommitLog struct {
 	ID                 uint      `gorm:"primaryKey" json:"id"`
@@ -480,6 +492,7 @@ func coreSchemaModels() []any {
 		&ContextPack{},
 		&ContextPackItem{},
 		&ConfigVersion{},
+		&RuntimeConfig{},
 		&GitCommitLog{},
 		&JiraCommentLog{},
 		&JiraInboundSyncState{},

@@ -337,9 +337,9 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// SaveConfig atomically writes configuration back to a YAML file with owner-only
-// permissions. The file can contain bootstrap credentials, so callers must not
-// rely on a process umask or leave a partially-written replacement behind.
+// SaveConfig atomically writes bootstrap-only infrastructure configuration to
+// YAML with owner-only permissions. Runtime settings pages persist through the
+// database and must not call this function.
 func SaveConfig(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

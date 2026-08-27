@@ -1,9 +1,27 @@
 package telemetry
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
+
 	"well-ambient/internal/db"
 )
+
+func TestFirstCommitLineKeepsUTF8Boundary(t *testing.T) {
+	prefix := strings.Repeat("A", 79)
+	got := firstCommitLine(prefix + "中")
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("firstCommitLine returned invalid UTF-8: %x", []byte(got))
+	}
+	if len(got) > 80 {
+		t.Fatalf("firstCommitLine returned %d bytes, want at most 80", len(got))
+	}
+	if got != prefix {
+		t.Fatalf("firstCommitLine() = %q, want complete-rune prefix %q", got, prefix)
+	}
+}
 
 func TestSemanticLinkTrustReasonRejectsWeakProjectMismatch(t *testing.T) {
 	oldDB := db.DB

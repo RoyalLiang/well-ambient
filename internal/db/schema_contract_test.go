@@ -24,7 +24,7 @@ func TestRequiredSchemaModelsCoverCoreIdentityFactsAndDataAssets(t *testing.T) {
 		tables[statement.Schema.Table] = struct{}{}
 	}
 	for _, required := range []string{
-		"users", "task_telemetries", "config_versions", "solution_assets",
+		"users", "task_telemetries", "config_versions", "runtime_configs", "solution_assets",
 		"performance_score_snapshots", "data_asset_events", "data_asset_snapshot_payloads",
 	} {
 		if _, ok := tables[required]; !ok {

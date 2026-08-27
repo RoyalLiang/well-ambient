@@ -24,4 +24,5 @@ deploy/runtime
 deploy/backups
 deploy/.state
 deploy/bundles
+deploy/generated
 *.xlsx

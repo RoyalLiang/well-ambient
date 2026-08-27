@@ -58,7 +58,7 @@ func (s *Server) handleGetJiraLinkConfig(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// handleSaveConfig updates the server configuration and saves it to disk
+// handleSaveConfig validates and persists the current settings configuration.
 func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -88,14 +88,13 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.applyConfig(newCfg); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	version, err := s.recordConfigVersion(previous, newCfg, r, "manual-save", 0)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Configuration saved but version archive failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to persist configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := s.applyConfig(newCfg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	BroadcastConfigUpdated(configVersionDTO(version))

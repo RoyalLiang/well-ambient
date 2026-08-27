@@ -16,7 +16,10 @@ import (
 	"well-ambient/internal/db"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const runtimeConfigSingletonID uint = 1
 
 type ConfigVersionDTO struct {
 	ID                  uint                   `json:"id"`
@@ -103,14 +106,13 @@ func (s *Server) handleRollbackConfigVersion(w http.ResponseWriter, r *http.Requ
 	previous := *s.config
 	restored.Database = previous.Database
 	mergeConfiguredSecrets(&restored, previous)
-	if err := s.applyConfig(restored); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	version, err := s.recordConfigVersion(previous, restored, r, "rollback", target.ID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Config restored but version archive failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to persist restored configuration: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := s.applyConfig(restored); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	BroadcastConfigUpdated(configVersionDTO(version))
@@ -130,8 +132,25 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 		return fmt.Errorf("database not initialized")
 	}
 
+	var current db.RuntimeConfig
+	err := db.DB.First(&current, runtimeConfigSingletonID).Error
+	if err == nil {
+		databaseConfig := cfg.Database
+		restored, restoreErr := restoreVersionedConfig(*cfg, current.ConfigJSON)
+		if restoreErr != nil {
+			return fmt.Errorf("current database config is invalid: %w", restoreErr)
+		}
+		restored.Database = databaseConfig
+		*cfg = restored
+		log.Printf("Loaded current configuration from database version %d", current.Version)
+		return nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("failed to load current database config: %w", err)
+	}
+
 	var latest db.ConfigVersion
-	err := db.DB.Order("version desc").First(&latest).Error
+	err = db.DB.Order("version desc").First(&latest).Error
 	if err == nil {
 		databaseConfig := cfg.Database
 		restored, unmarshalErr := restoreVersionedConfig(*cfg, latest.ConfigJSON)
@@ -140,8 +159,13 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 		}
 		restored.Database = databaseConfig
 		mergeConfiguredSecrets(&restored, *cfg)
+		if err := db.DB.Transaction(func(tx *gorm.DB) error {
+			return persistRuntimeConfig(tx, restored, latest.Version)
+		}); err != nil {
+			return fmt.Errorf("failed to synchronize legacy config into current database config: %w", err)
+		}
 		*cfg = restored
-		log.Printf("Loaded configuration from database version %d", latest.Version)
+		log.Printf("Loaded and synchronized legacy configuration as current database version %d", latest.Version)
 		return nil
 	}
 	if err != gorm.ErrRecordNotFound {
@@ -172,10 +196,15 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 		DiffJSON:            string(emptyDiff),
 		CreatedAt:           time.Now(),
 	}
-	if err := db.DB.Create(&version).Error; err != nil {
+	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&version).Error; err != nil {
+			return err
+		}
+		return persistRuntimeConfig(tx, *cfg, version.Version)
+	}); err != nil {
 		return fmt.Errorf("failed to archive initial config version: %w", err)
 	}
-	log.Printf("Archived initial file configuration as database version %d", version.Version)
+	log.Printf("Archived and synchronized initial file configuration as database version %d", version.Version)
 	return nil
 }
 
@@ -219,19 +248,31 @@ func restoreVersionedConfig(fileConfig config.Config, archivedJSON string) (conf
 }
 
 func (s *Server) applyConfig(next config.Config) error {
-	if s.configPath != "" {
-		if err := config.SaveConfig(s.configPath, &next); err != nil {
-			return fmt.Errorf("Failed to save config: %v", err)
-		}
-		log.Printf("Configuration saved to %s", s.configPath)
-	} else {
-		log.Printf("Warning: configPath is empty, configuration not saved to disk")
-	}
 	*s.config = next
 	if s.performance != nil {
 		s.performance.Reconfigure(s.performanceSettings())
 	}
 	return nil
+}
+
+func persistRuntimeConfig(tx *gorm.DB, next config.Config, version int) error {
+	raw := configToMap(next)
+	delete(raw, "database")
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+
+	current := db.RuntimeConfig{
+		ID:         runtimeConfigSingletonID,
+		Version:    version,
+		ConfigJSON: string(encoded),
+		UpdatedAt:  time.Now(),
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"version", "config_json", "updated_at"}),
+	}).Create(&current).Error
 }
 
 func (s *Server) recordConfigVersion(previous config.Config, next config.Config, r *http.Request, source string, rollbackFromID uint) (db.ConfigVersion, error) {
@@ -290,7 +331,10 @@ func (s *Server) recordConfigVersion(previous config.Config, next config.Config,
 			RollbackFromVersionID: rollbackFromID,
 			CreatedAt:             time.Now(),
 		}
-		return tx.Create(&created).Error
+		if err := tx.Create(&created).Error; err != nil {
+			return err
+		}
+		return persistRuntimeConfig(tx, next, created.Version)
 	})
 	return created, err
 }

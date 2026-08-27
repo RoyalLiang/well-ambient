@@ -29,7 +29,7 @@ services:
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     command: ["--config", "/etc/well-ambient/config.yaml", "--skip-migrate"]
     environment:
-      WELL_AMBIENT_SETUP_TOKEN: ${WELL_AMBIENT_SETUP_TOKEN:?WELL_AMBIENT_SETUP_TOKEN is required}
+      WELL_AMBIENT_SETUP_TOKEN: ${WELL_AMBIENT_SETUP_TOKEN:-}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       # Mount the directory, not one file, so owner-only atomic config replacement works.

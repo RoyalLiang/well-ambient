@@ -8,12 +8,14 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --froze
 COPY web/ ./
 RUN pnpm build
 
-FROM golang:1.24.13-bookworm AS server-build
+FROM golang:1.26.1 AS server-build
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -26,6 +28,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -o /out/well-ambient ./cmd/server
 
 FROM debian:bookworm-slim AS server
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+LABEL org.opencontainers.image.title="Well Ambient server" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIME}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
     && rm -rf /var/lib/apt/lists/* \
@@ -40,6 +49,13 @@ ENTRYPOINT ["/usr/local/bin/well-ambient"]
 CMD ["--config", "/etc/well-ambient/config.yaml", "--skip-migrate"]
 
 FROM nginx:1.28.3-alpine AS web
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+LABEL org.opencontainers.image.title="Well Ambient web" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIME}"
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=web-build /src/web/dist/ /usr/share/nginx/html/
 EXPOSE 8080

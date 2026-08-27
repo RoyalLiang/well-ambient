@@ -70,3 +70,4 @@ Thumbs.db
 /deploy/backups/
 /deploy/.state/
 /deploy/bundles/
+/deploy/generated/

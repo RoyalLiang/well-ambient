@@ -1,3 +1,62 @@
+# Session: 2026-08-27 - 引导页减负、维护库渐进展示与 SQLite 迁移进度
+
+## 2026-08-27 品牌图标替换进度
+
+- 已完成项目冷启动、coding.complex/tool-routing/delivery 规则加载与 planning-with-files 建档。
+- 已读取项目 Impeccable、design-taste-frontend、finesse-ui、imagegen 约束，并完成三方评审。
+- 已确认目标引用：`web/index.html` 的 Vite 默认 favicon 与 `FunctionalAdminShell.svelte` 左轨 `wa` 占位标记；尚未编辑前端文件。
+- 已生成并收敛 `web/public/brand-mark.svg`，`web/index.html` 与共享 `FunctionalAdminShell` 复用同一资产；旧 Vite `favicon.svg` 已移除。
+- 品牌合同 2/2、`pnpm check` 0 error、`pnpm build`、`git diff --check` 通过；Impeccable `[]`，Finesse P0=0，P1 为目标文件既有双 sticky 检测项。
+- 浏览器已检查 1280 展开、94px 折叠、390/320 移动抽屉，以及 16/32/42px 在浅/深背景的可读性；临时响应式夹具已删除，5177 验证服务待停止。
+
+- **Phase 1 status:** in_progress
+- 收到真实迁移失败截图后进入追加诊断：确认 `notifications` 仅是最后记录表，失败阶段被错误覆盖、服务端根错误未记录；未自动重跑数据库写操作。
+- 已对 SQLite 源表做只读结构/数据质量检查，暂无 NULL、超长、空时间或 NUL 证据；下一步先补失败阶段保留、安全 SQLSTATE 日志、本地 setup 默认和 SSL 原生 select 样式合同。
+- 三条追加红灯已转绿：失败 stage/table/count 保留且 SQLSTATE 双 `%w` 贯通；本地示例默认 setup；SSL 原生 select 的统一 SVG chevron 通过合同与双设计检测。
+- 浏览器无写入夹具验证失败态 1280/390/320px 均 active“迁移 SQLite”、零横溢；SSL 触发器 44px、箭头不遮挡。夹具已停止，真实 setup 后端已用最终代码恢复在 127.0.0.1:18197，5175 页面回到空凭据初始态。
+- 最终回归：目标前端 15/15、全量前端 166/166，db/config/server Go 包通过，Svelte/TypeScript 0 error，production build 成功，Impeccable `[]`、Finesse findings 为空、diff check 通过。
+- 现场根因边界：旧进程没有保留真实 PostgreSQL SQLSTATE，当前只能确认 `notifications` 批量复制边界且源表静态质量正常；下一次由用户填写凭据重试时，页面与服务日志会返回真实五位 SQLSTATE，系统不会自动重跑。
+- 已启用 planning-with-files、diagnosing-bugs，以及项目强制的 Impeccable、design-taste-frontend、finesse-ui 三方 UI 审查；完整读取 onboarding/product、product workflow、palette、移动底线、反廉价与交付检查参考。
+- 已读取既有 Finesse 记录：上一版数据库安装页为居中工作流、低动效、中高密度；本轮保持相同产品语法，只进一步减文案、渐进展示高级字段并补齐真实迁移状态，不做另一个风格化页面。
+- 下一步读取当前组件、setup server 与测试，先建立三个能准确失败的症状合同；在三方会审记录完整前不编辑 frontend 业务文件。
+- 已确认 UI/后端已有迁移选择与轮询骨架，定位测试环境丢失及全流程进度映射缺口。
+- 已冻结三方评审结论、响应式范围与验证边界；尚未编辑任何 frontend 业务文件。
+- 用户确认 Design Read；进入 Phase 3，先以三个源码合同建立红灯，再修改唯一 UI owner。
+- 三条目标合同先准确失败，实施后 `database-setup-contract` 13/13 通过；维护库渐进展示、SQLite 预告和端到端进度均已锁定。
+- `pnpm check` 为 0 errors（148 条既有 warning 来自其他 11 个文件）；`pnpm build` 成功，现有大 chunk/历史 Svelte warnings 未扩大处理范围。
+- `internal/db` 与 `internal/server` 的 SQLite/安装定向 Go 测试通过；Impeccable 复扫为 `[]`，Finesse 为 0 P0。
+- 真实浏览器完成待测试首屏、连接成功、SQLite 迁移/跳过选择、43% 复制进度、默认桌面/390/320px 与 console 验证；临时状态桩已停止。
+- 已恢复真实隔离 setup 后端 `127.0.0.1:18197`，Vite 页面保留在 `127.0.0.1:5175`，识别一致性 SQLite 快照且未填写任何密码/令牌。
+
+---
+
+# Session: 2026-08-27 - 正式居中引导、配置数据库化与 Docker 瘦身
+
+- **Phase 5 status:** completed（反思门禁后按用户要求开启隔离本地引导环境）
+- 已读取项目冷启动、复杂编码/数据库安全/规划规则与现有 `DESIGN.md`；启用 planning-with-files 和 diagnosing-bugs。
+- 已完整加载项目 Impeccable 主技能与 onboard/product 参考、design-taste-frontend、finesse-ui 主技能及 product/workflow/redesign 参考；完成初始三方方向记录，尚未编辑任何 UI/frontend 业务文件。
+- 已运行 Impeccable 项目上下文探测：`web` 目标存在，项目无 `PRODUCT.md`、有 `DESIGN.md`，因此按既有页面定点整改继续。
+- 已记录初始脏工作树：`Dockerfile`、`Makefile`、`task_status.md` 已修改；下一步先核对 diff、引导页入口、配置 API/数据库模型与 Docker 分层反馈环。
+- 已记录一次技能/上下文聚合输出截断，并改用分段读取；未重复同一失败方式。
+- 已定位首次安装页真实 owner `DatabaseSetup.svelte`，并以源码确认桌面双栏、左侧大标题叙事与右侧完整工作区是用户反馈的直接根因。
+- 已完成并记录强制三方 UI 会审：不新增欢迎 step，不隐藏必需字段；改为所有断点单列居中，保留现有两步业务状态机、安全边界与交互。
+- 已逐项核对 SettingsPanel 及其独立配置 section：中心配置当前仍写 YAML，数据库中的 ConfigVersion 只是脱敏历史；决定新增 current/runtime config 单例，数据库连接留作文件 bootstrap，版本历史继续脱敏。
+- 已核对 Dockerfile 用户 diff 与 `.dockerignore`：server runtime 误用完整 Go 工具链镜像是主因，大体积 `.git`/数据库/依赖目录均已排除；本机无 Docker 兼容运行时，实际字节验收需标明环境缺口。
+- 下一步先增加 UI、配置持久化和 Docker 运行时三条症状级红灯，再实施最小修复。
+- 三条红灯分别准确失败于双栏 CSS、`golang` server runtime 与 `db.RuntimeConfig` 缺失；新增实现后目标 UI/Docker 合同 10/10、配置/Schema 定向 Go 回归通过。
+- 配置保存已改为同一事务创建脱敏 `ConfigVersion` 并 upsert 单例 `RuntimeConfig`，事务成功后才更新内存；新增回归证明启动 YAML 不被改写、runtime 表失败时版本插入也会回滚。
+- 一次只读存储检索因不存在 glob 被 zsh 拒绝；已按 Self-Improving 改为 `rg -g`，并确认设置面板中心配置统一走 `/api/config`，方案提示词、项目映射、用户/权限/策略等独立 section 原本已使用各自数据库模型/API。
+- 引导页已改成正式居中的单列工作流，保留原两步字段、连接测试、失败/成功、迁移/跳过和重启恢复状态机；三套 UI 检测的目标 findings 均为 0。
+- 新增 `runtime_configs` 单例 current row：启动优先从数据库恢复设置，数据库连接继续使用 YAML bootstrap；手动保存/回滚同一事务写 current row 与脱敏版本历史，普通设置保存不再改写 YAML。
+- `--migrate-only` 已包含配置同步。在主库精确副本上用新构建执行真实迁移，legacy v28 成功变成 current v28，payload 与最新历史同步且不含 database bootstrap；主库因旧 8080 实例仍运行而未在线改动。
+- Docker server runtime 已从误带完整 Go 工具链恢复到 `debian:bookworm-slim`，web runtime 继续使用 nginx alpine；`.git`、约 400M 数据库、node_modules、dist 与备份均已被 `.dockerignore` 排除，未做破坏性本地清理。
+- 浏览器在 1440/1024/760/390/320 实测单列居中、零 document 横溢；连接失败/成功、第二步迁移选择、可见键盘焦点与 console 0 error/warning 通过。隔离 fixture、Vite、临时数据库副本、配置和二进制均已停止并删除。
+- 最终自动验证通过：安装/Docker/迁移合同 11/11，Svelte/TS 0 errors、production build、Go 全量、Go vet、diff hygiene、Impeccable `[]`、Finesse P0=0。沙箱内 Go 的 `httptest` 端口限制由受控同命令沙箱外重跑解决。
+- 本机无 Docker/Podman/nerdctl/Finch/Colima/Lima/OrbStack，无法实测最终镜像字节数；代码级根因和 runtime 边界已闭环，但不得声称精确 post-fix MB 或已低于某一阈值。
+- 用户在反思门禁后要求本地测试环境开启引导页；已用 `/tmp/well-ambient-setup-local.yaml` 启动 setup-only 后端 `127.0.0.1:18197` 与 Vite 前端 `127.0.0.1:5175`，不改主配置/主库/8080 服务。浏览器已打开并保留该页，DOM 标题为“完成运行数据库配置”、9 个表单控件、无横向溢出，setup status 为 `setup_required=true`，console error/warning 为空。
+
+---
+
 # Session: 2026-08-26 - 编辑方案保存时 Toast 统一与闪烁修复
 
 - 已读取项目冷启动规则、复杂编码/内存约束、planning-with-files、diagnosing-bugs、项目 Impeccable、design-taste-frontend 与 finesse-ui 主技能；大型技能首次聚合读取被截断，随后分块完整读取并记录错误。
@@ -3472,3 +3531,64 @@
 - 验证完成：shell 语法、YAML 三服务/无 PG/无本地 build 合同、部署包内容、示例占位符、可执行位和精确 diff 通过；数据库安装定向合同 8/8、前端全量合同 149/149、Svelte 0 error（148 个既有 warning）、production build 通过。
 - 当前开发机仍没有 Docker/PostgreSQL，因此没有伪装完成目标服务器上的真实拉取、Compose 启动或容器到现有 PG 的网络/SSL/权限验收；服务器操作清单已写入手册。
 - 已生成可直接上传的 `deploy/bundles/well-ambient-compose-2026.08.26-1.tar.gz`（4.6K，SHA-256 `479d8fe3e990e5e3c215162324449bf9ba74076346ddf3c28a561e2ad7d814e2`）；该目录已忽略，不进入 Git 提交。
+## 2026-08-27 首次安装令牌自动生成
+
+- 用户已确认：自动生成时可在终端打印完整令牌和临时文件路径，并接受 Docker 日志保留副本的安全取舍。
+- 已加载 `planning-with-files`、`docs-write`、`codebase-design` 和失败后的 `self-improvement` 约束。
+- 已完成只读盘点；下一步先补令牌 provision 单元测试，再实现启动入口与部署合同。
+- 红灯合同已建立：`go test ./internal/server -run TestProvisionSetupToken` 因 provision 接口尚不存在而按预期失败。
+- 第一次启动入口整块补丁因现有文案上下文漂移而原子失败，未产生半成品；已改为按当前文件小块提交。
+- 已实现深模块令牌 provision，并接入 `cmd/server`：只有自动生成分支会打印完整令牌与 `0600` 文件路径；setup server 退出后先清理文件，再处理启动错误。
+- provision 定向测试已从红转绿，显式 token、自动生成、权限、文件内容、随机源失败和幂等清理均通过；现同步部署入口和说明。
+- Compose 已允许空令牌；部署脚本只校验非空显式令牌，并在自动生成时从 server 日志回显本次令牌和临时文件路径。
+- 生产环境示例、本地 setup 示例、Linux 部署手册和前端部署合同已同步。两次多文件文案上下文漂移均为原子失败，拆分后完成。
+- Prettier 未安装，文档技能的格式化命令无法执行且未改文件；改用仓库已有检查，不下载新依赖。
+- 本地无 Docker CLI，Compose runtime 校验未执行；改用 YAML 解析与静态部署合同，并将真实 Docker 启动列为环境缺口。
+- 定向 server 测试、16 项安装合同和 `bash -n deploy/deploy.sh` 已通过；Ruby 2.6 首次 YAML 调用仅因 API 版本不兼容失败，正改用兼容形式重试。
+- Ruby 2.6 兼容形式已成功解析 `compose.yaml`；进入全量 Go、前端检查/构建和隔离进程烟测。
+- `go vet ./...`、前端类型/Svelte 检查和生产构建已通过；全量 Go 仅被沙箱禁止既有 `httptest` loopback 阻断，按流程在受控权限下重跑。
+- 全量 Go 测试在获批 loopback 权限下通过。隔离 18198 进程已生成 64 位十六进制令牌，临时文件为 `0600`、65 字节；待同权限 `/ready` 与退出清理验证。
+- 隔离 18198 `/ready` 返回 `SETUP`；SIGINT 后进程退出码 0，自动令牌文件确认消失。现有 18197 引导环境未重启。
+- 本任务实现与验证阶段均完成，进入精确差异审查和临时产物清理。
+- 精确差异审查与 `git diff --check` 通过；烟测配置、二进制和令牌文件均已清理。未触碰现有 18197 引导进程，未修改或提交无关工作树内容。
+## 2026-08-27 SQLite 迁移 PostgreSQL 22021
+
+- 502 修复红灯已转绿：launcher 合同要求 backend host/port 覆盖；server 在 runtime config restore 后重新应用该覆盖，空覆盖保持数据库运行地址不变。
+- 隔离真实 PG 配置验证：数据库恢复 runtime config version 28 后，新版仍监听 18198，`/ready=200`、setup API=404。
+- 当前现场已替换为新版 18197 正式后端并停止旧 8080 supervisor；5175 HTML=200、同源 setup API=404（非 502）、18197 `/ready=200`。
+- 最终 `go test ./...`、`go vet ./...`、launcher `bash -n`、目标 `git diff --check` 全通过。
+- 用户真实 PostgreSQL 重试已越过 22021 并完成迁移；随后复现新红灯：5175 `/api/setup/status`=502、18197 未监听、8080 `/ready`=200。
+- 已确认 runtime config restore 将 server.port 从临时 YAML 的 18197 恢复为历史 8080；进入本地进程级地址覆盖回归测试与修复。
+- 两条最小红灯已先失败后转绿：`firstCommitLine` 不再返回非法 UTF-8；迁移批次会修复非法 UTF-8 和 NUL，并将修复值计入 `TextValuesRepaired`。
+- 真实 408.6 MB 快照全量只读模拟通过：复制 470,518 行、64 张应用表，目标事务和引用数据初始化完成。
+- setup backend 现在会在服务端日志记录修复的历史文本值数量，不输出原始业务内容。
+- 只读 SQLite 检查通过：408,551,424 字节、69 表、UTF-8、quick_check=ok；默认沙箱 CLI 无法打开后改用显式 `mode=ro&immutable=1` 受控读取。
+- 临时诊断测试遍历 `RequiredSchemaModels` 对应表的全部 TEXT 列，红灯精确落在 `notifications.message` 两条记录；未输出消息正文。
+- 进一步确认 `notifications.id=277/284` 均为 semantic link review，坏字节位于 `firstCommitLine` 生成的 commit 摘要尾部。
+- 已启用 `diagnosing-bugs` 与 `planning-with-files`；先建立 SQLSTATE 22021 的红灯反馈循环，再修复。
+- 旧任务记忆只确认此前真实 PostgreSQL 迁移曾是未验证项；本轮不沿用旧结论，以当前日志、SQLite 字节和迁移代码为准。
+
+## 2026-08-27 本地开发环境未进入引导页
+
+- 已加载 `diagnosing-bugs`、浏览器控制、`planning-with-files` 和 `self-improvement`。
+- 已建立四阶段诊断计划；尚未修改产品代码或运行配置。
+- 浏览器连接成功，但 ambient 提示的 5175 标签不可接管；未触碰用户标签，改用同浏览器临时标签复现。
+- 原始浏览器反馈循环已红：5175 连接被拒绝。下一步分别检查 5175 Vite 与 18197 setup backend 监听状态和本地启动入口。
+- 端口/配置最小化完成：Vite 和 18197 均未运行，8080 指向本地 `config.yaml` 的非 setup 模式；仓库缺少一键启动 setup backend + 正确 Vite proxy 的本地入口。
+- 红灯命令已固定：先请求 5175 HTML，再断言同源 `/api/setup/status` 包含 `setup_required: true`；当前稳定在第一步连接失败。默认 Vite 首次启动被沙箱监听限制阻断，正按受控权限重跑。
+- Vite 已在获批的 5175 loopback 上启动。浏览器策略阻止自动刷新本地 URL，停止该自动化路径，改用同源只读 HTTP 探针。
+- 默认 Vite 场景最小化为 `/api/setup/status` 404；切换到 18197 setup proxy 后原反馈循环已转绿，返回 `setup_required: true` 和真实 SQLite 快照事实。
+- 当前临时 5175/18197 环境已恢复。进入持久化修复：先为 `make dev-setup` 与 launcher wiring 建立失败合同，再实现脚本。
+- 持久化修复完成：新增 `scripts/dev-setup.sh` 与 `make dev-setup`，使用 owner-only 临时配置启动 setup backend，自动识别仓库根目录 SQLite，并把 Vite 同源 `/api` 固定代理到隔离的 18197。
+- 原始反馈循环已在新入口转绿：5175 HTML 可达，`/api/setup/status` 返回 `setup_required: true`、SQLite 408,223,744 字节/69 表；5175 与 18197 保持运行供用户刷新验收。
+- 验证通过：launcher 合同测试、`go test ./...`、`go vet ./...`、`pnpm -C web check`（0 error，既有 warnings）、`pnpm -C web build`、`bash -n scripts/dev-setup.sh`、目标 `git diff --check`。
+- 浏览器控制受本地 URL 策略阻止，未改用其他浏览器或 CDP 绕过；本轮以同源 HTTP 事实验证启动链路，视觉状态留给用户在已打开的 5175 标签刷新确认。
+# 2026-08-27 自动发布元数据与一键部署进度
+
+- 已读取 planning-with-files 工作流并建立本任务计划。
+- 已回看上一版 Linux/PostgreSQL 部署约定：预构建镜像、Compose bundle、离线 image bundle，以及外部备份引用门禁。
+- 已完成自动发布元数据生成器及 Make/部署/回滚/文档接入；默认无需人工输入版本、构建日期或批次内容。
+- 已通过聚焦 Go 契约、Web 部署契约（16/16）、Bash 语法、Make 干跑、真实 Compose bundle、确定性/特殊字符测试与 `make verify` 全量验证。
+- `make verify` 在受限沙箱首次因现有 `httptest.NewServer` 无法绑定回环地址失败；以同一命令开放本机回环后通过 Go test/vet、Svelte check/build。
+- 已执行 Impeccable 检测，更新后的部署契约测试无 UI 违规；本任务没有渲染组件或交互变化，因此没有新增浏览器状态需要验证。
+- 本机没有 Docker CLI；尚不能执行真实镜像构建、体积对比、`docker load` 与 Compose 启动验证。

@@ -1,13 +1,14 @@
 # 本文件只包含不可用示例值。不要在仓库中保存真实 URL、账号、项目清单、JQL 或凭据。
 database:
-  # 本地开发默认 SQLite；正式 Linux 环境使用 deploy/config.production.example.yaml 的 setup 模式。
-  driver: sqlite
-  dsn: well-ambient.db
-  auto_migrate: true
-  max_open_connections: 4
-  max_idle_connections: 2
-  connection_max_lifetime_minutes: 0
-  connection_max_idle_time_minutes: 0
+  # 本地测试默认进入受令牌保护的 PostgreSQL 安装页；令牌为空时，启动过程会生成一次性令牌和 owner-only 临时文件。
+  driver: setup
+  # 如需迁移旧库，填写停写快照的绝对路径；页面不能修改或读取任意路径。
+  # legacy_sqlite_path: /absolute/path/to/well-ambient.db
+  auto_migrate: false
+  max_open_connections: 20
+  max_idle_connections: 10
+  connection_max_lifetime_minutes: 30
+  connection_max_idle_time_minutes: 5
 
 server:
   host: 127.0.0.1

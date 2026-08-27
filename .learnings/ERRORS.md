@@ -20,6 +20,82 @@ Capability is not available: console
 
 ---
 
+## [ERR-20260827-018] release-contract-fixture-escaped-input
+
+**Logged**: 2026-08-27T14:08:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+调整 release.env 的 shell 转义断言时误改了环境变量输入夹具。
+
+### Error
+
+```text
+release notes contained automated\ release\ batch instead of automated release batch
+```
+
+### Context
+
+- 相同文本在测试中同时出现在输入和期望数组，补丁匹配了第一个位置。
+- 生成器正确保留了输入，因此反斜杠进入了批次说明。
+
+### Suggested Fix
+
+分别锚定输入数组与输出断言：输入保持普通空格，只有 `release.env` 断言检查 Bash `%q` 转义。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: cmd/server/release_artifact_contract_test.go
+
+### Resolution
+
+- **Resolved**: 2026-08-27T14:09:00+08:00
+- **Notes**: 恢复普通输入，并只在 release.env 期望值中保留反斜杠。
+
+---
+
+## [ERR-20260827-017] apply-patch-delete-add-same-file
+
+**Logged**: 2026-08-27T14:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+
+`apply_patch` 拒绝在同一个补丁中对 Makefile 同时执行 Delete File 和 Add File。
+
+### Error
+
+```text
+apply_patch verification failed: invalid patch: multiple operations target Makefile
+```
+
+### Context
+
+- 尝试用整文件删除再新增的方式重写 Makefile。
+- 工具要求同一文件在一个补丁中只能有一种操作。
+
+### Suggested Fix
+
+整文件替换使用单个 Update File 补丁；需要新增同名文件时拆成两个独立补丁。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: Makefile
+
+### Resolution
+
+- **Resolved**: 2026-08-27T14:01:00+08:00
+- **Notes**: 改为一个 Update File 补丁，不再组合 Delete/Add。
+
+---
+
 ## [ERR-20260824-001] browser-page-proxy-scrolltop-setter
 
 **Logged**: 2026-08-24T22:08:00+08:00
@@ -4988,5 +5064,646 @@ Assign browser evaluation results to a named variable, then emit that variable i
 ### Resolution
 - **Resolved**: 2026-08-25T17:55:00+08:00
 - **Notes**: Split the expressions into named metric assignments; all three responsive measurements completed.
+
+---
+## [ERR-20260827-001] docs-write-shared-style-guide-missing
+
+**Logged**: 2026-08-27T00:00:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+
+`docs-write` 引用的共享风格指南未安装在声明的相对路径。
+
+### Error
+
+```text
+sed: /Users/eddie/.agents/skills/_shared/metabase-style-guide.md: No such file or directory
+```
+
+### Context
+
+- 读取 `/Users/eddie/.agents/skills/docs-write/SKILL.md` 后按其相对引用加载共享文件。
+- 技能正文已包含完成本任务所需的核心写作规则，因此实现不受阻。
+
+### Suggested Fix
+
+补齐技能包中的 `_shared/metabase-style-guide.md`，或移除失效引用并将必要规则保留在 `SKILL.md`。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: /Users/eddie/.agents/skills/docs-write/SKILL.md
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:00:00+08:00
+- **Notes**: 不再重复读取缺失路径，按已加载的技能正文继续。
+
+---
+
+## [ERR-20260827-002] setup-token-main-patch-context-drift
+
+**Logged**: 2026-08-27T00:05:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: backend
+
+### Summary
+
+令牌模块、校验和启动入口的组合补丁因 `cmd/server/main.go` 现有文案与快照不同而校验失败。
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in cmd/server/main.go
+```
+
+### Context
+
+- 工作树已有同一区域的用户/任务改动。
+- `apply_patch` 原子失败，确认 `setup_token.go` 未创建，其他文件也未被部分修改。
+
+### Suggested Fix
+
+重新读取目标小范围，按单文件、精确当前上下文拆分补丁。
+
+### Metadata
+
+- Reproducible: no
+- Related Files: cmd/server/main.go, internal/server/setup_server.go
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:06:00+08:00
+- **Notes**: 已采用小块补丁，保留现有启动文案和工作树改动。
+
+---
+
+## [ERR-20260827-003] setup-token-deployment-patch-context-drift
+
+**Logged**: 2026-08-27T00:15:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+
+部署、示例和文档组合补丁两次因中文现有文案与快照不同而原子失败。
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in deploy/.env.production.example
+apply_patch verification failed: Failed to find expected lines in docs/deployment-linux-postgres.md
+```
+
+### Context
+
+- 代码、Compose、部署脚本和文档都在同一组合补丁中，任一文案漂移会阻止全部文件更新。
+- 两次失败均为原子失败，没有半应用。
+
+### Suggested Fix
+
+对脏工作树中的多文件变更按文件拆分；文档优先锚定稳定代码块或标题，不依赖整句自然语言。
+
+### Metadata
+
+- Reproducible: no
+- Related Files: deploy/.env.production.example, docs/deployment-linux-postgres.md
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:18:00+08:00
+- **Notes**: 已拆成单文件补丁，并在稳定部署命令代码块后新增独立令牌小节。
+
+---
+
+## [ERR-20260827-004] prettier-not-installed
+
+**Logged**: 2026-08-27T00:25:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: docs
+
+### Summary
+
+`docs-write` 要求的 Prettier 不在当前项目依赖中。
+
+### Error
+
+```text
+ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "prettier" not found
+```
+
+### Context
+
+- 尝试格式化新增 TypeScript 合同和 Markdown 部署说明。
+- 命令在任何后续测试执行前退出，没有产生文件改动。
+
+### Suggested Fix
+
+若项目决定统一采用 Prettier，应将其加入开发依赖并提供仓库级格式化脚本；本任务不临时下载依赖。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: web/package.json, docs/deployment-linux-postgres.md
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:26:00+08:00
+- **Notes**: 改用仓库现有 TypeScript/Svelte 检查、Node 合同测试和 Markdown 人工结构检查。
+
+---
+
+## [ERR-20260827-005] docker-cli-not-installed
+
+**Logged**: 2026-08-27T00:30:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: infra
+
+### Summary
+
+本地环境没有 Docker CLI，无法执行 `docker compose config --quiet`。
+
+### Error
+
+```text
+zsh: command not found: docker
+```
+
+### Context
+
+- Compose 校验与 Go/Node 测试使用 `&&` 串联，因此命令在测试前停止。
+- 没有启动或修改任何容器。
+
+### Suggested Fix
+
+在无 Docker 环境中先用本地 YAML 解析器和部署合同验证结构，并把真实 Compose 启动保留为带 Docker 的交付环境门禁。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: compose.yaml
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:31:00+08:00
+- **Notes**: 改用 Ruby YAML 解析，Go 与 Node 测试拆分执行。
+
+---
+
+## [ERR-20260827-006] ruby-psych-aliases-keyword-unsupported
+
+**Logged**: 2026-08-27T00:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: infra
+
+### Summary
+
+系统 Ruby 2.6 的 Psych 不支持 `YAML.load_file(..., aliases: true)` 关键字参数。
+
+### Error
+
+```text
+unknown keyword: aliases (ArgumentError)
+```
+
+### Context
+
+- 这是无 Docker 环境下的 Compose YAML 替代语法检查。
+- 同批 bash、Go 和 Node 校验均通过。
+
+### Suggested Fix
+
+Ruby 2.6 使用 `YAML.load(File.read(path))` 的兼容调用；不要重复较新 Psych API。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: compose.yaml
+
+### Resolution
+
+- **Resolved**: 2026-08-27T00:36:00+08:00
+- **Notes**: 改用 Ruby 2.6 兼容 API。
+
+---
+
+## [ERR-20260827-007] full-go-tests-sandbox-loopback-denied
+
+**Logged**: 2026-08-27T12:23:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+全量 Go 测试中的既有 `httptest.NewServer` 无法在沙箱内监听 IPv6 loopback。
+
+### Error
+
+```text
+httptest: failed to listen on a port: listen tcp6 [::1]:0: bind: operation not permitted
+```
+
+### Context
+
+- `internal/llm` 和 `internal/server` 的既有 HTTP 测试触发；本任务定向令牌测试已通过。
+- 同批 `go vet ./...`、前端检查和生产构建通过。
+
+### Suggested Fix
+
+按审批流程仅为全量测试开放本地 loopback，使用相同命令重跑，不修改测试逻辑。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: internal/llm/client_test.go, internal/server/config_handlers_gitlab_webhook_test.go
+
+### Resolution
+
+- **Resolved**: 2026-08-27T12:28:00+08:00
+- **Notes**: 在获批的本地 loopback 权限下原命令全量通过。
+
+---
+
+## [ERR-20260827-008] setup-token-smoke-sandbox-loopback-denied
+
+**Logged**: 2026-08-27T12:30:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+隔离 setup 进程需要获批权限监听 18198，沙箱内 curl 也不能跨该边界访问它。
+
+### Error
+
+```text
+curl: (7) Failed to connect to 127.0.0.1 port 18198
+```
+
+### Context
+
+- 获批后的测试进程仍在运行，自动令牌文件已出现并通过 `0600`、65 字节和 64 位十六进制格式检查。
+- 现有本地 18197 服务未停止或改令牌。
+
+### Suggested Fix
+
+在与监听进程相同的受控权限边界内请求 `/ready`，随后发送 SIGINT 检查文件清理。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: cmd/server/main.go, internal/server/setup_token.go
+
+### Resolution
+
+- **Resolved**: 2026-08-27T12:31:00+08:00
+- **Notes**: 同权限 `/ready` 返回 `SETUP`；SIGINT 后进程退出码 0，生成文件已删除。
+
+---
+## [ERR-20260827-009] ambient-local-tab-not-claimable
+
+**Logged**: 2026-08-27T12:45:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+环境提示存在 5175 标签，但当前 in-app browser 的可接管标签列表没有该 URL。
+
+### Error
+
+```text
+Local 5175 tab is not open
+```
+
+### Context
+
+- 浏览器连接成功，但 `browser.user.openTabs()` 未返回匹配标签。
+- 未关闭、刷新或修改用户标签。
+
+### Suggested Fix
+
+本地只读诊断可在同一浏览器新建临时标签访问目标 URL；不要假定 ambient tab 一定可接管。
+
+### Metadata
+
+- Reproducible: unknown
+- Related Files: web/vite.config.ts
+
+### Resolution
+
+- **Resolved**: 2026-08-27T12:46:00+08:00
+- **Notes**: 改为创建临时 5175 标签，继续同一反馈循环。
+
+---
+## [ERR-20260827-018] migration-diagnosis-local-tooling
+
+**Logged**: 2026-08-27T18:45:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+迁移诊断中多项本地工具默认路径不可用，且一次 `rg` 命令错误包含 shell 反引号。
+
+### Error
+
+```text
+sqlite3: unable to open database file
+headroom retrieve: approval review deadline
+go test: go-build cache operation not permitted
+pgrep: Cannot get process list
+socat: command not found
+zsh: command not found: gorm
+```
+
+### Resolution
+- SQLite 改用获批的 `mode=ro&immutable=1` URI。
+- Go 命令统一使用 `/tmp/well-ambient-gocache`。
+- 进程树改用精确 PID 的获批 `ps`/`lsof`；无需 `socat`。
+- 后续 shell 搜索禁止反引号模式，使用不含命令替换字符的 `rg` 表达式。
+
+---
+
+## [ERR-20260827-017] migration-plan-multi-file-context-drift
+
+**Logged**: 2026-08-27T13:35:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+迁移诊断计划的跨文件原子补丁因 `progress.md` 标题层级与预期不同而失败。
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in progress.md
+```
+
+### Resolution
+先用 `rg` 确认各文件标题层级，再逐文件应用补丁；没有产生半更新。
+
+---
+
+## [ERR-20260827-010] local-vite-port-not-listening
+
+**Logged**: 2026-08-27T12:48:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+
+用户报告本地没有引导时，5175 实际未监听，浏览器连接被拒绝。
+
+### Error
+
+```text
+net::ERR_CONNECTION_REFUSED
+```
+
+### Context
+
+- 使用同一 in-app browser 新建临时标签直连 `http://127.0.0.1:5175/`。
+- 页面尚未进入 Svelte setup gate，不能把问题归因为 UI 分支。
+
+### Suggested Fix
+
+先恢复并验证 Vite 监听，再检查 `/api/setup/status` 代理与 setup 后端；把两者纳入本地一键启动合同。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: web/vite.config.ts, package.json, Makefile
+
+---
+## [ERR-20260827-011] local-process-inspection-sandbox-denied
+
+**Logged**: 2026-08-27T12:52:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+沙箱内无法读取 8080 进程命令，也不能连接由外部权限边界启动的本地服务。
+
+### Error
+
+```text
+ps: operation not permitted
+curl: (7) Failed to connect to 127.0.0.1 port 8080
+```
+
+### Context
+
+- `lsof` 已确认 PID 84469 监听 8080。
+- 本地 `config.yaml` 的非秘密字段显示数据库 driver 为空、端口 8080。
+
+### Suggested Fix
+
+若仍需辨认 8080 进程/API，使用受控只读权限检查；不要据沙箱 curl 失败判断外部进程不存在。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: config.yaml, web/vite.config.ts
+
+---
+
+## [ERR-20260827-012] local-dev-findings-patch-context-drift
+
+**Logged**: 2026-08-27T12:53:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+组合记录补丁因 `Vite 与` 中的空格上下文不一致而原子失败。
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in progress.md
+```
+
+### Context
+
+- 没有产生半应用。
+
+### Suggested Fix
+
+用 `rg` 读取精确当前行后再拆分补丁。
+
+### Metadata
+
+- Reproducible: no
+- Related Files: progress.md
+
+### Resolution
+
+- **Resolved**: 2026-08-27T12:54:00+08:00
+- **Notes**: 已按当前文本完成记录。
+
+---
+## [ERR-20260827-013] vite-dev-sandbox-listen-denied
+
+**Logged**: 2026-08-27T12:58:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+Vite 无法在默认沙箱内监听 127.0.0.1:5175。
+
+### Error
+
+```text
+local development server exited while binding 127.0.0.1:5175
+```
+
+### Context
+
+- 命令未留下运行进程。
+
+### Suggested Fix
+
+用受控本地 loopback 权限重跑同一 dev 命令。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: web/vite.config.ts
+
+---
+## [ERR-20260827-014] browser-local-url-policy-block
+
+**Logged**: 2026-08-27T13:02:00+08:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+浏览器控制策略阻止自动刷新本地 5175 页面。
+
+### Error
+
+```text
+browser URL policy blocks this action
+```
+
+### Context
+
+- Vite 已在 5175 监听。
+- 不使用其他浏览器、CDP 或间接浏览器控制绕过。
+
+### Suggested Fix
+
+改用只读本地 HTTP 探针验证 HTML 和 setup API；用户可在已打开页面手动刷新。
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: web/vite.config.ts
+
+### Resolution
+
+- **Resolved**: 2026-08-27T13:03:00+08:00
+- **Notes**: 停止浏览器自动化，采用更安全的本地 curl 反馈循环。
+
+---
+
+## [ERR-20260827-015] post-fix-ps-sandbox-denied
+
+**Logged**: 2026-08-27T13:18:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+修复后再次用 `ps` 读取启动参数时仍被沙箱拒绝。
+
+### Error
+
+```text
+zsh:1: operation not permitted: ps
+```
+
+### Resolution
+改用 `lsof` 确认监听进程与临时运行目录，并用同源 HTTP 验证实际行为；没有扩大权限。
+
+---
+
+## [ERR-20260827-016] completion-record-patch-context-drift
+
+**Logged**: 2026-08-27T13:22:00+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+跨多个记录文件的完成状态补丁因 `findings.md` 上下文漂移而原子失败。
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in findings.md
+```
+
+### Resolution
+拆分为逐文件补丁，并用稳定标题作为上下文；没有产生半应用。
+
+---
+## [ERR-20260827-019] git-add-sandbox-index-lock
+
+**Logged**: 2026-08-27T14:38:43Z
+**Priority**: low
+**Status**: resolved
+**Area**: config
+
+### Summary
+
+`git add -A` could not create `.git/index.lock` under the workspace-write sandbox.
+
+### Error
+
+```text
+fatal: Unable to create '/Users/eddie/Workspace/well-ambient/.git/index.lock': Operation not permitted
+```
+
+### Context
+
+- Command: `git add -A`
+- The repository had no pre-existing `.git/index.lock`; the sandbox allowed worktree edits but exposed `.git` read-only.
+
+### Suggested Fix
+
+Retry the same narrowly scoped Git command with the approved `git add` escalation instead of changing repository state or removing lock files.
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: `.git/index`
+- See Also: ERR-20260827-007
+
+### Resolution
+
+- **Resolved**: 2026-08-27T14:38:43Z
+- **Notes**: Retried through the scoped Git staging approval path.
 
 ---

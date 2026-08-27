@@ -33,9 +33,10 @@ type LegacyMigrationProgress struct {
 }
 
 type LegacyMigrationReport struct {
-	TablesCopied int              `json:"tables_copied"`
-	RowsCopied   int64            `json:"rows_copied"`
-	TableRows    map[string]int64 `json:"table_rows"`
+	TablesCopied       int              `json:"tables_copied"`
+	RowsCopied         int64            `json:"rows_copied"`
+	TextValuesRepaired int64            `json:"text_values_repaired"`
+	TableRows          map[string]int64 `json:"table_rows"`
 }
 
 type legacyTableCopy struct {
@@ -174,11 +175,12 @@ func MigrateLegacySQLite(
 				Stage: "copying_data", Table: table.name, TablesCompleted: tableIndex,
 				TablesTotal: len(tables), RowsCopied: copiedRows,
 			})
-			rows, err := copyLegacyTable(ctx, source, tx, table)
+			rows, repaired, err := copyLegacyTable(ctx, source, tx, table)
 			if err != nil {
 				return err
 			}
 			copiedRows += rows
+			report.TextValuesRepaired += repaired
 			report.TableRows[table.name] = rows
 			report.TablesCopied++
 			report.RowsCopied = copiedRows
@@ -245,18 +247,20 @@ func legacyCopyPlan(source *gorm.DB) ([]legacyTableCopy, error) {
 	return plan, nil
 }
 
-func copyLegacyTable(ctx context.Context, source, target *gorm.DB, table legacyTableCopy) (int64, error) {
+func copyLegacyTable(ctx context.Context, source, target *gorm.DB, table legacyTableCopy) (int64, int64, error) {
 	modelType := reflect.TypeOf(table.model)
 	if modelType.Kind() != reflect.Pointer || modelType.Elem().Kind() != reflect.Struct {
-		return 0, fmt.Errorf("legacy model for %s is not a struct pointer", table.name)
+		return 0, 0, fmt.Errorf("legacy model for %s is not a struct pointer", table.name)
 	}
 	slice := reflect.New(reflect.SliceOf(modelType.Elem()))
 	var copied int64
+	var repaired int64
 	err := source.WithContext(ctx).Table(table.name).FindInBatches(slice.Interface(), legacyMigrationBatchSize, func(_ *gorm.DB, _ int) error {
 		batchSize := slice.Elem().Len()
 		if batchSize == 0 {
 			return nil
 		}
+		repaired += int64(repairLegacyTextValues(slice.Interface()))
 		if err := target.WithContext(ctx).Table(table.name).Create(slice.Interface()).Error; err != nil {
 			return fmt.Errorf("copy legacy table %s: %w", table.name, err)
 		}
@@ -264,12 +268,65 @@ func copyLegacyTable(ctx context.Context, source, target *gorm.DB, table legacyT
 		return nil
 	}).Error
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if copied != table.rows {
-		return 0, fmt.Errorf("read legacy table %s: expected %d rows, copied %d", table.name, table.rows, copied)
+		return 0, 0, fmt.Errorf("read legacy table %s: expected %d rows, copied %d", table.name, table.rows, copied)
 	}
-	return copied, nil
+	return copied, repaired, nil
+}
+
+func repairLegacyTextValues(batch any) int {
+	value := reflect.ValueOf(batch)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return 0
+	}
+	value = value.Elem()
+	if value.Kind() != reflect.Slice {
+		return 0
+	}
+
+	repaired := 0
+	for index := 0; index < value.Len(); index++ {
+		repaired += repairLegacyTextStruct(value.Index(index))
+	}
+	return repaired
+}
+
+func repairLegacyTextStruct(value reflect.Value) int {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return 0
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return 0
+	}
+
+	repaired := 0
+	valueType := value.Type()
+	for index := 0; index < value.NumField(); index++ {
+		field := value.Field(index)
+		fieldType := valueType.Field(index)
+		if !field.CanSet() {
+			continue
+		}
+		if field.Kind() == reflect.String {
+			original := field.String()
+			normalized := strings.ToValidUTF8(original, "\uFFFD")
+			normalized = strings.ReplaceAll(normalized, "\x00", "\uFFFD")
+			if normalized != original {
+				field.SetString(normalized)
+				repaired++
+			}
+			continue
+		}
+		if fieldType.Anonymous {
+			repaired += repairLegacyTextStruct(field)
+		}
+	}
+	return repaired
 }
 
 func resetPostgresSequences(target *gorm.DB, tables []legacyTableCopy) error {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"well-ambient/internal/config"
@@ -19,7 +21,7 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&db.ConfigVersion{}); err != nil {
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}, &db.RuntimeConfig{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	previousDB := db.DB
@@ -58,6 +60,56 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 	}
 	if fileConfig.Database.Driver != "postgres" || fileConfig.Database.DSNEnv != "WELL_AMBIENT_DATABASE_DSN" {
 		t.Fatalf("bootstrap-only database config was replaced by runtime archive: %#v", fileConfig.Database)
+	}
+	var synchronized db.RuntimeConfig
+	if err := gormDB.First(&synchronized, runtimeConfigSingletonID).Error; err != nil {
+		t.Fatalf("legacy archive was not synchronized into current config: %v", err)
+	}
+	if synchronized.Version != 1 || strings.Contains(synchronized.ConfigJSON, `"database"`) {
+		t.Fatalf("unexpected synchronized runtime config: %#v", synchronized)
+	}
+}
+
+func TestBootstrapVersionedConfigLoadsCurrentDatabaseConfig(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}, &db.RuntimeConfig{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	stored := config.Config{
+		Server: config.ServerConfig{Host: "127.0.0.1", Port: 9200},
+		Jira: config.JiraConfig{
+			Enabled: true, BaseURL: "https://jira.database.example.com", APIToken: "database-secret",
+		},
+	}
+	storedJSON, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("marshal runtime config: %v", err)
+	}
+	if err := gormDB.Create(&db.RuntimeConfig{ID: 1, Version: 7, ConfigJSON: string(storedJSON)}).Error; err != nil {
+		t.Fatalf("seed runtime config: %v", err)
+	}
+
+	fileConfig := config.Config{
+		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		Jira:     config.JiraConfig{APIToken: "stale-file-secret"},
+	}
+	if err := BootstrapVersionedConfig(&fileConfig); err != nil {
+		t.Fatalf("bootstrap config: %v", err)
+	}
+
+	if fileConfig.Server.Port != 9200 || fileConfig.Jira.BaseURL != stored.Jira.BaseURL || fileConfig.Jira.APIToken != "database-secret" {
+		t.Fatalf("runtime database config was not authoritative: %#v", fileConfig)
+	}
+	if fileConfig.Database.Driver != "postgres" || fileConfig.Database.DSNEnv != "WELL_AMBIENT_DATABASE_DSN" {
+		t.Fatalf("bootstrap database config was not retained: %#v", fileConfig.Database)
 	}
 }
 
@@ -139,6 +191,83 @@ func TestHandleSaveConfigRejectsInvalidJiraQueryBeforeApply(t *testing.T) {
 	}
 }
 
+func TestHandleSaveConfigPersistsDatabaseWithoutRewritingBootstrapFile(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}, &db.RuntimeConfig{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	bootstrapPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(bootstrapPath, []byte("bootstrap-only\n"), 0o600); err != nil {
+		t.Fatalf("write bootstrap fixture: %v", err)
+	}
+	current := &config.Config{
+		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
+	}
+	s := &Server{config: current, configPath: bootstrapPath}
+	body, err := json.Marshal(config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8123}})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+
+	s.handleSaveConfig(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	contents, err := os.ReadFile(bootstrapPath)
+	if err != nil {
+		t.Fatalf("read bootstrap fixture: %v", err)
+	}
+	if string(contents) != "bootstrap-only\n" {
+		t.Fatalf("settings save rewrote the bootstrap file: %q", contents)
+	}
+	var runtime db.RuntimeConfig
+	if err := gormDB.First(&runtime, runtimeConfigSingletonID).Error; err != nil {
+		t.Fatalf("load runtime config: %v", err)
+	}
+	if runtime.Version != 1 || !strings.Contains(runtime.ConfigJSON, `"port":8123`) {
+		t.Fatalf("settings were not persisted as current database config: %#v", runtime)
+	}
+	if current.Server.Port != 8123 {
+		t.Fatalf("persisted settings were not applied in memory: %#v", current.Server)
+	}
+}
+
+func TestRecordConfigVersionRollsBackArchiveWhenCurrentConfigCannotPersist(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}); err != nil {
+		t.Fatalf("migrate archive only: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	s := &Server{config: &config.Config{}}
+	_, err = s.recordConfigVersion(config.Config{}, config.Config{Server: config.ServerConfig{Port: 8123}}, httptest.NewRequest(http.MethodPost, "/api/config", nil), "manual-save", 0)
+	if err == nil {
+		t.Fatal("expected current config persistence to fail without its migrated table")
+	}
+	var count int64
+	if err := gormDB.Model(&db.ConfigVersion{}).Count(&count).Error; err != nil {
+		t.Fatalf("count versions: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("version archive escaped the failed transaction: %d", count)
+	}
+}
+
 func TestRedactConfigForArchiveHashesSecrets(t *testing.T) {
 	cfg := config.Config{
 		GitLab: config.GitLabConfig{
@@ -172,7 +301,7 @@ func TestRecordConfigVersionStoresDiffAndSections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := gormDB.AutoMigrate(&db.ConfigVersion{}); err != nil {
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}, &db.RuntimeConfig{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	previousDB := db.DB
@@ -209,6 +338,16 @@ func TestRecordConfigVersionStoresDiffAndSections(t *testing.T) {
 	}
 	if strings.Contains(version.ConfigJSON, "plain-test-secret") || !strings.Contains(version.ConfigJSON, configuredSecretPlaceholder) {
 		t.Fatalf("restorable archive must contain only a configured marker: %s", version.ConfigJSON)
+	}
+	var runtime db.RuntimeConfig
+	if err := gormDB.First(&runtime, 1).Error; err != nil {
+		t.Fatalf("load runtime config: %v", err)
+	}
+	if runtime.Version != version.Version || !strings.Contains(runtime.ConfigJSON, "plain-test-secret") {
+		t.Fatalf("current database config did not preserve the applied secret: %#v", runtime)
+	}
+	if strings.Contains(runtime.ConfigJSON, `"database"`) {
+		t.Fatalf("bootstrap-only database settings leaked into runtime config: %s", runtime.ConfigJSON)
 	}
 }
 

@@ -15,6 +15,30 @@
 - 可从镜像仓库拉取 server/web 镜像，或已通过 `docker load` 导入镜像；
 - 由宿主机或上游负载均衡器终止 TLS。Compose 只暴露应用 HTTP 端口。
 
+## 自动发布元数据与一条命令
+
+默认发布不再要求输入版本、日期或批次内容。`scripts/release-metadata.sh` 一次生成 `deploy/generated/release.env` 和 `release-notes.txt`，server/web 镜像、Compose 包、离线镜像包与部署状态共用这份元数据：
+
+- 干净工作树使用 Git 提交日期和短 SHA，例如 `2026.08.27-58e6467`；
+- 未提交工作树自动追加 `dirty` 和 UTC 构建时刻，避免不同内容共用同一标签；
+- 批次说明取最近 Git 标签之后的提交；无标签时取最近 20 个提交；
+- 两个镜像写入相同的 OCI version、revision 和 created 标签；
+- 离线镜像包使用 gzip 压缩，避免 `docker save` 的未压缩 tar 被误认为镜像本身超过 1 GB。
+
+完整校验、构建镜像并生成 Compose/离线镜像两个交付包：
+
+```bash
+make release
+```
+
+在已配置 `deploy/.env.production` 的同一台主机上构建并部署：
+
+```bash
+make deploy
+```
+
+特殊发布仍可用 `VERSION`、`BUILD_TIME` 或 `WELL_AMBIENT_RELEASE_BATCH` 覆盖自动值，但日常发布无需填写。
+
 服务器建议使用以下目录：
 
 ```text
@@ -35,16 +59,17 @@
 推荐先在仓库根目录生成不含源码、数据库和秘密的 Compose 部署包：
 
 ```bash
-make compose-bundle VERSION=2026.08.26-1
-scp deploy/bundles/well-ambient-compose-2026.08.26-1.tar.gz \
-  deploy@your-server:/tmp/
+make compose-bundle
+. deploy/generated/release.env
+scp "deploy/bundles/well-ambient-compose-${WELL_AMBIENT_VERSION}.tar.gz" \
+  deploy@your-server:/tmp/well-ambient-compose.tar.gz
 ```
 
 服务器上预先创建由部署用户持有的目录，然后解压：
 
 ```bash
 sudo install -d -o deploy -g deploy -m 0750 /opt/well-ambient
-sudo -u deploy tar -xzf /tmp/well-ambient-compose-2026.08.26-1.tar.gz \
+sudo -u deploy tar -xzf /tmp/well-ambient-compose.tar.gz \
   -C /opt/well-ambient
 cd /opt/well-ambient
 ```
@@ -61,8 +86,8 @@ chmod 600 deploy/.env.production deploy/runtime/config.yaml
 编辑 `deploy/.env.production`：
 
 - `WELL_AMBIENT_SERVER_IMAGE` 和 `WELL_AMBIENT_WEB_IMAGE` 指向服务器能取得的镜像仓库；离线导入时填写 `well-ambient-server` 和 `well-ambient-web`；
-- `WELL_AMBIENT_VERSION` 使用发布号或 commit SHA，不能使用 `latest`；
-- `WELL_AMBIENT_SETUP_TOKEN` 使用与数据库密码不同的高熵随机值，至少 32 个字符；它只授权首次数据库安装写操作；
+- 不再填写 `WELL_AMBIENT_VERSION`；版本、UTC 构建日期和批次说明由 Git 自动生成并随部署包写入 `deploy/generated/`；
+- `WELL_AMBIENT_SETUP_TOKEN` 可留空，让程序在首次安装模式生成一次性令牌；也可填写与数据库密码不同且至少 32 个字符的高熵随机值。显式令牌不会被程序回显或写入临时文件；
 - `APP_UID`、`APP_GID` 应与服务器上 `deploy/runtime` 的所有者一致；
 - `HTTP_BIND` 默认是 `127.0.0.1`，供同机 TLS 反向代理使用；只有防火墙和 TLS 边界明确时才改为外部地址；
 - `HTTP_PORT` 是 Linux 主机暴露端口；
@@ -77,25 +102,27 @@ Compose 不再包含 `build:`，所以服务器不需要项目源码，但必须
 使用镜像仓库时，在构建机执行：
 
 ```bash
-make images VERSION=2026.08.26-1 PLATFORM=linux/amd64 \
+make images PLATFORM=linux/amd64 \
   SERVER_IMAGE=registry.example.com/your-team/well-ambient-server \
   WEB_IMAGE=registry.example.com/your-team/well-ambient-web
-docker push registry.example.com/your-team/well-ambient-server:2026.08.26-1
-docker push registry.example.com/your-team/well-ambient-web:2026.08.26-1
+. deploy/generated/release.env
+docker push "registry.example.com/your-team/well-ambient-server:${WELL_AMBIENT_VERSION}"
+docker push "registry.example.com/your-team/well-ambient-web:${WELL_AMBIENT_VERSION}"
 ```
 
-将真实仓库地址和相同版本写入服务器的 `.env.production`。使用离线交付时，在与服务器架构一致的构建机执行：
+将真实仓库地址写入服务器的 `.env.production`；版本由部署包携带，不再重复填写。使用离线交付时，在与服务器架构一致的构建机执行：
 
 ```bash
-make image-bundle VERSION=2026.08.26-1 PLATFORM=linux/amd64
-scp deploy/bundles/well-ambient-images-2026.08.26-1.tar \
-  deploy@your-server:/opt/well-ambient/
+make image-bundle PLATFORM=linux/amd64
+. deploy/generated/release.env
+scp "deploy/bundles/well-ambient-images-${WELL_AMBIENT_VERSION}.tar.gz" \
+  deploy@your-server:/opt/well-ambient/well-ambient-images.tar.gz
 ```
 
 然后在服务器导入：
 
 ```bash
-docker load -i well-ambient-images-2026.08.26-1.tar
+docker load -i well-ambient-images.tar.gz
 ```
 
 ARM64 服务器将 `PLATFORM` 改为 `linux/arm64`。不要把 AMD64 镜像搬到 ARM64 主机后再声明部署完成。
@@ -105,6 +132,9 @@ ARM64 服务器将 `PLATFORM` 改为 `linux/arm64`。不要把 AMD64 镜像搬�
 先验证最终配置，不会启动容器：
 
 ```bash
+set -a
+. deploy/generated/release.env
+set +a
 docker compose --env-file deploy/.env.production config
 ```
 
@@ -116,15 +146,27 @@ docker compose --env-file deploy/.env.production up -d --wait server web
 
 也可以把 `deploy/deploy.sh` 一并搬到相同目录结构后执行一键部署：
 
-版本必须是不可变标识，例如 Git commit SHA 或发布号，不能使用 `latest`：
+脚本默认读取部署包中的自动版本、构建日期和批次说明，不需要位置参数：
 
 ```bash
-./deploy/deploy.sh 2026.08.26-1
+./deploy/deploy.sh
 ```
+
+### 获取自动生成的安装令牌
+
+若 `WELL_AMBIENT_SETUP_TOKEN` 留空，程序会在首次安装模式生成令牌，将它写入容器 `/tmp` 下权限为 `0600` 的临时文件，并在服务终端输出令牌和路径。`deploy/deploy.sh` 会把这两行服务日志显示在当前终端。安装完成或安装进程正常退出后，临时文件会被删除。
+
+也可再次查看服务日志：
+
+```bash
+docker compose --env-file deploy/.env.production logs --tail 100 server
+```
+
+自动生成的完整令牌会进入 Docker 日志；当前 Compose 将日志限制为最多 5 个、每个 20 MB。完成安装后应限制主机日志读取权限。显式配置的令牌不会被程序回显或写入临时文件。
 
 脚本依次执行：
 
-1. 校验工具、镜像地址、版本、安装令牌和端口；
+1. 读取并显示自动生成的版本、UTC 构建日期和批次说明，再校验工具、镜像地址、安装令牌和端口；
 2. 验证 Compose 渲染结果；
 3. 启动只提供健康检查和 `/api/setup/*` 的受限 server，以及同源 Web；
 4. `/ready` 返回 `SETUP` 后记录版本并退出，等待管理员完成页面配置。
@@ -145,12 +187,12 @@ docker compose --env-file deploy/.env.production up -d --wait server web
 
 ```bash
 WELL_AMBIENT_EXTERNAL_BACKUP_REFERENCE=provider-snapshot-20260826-001 \
-  ./deploy/deploy.sh 2026.08.26-2
+  ./deploy/deploy.sh
 ```
 
 脚本只记录外部备份引用，然后执行一次 `--migrate-only` 和 server/web 切换，不会伪装成自己已经备份 PostgreSQL。
 
-部署状态、运行配置和备份分别位于 `deploy/.state/`、`deploy/runtime/`、`deploy/backups/`，都已加入 `.gitignore`。容器日志默认轮转为单文件 20MiB、最多五份，避免长期运行耗尽系统盘。
+部署状态、当前/上一版发布元数据、运行配置和备份分别位于 `deploy/.state/`、`deploy/runtime/`、`deploy/backups/`，都已加入 `.gitignore`。应用回滚时，版本、release env 和批次说明会一起切换。容器日志默认轮转为单文件 20MiB、最多五份，避免长期运行耗尽系统盘。
 
 ## 健康检查与验收
 

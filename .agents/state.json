@@ -1,23 +1,23 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-08-24T21:46:30+08:00",
+  "updated_at": "2026-08-27T19:50:57+08:00",
   "active_task": {
-    "goal": "Remove elliptical focus borders from every Decision list dropdown while preserving one accessible field-shaped focus ring",
-    "intent": "decision_filter_focus_geometry",
+    "goal": "Generate a well-ambient brand mark and replace the default browser-tab and shared app-shell icons",
+    "intent": "brand_mark_refresh",
     "complexity": "multi_step",
-    "continuity": "new_related_task",
-    "freshness": "authenticated_browser_desktop_760_390",
+    "continuity": "new_task",
+    "freshness": "current_workspace_and_local_prototype_browser",
     "risk": "low",
-    "phase": "verified_reflection_gate_pending",
+    "phase": "prototype_verified_reflection_gate_pending",
     "loaded_modules": [
       "core-lite",
       "state-lite",
       "workflow/default",
       "domains/coding",
       "runtime/memory",
-      "diagnosing-bugs",
       "planning-with-files",
       "self-improving",
+      "imagegen",
       "impeccable",
       "design-taste-frontend",
       "finesse-ui",
@@ -25,6 +25,31 @@
     ]
   },
   "warm_memory": {
+    "brand_mark_refresh": {
+      "status": "prototype_verified_reflection_gate_pending",
+      "findings": [
+        "The Vite default purple favicon and text wa shell placeholder conflicted with the Phase 41 deep-navy and mint-teal product identity.",
+        "Two imagegen drafts established the three-node twin-arc concept but retained gradients; the production asset was distilled to an auditable two-color SVG.",
+        "web/index.html and FunctionalAdminShell now reuse /brand-mark.svg; the obsolete favicon.svg was removed."
+      ],
+      "validation": [
+        "Brand contract 2/2, pnpm check zero errors with existing warnings, production build, and git diff --check passed.",
+        "Impeccable returned no findings; Finesse returned P0=0 with pre-existing shell P1 dual-sticky finding unrelated to this diff.",
+        "Browser prototype checked 1280 expanded, 94px collapsed, 390 and 320 mobile drawers, plus 16/32/42px light and dark samples; actual authenticated route remains unverified because the local backend was not running."
+      ],
+      "touched_files": [
+        "web/public/brand-mark.svg",
+        "web/public/favicon.svg",
+        "web/index.html",
+        "web/src/components/prototype/FunctionalAdminShell.svelte",
+        "web/tests/brand-mark-contract.test.ts",
+        "task_plan.md",
+        "findings.md",
+        "progress.md",
+        ".agents/state.json"
+      ],
+      "next_action": "Run the one-time reflection gate; if the user wants full acceptance, start the normal backend and verify the authenticated main route without bypassing login."
+    },
     "decision_filter_focus_geometry": {
       "status": "verified_reflection_gate_pending",
       "findings": [

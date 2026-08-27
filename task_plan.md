@@ -1,5 +1,126 @@
 # Task Plan: Implementation Plan Check and Fix
 
+## 2026-08-27 引导页减负、维护库渐进展示与 SQLite 迁移进度
+
+### 目标与验收契约
+
+- [completed] 删除与完成安装无关的品牌/安全/解释性文案，首屏只保留动作所需的标题、字段标签、必要后果与实时状态；不得删除错误修复信息或安全关键边界。
+- [completed] 维护数据库默认隐藏，仅在目标数据库需要创建等真实场景下渐进显示；优化单一安装卡片的层级、表单密度、间距、边界和移动布局，保留项目 Phase 41 token 与可见键盘焦点。
+- [completed] 证明“没有 SQLite 迁移引导/迁移进度”的实际数据与状态分支；当服务器存在固定 SQLite 快照时，第二步必须明确提供迁移/跳过，并在执行期间显示可量测的阶段、进度与说明；没有快照时不得伪造迁移选项。
+- [completed] 三个症状分别建立可证伪合同并从红转绿；运行前端/Go 回归、类型检查、生产构建、Impeccable/Finesse 检测及真实浏览器桌面/移动状态验证。
+
+### 阶段
+
+- [completed] Phase 1：加载 UI/诊断规则，检查当前页面、setup API、SQLite 发现条件与迁移状态模型，建立三个红灯
+- [completed] Phase 2：完成并记录 Impeccable / design-taste-frontend / finesse-ui 三方会审，冻结层级、owner、响应式与验证范围
+- [completed] Phase 3：实施最小 UI/状态修复和必要的 setup 后端进度契约
+- [completed] Phase 4：运行定向/全量自动验证与真实浏览器多状态、多断点验收
+- [completed] Phase 5：保留用户要求的隔离本地引导环境、完成一次性交付反思门禁并交付
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 首次按错误层级读取 `web/src/lib/components/DatabaseSetup.svelte` | 1 | 用 `rg --files` 重新定位为 `web/src/components/DatabaseSetup.svelte`，未产生文件改动。 |
+| 计划增补补丁因既有标题文本不完全一致被拒绝 | 1 | 读取实际文件顶部后做精确上下文补丁，保留其他任务记录。 |
+| 在 `web/` 工作目录仍传入 `web/tests/...` 导致目标合同未找到 | 1 | 改为 `tests/database-setup-contract.test.ts`，13/13 通过。 |
+| 沙箱禁止隔离 setup 服务监听回环端口 | 1 | 受控权限只监听 `127.0.0.1:18197`；主 8080 服务与主库未触碰。 |
+| 浏览器旧标签绑定失效、标准 Playwright 视口方法不适用 | 1 | 复用现有浏览器取得新标签，并使用浏览器 `viewport` 能力完成 390/320px 验收后重置。 |
+| Impeccable 检出进度条 `width` 动画 | 1 | 改为 `transform: scaleX()`；复扫为 `[]`。 |
+| 红灯命令在 `web/` 工作目录误用了根目录 Go 路径 | 1 | 按 Self-Improving 复盘后把 Go 与前端测试分开指定 workdir；有效前端红灯保留，Go 红灯随后真实复现。 |
+| 全量 `internal/server` 在沙箱内被既有 `httptest` 回环监听限制阻断 | 1 | 按权限流程在受控本地监听环境重跑同一命令，5.564s 通过。 |
+| 首轮日志修复仍拿不到 SQLSTATE | 1 | 继续追踪发现真实迁移 error 用 `%v` 截断 cause；抽出 `wrapLegacyMigrationFailure` 双 `%w` 并让回归直接消费该 helper。 |
+
+### 当前设计读法
+
+- 这是生产工具的首次数据库安装流程，面向知道 PostgreSQL 基础信息的运维/部署人员；采用既有 Phase 41 浅色产品界面，保留标准字段与真实状态，不引入插画、营销式引言或装饰动效。
+- design-taste-frontend 明确不主导多步产品表单，本轮只应用 preserve 审计：保持路由、字段名、动作、状态语义、品牌 token 与可访问性，不把“现代审美”解释成新视觉系统。
+- Finesse 暂定 `SOUL=4 / SPECTACLE=1 / DENSITY=7`；仍使用 `centered-setup-workflow`，但从“介绍区 + 大卡片”进一步收敛成“紧凑标题 + 单一操作面板”，进度只用于真实迁移状态反馈。
+
+### 三方评审结论（实现前冻结）
+
+- 共同方向：保留现有设计令牌与居中式单工作台，删掉品牌、首装口号、安全说明块、重复步骤说明和字段常识性提示；首屏只保留标题、两步状态、必填连接字段和主要动作。
+- 层级：页面标题只有一层；步骤条作为唯一导航；连接检查在测试后呈现结果，不再预先展示四项说明卡；第二步把 PostgreSQL 结果与 SQLite 迁移决策合并为一个确认面。
+- 组件归属：`DatabaseSetup.svelte` 继续拥有安装状态与交互；维护库和 SSL/证书归入默认关闭的“高级连接选项”；后端继续提供服务器受控 SQLite 状态和迁移进度，不把路径选择权交给浏览器。
+- 响应式：桌面保持双列主字段，窄屏单列；高级选项、迁移选择和进度阶段均在 768px 以下自然堆叠；不改变 44px 控件触控下限。
+- 进度呈现：使用“当前阶段 + 确定型阶段进度 + 表/行实数”；建库、建结构、迁移、核对、完成均有可见推进，避免非复制阶段停在 0%。
+- 验证范围：静态契约、Svelte 检查/构建、后端迁移状态测试，以及首次安装的桌面/窄屏真实浏览器；该页面位于登录前，认证验证不适用，改为安装令牌边界验证。
+- 分歧与裁决：Taste 不主导多步骤向导，只做 anti-slop 审计；Impeccable 倾向进一步隐藏非当前状态，Finesse 倾向保留可扫描的操作事实，最终采用默认精简、按需展开和执行期强反馈。
+
+### 缺陷假设（按强度排序）
+
+1. **已证实**：本地测试配置没有有效的 `legacy_sqlite_path`，安装状态自然返回不可迁移，第二步不会出现迁移选择。
+2. **已证实**：本地安装后端已退出且临时配置被上一次成功安装改写为 PostgreSQL，当前页面不能再复现首次安装路径。
+3. **高概率**：迁移引导只在连接测试成功并进入第二步后出现，缺少首屏“已检测到旧库”的轻量预告，用户会误判为功能缺失。
+4. **已证实**：百分比只根据已完成表数计算；建库、建结构、校验和分析阶段均显示 0%，不能表达端到端进度。
+5. **中概率**：当前大段说明、检查清单和状态条重复表达同一事实，压低了 SQLite 决策和实际进度的视觉优先级。
+
+### 现场迁移失败追加闭环（2026-08-27）
+
+- [completed] 定位截图中 `notifications` 复制失败；保留 PostgreSQL 回滚与 SQLite 只读边界，不在缺少原始数据库错误时臆测唯一根因，也不自动重跑写操作。
+- [completed] 失败 operation 保留最后真实 `stage/table/count`，服务端记录不含 DSN、密码和数据行的 PostgreSQL 错误码摘要；前端失败态停在对应阶段并显示可行动说明。
+- [completed] 本地示例配置默认进入 PostgreSQL setup，不再静默使用 SQLite；连接凭据仍由本地安装页或环境注入，仓库不保存可用密码。
+- [completed] SSL 下拉继续使用原生 `<select>` 与键盘行为，只给收起态增加统一的自有箭头、44px 高度、边框、焦点和禁用态；桌面与窄屏展开/收起均验证。
+
+#### UI 三方追加会审（编辑前）
+
+- **Impeccable：** 失败不是新页面，应保留最后成功推进的位置并把错误消息放在同一工作流；SSL 选择不得改成不可访问的自制菜单。
+- **design-taste-frontend / preserve：** 沿用当前 `--wa-*` token、字号、圆角和表单密度，不引入另一套 select 视觉或装饰图标语言。
+- **finesse-ui：** 用单一 `select-control` wrapper 和轻量 SVG chevron 统一 collapsed trigger；覆盖 hover/focus/disabled，系统 option popup 不做脆弱伪装。
+- **共同层级与 owner：** `databaseSetupService` 保留真实失败阶段并负责安全日志摘要；`DatabaseSetup.svelte` 只解释状态和呈现控件，不学习数据库内部错误或凭据。
+- **共同响应式与验证：** 1280/390/320px 下 SSL 触发器不溢出、箭头不遮挡值、键盘焦点可见；迁移失败在所有断点都高亮“迁移 SQLite”而非“检查目标库”。
+- **分歧与裁决：** 不模拟操作系统下拉弹层的颜色，因为跨浏览器不可稳定控制；只统一产品可拥有的收起态，保留平台原生选择行为。
+
+#### 追加验证结果
+
+- 后端先红后绿证明失败仍为 `state=failed`，但 `stage=copying_data`、表名和计数不丢失；真实迁移包装改为双 `%w`，SQLSTATE 能穿过 service 边界，日志与页面只显示安全错误码，不显示密码或内部错误文本。
+- 前端合同 15/15、全量合同 166/166；`internal/db`、`internal/config`、`internal/server` 回归通过，Svelte/TypeScript 0 error、生产构建通过。
+- Impeccable `[]`，Finesse 目标 findings 为空；原先 CSS border chevron 的 P1 误报改为同尺寸 SVG path 后清零。
+- 真实浏览器用无数据库写入的临时 stub 验证 1280/390/320px：失败阶段均为“迁移 SQLite”，`notifications`、14/63、42112 行和安全错误码可见，document 横溢均为 0；随后已恢复真实 setup 后端和初始引导页。
+- 原始失败的精确 PostgreSQL SQLSTATE 在旧进程中已被 `%v` 包装和 `Silent` 日志永久丢弃；当前代码只能确认失败边界，不能从截图反推唯一数据库根因。下一次人工重试会直接显示并记录真实 SQLSTATE。
+
+## 2026-08-27 正式居中引导、配置数据库化与 Docker 瘦身
+
+### 目标与验收契约
+
+- [x] 引导页从左右 AI 对话/信息堆叠改为居中、正式、单一主任务的引导内容；保留跳过/进入路径、既有品牌与业务语义，并验证桌面/平板/手机及键盘可用性。
+- [x] 逐一盘点所有配置页的字段、GET/PUT/测试链路与存储 owner；页面配置必须由数据库读取与保存，重启后仍可恢复，当前文件/环境默认只作明确的 bootstrap/fallback；用数据库行与 API 回读核对“已同步”状态。
+- [x] 对两个 Docker 镜像建立分层/上下文红灯，定位超过 1GB 的具体层或误复制目录；在不覆盖现有 `Dockerfile`/`Makefile` 用户改动的前提下收敛构建上下文和运行时依赖；本机无 Docker 兼容运行时，精确镜像字节数保留为明确环境缺口。
+- [x] 每个症状有独立可证伪回归；相关 Go/前端检查、构建、Impeccable/Finesse detector 和安装前浏览器多状态/多断点均完成；Docker 实际 build/inspect 因本机无兼容运行时未伪报。
+
+### 阶段
+
+- [completed] Phase 1：保护脏工作树，定位引导页 owner、配置清单/持久化链路与镜像分层；建立三条红灯/基线
+- [completed] Phase 2：完成并记录 Impeccable / design-taste-frontend / finesse-ui 三方会审，冻结 hierarchy、owner、响应式与验证范围
+- [completed] Phase 3：实现居中正式引导、配置数据库化/同步检查及 Docker 最小瘦身
+- [completed] Phase 4：运行定向/全量自动验证、精确数据库副本迁移回读、安装前浏览器多状态/多断点验证；记录主实例 rollout 与 Docker 字节数环境缺口
+- [completed] Phase 5：清理临时产物、完成一次性交付反思门禁；按用户反馈保留隔离本地引导环境供验收
+
+### 强制 UI 三方会审（实现前）
+
+- [x] **现状证据：** 实际 owner 是 `web/src/components/DatabaseSetup.svelte`。桌面根容器用 `0.78fr / 1.7fr` 双栏，左侧是大标题/品牌叙事/安全说明，右侧一次展示完整 PostgreSQL 与迁移工作区；这与用户所述“左边 AI、右边太多”完全一致。
+- [x] **Impeccable / onboard + product：** onboarding 只负责尽快完成一个真实任务，不承担全产品说明；保留当前 PostgreSQL 确认与本地数据迁移两个真实步骤，不增加欢迎 step 0，不在首屏并列功能摘要。
+- [x] **design-taste-frontend / redesign-preserve：** 该技能不主导后台产品 UI，本轮只应用 preserve 审计；保留 Phase 41 浅色管理台、现有字体/品牌色/路由/动作和表单语义，移除营销式左右 hero 与超大标题，不引入插画、AI 对话、装饰动效或模板化三卡。
+- [x] **finesse-ui / product workflow：** `SOUL=4 / SPECTACLE=1 / DENSITY=6`；一个居中工作流列承载标题、步骤和表单，静态帮助与安全边界压缩为正文内说明，连接测试、迁移状态、错误与主动作继续在原上下文中可见。
+- [x] **共同层级与所有权：** `DatabaseSetup -> formal intro -> existing step/form workspace`；只调整该组件的布局和文案层级，不改 App 路由、setup API、字段、迁移状态机或数据库选择规则。
+- [x] **共同响应式：** 1440/1024/760/390 均保持单列；正文和表单分别限制舒适阅读/操作宽度，窄屏不产生 document 横向溢出，既有 field grid 在手机端继续降为一列。
+- [x] **分歧与裁决：** ① 不新增独立欢迎页，因为会增加完成 PostgreSQL 前的点击并违背“右边太多”的减负目标；② 安全说明不删除，因为它解释密码不回显和本地迁移的关键边界，但压缩为居中短说明；③ 不隐藏必需字段，信息减负由单列顺序与渐进的两步状态承担，避免形式简洁却无法完成安装。
+- [x] **验证范围：** 源码合同先锁定单列居中和无双栏；真实浏览器覆盖待连接、测试成功/失败、迁移/跳过、键盘焦点、1440/1024/760/390 与 reduced-motion。安装页天然处于认证前，记录为项目“认证浏览器”规则的明确前置安装例外。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| 大型 UI 技能与项目上下文聚合读取发生输出截断 | 1 | 改为按文件/行段读取，未依据被截断内容编辑业务文件。 |
+| 只读设置存储检索包含不存在的 shell glob，zsh 在执行该段前拒绝展开 | 1 | 按 Self-Improving 做有界复盘，改用 `rg -g` 在现存目录内过滤；有效的前两段结果保留，未产生业务修改。 |
+| Vite 启动命令把 `--` 作为字面参数，目标端口未生效并自动落到 5174 | 1 | 读取实际启动输出后按真实 5174 端口完成隔离验收；没有占用或停止主服务。 |
+| 浏览器等待 API 不支持 `networkidle` | 1 | 改用当前浏览器技能文档支持的 `domcontentloaded` 与显式 DOM 状态等待。 |
+| SQLite 副本普通只读 URI 在锁定语义下无法打开 | 1 | 改用仅针对精确临时副本的 `immutable=1` 只读查询；主库未修改。 |
+| Go 全量测试在沙箱内无法监听 `httptest` 回环端口 | 1 | 受控在沙箱外重跑同一命令，所有包通过。 |
+| 目标 TypeScript 合同误用裸 `node --test`，Node 22 不识别 `.ts` | 1 | 使用仓库既有的 `--experimental-strip-types` 方式重跑，11/11 通过。 |
+| `rg` 同时检查根与 `web/package.json` 时根 `package.json` 不存在 | 1 | 读取已确认存在的 `web/package.json`，未再假设根目录有 Node manifest。 |
+| 沙箱拒绝读取本机进程表 | 1 | 以只读受控权限查询固定 PID，确认 8080 仍是原 Go 缓存二进制；未发送信号或改动服务。 |
+
 ## 2026-08-26 编辑方案保存时 Toast 统一与闪烁修复
 
 ### 目标与验收契约
@@ -7001,3 +7122,135 @@ Allow administrators to configure Jira release-page sources with a project numbe
 | 初次按语义猜测了不存在的 Impeccable `reference/onboarding.md` | 1 | 从技能命令表确认真实文件为 `reference/onboard.md`，完整加载后继续；后续按命令表精确寻址 |
 | setup service 首轮大补丁遗漏三个局部闭合大括号，`gofmt` 在解析阶段失败 | 1 | 按编译器精确行号检查并逐处补齐；随后 setup 专项编译与测试通过，不继续叠加未验证补丁 |
 | `internal/server` 全包测试在沙箱内的既有 webhook `httptest.NewServer` 因禁止回环监听而 panic | 1 | 本次 setup 专项测试与 db/config 包已通过；最终全包使用已获批的本地监听权限重跑 |
+# 2026-08-27 首次安装令牌自动生成
+
+## 目标与安全合同
+
+- [completed] 仅当程序处于安装模式且未提供 `WELL_AMBIENT_SETUP_TOKEN` 时生成高熵令牌；显式环境变量保持最高优先级且永不回显、永不落盘。
+- [completed] 自动生成的令牌写入系统临时目录，文件权限固定为 `0600`；终端一次性打印令牌和路径，安装完成或进程退出后删除文件。
+- [completed] Compose 和部署脚本允许令牌为空，但仍拒绝长度不足 32 字符的显式令牌；同步示例配置和 Linux 部署说明。
+- [completed] 用单元测试锁定随机性、权限、文件内容、清理与显式令牌兼容；用独立端口真实启动验证终端提示和临时文件生命周期。
+
+## 阶段
+
+- [completed] Phase 1：记录现有启动/部署合同，建立失败测试。
+- [completed] Phase 2：实现深模块令牌 provision，并接入启动入口。
+- [completed] Phase 3：同步 Compose、部署脚本、示例和文档。
+- [completed] Phase 4：运行定向/全量测试、构建和真实启动烟测。
+
+## 已确认决策
+
+- 用户接受自动生成时终端打印完整令牌会进入 Docker 日志的安全取舍。
+- 自动生成文件仅在令牌有效期内存在；外部提供的令牌不创建临时文件。
+# 2026-08-27 SQLite 迁移 PostgreSQL 22021
+
+## 目标与反馈循环
+
+- [completed] 从当前 setup 服务日志与只读 SQLite 快照锁定 SQLSTATE 22021 的具体表、列和原始字节模式。
+- [completed] 在真实迁移写入 seam 建立能稳定复现同一 `22021` 数据模式的最小红灯测试。
+- [completed] 展示 5 个可证伪假设，以单变量探针确认根因并实施源头 + 迁移边界最小修复。
+- [in_progress] 最小测试、真实快照模拟、真实 PostgreSQL 迁移、全量验证均已通过；等待用户刷新确认当前页面视觉状态。
+- [completed] 修复迁移成功后数据库运行配置把 server 端口恢复为 8080、Vite 仍代理 18197 导致的 502；保持本地启动地址在两种模式间稳定。
+
+## 错误记录
+
+- 默认沙箱 SQLite/Go cache 不可用：改用 immutable 只读 URI 与任务专用 `/tmp` GOCACHE。
+- 两次记录/测试补丁上下文漂移：原子失败后先读取精确行，再逐文件更新。
+- `pgrep`/`socat` 在当前 macOS 环境不可用：改用精确 PID 的 `lsof`/获批 `ps`，并直接替换本任务后端。
+- 一次 `rg` 模式包含反引号被 shell 执行：已改为无命令替换字符的安全表达式并记录。
+
+## 当前约束
+
+- PostgreSQL 事务已回滚；诊断阶段不手工改目标库，不绕过事务和核对门禁。
+- SQLite 仅以只读方式检查，不对坏数据做原地清洗。
+- 保留工作树中所有无关改动，只修改迁移器及其回归测试所需文件。
+
+# 2026-08-27 本地开发环境未进入引导页
+
+## 目标与反馈循环
+
+- [completed] 在当前 `http://127.0.0.1:5175/` 建立可重复红灯：页面未渲染 PostgreSQL 安装引导，并同时记录 `/api/setup/status` 的真实响应。
+- [completed] 最小化到 Vite 代理、setup 后端、配置回退或前端 gate 中唯一失效边界；提出并逐一证伪 3–5 个假设。
+- [completed] 在启动编排 seam 建立回归合同并实施最小修复；未修改 frontend 文件，因此无需触发 UI 编辑门禁。
+- [completed] 复跑同源 HTTP 场景、定向/全量测试和构建，并保留本地 5175 引导环境供用户验收。
+
+## 阶段
+
+- [completed] Phase 1：复现并建立红灯反馈循环。
+- [completed] Phase 2：最小化与假设检验。
+- [completed] Phase 3：回归合同与修复。
+- [completed] Phase 4：本地 HTTP、测试和交付验证；浏览器自动刷新受产品 URL 策略限制，未绕过。
+
+## 当前约束
+
+- 不修改或迁移用户现有数据库，不触碰远程/生产环境。
+- 先诊断运行态，不以源码“看起来正确”替代 5175 页面和 API 证据。
+- 上一轮 18197 烟测结论不能证明 Vite 5175 正在代理到同一 setup 后端。
+
+## 假设检验结果
+
+- [confirmed] 5175 未监听是第一层故障；启动 Vite 后 HTML 恢复。
+- [confirmed] Vite 默认代理到普通 8080；`/api/setup/status` 返回 404，前端按设计进入非 setup 流程。
+- [confirmed] 默认 `config.yaml` 是非 setup 模式；直接启动默认 server 不会提供引导。
+- [falsified] 前端 setup gate 回归；把代理切到 18197 后同源 API 返回 `setup_required: true`，现有 gate 合同仍成立。
+- [falsified] 浏览器缓存是主因；服务端同源 API 在不改前端产物时随代理目标立即改变。
+# 2026-08-27 自动发布元数据与一键部署
+
+## 目标
+
+- 镜像制作、离线包与一键部署共用同一份自动发布元数据。
+- 默认不再要求人工输入版本、构建日期或批次内容；显式环境变量仍可覆盖自动值。
+- 保留数据库连接、口令和外部 PostgreSQL 备份引用等安全门禁。
+
+## 计划
+
+- [completed] 盘点 Makefile、Dockerfile、Compose、bundle 与部署脚本中的手工输入点和现有契约。
+- [completed] 先补自动元数据与部署入口的失败契约测试。
+- [completed] 实现单一发布元数据生成器，并接入镜像、bundle 与部署流程。
+- [completed] 更新部署说明与示例，确保默认命令无需版本、日期和批次参数。
+- [completed] 运行脚本、Go、Compose/Make dry-run 与完整验证；当前主机无 Docker CLI，真实镜像体积与 load/up 保留为环境验证缺口。
+
+## 设计约束
+
+- 一个发布过程只生成一次时间戳，server/web 镜像与两个 bundle 不得各自漂移。
+- 自动版本必须是合法 Docker tag 与文件名，并显式标记脏工作树。
+- 自动批次说明来自 Git 提交范围；无提交历史时提供可理解的降级内容。
+- 不自动生成或绕过数据库凭据、生产连接参数、外部备份引用。
+
+### 前端契约三方会审（编辑 `web/tests` 前）
+
+- **共同方向：** 本任务不改变任何渲染组件、视觉层级、交互、响应式行为或可访问性状态；只把旧的人工 `$(VERSION)` bundle 断言更新为自动发布元数据契约。组件所有权和 Phase 41 产品表面保持不变。
+- **Impeccable：** 现有产品设计合同优先，零 UI 改动时不得借发布自动化重排界面；验证只需覆盖受影响的静态前端契约。
+- **design-taste-frontend：** 明确判定管理台与部署契约不属于其营销页面范围；其结论是避免引入任何视觉意见或新依赖。
+- **finesse-ui：** register=product、SPECTACLE=1；发布链路没有可见页面状态，不应用品牌 substrate、动画或布局规则。
+- **分歧与处理：** taste-skill 认为任务完全超出视觉设计范围，另两者保留产品一致性门禁；三方最终一致为“仅改断言、不改 UI”。因此无受影响断点或登录态需要浏览器重验，但仍运行 Impeccable detector、Node 前端契约和现有构建检查。
+
+## 2026-08-27 品牌图标生成与默认图标替换
+
+### 目标与验收契约
+
+- [completed] 盘点现有 favicon、共享左轨品牌位、设计基线与现有 token，确认不改页面信息架构或业务交互。
+- [completed] 完成 Impeccable、design-taste-frontend、finesse-ui 三方评审，并在实施前记录共识与分歧。
+- [completed] 生成一枚无文字、两色、强轮廓、适合 16px-42px 使用的 well-ambient 品牌标记，落入 `web/public`。
+- [completed] 用同一品牌标记替换浏览器标签页图标和 `FunctionalAdminShell` 左上角默认 `wa` 字样，保持展开、折叠、移动侧栏几何稳定。
+- [in_progress] 品牌引用合同、Svelte 检查、生产构建、Impeccable/Finesse 检测和原型浏览器多断点已完成；实际登录态路由因本地后端未运行仍待确认。
+
+### 三方 UI 评审
+
+- Impeccable：按产品界面处理，继承 Phase 41 的深色左轨、薄荷青主色与共享 shell；图标必须在小尺寸可读，不新增装饰层级，验证实际登录态与断点。
+- design-taste-frontend：该技能不负责管理台布局，但品牌资产层可采用其反默认约束；拒绝 Vite 紫色默认图标、渐变文字、发光和复杂细节，以单一强轮廓取代字母占位符。
+- finesse-ui：按 component scope 处理，跳过页面骨架、hero 引擎和 divergence 轮换；register=product，SPECTACLE=1，DENSITY 保持现状，已有 token 优先且不写 `.finesse/log.json`。
+- 共同方向：深海军蓝 `#020b13` + 薄荷青 `#71e2d1` 两色；无文字、无渐变、无阴影；一份品牌资产同时服务 favicon 与共享左轨。
+- 分歧与处理：taste-skill 对管理台页面本身不适用，故只采用其品牌资产与反默认检查；Finesse 的八交互状态不适用于静态品牌图，改以 16px/32px/42px 清晰度、展开/折叠/移动三种容器状态作为验收状态。
+
+### 错误记录
+
+| 错误 | 次数 | 处理 |
+|---|---:|---|
+| 三文件追加补丁因 `findings.md` 压缩拼接尾行不精确而原子失败 | 1 | 确认未产生改动，改用逐文件精确尾部锚点小补丁 |
+| 同一补丁对 `favicon.svg` 同时执行删除和新增，补丁工具拒绝重复目标 | 1 | 确认未产生改动，改用新资产路径并单独更新引用；待引用验证后再移除旧文件 |
+| 本地图像查看器不支持直接解析 SVG | 1 | 文件未改变，改用实际浏览器渲染与截图验收 |
+| 裸 `node --test` 无法加载 `.ts` 品牌合同 | 1 | 按仓库既有方式加 `--experimental-strip-types` 重跑，不改测试内容 |
+| 沙箱禁止 Vite 监听 127.0.0.1:5175 | 1 | 按审批流程在受控 loopback 启动；5175/5176 已被占用后使用 Vite 自动选择的 5177 |
+| 浏览器宿主不提供 viewport/CDP 覆盖且 iframe 物理点击坐标错误 | 1 | 用真实 390/320 iframe 视口触发媒体查询，按截图坐标打开移动抽屉；未把裁剪桌面截图当作响应式证据 |
+| 双 iframe 原型夹具记录一条 `MutationObserver` Node 参数错误 | 1 | 桌面单页无该错误，视觉状态正常；判定为夹具/原型既有错误，不扩大本次品牌资产范围，明确记录残余 |

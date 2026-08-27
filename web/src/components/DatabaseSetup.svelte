@@ -37,6 +37,12 @@
     error?: { code?: string; message?: string };
   }
 
+  interface ProgressStep {
+    key: string;
+    label: string;
+    state: 'pending' | 'active' | 'completed';
+  }
+
   interface SetupErrorPayload {
     error?: { code?: string; message?: string };
   }
@@ -84,33 +90,9 @@
   $: legacyDecisionReady = !legacyChoiceApplies || legacySQLite.decision_recorded || Boolean(legacyDecision);
   $: canContinue = connectionIsCurrent && inspectionIsSafe && testState !== 'working';
   $: canApply = canContinue && legacyDecisionReady && applyState !== 'working';
-  $: progressPercent = operation?.tables_total
-    ? Math.round((operation.tables_completed / operation.tables_total) * 100)
-    : operation?.stage === 'completed' ? 100 : 0;
-
-  $: checklist = [
-    {
-      label: '连接信息',
-      detail: host.trim() && database.trim() && username.trim() && password
-        ? `${host.trim()}:${port} / ${database.trim()}` : '请填写全部必填字段',
-      passed: Boolean(host.trim() && database.trim() && maintenanceDatabase.trim() && username.trim() && password && port > 0 && port <= 65535)
-    },
-    {
-      label: '安装令牌',
-      detail: setupToken.length >= 32 ? '已填写一次性令牌' : '至少 32 个字符',
-      passed: setupToken.length >= 32
-    },
-    {
-      label: '连接测试',
-      detail: inspection ? `PostgreSQL ${inspection.server_version}，${schemaStateLabel(inspection.schema_state)}` : '需要使用当前信息测试',
-      passed: connectionIsCurrent
-    },
-    {
-      label: '安全操作',
-      detail: inspection ? operationSummary(inspection) : '由服务器检查后确定',
-      passed: connectionIsCurrent && inspectionIsSafe
-    }
-  ];
+  $: migrationSelected = legacySQLite.decision === 'migrate' || legacyDecision === 'migrate';
+  $: progressPercent = operation ? operationProgressPercent(operation) : 0;
+  $: progressSteps = operation ? buildProgressSteps(operation, migrationSelected) : [];
 
   function requestPayload() {
     return {
@@ -342,6 +324,23 @@
   }
 
   function operationStatusLabel(value: OperationStatus): string {
+    if (value.state === 'failed') {
+      if (value.stage === 'copying_data') {
+        return value.table
+          ? `迁移 ${value.table} 时停止（${value.tables_completed}/${value.tables_total}，已复制 ${value.rows_copied} 行）。`
+          : '迁移本地 SQLite 数据时停止。';
+      }
+      const failedLabels: Record<string, string> = {
+        queued: '任务启动失败。',
+        checking_database: '检查目标数据库时停止。',
+        creating_database: '创建目标数据库时停止。',
+        preparing_schema: '创建 PostgreSQL 结构时停止。',
+        initializing_schema: '初始化 PostgreSQL 结构时停止。',
+        verifying_counts: '核对迁移数据时停止。',
+        analyzing: '更新 PostgreSQL 统计信息时停止。'
+      };
+      return failedLabels[value.stage] || '数据库安装任务已停止。';
+    }
     const labels: Record<string, string> = {
       queued: '任务已排队。',
       checking_database: '正在重新确认目标数据库状态。',
@@ -356,6 +355,61 @@
       completed: '数据库任务已完成，正在切换服务模式。'
     };
     return labels[value.stage] || '数据库任务正在执行。';
+  }
+
+  function operationProgressPercent(value: OperationStatus): number {
+    if (value.stage === 'copying_data') {
+      const copiedRatio = value.tables_total > 0
+        ? value.tables_completed / value.tables_total
+        : 0;
+      return Math.min(80, 35 + Math.round(copiedRatio * 45));
+    }
+    if (value.stage === 'failed') {
+      const copiedRatio = value.tables_total > 0
+        ? value.tables_completed / value.tables_total
+        : 0;
+      return value.tables_total > 0 ? Math.min(80, 35 + Math.round(copiedRatio * 45)) : 8;
+    }
+    const stageProgress: Record<string, number> = {
+      queued: 2,
+      checking_database: 8,
+      creating_database: 18,
+      preparing_schema: 28,
+      initializing_schema: 34,
+      verifying_counts: 90,
+      analyzing: 96,
+      completed: 100
+    };
+    return stageProgress[value.stage] ?? 2;
+  }
+
+  function buildProgressSteps(value: OperationStatus, includeMigration: boolean): ProgressStep[] {
+    const definitions = [
+      { key: 'database', label: '检查目标库' },
+      { key: 'schema', label: '初始化结构' },
+      ...(includeMigration ? [{ key: 'migration', label: '迁移 SQLite' }] : []),
+      { key: 'verification', label: '核对数据' },
+      { key: 'finish', label: '启动服务' }
+    ];
+    const stageKey: Record<string, string> = {
+      queued: 'database',
+      checking_database: 'database',
+      creating_database: 'database',
+      preparing_schema: 'schema',
+      initializing_schema: 'schema',
+      copying_data: includeMigration ? 'migration' : 'schema',
+      verifying_counts: 'verification',
+      analyzing: 'verification',
+      completed: 'finish'
+    };
+    const activeKey = stageKey[value.stage] || (value.state === 'failed' && value.table && includeMigration ? 'migration' : 'database');
+    const activeIndex = definitions.findIndex((item) => item.key === activeKey);
+    return definitions.map((item, index) => ({
+      ...item,
+      state: value.stage === 'completed' || index < activeIndex
+        ? 'completed'
+        : index === activeIndex ? 'active' : 'pending'
+    }));
   }
 
   function formatBytes(value = 0): string {
@@ -377,44 +431,25 @@
 </script>
 
 <main class="database-setup" aria-labelledby="setup-title">
-  <section class="setup-intro">
-    <div class="setup-brand">well-ambient</div>
-    <div class="setup-intro-copy">
-      <p class="setup-kicker">首次安装</p>
-      <h1 id="setup-title">先确认 PostgreSQL，再迁移本地数据</h1>
-      <p class="setup-summary">连接测试会明确区分“目标数据库不存在”“空 schema”和“已迁移结构”。安装完成后，数据库入口会关闭，登录与业务接口才会启用。</p>
-    </div>
-    <div class="setup-security-note">
-      <strong>安全边界</strong>
-      <p>数据库密码和安装令牌只提交给当前服务。SQLite 路径由服务器配置固定，页面无法选择任意文件。</p>
-    </div>
-  </section>
+  <header class="setup-header">
+    <h1 id="setup-title">配置运行数据库</h1>
+    <p>连接 PostgreSQL，完成后进入登录。</p>
+  </header>
 
   <form class="setup-workspace" aria-busy={testState === 'working' || applyState === 'working'} on:submit={applyDatabase}>
     <nav class="setup-steps" aria-label="数据库安装步骤">
-      <span class:active={step === 1} class:completed={step === 2}><b>1</b> 连接与测试</span>
-      <span class:active={step === 2}><b>2</b> 数据与确认</span>
+      <span class:active={step === 1} class:completed={step === 2}><b>1</b> 连接</span>
+      <span class:active={step === 2}><b>2</b> 确认与迁移</span>
     </nav>
 
-    <header class="setup-workspace-header">
-      <div>
-        <p class="setup-kicker">步骤 {step} / 2</p>
-        <h2>{step === 1 ? '配置运行数据库' : '确认首次安装操作'}</h2>
-        <p>{step === 1 ? '先连接维护数据库，再检查目标数据库是否存在及当前角色权限。' : '核对服务器检查结果，并仅在发现本地 SQLite 快照时确认是否迁移。'}</p>
-      </div>
-      <span class="setup-status-chip" class:is-ready={step === 1 ? canContinue : canApply}>
-        {step === 1 ? (canContinue ? '检查通过' : '等待检查') : (canApply ? '可以安装' : '等待确认')}
-      </span>
-    </header>
-
     {#if step === 1}
-      <fieldset class="setup-section" disabled={applyState === 'working' || applyState === 'success'}>
-        <legend>连接信息</legend>
+      <fieldset class="setup-section connection-section" disabled={applyState === 'working' || applyState === 'success'}>
+        <legend>PostgreSQL 连接</legend>
         <div class="setup-fields two-columns">
           <label>
             <span>主机名或 IP *</span>
             <input id="setup-host" bind:value={host} on:input={markConnectionDirty} aria-invalid={fieldErrors.host ? 'true' : undefined} autocomplete="off" />
-            {#if fieldErrors.host}<small class="field-error">{fieldErrors.host}</small>{:else}<small>Compose 内置 PostgreSQL 使用 <code>postgres</code>。</small>{/if}
+            {#if fieldErrors.host}<small class="field-error">{fieldErrors.host}</small>{/if}
           </label>
           <label>
             <span>端口 *</span>
@@ -422,14 +457,9 @@
             {#if fieldErrors.port}<small class="field-error">{fieldErrors.port}</small>{/if}
           </label>
           <label>
-            <span>目标数据库名 *</span>
+            <span>目标数据库 *</span>
             <input id="setup-database" bind:value={database} on:input={markConnectionDirty} aria-invalid={fieldErrors.database ? 'true' : undefined} autocomplete="off" />
-            {#if fieldErrors.database}<small class="field-error">{fieldErrors.database}</small>{:else}<small>允许尚不存在；测试后由服务判断是否创建。</small>{/if}
-          </label>
-          <label>
-            <span>维护数据库名 *</span>
-            <input id="setup-maintenance-database" bind:value={maintenanceDatabase} on:input={markConnectionDirty} aria-invalid={fieldErrors.maintenance_database ? 'true' : undefined} autocomplete="off" />
-            {#if fieldErrors.maintenance_database}<small class="field-error">{fieldErrors.maintenance_database}</small>{:else}<small>通常为 <code>postgres</code>，用于检查和创建目标数据库。</small>{/if}
+            {#if fieldErrors.database}<small class="field-error">{fieldErrors.database}</small>{/if}
           </label>
           <label>
             <span>用户名 *</span>
@@ -439,247 +469,199 @@
           <label>
             <span>数据库密码 *</span>
             <input id="setup-password" type="password" bind:value={password} on:input={markConnectionDirty} aria-invalid={fieldErrors.password ? 'true' : undefined} autocomplete="new-password" />
-            {#if fieldErrors.password}<small class="field-error">{fieldErrors.password}</small>{:else}<small>成功后从页面内存清除。</small>{/if}
-          </label>
-        </div>
-      </fieldset>
-
-      <fieldset class="setup-section" disabled={applyState === 'working' || applyState === 'success'}>
-        <legend>传输安全与安装授权</legend>
-        <div class="setup-fields two-columns">
-          <label>
-            <span>SSL 模式 *</span>
-            <select id="setup-ssl-mode" bind:value={sslMode} on:change={markConnectionDirty}>
-              <option value="disable">disable</option>
-              <option value="prefer">prefer</option>
-              <option value="require">require</option>
-              <option value="verify-ca">verify-ca</option>
-              <option value="verify-full">verify-full</option>
-            </select>
-            <small>跨主机连接建议使用 <code>verify-full</code>。</small>
+            {#if fieldErrors.password}<small class="field-error">{fieldErrors.password}</small>{/if}
           </label>
           <label>
-            <span>根证书路径</span>
-            <input id="setup-root-cert" bind:value={sslRootCert} on:input={markConnectionDirty} placeholder="/etc/well-ambient/ca.pem" aria-invalid={fieldErrors.ssl_root_cert ? 'true' : undefined} autocomplete="off" />
-            {#if fieldErrors.ssl_root_cert}<small class="field-error">{fieldErrors.ssl_root_cert}</small>{:else}<small>仅 verify-ca / verify-full 使用。</small>{/if}
-          </label>
-          <label class="full-width">
-            <span>一次性安装令牌 *</span>
+            <span>安装令牌 *</span>
             <input id="setup-token" type="password" bind:value={setupToken} on:input={markConnectionDirty} aria-invalid={fieldErrors.setup_token ? 'true' : undefined} autocomplete="new-password" />
-            {#if fieldErrors.setup_token}<small class="field-error">{fieldErrors.setup_token}</small>{:else}<small>读取 <code>deploy/.env.production</code> 中的 <code>WELL_AMBIENT_SETUP_TOKEN</code>。</small>{/if}
+            {#if fieldErrors.setup_token}<small class="field-error">{fieldErrors.setup_token}</small>{/if}
           </label>
         </div>
-      </fieldset>
 
-      <section class="setup-check" aria-labelledby="setup-check-title">
-        <div class="setup-check-header">
-          <div>
-            <h3 id="setup-check-title">连接检查</h3>
-            <p>不会在此步骤创建数据库或写入配置。</p>
+        <details class="advanced-options">
+          <summary>高级连接选项</summary>
+          <div class="setup-fields two-columns advanced-fields">
+            <label>
+              <span>维护数据库</span>
+              <input id="setup-maintenance-database" bind:value={maintenanceDatabase} on:input={markConnectionDirty} aria-invalid={fieldErrors.maintenance_database ? 'true' : undefined} autocomplete="off" />
+              {#if fieldErrors.maintenance_database}<small class="field-error">{fieldErrors.maintenance_database}</small>{/if}
+            </label>
+            <label>
+              <span>SSL 模式</span>
+              <div class="select-control">
+                <select id="setup-ssl-mode" bind:value={sslMode} on:change={markConnectionDirty}>
+                  <option value="disable">disable</option>
+                  <option value="prefer">prefer</option>
+                  <option value="require">require</option>
+                  <option value="verify-ca">verify-ca</option>
+                  <option value="verify-full">verify-full</option>
+                </select>
+                <svg aria-hidden="true" class="select-chevron" viewBox="0 0 12 8" focusable="false">
+                  <path d="M1.5 1.5 6 6l4.5-4.5"></path>
+                </svg>
+              </div>
+            </label>
+            <label class="full-width">
+              <span>根证书路径</span>
+              <input id="setup-root-cert" bind:value={sslRootCert} on:input={markConnectionDirty} placeholder="/etc/well-ambient/ca.pem" aria-invalid={fieldErrors.ssl_root_cert ? 'true' : undefined} autocomplete="off" />
+              {#if fieldErrors.ssl_root_cert}<small class="field-error">{fieldErrors.ssl_root_cert}</small>{/if}
+            </label>
           </div>
-          <button type="button" class="secondary-action" on:click={testConnection} disabled={testState === 'working' || applyState === 'working'}>
-            {testState === 'working' ? '正在测试' : '测试连接'}
-          </button>
+        </details>
+
+        {#if legacySQLite.available}
+          <div class="legacy-detected" role="note">
+            <span aria-hidden="true">✓</span>
+            <p><strong>已检测到本地 SQLite</strong><small>{formatBytes(legacySQLite.size_bytes)} · {legacySQLite.table_count || 0} 张表，连接测试后可选择是否迁移。</small></p>
+          </div>
+        {/if}
+      </fieldset>
+    {:else if operation}
+      <section class="operation-progress" class:is-failed={operation.state === 'failed'} aria-labelledby="progress-title">
+        <div class="progress-heading">
+          <div>
+            <h2 id="progress-title">{operation.state === 'failed' ? '安装已停止' : operation.state === 'completed' ? '安装完成' : '正在安装'}</h2>
+            <p>{operationStatusLabel(operation)}</p>
+          </div>
+          <strong>{operation.state === 'failed' ? '失败' : `${progressPercent}%`}</strong>
         </div>
-        <div class="check-list">
-          {#each checklist as item}
-            <div class="check-row" class:passed={item.passed}>
-              <span class="check-symbol" aria-hidden="true">{item.passed ? '✓' : '!'}</span>
-              <div><strong>{item.label}</strong><small>{item.detail}</small></div>
-            </div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}>
+          <span style={`transform: scaleX(${progressPercent / 100})`}></span>
+        </div>
+        <ol class="progress-stages" aria-label="安装阶段">
+          {#each progressSteps as item}
+            <li class:active={item.state === 'active'} class:completed={item.state === 'completed'} aria-current={item.state === 'active' ? 'step' : undefined}>
+              <span aria-hidden="true">{item.state === 'completed' ? '✓' : ''}</span>
+              {item.label}
+            </li>
           {/each}
+        </ol>
+        <div class="progress-metrics">
+          {#if operation.table}<span>当前表 <strong>{operation.table}</strong></span>{/if}
+          {#if operation.tables_total > 0}<span>表进度 <strong>{operation.tables_completed}/{operation.tables_total}</strong></span>{/if}
+          {#if operation.rows_copied > 0}<span>已复制 <strong>{operation.rows_copied} 行</strong></span>{/if}
         </div>
       </section>
     {:else}
       <section class="confirmation-section" aria-labelledby="operation-title">
-        <div class="section-heading">
-          <p class="setup-kicker">数据库操作</p>
-          <h3 id="operation-title">{inspection ? schemaStateLabel(inspection.schema_state) : '等待检查结果'}</h3>
-          <p>{inspection ? operationSummary(inspection) : '返回上一步重新测试连接。'}</p>
-        </div>
+        <h2 id="operation-title">{inspection ? schemaStateLabel(inspection.schema_state) : '确认安装'}</h2>
+        <p>{inspection ? operationSummary(inspection) : '返回上一步重新测试连接。'}</p>
         <dl class="setup-summary-list">
-          <div><dt>PostgreSQL</dt><dd>{inspection?.server_version || '—'}</dd></div>
           <div><dt>目标</dt><dd>{host.trim()}:{port} / {database.trim()}</dd></div>
-          <div><dt>维护库</dt><dd>{maintenanceDatabase.trim()}</dd></div>
-          <div><dt>服务操作</dt><dd>{inspection?.required_operation || '—'}</dd></div>
+          <div><dt>版本</dt><dd>PostgreSQL {inspection?.server_version || '—'}</dd></div>
         </dl>
       </section>
 
-      <fieldset class="setup-section legacy-section" disabled={applyState === 'working' || applyState === 'success'}>
-        <legend>本地 SQLite 数据</legend>
-        {#if legacyChoiceApplies && legacySQLite.decision_recorded}
-          <div class="decision-recorded">
-            <strong>本次安装已记录：{legacySQLite.decision === 'migrate' ? '迁移本地数据' : '跳过本地数据'}</strong>
-            <p>该选择只记录一次。若确需变更，请由管理员修改服务器运行配置后重新进入安装流程。</p>
-          </div>
-        {:else if legacyChoiceApplies}
-          <p class="legacy-facts">服务器发现一个只读 SQLite 快照：{formatBytes(legacySQLite.size_bytes)}，约 {legacySQLite.table_count || 0} 张非系统表。请选择一次，提交后不可在页面修改。</p>
-          <div class="mode-grid">
-            <label class="mode-card" class:selected={legacyDecision === 'migrate'}>
-              <input type="radio" name="legacy-decision" value="migrate" bind:group={legacyDecision} />
-              <span>
-                <strong>迁移本地数据</strong>
-                <small>在同一事务中创建结构、按白名单分批复制、重置 sequence 并逐表核对行数。</small>
-              </span>
-            </label>
-            <label class="mode-card" class:selected={legacyDecision === 'skip'}>
-              <input type="radio" name="legacy-decision" value="skip" bind:group={legacyDecision} />
-              <span>
-                <strong>跳过本地数据</strong>
-                <small>只初始化 PostgreSQL；SQLite 快照不会被删除或修改。</small>
-              </span>
-            </label>
-          </div>
-        {:else if legacySQLite.available && inspection?.required_operation === 'connect_existing'}
-          <p class="legacy-facts">服务器发现 SQLite 快照，但目标 PostgreSQL 已是完整结构，本次只接入现有数据库，不重复迁移。</p>
-        {:else}
-          <p class="legacy-facts">服务器未发现配置路径下可读取且校验通过的 SQLite 快照，本次将按全新安装处理。</p>
-        {/if}
-      </fieldset>
-
-      {#if operation}
-        <section class="operation-progress" aria-labelledby="progress-title">
-          <div class="progress-heading">
-            <div>
-              <h3 id="progress-title">安装进度</h3>
-              <p>{operationStatusLabel(operation)}</p>
+      {#if legacyChoiceApplies}
+        <fieldset class="setup-section legacy-section" disabled={applyState === 'working' || applyState === 'success'}>
+          <legend>本地 SQLite</legend>
+          {#if legacySQLite.decision_recorded}
+            <div class="decision-recorded">
+              已选择：{legacySQLite.decision === 'migrate' ? '迁移本地数据' : '不迁移本地数据'}
             </div>
-            <strong>{progressPercent}%</strong>
-          </div>
-          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent}>
-            <span style={`width: ${progressPercent}%`}></span>
-          </div>
-          {#if operation.rows_copied > 0}
-            <small>已复制 {operation.rows_copied} 行 · {operation.tables_completed}/{operation.tables_total} 张表</small>
+          {:else}
+            <p class="legacy-facts">{formatBytes(legacySQLite.size_bytes)} · {legacySQLite.table_count || 0} 张表 · 该选择只记录一次</p>
+            <div class="mode-grid">
+              <label class="mode-card" class:selected={legacyDecision === 'migrate'}>
+                <input type="radio" name="legacy-decision" value="migrate" bind:group={legacyDecision} />
+                <span><strong>迁移本地数据</strong><small>复制到 PostgreSQL 并核对行数</small></span>
+              </label>
+              <label class="mode-card" class:selected={legacyDecision === 'skip'}>
+                <input type="radio" name="legacy-decision" value="skip" bind:group={legacyDecision} />
+                <span><strong>不迁移</strong><small>使用空白 PostgreSQL 数据库</small></span>
+              </label>
+            </div>
           {/if}
-        </section>
+        </fieldset>
+      {:else if legacySQLite.available && inspection?.required_operation === 'connect_existing'}
+        <p class="legacy-inline-note">目标 PostgreSQL 已有完整数据，本次不重复迁移 SQLite。</p>
       {/if}
     {/if}
 
     <div class="setup-feedback tone-{applyState === 'success' ? 'success' : testState === 'error' || applyState === 'error' ? 'error' : testState === 'working' || applyState === 'working' ? 'working' : 'neutral'}" role="status" aria-live="polite">
-      <strong>{applyState === 'success' ? '配置已保存' : testState === 'success' ? '检查结果' : '当前状态'}</strong>
       <span>{statusMessage}</span>
     </div>
 
     <footer class="setup-actions">
-      <p>最终连接串会原子写入权限为 0600 的服务器运行配置；SQLite 快照只读，不会自动删除。</p>
-      <div class="action-group">
-        {#if step === 2 && applyState !== 'success'}
-          <button type="button" class="secondary-action" on:click={() => step = 1} disabled={applyState === 'working'}>返回修改</button>
-        {/if}
-        {#if restartTimedOut}
-          <button type="button" class="primary-action" on:click={() => window.location.reload()}>刷新页面</button>
-        {:else if step === 1}
-          <button type="button" class="primary-action" on:click={continueToConfirmation} disabled={!canContinue}>下一步</button>
-        {:else}
-          <button type="submit" class="primary-action" disabled={!canApply}>
-            {applyState === 'working' ? '正在执行安装' : inspection?.required_operation === 'connect_existing' ? '确认接入并启动' : '开始安装并启动'}
-          </button>
-        {/if}
-      </div>
+      {#if restartTimedOut}
+        <button type="button" class="primary-action" on:click={() => window.location.reload()}>刷新页面</button>
+      {:else if step === 1}
+        <button type="button" class="secondary-action" on:click={testConnection} disabled={testState === 'working' || applyState === 'working'}>
+          {testState === 'working' ? '正在测试' : '测试连接'}
+        </button>
+        <button type="button" class="primary-action" on:click={continueToConfirmation} disabled={!canContinue}>下一步</button>
+      {:else if !operation}
+        <button type="button" class="secondary-action" on:click={() => step = 1} disabled={applyState === 'working'}>返回</button>
+        <button type="submit" class="primary-action" disabled={!canApply}>
+          {inspection?.required_operation === 'connect_existing' ? '确认接入' : '开始安装'}
+        </button>
+      {/if}
     </footer>
   </form>
 </main>
 
 <style>
+  /* finesse · register=product · shell=centered-setup-workflow · SOUL=4 SPECTACLE=1 DENSITY=7 */
   .database-setup {
     min-height: 100dvh;
     display: grid;
-    grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.7fr);
-    gap: clamp(24px, 4vw, 64px);
-    align-items: start;
-    padding: clamp(24px, 5vw, 72px);
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    align-content: start;
+    gap: 20px;
+    padding: clamp(28px, 4vw, 52px) clamp(20px, 4vw, 48px);
     background: var(--wa-bg-ambient), var(--wa-bg-page);
     color: var(--wa-text-main);
   }
 
-  .setup-intro {
+  .setup-header {
+    width: 100%;
+    max-width: 760px;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 48px;
-    padding-top: 8px;
+    text-align: center;
   }
 
-  .setup-brand {
-    width: fit-content;
-    color: var(--wa-rail-text-strong);
-    background: var(--wa-bg-rail);
-    border-radius: var(--wa-radius-sm);
-    padding: 10px 14px;
-    font-family: var(--wa-font-display);
-    font-size: 16px;
-    font-weight: 760;
-    letter-spacing: -0.02em;
-  }
-
-  .setup-kicker {
-    margin: 0 0 10px;
-    color: var(--wa-accent-strong);
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-  }
-
-  h1, h2, h3, p { margin-top: 0; }
+  h1, h2, p { margin-top: 0; }
 
   h1 {
-    max-width: 12ch;
-    margin-bottom: 18px;
+    max-width: 24ch;
+    margin: 0 auto 7px;
     color: var(--wa-text-strong);
     font-family: var(--wa-font-display);
-    font-size: clamp(34px, 4vw, 54px);
-    line-height: 1.05;
-    letter-spacing: -0.045em;
+    font-size: 30px;
+    line-height: 1.18;
+    letter-spacing: -0.035em;
     text-wrap: balance;
     overflow-wrap: anywhere;
     min-width: 0;
   }
 
-  .setup-summary {
-    max-width: 38ch;
-    margin-bottom: 0;
+  .setup-header p {
+    margin: 0 auto;
     color: var(--wa-text-muted);
-    font-size: 15px;
-    line-height: 1.75;
-    text-wrap: pretty;
-  }
-
-  .setup-security-note {
-    max-width: 390px;
-    padding-top: 18px;
-    border-top: 1px solid var(--wa-border-strong);
-  }
-
-  .setup-security-note strong { color: var(--wa-text-strong); font-size: 13px; }
-  .setup-security-note p { margin: 8px 0 0; color: var(--wa-text-muted); font-size: 13px; line-height: 1.65; }
-
-  code {
-    font-family: var(--wa-font-mono);
-    font-size: 0.92em;
-    color: var(--wa-info-strong);
-    overflow-wrap: anywhere;
+    font-size: 13px;
+    line-height: 1.5;
   }
 
   .setup-workspace {
     width: 100%;
-    max-width: 880px;
+    max-width: 760px;
     min-width: 0;
-    justify-self: end;
+    justify-self: center;
     background: var(--wa-glass-panel-strong);
     border: 1px solid var(--wa-glass-outline);
     border-top-color: var(--wa-glass-highlight);
     border-radius: var(--wa-radius-xl);
     box-shadow: var(--wa-shadow-panel);
     backdrop-filter: blur(18px) saturate(124%);
-    padding: clamp(20px, 3vw, 34px);
+    padding: clamp(20px, 3vw, 30px);
   }
 
   .setup-steps {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 1px;
-    margin: -4px 0 24px;
+    margin: -4px 0 22px;
     border: 1px solid var(--wa-border-divider);
     border-radius: var(--wa-radius-md);
     overflow: hidden;
@@ -712,61 +694,28 @@
   .setup-steps span.active { color: var(--wa-accent-strong); background: var(--wa-accent-soft); }
   .setup-steps span.active b, .setup-steps span.completed b { background: var(--wa-accent-fill); color: var(--wa-accent-fill-ink); }
 
-  .setup-workspace-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 24px;
-    padding-bottom: 24px;
-    border-bottom: 1px solid var(--wa-border-divider);
-  }
-
-  .setup-workspace-header h2 {
-    margin-bottom: 8px;
-    color: var(--wa-text-strong);
-    font-size: 23px;
-    letter-spacing: -0.025em;
-  }
-
-  .setup-workspace-header p:last-child { margin: 0; color: var(--wa-text-muted); font-size: 13px; line-height: 1.55; }
-
-  .setup-status-chip {
-    flex: 0 0 auto;
-    min-height: 32px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 11px;
-    border-radius: var(--wa-radius-pill);
-    background: var(--wa-neutral-soft);
-    color: var(--wa-text-muted);
-    font-size: 12px;
-    font-weight: 760;
-  }
-
-  .setup-status-chip.is-ready { background: var(--wa-success-soft); color: var(--wa-success); }
-
   fieldset {
     min-width: 0;
     margin: 0;
-    padding: 24px 0;
+    padding: 2px 0 22px;
     border: 0;
     border-bottom: 1px solid var(--wa-border-divider);
   }
 
   legend {
-    margin-bottom: 16px;
+    margin-bottom: 15px;
     padding: 0;
     color: var(--wa-text-strong);
     font-size: 15px;
     font-weight: 760;
   }
 
-  .setup-fields { display: grid; gap: 18px; }
+  .setup-fields { display: grid; gap: 16px; }
   .setup-fields.two-columns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .full-width { grid-column: 1 / -1; }
 
   label { min-width: 0; display: flex; flex-direction: column; gap: 7px; color: var(--wa-text-main); font-size: 13px; font-weight: 680; }
-  label small { min-height: 17px; color: var(--wa-text-muted); font-size: 11.5px; font-weight: 500; line-height: 1.45; }
+  label small { color: var(--wa-text-muted); font-size: 11.5px; font-weight: 500; line-height: 1.45; }
   label small.field-error { color: var(--wa-danger); }
 
   input, select {
@@ -789,9 +738,72 @@
   input:disabled, select:disabled { cursor: not-allowed; background: var(--wa-surface-inset); color: var(--wa-text-subtle); }
   input::placeholder { color: var(--wa-text-subtle); opacity: 1; }
 
+  .select-control { position: relative; min-width: 0; }
+  .select-control select {
+    appearance: none;
+    padding-right: 40px;
+  }
+  .select-chevron {
+    position: absolute;
+    top: 50%;
+    right: 15px;
+    width: 12px;
+    height: 8px;
+    color: var(--wa-text-muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+  .select-chevron path { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+  .select-control:has(select:disabled) .select-chevron { color: var(--wa-text-subtle); }
+
+  .advanced-options {
+    margin-top: 18px;
+    border-top: 1px solid var(--wa-border-divider);
+  }
+
+  .advanced-options summary {
+    width: fit-content;
+    margin-top: 15px;
+    color: var(--wa-text-muted);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .advanced-options summary:hover { color: var(--wa-accent-strong); }
+  .advanced-options summary:focus-visible { border-radius: var(--wa-radius-sm); outline: 3px solid var(--wa-accent-soft); outline-offset: 4px; }
+  .advanced-fields { margin-top: 16px; }
+
+  .legacy-detected {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-radius: var(--wa-radius-md);
+    background: var(--wa-info-soft);
+    color: var(--wa-info-strong);
+  }
+
+  .legacy-detected > span {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--wa-radius-pill);
+    background: var(--wa-surface-flat);
+    font-size: 12px;
+    font-weight: 820;
+  }
+
+  .legacy-detected p { min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+  .legacy-detected strong { font-size: 12.5px; }
+  .legacy-detected small { color: var(--wa-text-muted); font-size: 11.5px; line-height: 1.45; }
+
   .mode-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
   .mode-card {
-    min-height: 118px;
+    min-height: 88px;
     display: grid;
     grid-template-columns: 20px minmax(0, 1fr);
     align-items: start;
@@ -809,51 +821,77 @@
   .mode-card strong { color: var(--wa-text-strong); font-size: 14px; }
   .mode-card small { color: var(--wa-text-muted); font-size: 12px; line-height: 1.55; }
 
-  .confirmation-section { padding: 26px 0 8px; border-bottom: 1px solid var(--wa-border-divider); }
-  .section-heading h3 { margin-bottom: 8px; color: var(--wa-text-strong); font-size: 20px; letter-spacing: -0.02em; }
-  .section-heading > p:last-child { max-width: 68ch; margin-bottom: 20px; color: var(--wa-text-muted); font-size: 13px; line-height: 1.65; }
+  .confirmation-section { padding: 2px 0 18px; border-bottom: 1px solid var(--wa-border-divider); }
+  .confirmation-section h2 { margin-bottom: 7px; color: var(--wa-text-strong); font-size: 20px; letter-spacing: -0.02em; }
+  .confirmation-section > p { margin-bottom: 17px; color: var(--wa-text-muted); font-size: 12.5px; line-height: 1.55; }
 
   .setup-summary-list { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .setup-summary-list div { min-width: 0; display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 12px 0; border-top: 1px solid var(--wa-border-divider); }
+  .setup-summary-list div { min-width: 0; display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; padding: 11px 0; border-top: 1px solid var(--wa-border-divider); }
   .setup-summary-list div:nth-child(odd) { padding-right: 18px; }
   .setup-summary-list dt { color: var(--wa-text-muted); font-size: 11.5px; }
   .setup-summary-list dd { min-width: 0; margin: 0; color: var(--wa-text-strong); font: 620 12px var(--wa-font-mono); overflow-wrap: anywhere; }
 
-  .legacy-facts, .decision-recorded p { margin: 0 0 16px; color: var(--wa-text-muted); font-size: 12.5px; line-height: 1.65; }
-  .decision-recorded { padding: 13px 14px; border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-md); background: var(--wa-success-soft); }
-  .decision-recorded strong { color: var(--wa-success); font-size: 13px; }
-  .decision-recorded p { margin: 6px 0 0; }
+  .legacy-section { padding-top: 20px; }
+  .legacy-facts { margin: -5px 0 14px; color: var(--wa-text-muted); font: 600 12px var(--wa-font-mono); }
+  .decision-recorded { padding: 12px 14px; border-radius: var(--wa-radius-md); background: var(--wa-success-soft); color: var(--wa-success); font-size: 12.5px; font-weight: 700; }
+  .legacy-inline-note { margin: 18px 0 0; padding: 12px 14px; border-radius: var(--wa-radius-md); background: var(--wa-neutral-soft); color: var(--wa-text-muted); font-size: 12px; }
 
-  .operation-progress { padding: 22px 0; border-bottom: 1px solid var(--wa-border-divider); }
+  .operation-progress { padding: 4px 0 20px; border-bottom: 1px solid var(--wa-border-divider); }
   .progress-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-  .progress-heading h3 { margin-bottom: 5px; color: var(--wa-text-strong); font-size: 15px; }
-  .progress-heading p { margin: 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
-  .progress-heading > strong { color: var(--wa-accent-strong); font: 760 13px var(--wa-font-mono); }
-  .progress-track { height: 7px; margin-top: 14px; border-radius: var(--wa-radius-pill); background: var(--wa-neutral-soft); overflow: hidden; }
-  .progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--wa-accent-fill); }
-  .operation-progress > small { display: block; margin-top: 9px; color: var(--wa-text-muted); font-size: 11px; }
+  .progress-heading h2 { margin-bottom: 6px; color: var(--wa-text-strong); font-size: 21px; letter-spacing: -0.02em; }
+  .progress-heading p { margin: 0; color: var(--wa-text-muted); font-size: 12.5px; line-height: 1.5; }
+  .progress-heading > strong { color: var(--wa-accent-strong); font: 760 14px var(--wa-font-mono); }
+  .progress-track { height: 8px; margin-top: 18px; border-radius: var(--wa-radius-pill); background: var(--wa-neutral-soft); overflow: hidden; }
+  .progress-track span { display: block; width: 100%; height: 100%; transform-origin: left center; border-radius: inherit; background: var(--wa-accent-fill); transition: transform var(--wa-duration-normal) var(--wa-ease); }
+  .operation-progress.is-failed .progress-heading > strong { color: var(--wa-danger); }
+  .operation-progress.is-failed .progress-track span { background: var(--wa-danger); }
 
-  .setup-check { padding: 24px 0; border-bottom: 1px solid var(--wa-border-divider); }
-  .setup-check-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 16px; }
-  .setup-check h3 { margin-bottom: 4px; color: var(--wa-text-strong); font-size: 15px; }
-  .setup-check p { margin: 0; color: var(--wa-text-muted); font-size: 12px; }
-  .check-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 18px; }
-  .check-row { min-width: 0; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 0; }
-  .check-symbol { width: 24px; height: 24px; display: grid; place-items: center; border-radius: var(--wa-radius-pill); background: var(--wa-warning-soft); color: var(--wa-warning); font-weight: 850; }
-  .check-row.passed .check-symbol { background: var(--wa-success-soft); color: var(--wa-success); }
-  .check-row div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-  .check-row strong { color: var(--wa-text-strong); font-size: 12.5px; }
-  .check-row small { color: var(--wa-text-muted); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
+  .progress-stages {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+    margin: 18px 0 0;
+    padding: 0;
+    list-style: none;
+  }
 
-  .setup-feedback { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; margin-top: 20px; padding: 13px 14px; border-radius: var(--wa-radius-md); background: var(--wa-neutral-soft); color: var(--wa-text-main); font-size: 12.5px; line-height: 1.5; }
-  .setup-feedback strong { color: var(--wa-text-strong); }
+  .progress-stages li {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--wa-text-subtle);
+    font-size: 11.5px;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .progress-stages li > span {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-pill);
+    background: var(--wa-surface-flat);
+    font-size: 10px;
+  }
+
+  .progress-stages li.active { color: var(--wa-accent-strong); }
+  .progress-stages li.active > span { border-color: var(--wa-accent); box-shadow: inset 0 0 0 4px var(--wa-accent-soft); }
+  .progress-stages li.completed { color: var(--wa-text-main); }
+  .progress-stages li.completed > span { border-color: var(--wa-accent-fill); background: var(--wa-accent-fill); color: var(--wa-accent-fill-ink); }
+
+  .progress-metrics { display: flex; flex-wrap: wrap; gap: 8px 18px; min-height: 18px; margin-top: 16px; color: var(--wa-text-muted); font-size: 11.5px; }
+  .progress-metrics strong { color: var(--wa-text-main); font-family: var(--wa-font-mono); font-weight: 650; overflow-wrap: anywhere; }
+
+  .setup-feedback { margin-top: 18px; padding: 11px 13px; border-radius: var(--wa-radius-md); background: var(--wa-neutral-soft); color: var(--wa-text-main); font-size: 12.5px; line-height: 1.5; }
   .setup-feedback.tone-success { background: var(--wa-success-soft); color: var(--wa-success); }
   .setup-feedback.tone-error { background: var(--wa-danger-soft); color: var(--wa-danger); }
   .setup-feedback.tone-working { background: var(--wa-info-soft); color: var(--wa-info-strong); }
 
-  .setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-top: 22px; }
-  .setup-actions p { max-width: 56ch; margin: 0; color: var(--wa-text-muted); font-size: 11.5px; line-height: 1.5; }
-  .action-group { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+  .setup-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 18px; }
   button { min-height: 44px; border-radius: var(--wa-radius-md); padding: 0 16px; border: 1px solid transparent; font: 760 13px var(--wa-font-sans); white-space: nowrap; cursor: pointer; outline: none; }
   button:focus-visible { box-shadow: 0 0 0 3px var(--wa-accent-soft); }
   button:active:not(:disabled) { transform: translateY(1px); }
@@ -864,34 +902,29 @@
   .secondary-action:hover:not(:disabled) { border-color: var(--wa-accent); color: var(--wa-accent-strong); }
 
   @media (max-width: 900px) {
-    .database-setup { grid-template-columns: minmax(0, 1fr); padding: 32px 24px; }
-    .setup-intro { gap: 24px; }
-    h1 { max-width: 18ch; }
-    .setup-summary, .setup-security-note { max-width: 65ch; }
-    .setup-workspace { max-width: none; justify-self: stretch; }
+    .database-setup { padding: 32px 24px; }
   }
 
   @media (max-width: 768px) {
-    .setup-workspace-header, .setup-check-header, .setup-actions { flex-direction: column; align-items: stretch; }
-    .setup-fields.two-columns, .mode-grid, .check-list { grid-template-columns: minmax(0, 1fr); }
+    .setup-fields.two-columns, .mode-grid { grid-template-columns: minmax(0, 1fr); }
     .full-width { grid-column: auto; }
-    .setup-status-chip { align-self: flex-start; }
-    .setup-feedback { grid-template-columns: minmax(0, 1fr); gap: 4px; }
     .setup-summary-list { grid-template-columns: minmax(0, 1fr); }
     .setup-summary-list div:nth-child(odd) { padding-right: 0; }
-    .action-group { width: 100%; flex-direction: column-reverse; }
-    .primary-action, .secondary-action { width: 100%; }
+    .progress-stages { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   }
 
   @media (max-width: 600px) {
-    .database-setup { padding: 20px 14px; gap: 24px; }
-    .setup-brand { font-size: 14px; }
-    h1 { font-size: 32px; }
+    .database-setup { padding: 20px 14px; gap: 18px; }
+    h1 { font-size: 26px; }
     .setup-workspace { padding: 18px 14px; border-radius: var(--wa-radius-lg); }
+    .setup-steps span { padding: 0 10px; }
+    .setup-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .setup-actions > :only-child { grid-column: 1 / -1; }
+    .primary-action, .secondary-action { width: 100%; min-width: 0; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    input, select, button { transition: none; }
+    input, select, button, .progress-track span { transition: none; }
   }
 
   @media (prefers-reduced-transparency: reduce) {

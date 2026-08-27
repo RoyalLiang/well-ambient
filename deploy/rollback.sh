@@ -46,5 +46,17 @@ if [[ -f "$state_dir/current-version" ]]; then
   cp "$state_dir/current-version" "$state_dir/rolled-back-from-version"
 fi
 printf '%s\n' "$WELL_AMBIENT_VERSION" >"$state_dir/current-version"
+if [[ -f "$state_dir/current-release.env" ]]; then
+  cp "$state_dir/current-release.env" "$state_dir/rolled-back-from-release.env"
+fi
+if [[ -f "$state_dir/previous-release.env" ]]; then
+  cp "$state_dir/previous-release.env" "$state_dir/current-release.env"
+fi
+if [[ -f "$state_dir/current-release-notes.txt" ]]; then
+  cp "$state_dir/current-release-notes.txt" "$state_dir/rolled-back-from-release-notes.txt"
+fi
+if [[ -f "$state_dir/previous-release-notes.txt" ]]; then
+  cp "$state_dir/previous-release-notes.txt" "$state_dir/current-release-notes.txt"
+fi
 echo "rolled back application images to $WELL_AMBIENT_VERSION"
 echo "database was not restored automatically; forward migrations are expected to remain additive"

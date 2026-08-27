@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
+
 	"well-ambient/internal/db"
 )
 
@@ -164,7 +166,11 @@ func firstCommitLine(message string) string {
 	}
 	line := strings.TrimSpace(strings.Split(message, "\n")[0])
 	if len(line) > 80 {
-		return line[:80]
+		end := 80
+		for end > 0 && !utf8.ValidString(line[:end]) {
+			end--
+		}
+		return line[:end]
 	}
 	return line
 }

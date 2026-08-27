@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -70,6 +71,47 @@ func TestMigrateLegacySQLiteCopiesOwnedRowsAndIgnoresUnknownTables(t *testing.T)
 	}
 }
 
+func TestMigrateLegacySQLiteRepairsPostgresIncompatibleText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-invalid-utf8.db")
+	source, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.AutoMigrate(&Notification{}); err != nil {
+		t.Fatal(err)
+	}
+	invalidMessage := string(append([]byte("truncated message "), 0xe5, 0x8c, 0x00))
+	if err := source.Create(&Notification{Type: "semantic_link_review", Message: invalidMessage}).Error; err != nil {
+		t.Fatal(err)
+	}
+	closeTestConnection(t, source)
+
+	target, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "target.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil)
+	if err != nil {
+		t.Fatalf("MigrateLegacySQLite() error = %v", err)
+	}
+
+	var migrated Notification
+	if err := target.First(&migrated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(migrated.Message) {
+		t.Fatalf("migrated message remains invalid UTF-8: %x", []byte(migrated.Message))
+	}
+	if strings.ContainsRune(migrated.Message, '\x00') {
+		t.Fatalf("migrated message contains PostgreSQL-incompatible NUL: %x", []byte(migrated.Message))
+	}
+	if report.TextValuesRepaired != 1 {
+		t.Fatalf("TextValuesRepaired = %d, want 1", report.TextValuesRepaired)
+	}
+}
+
 func TestMigrateLegacySQLiteRollsBackSchemaAndRowsWhenFinalizationFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	source := openLegacyMigrationFixture(t, path)
@@ -118,7 +160,12 @@ func TestMigrateLegacySQLiteExternalSnapshot(t *testing.T) {
 	if report.TablesCopied == 0 || report.RowsCopied == 0 {
 		t.Fatalf("full snapshot simulation copied no application data: %#v", report)
 	}
-	t.Logf("full snapshot simulation copied %d rows across %d tables", report.RowsCopied, report.TablesCopied)
+	t.Logf(
+		"full snapshot simulation copied %d rows across %d tables and repaired %d text values",
+		report.RowsCopied,
+		report.TablesCopied,
+		report.TextValuesRepaired,
+	)
 }
 
 func openLegacyMigrationFixture(t *testing.T, path string) *gorm.DB {

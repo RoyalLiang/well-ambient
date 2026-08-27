@@ -434,7 +434,7 @@
 >
   <aside class="console-rail" class:mobile-open={mobileRailOpen} aria-label="well-ambient 管理台导航">
     <div class="brand-block">
-      <div class="brand-mark" aria-hidden="true">wa</div>
+      <img class="brand-mark" src="/brand-mark.svg" alt="" aria-hidden="true" />
       <div class="brand-copy">
         <strong>well-ambient</strong>
         <span>Ambient Operations</span>
@@ -747,17 +747,10 @@
     width: 42px;
     height: 42px;
     border-radius: 14px;
-    background:
-      linear-gradient(135deg, rgba(244, 251, 255, 0.18), rgba(244, 251, 255, 0.035)),
-      var(--wa-accent, #26ddff);
-    color: var(--wa-accent-ink, #021318);
-    display: grid;
-    place-items: center;
-    font-size: 0.68rem;
-    font-weight: 950;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    box-shadow: 0 18px 34px rgba(1, 9, 14, 0.42);
+    display: block;
+    flex: 0 0 auto;
+    object-fit: contain;
+    box-shadow: none;
   }
 
   .brand-copy {
@@ -1699,14 +1692,10 @@
   }
 
   .brand-mark {
-    width: auto;
-    height: auto;
-    border-radius: 0;
-    background: transparent;
-    color: #22d3d8;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
     box-shadow: none;
-    font-size: 0.98rem;
-    letter-spacing: 0;
   }
 
   .brand-copy strong {

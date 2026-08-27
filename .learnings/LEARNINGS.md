@@ -641,3 +641,52 @@ Treat cycle-local Jira resolution and cycle-local due dates as separate eligibil
 - Renamed the displayed trial value to reference score and separated it from the formal score and evidence status.
 
 ---
+## [LRN-20260827-A02] correction
+
+**Logged**: 2026-08-27T18:45:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+首次安装验证必须覆盖 setup 进程退出后正式服务的监听地址连续性，不能以迁移任务 completed 作为终点。
+
+### Details
+SQLite 到 PostgreSQL 的真实迁移已成功，但 `BootstrapVersionedConfig` 随后从数据库恢复历史 `server.port=8080`；Vite 仍代理 setup 使用的 18197，刷新页面稳定返回 502。此前只验证迁移与 setup 状态，没有验证 setup→normal 切换后的同源 API。
+
+### Suggested Action
+本地 launcher 必须给 setup 与 normal 两种模式传递同一进程级 HTTP 地址覆盖，并在 runtime config restore 后再次应用。端到端反馈循环至少断言页面 200、代理非 502、正式后端 ready 200。
+
+### Metadata
+- Source: user_feedback
+- Related Files: cmd/server/main.go, scripts/dev-setup.sh, internal/server/config_version_handlers.go
+- Tags: setup, postgres, runtime-config, proxy, port-continuity
+
+---
+
+## [LRN-20260827-A01] correction
+
+**Logged**: 2026-08-27T12:40:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+不能用独立 setup 后端烟测替代用户实际 Vite 入口的端到端引导页验证。
+
+### Details
+
+上一轮验证了 18198 setup server 能生成令牌并返回 `SETUP`，也保留了既有 18197 进程，但没有证明当前 `http://127.0.0.1:5175/` 正在代理到该后端并渲染 `DatabaseSetup`。用户随后确认本地开发页面没有引导。
+
+### Suggested Action
+
+凡是本地引导页任务，交付前同时验证 Vite 入口 DOM、`/api/setup/status` 网络响应、代理目标和后端配置状态；四项缺一不可。
+
+### Metadata
+
+- Source: user_feedback
+- Related Files: web/vite.config.ts, web/src/App.svelte, cmd/server/main.go, config.example.yaml
+- Tags: local-dev, setup-gate, browser-validation
+
+---

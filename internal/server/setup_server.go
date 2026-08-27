@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -215,8 +216,12 @@ func (backend postgresSetupBackend) Apply(
 	}
 
 	if legacySQLitePath != "" {
-		if _, err := db.MigrateLegacySQLite(ctx, legacySQLitePath, target, MigrateReadModels, progress); err != nil {
-			return DatabaseSetupResult{}, fmt.Errorf("%w: %v", errSetupLegacyMigrationFailed, err)
+		report, err := db.MigrateLegacySQLite(ctx, legacySQLitePath, target, MigrateReadModels, progress)
+		if err != nil {
+			return DatabaseSetupResult{}, wrapLegacyMigrationFailure(err)
+		}
+		if report.TextValuesRepaired > 0 {
+			log.Printf("Database setup: repaired %d PostgreSQL-incompatible legacy text values during migration", report.TextValuesRepaired)
 		}
 	} else {
 		if progress != nil {
@@ -232,6 +237,10 @@ func (backend postgresSetupBackend) Apply(
 		}
 	}
 	return backend.Inspect(ctx, connection)
+}
+
+func wrapLegacyMigrationFailure(err error) error {
+	return fmt.Errorf("%w: %w", errSetupLegacyMigrationFailed, err)
 }
 
 func inspectPostgresVersion(ctx context.Context, conn *gorm.DB) (string, error) {
@@ -443,7 +452,9 @@ func (s *databaseSetupService) Apply(ctx context.Context, request DatabaseSetupR
 
 	result, err := s.backend.Apply(ctx, connection, mode, legacyPath, s.updateMigrationProgress)
 	if err != nil {
-		return DatabaseSetupResult{}, publicSetupBackendError(err)
+		// Keep the internal cause until StartApply records a safe SQLSTATE/stage
+		// diagnostic. The HTTP boundary still receives only setupPublicError.
+		return DatabaseSetupResult{}, err
 	}
 	if result.SchemaState != "well_ambient" {
 		return DatabaseSetupResult{}, &setupPublicError{
@@ -516,10 +527,21 @@ func (s *databaseSetupService) StartApply(request DatabaseSetupRequest, onComple
 			if !errors.As(publicErr, &safe) {
 				safe = &setupPublicError{Code: "setup_failed", Message: "数据库配置失败。", Status: http.StatusInternalServerError}
 			}
+			sqlState := setupFailureSQLState(applyErr)
+			message := safe.Message
+			if safe.Code == "legacy_migration_failed" && sqlState != "" {
+				message = strings.TrimSuffix(message, "。") + "，PostgreSQL 错误码：" + sqlState + "。"
+			}
 			s.operation.State = "failed"
-			s.operation.Stage = "failed"
-			s.operation.Error = &setupOperationError{Code: safe.Code, Message: safe.Message}
+			s.operation.Error = &setupOperationError{Code: safe.Code, Message: message}
+			operationID := s.operation.ID
+			stage := s.operation.Stage
+			table := s.operation.Table
 			s.mu.Unlock()
+			log.Printf(
+				"Database setup operation failed: id=%s code=%s stage=%s table=%s sqlstate=%s",
+				operationID, safe.Code, safeSetupLogValue(stage), safeSetupLogValue(table), safeSetupLogValue(sqlState),
+			)
 			return
 		}
 		s.operation.State = "completed"
@@ -532,6 +554,35 @@ func (s *databaseSetupService) StartApply(request DatabaseSetupRequest, onComple
 		}
 	}()
 	return operation, nil
+}
+
+type sqlStateError interface {
+	SQLState() string
+}
+
+func setupFailureSQLState(err error) string {
+	var stateError sqlStateError
+	if !errors.As(err, &stateError) {
+		return ""
+	}
+	code := strings.ToUpper(strings.TrimSpace(stateError.SQLState()))
+	if len(code) != 5 {
+		return ""
+	}
+	for _, char := range code {
+		if (char < '0' || char > '9') && (char < 'A' || char > 'Z') {
+			return ""
+		}
+	}
+	return code
+}
+
+func safeSetupLogValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func (s *databaseSetupService) Operation() (DatabaseSetupOperation, bool) {
@@ -799,8 +850,8 @@ func NewSetupServer(cfg *config.Config, configPath, token string) (*SetupServer,
 	if cfg == nil || !cfg.Database.RequiresSetup() {
 		return nil, errors.New("database setup mode is not enabled")
 	}
-	if len(token) < minimumSetupTokenSize {
-		return nil, fmt.Errorf("%s must contain at least %d characters", SetupTokenEnvironment, minimumSetupTokenSize)
+	if err := validateSetupToken(token); err != nil {
+		return nil, err
 	}
 	server := &SetupServer{
 		config:      cfg,
