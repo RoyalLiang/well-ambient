@@ -1,8 +1,6 @@
-# syntax=docker/dockerfile:1.7
-
-FROM node:24-bookworm-slim AS web-build
+FROM node:25-alpine AS web-build
 WORKDIR /src/web
-RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
+RUN npm install pnpm@10.6.5 --global
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
 COPY web/ ./
@@ -27,7 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
     -o /out/well-ambient ./cmd/server
 
-FROM debian:bookworm-slim AS server
+FROM registry.cn-hangzhou.aliyuncs.com/rookiehouse/debian:bookworm-slim AS server
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
@@ -35,20 +33,15 @@ LABEL org.opencontainers.image.title="Well Ambient server" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIME}"
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 ambient \
-    && useradd --uid 10001 --gid ambient --no-create-home --shell /usr/sbin/nologin ambient \
-    && mkdir -p /var/lib/well-ambient/attachments /etc/well-ambient \
-    && chown -R ambient:ambient /var/lib/well-ambient /etc/well-ambient
+
 COPY --from=server-build /out/well-ambient /usr/local/bin/well-ambient
+
 USER ambient
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/well-ambient"]
 CMD ["--config", "/etc/well-ambient/config.yaml", "--skip-migrate"]
 
-FROM nginx:1.28.3-alpine AS web
+FROM uhub.service.ucloud.cn/westwell_devops/nginx:1.31.0 AS web
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown

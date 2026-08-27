@@ -7254,3 +7254,22 @@ Allow administrators to configure Jira release-page sources with a project numbe
 | 沙箱禁止 Vite 监听 127.0.0.1:5175 | 1 | 按审批流程在受控 loopback 启动；5175/5176 已被占用后使用 Vite 自动选择的 5177 |
 | 浏览器宿主不提供 viewport/CDP 覆盖且 iframe 物理点击坐标错误 | 1 | 用真实 390/320 iframe 视口触发媒体查询，按截图坐标打开移动抽屉；未把裁剪桌面截图当作响应式证据 |
 | 双 iframe 原型夹具记录一条 `MutationObserver` Node 参数错误 | 1 | 桌面单页无该错误，视觉状态正常；判定为夹具/原型既有错误，不扩大本次品牌资产范围，明确记录残余 |
+# 2026-08-27 Compose waiting 健康检查修复
+
+## 目标
+
+- 让 setup 与正常模式的 Compose `up --wait` 不依赖私有基础镜像是否预装 `curl` 或 `wget`。
+- 保留当前未提交的私有基础镜像选择和镜像瘦身方向。
+
+## 计划
+
+- [completed] 用静态运行时契约稳定复现 server healthcheck 缺少 `curl` 的红灯。
+- [completed] 先补 Compose 健康检查回归契约，再实现应用原生探针和 Web 无下载工具探针。
+- [completed] 运行聚焦 Go 测试、静态 Compose 反馈环、Bash 语法、Make 干跑和完整 `make verify`。
+- [completed] 给出部署主机上的重建、替换旧容器与验收命令；真实 Docker health 状态仍需部署主机验证。
+
+## 假设
+
+- [confirmed] Compose server healthcheck 调用 `curl`，当前最终 server 阶段没有显式提供它。
+- [mitigated] 私有 nginx 运行时是否含 `wget` 无需再假设；Web 探针已改为 shell 内建的文件/进程检查。
+- [pending] 部署主机是否另有挂载权限问题，需要在新镜像健康检查恢复后由自动诊断输出判定。

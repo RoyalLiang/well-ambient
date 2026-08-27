@@ -530,7 +530,7 @@
 | NS2-2150 | 门机移动后车辆无法获取门机最新位置，需要手动重派才能获取门机最新位置 | - | jira公用-南沙二期码头 | - | - |
 | NS2-2152 | VX119做转堆任务，在HF堆场收一个箱子之后，又跳出来HF堆场的任务，VX119绕了一圈又回到HF堆场，中控的指令为HL-10，待执行里面也有去HL堆场的指令 | - | jira公用-南沙二期码头 | - | - |
 | AB-3688 | ⭐【回放】【日志】AT014 deviated from the reference lane | - | 周小凯 | - | - |
-| AB-3713 | ⭐AT003 continuously exits from the safe driving mode | - | jira公用-阿联酋阿布扎比 | - | - |
+| AB-3713 | ⭐【回放】【日志】AT003 continuously exits from the safe driving mode | - | jira公用-阿联酋阿布扎比 | - | - |
 
 ## 进行中 (In Progress)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |

@@ -5707,3 +5707,80 @@ Retry the same narrowly scoped Git command with the approved `git add` escalatio
 - **Notes**: Retried through the scoped Git staging approval path.
 
 ---
+## [ERR-20260827-020] deployment-contract-suite-hit-concurrent-dockerfile-change
+
+**Logged**: 2026-08-27T15:07:29Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+The broad database setup contract suite failed on an unrelated Dockerfile base-image assertion while diagnosing setup mode.
+
+### Error
+
+```text
+production image stages keep build toolchains out of both runtimes: expected FROM debian:bookworm-slim AS server
+```
+
+### Context
+
+- Command: `node --experimental-strip-types --test tests/database-setup-contract.test.ts`
+- The exact setup-mode contracts passed; a concurrent uncommitted Dockerfile optimization changed the runtime base image after the previous commit.
+- The failure did not exercise the reported `Database setup mode is active` behavior.
+
+### Suggested Fix
+
+Use `--test-name-pattern` for the setup/deployment feedback loop, and review the separate Dockerfile change with its own image contract before accepting it.
+
+### Metadata
+
+- Reproducible: yes
+- Related Files: `Dockerfile`, `web/tests/database-setup-contract.test.ts`
+- See Also: ERR-20260827-019
+
+### Resolution
+
+- **Resolved**: 2026-08-27T15:07:29Z
+- **Notes**: The focused setup/Compose contract passed 2/2 and the Go apply/restart tests passed.
+
+---
+## [ERR-20260827-021] combined-contract-and-plan-patch-context-mismatch
+
+**Logged**: 2026-08-27T15:17:39Z
+**Priority**: low
+**Status**: resolved
+**Area**: tests
+
+### Summary
+
+A combined patch for the healthcheck regression contract and task plan failed because the task-plan context had drifted.
+
+### Error
+
+```text
+apply_patch verification failed: Failed to find expected lines in task_plan.md
+```
+
+### Context
+
+- The patch attempted to update two files atomically.
+- No partial changes were applied.
+
+### Suggested Fix
+
+Patch the exact test seam separately and append a self-contained task-plan section without relying on an older neighboring heading.
+
+### Metadata
+
+- Reproducible: no
+- Related Files: `cmd/server/release_artifact_contract_test.go`, `task_plan.md`
+- See Also: ERR-20260827-017
+
+### Resolution
+
+- **Resolved**: 2026-08-27T15:17:39Z
+- **Notes**: Split into exact single-file patches.
+
+---

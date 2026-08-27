@@ -84,6 +84,40 @@ func TestReleaseWorkflowUsesOneGeneratedMetadataSet(t *testing.T) {
 	}
 }
 
+func TestComposeHealthchecksUseImageIndependentRuntimePrimitives(t *testing.T) {
+	projectRoot := releaseContractProjectRoot(t)
+	compose := readReleaseContractFile(t, filepath.Join(projectRoot, "compose.yaml"))
+	deployScript := readReleaseContractFile(t, filepath.Join(projectRoot, "deploy", "deploy.sh"))
+
+	for _, forbidden := range []string{
+		`test: ["CMD", "curl"`,
+		`test: ["CMD", "wget"`,
+	} {
+		if strings.Contains(compose, forbidden) {
+			t.Errorf("compose healthcheck still depends on an optional runtime tool: %s", forbidden)
+		}
+	}
+
+	for _, expected := range []string{
+		`test: ["CMD", "/usr/local/bin/well-ambient", "--healthcheck-url", "http://127.0.0.1:8080/ready"]`,
+		`test: ["CMD-SHELL", "test -s /usr/share/nginx/html/index.html"]`,
+	} {
+		if !strings.Contains(compose, expected) {
+			t.Errorf("compose missing image-independent healthcheck %q", expected)
+		}
+	}
+
+	for _, expected := range []string{
+		"print_compose_diagnostics",
+		`docker inspect --format`,
+		`logs --no-color --tail 120 server web`,
+	} {
+		if !strings.Contains(deployScript, expected) {
+			t.Errorf("deploy failure path missing diagnostic %q", expected)
+		}
+	}
+}
+
 func releaseContractProjectRoot(t *testing.T) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

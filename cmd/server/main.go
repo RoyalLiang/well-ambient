@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
@@ -24,7 +27,16 @@ func main() {
 	httpPort := flag.Int("http-port", 0, "override HTTP listen port after runtime configuration restore")
 	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	skipMigrate := flag.Bool("skip-migrate", false, "start without applying database migrations")
+	healthcheckURL := flag.String("healthcheck-url", "", "probe an HTTP readiness URL and exit")
 	flag.Parse()
+	if endpoint := strings.TrimSpace(*healthcheckURL); endpoint != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		defer cancel()
+		if err := checkHealthEndpoint(ctx, http.DefaultClient, endpoint); err != nil {
+			log.Fatalf("Healthcheck failed: %v", err)
+		}
+		return
+	}
 	if *migrateOnly && *skipMigrate {
 		log.Fatal("--migrate-only and --skip-migrate cannot be used together")
 	}
@@ -133,6 +145,25 @@ func main() {
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server startup failed: %v", err)
 	}
+}
+
+func checkHealthEndpoint(ctx context.Context, client *http.Client, endpoint string) error {
+	if client == nil {
+		return fmt.Errorf("HTTP client is required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create readiness request: %w", err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("request readiness endpoint: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("readiness endpoint returned HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func applyHTTPAddressOverride(cfg *config.Config, host string, port int) error {

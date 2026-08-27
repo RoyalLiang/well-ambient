@@ -108,6 +108,20 @@ export WELL_AMBIENT_VERSION="$version"
 
 compose=(docker compose --env-file "$env_file" -f "$project_root/compose.yaml" --project-directory "$project_root")
 
+print_compose_diagnostics() {
+  echo "compose services did not become ready; diagnostics follow" >&2
+  "${compose[@]}" ps --all >&2 || true
+  "${compose[@]}" logs --no-color --tail 120 server web >&2 || true
+  local service container_id
+  for service in server web; do
+    container_id=$("${compose[@]}" ps -q "$service" 2>/dev/null || true)
+    if [[ -n "$container_id" ]]; then
+      echo "health state for $service ($container_id):" >&2
+      docker inspect --format '{{json .State.Health}}' "$container_id" >&2 || true
+    fi
+  done
+}
+
 if [[ -f "$state_dir/current-version" ]]; then
   cp "$state_dir/current-version" "$state_dir/previous-version"
 fi
@@ -144,8 +158,14 @@ echo "batch: $release_batch"
 "${compose[@]}" config --quiet
 
 if [[ "$database_driver" == "setup" ]]; then
-  "${compose[@]}" up -d --wait --wait-timeout 240 server web
-  curl --fail --silent --show-error "http://127.0.0.1:$http_port/ready" >/dev/null
+  if ! "${compose[@]}" up -d --wait --wait-timeout 240 server web; then
+    print_compose_diagnostics
+    exit 1
+  fi
+  if ! curl --fail --silent --show-error "http://127.0.0.1:$http_port/ready" >/dev/null; then
+    print_compose_diagnostics
+    exit 1
+  fi
   record_release_state
   echo "deployed version $version in first-install mode"
   if [[ -n "$setup_token" ]]; then
@@ -185,8 +205,14 @@ printf 'external_database_endpoint=%s\nbackup_reference=%s\nrelease_version=%s\n
   "$database_endpoint" "$external_backup_reference" "$version" "$release_batch" >"$backup_path"
 
 "${compose[@]}" run --rm --no-deps migrate
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 240 server web
-curl --fail --silent --show-error "http://127.0.0.1:$http_port/ready" >/dev/null
+if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 240 server web; then
+  print_compose_diagnostics
+  exit 1
+fi
+if ! curl --fail --silent --show-error "http://127.0.0.1:$http_port/ready" >/dev/null; then
+  print_compose_diagnostics
+  exit 1
+fi
 record_release_state
 
 echo "deployed version $version"

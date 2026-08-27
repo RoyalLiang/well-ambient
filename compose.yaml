@@ -36,7 +36,7 @@ services:
       - ./deploy/runtime:/etc/well-ambient
       - ./deploy/runtime/data:/var/lib/well-ambient
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/ready"]
+      test: ["CMD", "/usr/local/bin/well-ambient", "--healthcheck-url", "http://127.0.0.1:8080/ready"]
       interval: 10s
       timeout: 3s
       retries: 12
@@ -61,7 +61,7 @@ services:
       server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/live"]
+      test: ["CMD-SHELL", "test -s /usr/share/nginx/html/index.html"]
       interval: 10s
       timeout: 3s
       retries: 12
