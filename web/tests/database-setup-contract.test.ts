@@ -75,6 +75,10 @@ test('the second step asks about a server-controlled SQLite snapshot only once',
   assert.match(setup, /step: 1 \| 2/);
   assert.match(setup, /legacySQLite\.available/);
   assert.match(setup, /legacySQLite\.decision_recorded/);
+  assert.match(setup, /can_migrate_legacy/);
+  assert.match(setup, /inspection\.can_migrate_legacy/);
+  assert.match(setup, /开始迁移/);
+  assert.match(setup, /已包含业务数据，本地 SQLite 迁移已停用以避免覆盖/);
   assert.match(setup, /\/api\/setup\/legacy-sqlite\/decision/);
   assert.match(setup, /该选择只记录一次/);
   assert.doesNotMatch(setup, /type="file"/);

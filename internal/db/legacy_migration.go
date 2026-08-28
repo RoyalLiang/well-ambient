@@ -18,6 +18,24 @@ import (
 
 const legacyMigrationBatchSize = 500
 
+// ErrLegacyMigrationTargetNotEmpty protects an already configured PostgreSQL
+// database from being overwritten by a legacy SQLite import.
+var ErrLegacyMigrationTargetNotEmpty = errors.New("legacy migration target contains application data")
+
+var legacyMigrationSeedTables = map[string]struct{}{
+	"group_permissions":         {},
+	"permissions":               {},
+	"solution_prompt_templates": {},
+	"user_groups":               {},
+}
+
+var legacyMigrationSeedDeleteOrder = []string{
+	"group_permissions",
+	"user_groups",
+	"permissions",
+	"solution_prompt_templates",
+}
+
 type LegacySQLiteSnapshot struct {
 	Path       string `json:"-"`
 	SizeBytes  int64  `json:"size_bytes"`
@@ -169,6 +187,9 @@ func MigrateLegacySQLite(
 		if err := MigrateSchema(tx); err != nil {
 			return fmt.Errorf("create PostgreSQL schema: %w", err)
 		}
+		if err := prepareLegacyMigrationTarget(tx); err != nil {
+			return err
+		}
 		var copiedRows int64
 		for tableIndex, table := range tables {
 			update(LegacyMigrationProgress{
@@ -224,6 +245,55 @@ func MigrateLegacySQLite(
 	}
 	update(LegacyMigrationProgress{Stage: "completed", TablesCompleted: len(tables), TablesTotal: len(tables), RowsCopied: report.RowsCopied})
 	return report, nil
+}
+
+// LegacyMigrationTargetIsSafe reports whether the target contains only the
+// deterministic rows inserted by InitializeReferenceData. Those rows can be
+// recreated after an import; any other application row is treated as user data.
+func LegacyMigrationTargetIsSafe(target *gorm.DB) (bool, error) {
+	if target == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	for _, model := range RequiredSchemaModels() {
+		statement := &gorm.Statement{DB: target}
+		if err := statement.Parse(model); err != nil {
+			return false, fmt.Errorf("parse migration target model: %w", err)
+		}
+		table := statement.Schema.Table
+		if !target.Migrator().HasTable(table) {
+			continue
+		}
+		var count int64
+		if err := target.Table(table).Count(&count).Error; err != nil {
+			return false, fmt.Errorf("count migration target table %s: %w", table, err)
+		}
+		if count == 0 {
+			continue
+		}
+		if _, seeded := legacyMigrationSeedTables[table]; !seeded {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func prepareLegacyMigrationTarget(target *gorm.DB) error {
+	safe, err := LegacyMigrationTargetIsSafe(target)
+	if err != nil {
+		return err
+	}
+	if !safe {
+		return ErrLegacyMigrationTargetNotEmpty
+	}
+	for _, table := range legacyMigrationSeedDeleteOrder {
+		if !target.Migrator().HasTable(table) {
+			continue
+		}
+		if err := target.Exec("DELETE FROM " + quotePostgresIdentifier(table)).Error; err != nil {
+			return fmt.Errorf("clear setup seed table %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 func legacyCopyPlan(source *gorm.DB) ([]legacyTableCopy, error) {

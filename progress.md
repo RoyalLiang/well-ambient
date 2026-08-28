@@ -3626,3 +3626,16 @@
 - 服务器侧预期路径已固定为 `<项目根>/deploy/runtime/data/legacy/well-ambient.db`，对应容器路径 `/var/lib/well-ambient/legacy/well-ambient.db`；等待全仓回归和服务器使用新诊断输出复验。
 - 全仓 `make verify` 退出码 0；Go test/vet、Svelte check/build 均通过，只有仓库既有 warning。实现阶段完成，进入一次性交付反思与服务器侧复验。
 - 服务器容器证据锁定最终根因：bind-mounted runtime YAML 已更新，但旧 setup 进程未重载。新增 `--force-recreate` 合同准确红灯，修复后部署/setup 合同恢复 21/21；当前服务器可用 `docker restart <server-container>` 立即复验。
+
+## 2026-08-28 部署迁移仅建表后刷新
+
+- 收到服务器复现反馈：新部署仍只建表并刷新，没有迁移数据。
+- 启用 `diagnosing-bugs` 与 `Self-Improving`；列出 4 个可证伪假设，开始寻找能捕获 exact symptom 的红灯 seam。
+- 已确认前次部署契约只覆盖 SQLite 快照可见性，不覆盖最终 Apply 迁移选择和数据计数一致性。
+- 新增服务层症状回归并完成红灯：`TestSetupApplyCarriesLegacyMigrationIntoExistingWellAmbientSchema` 精确捕获 migrate 决定被降级为 connect-existing，目标命令 2.9 秒稳定失败。
+# SQLite migration recovery after schema-only initialization
+
+- Added a deterministic red test proving a persisted migrate decision was dropped for a complete `well_ambient` schema.
+- Added target safety classification, transactionally replaceable setup seeds, and a defense-in-depth refusal for targets containing application data.
+- Added `can_migrate_legacy` to database inspection and synchronized the setup UI, button labels, blocking copy, and contract tests.
+- Validated the exact 393 MiB project snapshot, full Go suite, web type/build checks, both UI detectors, and real browser states/breakpoints.

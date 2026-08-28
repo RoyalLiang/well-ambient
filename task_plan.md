@@ -7309,3 +7309,42 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - [completed] 用脚本夹具证明 setup 配置与标准路径能写入，但旧合同没有验证文件有效性或容器实际检测结果。
 - [completed] 部署前校验宿主快照可读且具有 SQLite 文件头；setup 启动后通过真实 `/api/setup/status` 验证 `legacy_sqlite.available=true`。
 - [completed] 定向合同、Bash/ShellCheck、`git diff --check` 与全仓 `make verify` 均通过；真实服务器的最终原因仍需由新部署诊断输出确认。
+
+## 2026-08-28 部署迁移仅建表后刷新
+
+### 目标与反馈循环
+
+- [in_progress] 建立能捕获“选择迁移后只创建 PostgreSQL 表并返回 setup 完成”的后端/HTTP 红灯，不再只检查 SQLite 可见性。
+- [pending] 沿 setup status、迁移决定、database apply、后台 operation、进程退出/Compose 重启逐段验证 4 个可证伪假设。
+- [pending] 在正确 seam 先加入回归再做最小修复；若涉及前端状态或交互，先完成 Impeccable、design-taste-frontend、finesse-ui 三方门禁。
+- [pending] 复跑原始红灯、定向/全量测试，并给出服务器可直接验证的表数和行数证据。
+
+### 当前假设（按优先级）
+
+1. setup apply 请求或服务端决定未把已确认的 legacy 迁移带入执行路径。
+2. legacy 可用状态与迁移决定在测试连接或页面状态更新时丢失。
+3. setup 过早持久化 PostgreSQL 配置并退出，迁移尚未成功就触发页面刷新。
+4. setup 完成后的正式容器与迁移容器使用不同配置或挂载。
+
+### 已识别的前次验证缺口
+
+- 之前只证明 `/api/setup/status` 报告 `legacy_sqlite.available=true`，没有证明最终 Apply 选择迁移，更没有验证迁移后业务行数。
+
+### Errors Encountered
+
+- 首次同时追加三个计划文件时，`findings.md` 标题锚点与实际文本不一致导致整批 `apply_patch` 未应用；随后 `task_plan.md` 的 diff 锚点也不精确，现已按实际尾行重试。
+# UI three-way review — migration recovery state
+
+- Impeccable: preserve the existing centered, formal setup workflow and its tokens. The UI must distinguish an initialized-only PostgreSQL schema from a database containing business data; a migration decision must never disappear behind a refresh.
+- design-taste-frontend: this is a product workflow, not a landing-page redesign. Apply only the anti-slop lens: concise operational copy, no extra decoration, no nested cards, no marketing motion.
+- finesse-ui: keep the existing product/workflow register and the recorded soul/spectacle/density dials (4/1/7). Expose one consequential migration choice only when the backend declares it safe; otherwise show a precise blocking reason. Preserve single-column mobile flow, visible focus, and 44px controls.
+- Shared direction: change state semantics and feedback inside the existing component owner; retain hierarchy, shell, palette, and responsive layout. Validate missing/empty PostgreSQL, initialized-only PostgreSQL, and business-data PostgreSQL states, including refresh/completion behavior.
+- Disagreement/resolution: design-taste-frontend considers multi-step product UI outside its primary scope, while finesse-ui offers workflow patterns. Use finesse only for state/feedback semantics and let the existing Well Ambient design system own all visual styling; do not introduce a new shell, animation, or visual language.
+# Completion status — schema-only migration retry
+
+- [x] Reproduce the silent migration skip with a targeted red test.
+- [x] Preserve explicit migrate intent when PostgreSQL already has a complete Well Ambient schema.
+- [x] Allow retry only for initialization-only targets; reject application data without mutation.
+- [x] Clear reconstructible setup seeds within the same migration transaction.
+- [x] Synchronize backend capability and frontend migration/blocked states.
+- [x] Verify unit, package, contract, build, detector, real snapshot, and browser breakpoint evidence.

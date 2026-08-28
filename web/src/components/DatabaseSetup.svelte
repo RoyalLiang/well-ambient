@@ -13,6 +13,7 @@
     schema_state: SchemaState;
     database_exists: boolean;
     can_create_database: boolean;
+    can_migrate_legacy: boolean;
     required_operation: SetupOperation;
   }
 
@@ -85,7 +86,7 @@
   );
   $: legacyChoiceApplies = Boolean(
     inspection && (legacySQLite.available || legacySQLite.decision_recorded) &&
-    (inspection.required_operation === 'create_database' || inspection.required_operation === 'initialize_empty')
+    inspection.can_migrate_legacy
   );
   $: legacyDecisionReady = !legacyChoiceApplies || legacySQLite.decision_recorded || Boolean(legacyDecision);
   $: canContinue = connectionIsCurrent && inspectionIsSafe && testState !== 'working';
@@ -319,7 +320,10 @@
         : `目标数据库 ${database.trim()} 不存在，当前角色没有 CREATEDB 权限。`;
     }
     if (value.schema_state === 'empty') return '目标数据库已存在且 schema 为空，将初始化当前结构。';
-    if (value.schema_state === 'well_ambient') return '目标数据库结构完整，将直接接入，不改写历史数据。';
+    if (value.schema_state === 'well_ambient' && value.can_migrate_legacy && legacySQLite.available) {
+      return '目标数据库仅含安装初始化数据，可以迁移本地 SQLite。';
+    }
+    if (value.schema_state === 'well_ambient') return '目标数据库结构完整，将直接接入，不改写已有数据。';
     return '目标 schema 已有未知表，自动安装已阻止。';
   }
 
@@ -568,13 +572,13 @@
               </label>
               <label class="mode-card" class:selected={legacyDecision === 'skip'}>
                 <input type="radio" name="legacy-decision" value="skip" bind:group={legacyDecision} />
-                <span><strong>不迁移</strong><small>使用空白 PostgreSQL 数据库</small></span>
+                <span><strong>不迁移</strong><small>保留当前 PostgreSQL 数据</small></span>
               </label>
             </div>
           {/if}
         </fieldset>
       {:else if legacySQLite.available && inspection?.required_operation === 'connect_existing'}
-        <p class="legacy-inline-note">目标 PostgreSQL 已有完整数据，本次不重复迁移 SQLite。</p>
+        <p class="legacy-inline-note">目标 PostgreSQL 已包含业务数据，本地 SQLite 迁移已停用以避免覆盖。</p>
       {/if}
     {/if}
 
@@ -593,7 +597,7 @@
       {:else if !operation}
         <button type="button" class="secondary-action" on:click={() => step = 1} disabled={applyState === 'working'}>返回</button>
         <button type="submit" class="primary-action" disabled={!canApply}>
-          {inspection?.required_operation === 'connect_existing' ? '确认接入' : '开始安装'}
+          {migrationSelected ? '开始迁移' : inspection?.required_operation === 'connect_existing' ? '确认接入' : '开始安装'}
         </button>
       {/if}
     </footer>

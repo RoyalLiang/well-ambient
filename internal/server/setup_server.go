@@ -60,6 +60,7 @@ type DatabaseSetupResult struct {
 	SchemaState       string `json:"schema_state"`
 	DatabaseExists    bool   `json:"database_exists"`
 	CanCreateDatabase bool   `json:"can_create_database"`
+	CanMigrateLegacy  bool   `json:"can_migrate_legacy"`
 	RequiredOperation string `json:"required_operation"`
 }
 
@@ -142,7 +143,7 @@ func (postgresSetupBackend) Inspect(ctx context.Context, connection setupDatabas
 	if !databaseExists {
 		return DatabaseSetupResult{
 			ServerVersion: version, SchemaState: "database_missing", DatabaseExists: false,
-			CanCreateDatabase: canCreateDatabase, RequiredOperation: "create_database",
+			CanCreateDatabase: canCreateDatabase, CanMigrateLegacy: true, RequiredOperation: "create_database",
 		}, nil
 	}
 
@@ -158,6 +159,14 @@ func (postgresSetupBackend) Inspect(ctx context.Context, connection setupDatabas
 	result.ServerVersion = version
 	result.DatabaseExists = true
 	result.CanCreateDatabase = canCreateDatabase
+	if result.SchemaState == "empty" {
+		result.CanMigrateLegacy = true
+	} else if result.SchemaState == "well_ambient" {
+		result.CanMigrateLegacy, err = db.LegacyMigrationTargetIsSafe(target)
+		if err != nil {
+			return DatabaseSetupResult{}, err
+		}
+	}
 	result.RequiredOperation = operationForSchemaState(result.SchemaState)
 	return result, nil
 }
@@ -210,7 +219,9 @@ func (backend postgresSetupBackend) Apply(
 	case "well_ambient":
 		// Schema initialization may have committed before runtime YAML could be
 		// persisted. A complete database is an idempotent recovery point.
-		return backend.Inspect(ctx, connection)
+		if legacySQLitePath == "" {
+			return backend.Inspect(ctx, connection)
+		}
 	case "unknown":
 		return DatabaseSetupResult{}, errSetupDatabaseNotEmpty
 	}
@@ -430,22 +441,25 @@ func (s *databaseSetupService) Apply(ctx context.Context, request DatabaseSetupR
 		return DatabaseSetupResult{}, publicSetupBackendError(errSetupDatabaseNotMigrated)
 	}
 	legacyPath := ""
-	if inspection.SchemaState == "database_missing" || inspection.SchemaState == "empty" {
-		legacyStatus := inspectLegacySQLiteStatus(databaseConfig)
-		switch strings.ToLower(strings.TrimSpace(databaseConfig.LegacyMigrationDecision)) {
-		case "migrate":
-			if !legacyStatus.Available {
-				return DatabaseSetupResult{}, &setupPublicError{
-					Code: "legacy_sqlite_unavailable", Message: "已记录迁移本地数据，但服务器不再能读取并校验 SQLite 快照。请恢复原快照后重试。", Status: http.StatusConflict,
-				}
+	legacyStatus := inspectLegacySQLiteStatus(databaseConfig)
+	switch strings.ToLower(strings.TrimSpace(databaseConfig.LegacyMigrationDecision)) {
+	case "migrate":
+		if !inspection.CanMigrateLegacy {
+			return DatabaseSetupResult{}, &setupPublicError{
+				Code: "legacy_target_not_empty", Message: "目标 PostgreSQL 已包含业务数据，已阻止 SQLite 迁移以避免覆盖。请改用新的空数据库。", Status: http.StatusConflict,
 			}
-			legacyPath = strings.TrimSpace(databaseConfig.LegacySQLitePath)
-		case "skip":
-		default:
-			if legacyStatus.Available {
-				return DatabaseSetupResult{}, &setupPublicError{
-					Code: "legacy_decision_required", Message: "检测到本地 SQLite 数据，请先在下一步确认迁移或跳过。", Status: http.StatusConflict,
-				}
+		}
+		if !legacyStatus.Available {
+			return DatabaseSetupResult{}, &setupPublicError{
+				Code: "legacy_sqlite_unavailable", Message: "已记录迁移本地数据，但服务器不再能读取并校验 SQLite 快照。请恢复原快照后重试。", Status: http.StatusConflict,
+			}
+		}
+		legacyPath = strings.TrimSpace(databaseConfig.LegacySQLitePath)
+	case "skip":
+	default:
+		if legacyStatus.Available && inspection.CanMigrateLegacy {
+			return DatabaseSetupResult{}, &setupPublicError{
+				Code: "legacy_decision_required", Message: "检测到本地 SQLite 数据，请先在下一步确认迁移或跳过。", Status: http.StatusConflict,
 			}
 		}
 	}

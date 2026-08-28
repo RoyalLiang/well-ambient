@@ -218,6 +218,51 @@ func TestSetupApplyPersistsPostgresAndClearsLegacySetupState(t *testing.T) {
 	}
 }
 
+func TestSetupApplyCarriesLegacyMigrationIntoExistingWellAmbientSchema(t *testing.T) {
+	backend := &fakeSetupBackend{
+		inspectResult: configuredDatabaseResult(),
+		applyResult:   configuredDatabaseResult(),
+	}
+	server := newTestSetupServer(t, backend)
+	legacyPath := createLegacySQLiteFixture(t)
+	server.config.Database.LegacySQLitePath = legacyPath
+	server.config.Database.LegacyMigrationDecision = "migrate"
+	server.service.persist = func(string, *config.Config) error { return nil }
+
+	request := DatabaseSetupRequest{
+		Host: "postgres", Port: 5432, Database: "well_ambient", MaintenanceDatabase: "postgres",
+		Username: "ambient", Password: "secret", SSLMode: "disable", Mode: "connect_existing",
+	}
+	if _, err := server.service.Apply(context.Background(), request); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if backend.lastLegacyPath != legacyPath {
+		t.Fatalf("legacy path = %q, want %q; migrate decision was silently treated as connect-existing", backend.lastLegacyPath, legacyPath)
+	}
+}
+
+func TestSetupApplyRejectsLegacyMigrationWhenExistingSchemaHasApplicationData(t *testing.T) {
+	legacyPath := createLegacySQLiteFixture(t)
+	configured := configuredDatabaseResult()
+	configured.CanMigrateLegacy = false
+	backend := &fakeSetupBackend{inspectResult: configured, applyResult: configured}
+	server := newTestSetupServer(t, backend)
+	server.config.Database.LegacySQLitePath = legacyPath
+	server.config.Database.LegacyMigrationDecision = "migrate"
+
+	_, err := server.service.Apply(context.Background(), DatabaseSetupRequest{
+		Host: "postgres", Port: 5432, Database: "well_ambient", MaintenanceDatabase: "postgres",
+		Username: "ambient", Password: "secret", SSLMode: "disable", Mode: "connect_existing",
+	})
+	var publicErr *setupPublicError
+	if !errors.As(err, &publicErr) || publicErr.Code != "legacy_target_not_empty" {
+		t.Fatalf("Apply() error = %v, want legacy_target_not_empty", err)
+	}
+	if backend.applyCalls != 0 {
+		t.Fatalf("backend apply calls = %d, want 0", backend.applyCalls)
+	}
+}
+
 func TestSetupApplyRunsAsPollableOperation(t *testing.T) {
 	backend := &fakeSetupBackend{inspectResult: missingDatabaseResult(), applyResult: configuredDatabaseResult()}
 	server := newTestSetupServer(t, backend)
@@ -369,14 +414,14 @@ func TestSetupBackendErrorsDoNotEchoDatabaseSecrets(t *testing.T) {
 func missingDatabaseResult() DatabaseSetupResult {
 	return DatabaseSetupResult{
 		ServerVersion: "17.11", SchemaState: "database_missing", DatabaseExists: false,
-		CanCreateDatabase: true, RequiredOperation: "create_database",
+		CanCreateDatabase: true, CanMigrateLegacy: true, RequiredOperation: "create_database",
 	}
 }
 
 func configuredDatabaseResult() DatabaseSetupResult {
 	return DatabaseSetupResult{
 		ServerVersion: "17.11", SchemaState: "well_ambient", DatabaseExists: true,
-		CanCreateDatabase: true, RequiredOperation: "connect_existing",
+		CanCreateDatabase: true, CanMigrateLegacy: true, RequiredOperation: "connect_existing",
 	}
 }
 

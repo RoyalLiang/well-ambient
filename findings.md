@@ -2829,3 +2829,23 @@
 - 修复后 `make deploy` 在启动前验证文件可读和 SQLite 文件头，启动后查询 setup status；容器不可读时打印宿主 owner/mode、期望 `APP_UID:APP_GID` 和收敛后的 `chown/chmod` 命令。
 - 服务器实证进一步排除了挂载和权限：容器内 UID/GID 为 `1000:1000`，配置与快照路径正确，SQLite 文件头可读，但运行中的 setup API 仍返回 `available=false`。根因是 Compose 不会因 bind mount 文件内容变化而重建容器，进程持续使用增加 `legacy_sqlite_path` 前加载的内存配置。
 - setup 分支现改为 `docker compose up -d --force-recreate ...`；红灯合同先复现缺少 recreate，实施后转绿。
+
+## 2026-08-28 部署迁移仅建表后刷新
+
+- 用户在包含 `--force-recreate` 修复的新部署后仍复现：安装流程只创建 PostgreSQL 表，随后页面刷新，没有迁移 SQLite 数据。
+- 这推翻了“重建容器并重载配置即可解决”的充分性判断；重载配置至多解决快照发现，不能证明 Apply 执行迁移。
+- 当前仓库契约检查了 `legacy_sqlite.available`、迁移决定接口与进度字段的源码存在性，但尚未证明“迁移决定为 migrate 时 Apply 必须复制 SQLite 行”。
+- Self-Improving 复盘：前一次把启动态可观测性当成终态迁移证据，缺少最终数据不变量。按上级规则，本次不写外部长期记忆，只在当前项目任务记录保留纠正。
+- 红灯命令 `GOCACHE=/tmp/well-ambient-gocache GOMODCACHE=/tmp/well-ambient-gomodcache go test ./internal/server -run '^TestSetupApplyCarriesLegacyMigrationIntoExistingWellAmbientSchema$' -count=1 -v` 稳定失败：持久化决定明确为 `migrate`，但 fake backend 收到的 legacy path 仍为空。
+- 根因第一层已确认：`databaseSetupService.Apply` 仅在 `database_missing/empty` 状态读取 legacy 决定；`well_ambient` 状态静默忽略迁移。
+- 根因第二层由源码确认：`postgresSetupBackend.Apply` 对 `well_ambient` schema 直接返回，即使上层未来传入 legacy path 也不会复制数据。
+# Confirmed fix evidence — initialized PostgreSQL recovery
+
+- Root cause confirmed: `databaseSetupService.Apply` previously forwarded the legacy path only for `database_missing` or `empty`; `postgresSetupBackend.Apply` also returned early for `well_ambient`. A persisted `migrate` decision was therefore silently treated as connect-existing after schema initialization.
+- Recovery invariant: a complete PostgreSQL schema is migration-safe only when every application-owned source table is empty except the four deterministic reference tables (`permissions`, `user_groups`, `group_permissions`, `solution_prompt_templates`). Any other application row blocks migration.
+- Recovery transaction clears only those reconstructible reference rows, imports the SQLite source, verifies every copied table count, resets PostgreSQL sequences, recreates defaults, and finalizes read models. A failure rolls the transaction back.
+- The real 408,551,424-byte local snapshot completed the full external migration simulation: 471,363 rows across 64 owned tables, with 2 incompatible text values repaired.
+- Browser validation proved both UI branches: initialized-only target exposes migration and enables `开始迁移`; application-data target exposes no migration radio and states that migration is disabled to prevent overwrite.
+- Responsive evidence at 320/375/414/768: document scroll width equals viewport width and all affected buttons remain 44px high. Impeccable and finesse static detectors both reported zero findings.
+- Initial broad Go package test failed only because the sandbox denied an `httptest` IPv6 listener. The same full `go test ./... -count=1` suite passed outside that listener restriction.
+- `node --test` cannot load `.ts` directly on the installed Node 22; rerunning with `--experimental-strip-types` passed all 16 database setup contract tests.

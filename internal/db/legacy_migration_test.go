@@ -71,6 +71,45 @@ func TestMigrateLegacySQLiteCopiesOwnedRowsAndIgnoresUnknownTables(t *testing.T)
 	}
 }
 
+func TestMigrateLegacySQLiteReplacesSetupSeedsButRejectsApplicationData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	source := openLegacyMigrationFixture(t, path)
+	closeTestConnection(t, source)
+
+	target, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "target.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(target); err != nil {
+		t.Fatalf("initialize target: %v", err)
+	}
+	safe, err := LegacyMigrationTargetIsSafe(target)
+	if err != nil || !safe {
+		t.Fatalf("initialized-only target safe = %v, err = %v", safe, err)
+	}
+
+	if _, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil); err != nil {
+		t.Fatalf("migrate into initialized-only target: %v", err)
+	}
+	var copiedTasks int64
+	if err := target.Model(&TaskTelemetry{}).Where("task_id = ?", "FZ-2257").Count(&copiedTasks).Error; err != nil || copiedTasks != 1 {
+		t.Fatalf("copied task count = %d, err = %v", copiedTasks, err)
+	}
+
+	safe, err = LegacyMigrationTargetIsSafe(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safe {
+		t.Fatal("target with migrated application data reported safe")
+	}
+	if _, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil); !errors.Is(err, ErrLegacyMigrationTargetNotEmpty) {
+		t.Fatalf("second migration error = %v, want ErrLegacyMigrationTargetNotEmpty", err)
+	}
+}
+
 func TestMigrateLegacySQLiteRepairsPostgresIncompatibleText(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-invalid-utf8.db")
 	source, err := gorm.Open(sqlite.Open(path), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
