@@ -1378,7 +1378,7 @@ func TestLoginDoesNotFallbackForUnknownUserWhenWellOSUnavailable(t *testing.T) {
 
 	oldDoer := wellOSLoginDoer
 	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
-		return nil, io.EOF
+		return nil, fmt.Errorf("tls: failed to verify certificate: x509: certificate signed by unknown authority")
 	}
 	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
 
@@ -1391,8 +1391,21 @@ func TestLoginDoesNotFallbackForUnknownUserWhenWellOSUnavailable(t *testing.T) {
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("unknown user fallback status = %v, want %v body %s", rr.Code, http.StatusBadGateway, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "no local session fallback") {
-		t.Fatalf("unexpected unknown user fallback response: %s", rr.Body.String())
+	var response struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode unknown user fallback response: %v body %s", err, rr.Body.String())
+	}
+	if response.Code != "wellos_unreachable" {
+		t.Fatalf("fallback code = %q, want wellos_unreachable", response.Code)
+	}
+	if strings.Contains(strings.ToLower(response.Message), "maintenance") {
+		t.Fatalf("transport failure must not be reported as maintenance: %q", response.Message)
+	}
+	if !strings.Contains(response.Message, "no verified local session fallback") {
+		t.Fatalf("unexpected unknown user fallback response: %q", response.Message)
 	}
 }
 

@@ -143,12 +143,17 @@ test('server compose requires external PostgreSQL and prebuilt application image
 });
 
 test('production image stages keep build toolchains out of both runtimes', () => {
-  assert.match(dockerfile, /FROM debian:bookworm-slim AS server/);
-  assert.match(dockerfile, /FROM nginx:1\.28\.3-alpine AS web/);
+  assert.match(dockerfile, /FROM [^\n]*debian:bookworm-slim AS server/);
+  assert.match(dockerfile, /FROM [^\n]*nginx:1\.31\.0 AS web/);
   assert.doesNotMatch(dockerfile, /FROM (?:golang|node):[^\n]+ AS (?:server|web)$/m);
 
-  const serverRuntime = dockerfile.split('FROM debian:bookworm-slim AS server')[1]?.split('FROM nginx:1.28.3-alpine AS web')[0] ?? '';
+  const serverRuntime = dockerfile.match(/FROM [^\n]+ AS server\n([\s\S]*?)\nFROM [^\n]+ AS web/)?.[1] ?? '';
   assert.doesNotMatch(serverRuntime, /GOPROXY|go mod|pnpm|node_modules/);
+  assert.match(
+    serverRuntime,
+    /COPY --from=server-build \/etc\/ssl\/certs\/ca-certificates\.crt \/etc\/ssl\/certs\/ca-certificates\.crt/,
+  );
+  assert.match(serverRuntime, /ENV SSL_CERT_FILE=\/etc\/ssl\/certs\/ca-certificates\.crt/);
   assert.match(dockerignore, /^\.git$/m);
   assert.match(dockerignore, /^well-ambient\.db-\*$/m);
   assert.match(dockerignore, /^web\/node_modules$/m);

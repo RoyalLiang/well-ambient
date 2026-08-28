@@ -7273,3 +7273,33 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - [confirmed] Compose server healthcheck 调用 `curl`，当前最终 server 阶段没有显式提供它。
 - [mitigated] 私有 nginx 运行时是否含 `wget` 无需再假设；Web 探针已改为 shell 内建的文件/进程检查。
 - [pending] 部署主机是否另有挂载权限问题，需要在新镜像健康检查恢复后由自动诊断输出判定。
+# 2026-08-28 make deploy 旧库发现、登录失败稳定态与本地一键服务
+
+## 目标与验收契约
+
+- [in_progress] `make deploy` 在复用旧版 `deploy/runtime/config.yaml` 时，若宿主机存在 `deploy/runtime/data/legacy/well-ambient.db`，必须把容器内固定只读路径补入 setup 配置，并在安装页明确进入“迁移/跳过”决策；不得覆盖用户已显式配置的其他路径或选择。
+- [pending] 登录失败只发送一次请求，登录卡片 DOM 与几何保持稳定，错误在预留反馈槽内呈现；不得触发页面刷新、卡片重挂载或按钮宽高变化。
+- [pending] 提供可直接执行的一键本地测试脚本，同时保留现有 `make dev-setup` 兼容入口；脚本统一启动隔离后端与 Vite、等待就绪、打印访问地址并在退出时清理子进程。
+- [pending] 每个症状都先建立独立红灯再转绿；最终运行定向契约、Go/前端检查、脚本语法、Impeccable 检测，以及登录失败/成功的真实浏览器桌面与移动验证。
+
+## 三方 UI 评审（编辑前门禁）
+
+- Impeccable：错误态必须帮助恢复，并留在现有登录表单的固定反馈槽；错误出现不能改变卡片高度或焦点位置，动效只表达提交状态并支持 reduced motion。
+- design-taste-frontend：这是既有产品登录表单，不适用营销页重设计；沿用当前视觉系统、信息架构和控件词汇，不增加装饰、卡片层级或新品牌表达。
+- finesse-ui：采用 component-scope / product register，SPECTACLE=1、密度不变；验证 default、focus-visible、loading、disabled、error，按钮标签/旋转器占位不能引起回流。
+- 共同方向：稳定同一 DOM、固定反馈槽、一次提交、就地恢复；桌面与移动都验证卡片边界框、错误可见性、按钮高度与键盘焦点。
+- 分歧与裁决：Finesse 允许补齐更多组件状态，Taste 反对借机重绘页面；本次只修登录状态所有权和几何，不调整配色、排版或背景。
+
+## 阶段
+
+- [in_progress] Phase 1：读取配置/部署/登录/本地启动路径，建立三个独立失败合同并验证首个失败点。
+- [pending] Phase 2：实施配置兼容补全、稳定登录反馈槽和一键启动入口。
+- [pending] Phase 3：定向回归、全量构建、静态 UI 检测与真实浏览器多状态/多断点验收。
+- [completed] Phase 4：一次性交付反思门禁已执行；用户反馈的新部署登录问题已纳入同一任务并完成修复验证。
+# 2026-08-28 最终状态（交付反思前）
+
+- [completed] 旧 runtime 配置兼容：标准 SQLite 快照存在时原子补入 `/var/lib/well-ambient/legacy/well-ambient.db`，显式自定义路径保持不变，Compose 发布包包含辅助脚本。
+- [completed] 登录失败稳定态：single-flight、常驻 58px 双行错误槽、固定按钮高度、reduced-motion；桌面、390px、320px 失败前后卡片边界框差值均为 0。
+- [completed] 本地一键服务：`./scripts/dev.sh` 与 `make dev` 复用 `dev-setup.sh`，实际启动 18207/5185 后 setup 页面正常检测 SQLite。
+- [completed] 验证：21/21 定向合同、脚本语法、Impeccable `[]`、定向 Go、`make verify`、生产构建、移动登录成功进入认证后管理台均通过。
+- [completed] 用户反馈吸收：部署镜像显式携带 HTTPS CA 信任链；WellOS 传输错误与“上游维护”语义已分离。定向回归与全仓 `make verify` 通过；当前环境没有 Docker CLI，真实镜像构建 smoke test 留给发布主机。

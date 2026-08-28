@@ -77,10 +77,10 @@ if [[ -n "$setup_token" ]] && (( ${#setup_token} < 32 )); then
 fi
 
 mkdir -p "$runtime_dir/data/attachments" "$runtime_dir/data/legacy" "$state_dir" "$backup_dir"
-if [[ ! -f "$runtime_dir/config.yaml" ]]; then
-  cp "$project_root/deploy/config.production.example.yaml" "$runtime_dir/config.yaml"
-fi
-chmod 600 "$runtime_dir/config.yaml"
+"$project_root/deploy/prepare-runtime-config.sh" \
+	"$runtime_dir/config.yaml" \
+	"$project_root/deploy/config.production.example.yaml" \
+	"$runtime_dir/data/legacy/well-ambient.db"
 
 database_driver=$(awk '
   /^database:[[:space:]]*$/ { in_database=1; next }

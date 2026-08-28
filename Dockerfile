@@ -35,6 +35,8 @@ LABEL org.opencontainers.image.title="Well Ambient server" \
       org.opencontainers.image.created="${BUILD_TIME}"
 
 COPY --from=server-build /out/well-ambient /usr/local/bin/well-ambient
+COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 USER ambient
 EXPOSE 8080

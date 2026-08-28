@@ -16,7 +16,10 @@ PRODUCTION_WEB_IMAGE := $(shell sed -n 's/^WELL_AMBIENT_WEB_IMAGE=//p' deploy/.e
 SERVER_IMAGE ?= $(if $(PRODUCTION_SERVER_IMAGE),$(PRODUCTION_SERVER_IMAGE),well-ambient-server)
 WEB_IMAGE ?= $(if $(PRODUCTION_WEB_IMAGE),$(PRODUCTION_WEB_IMAGE),well-ambient-web)
 
-.PHONY: dev-setup verify release-metadata release-info images image-bundle compose-bundle release deploy rollback
+.PHONY: dev dev-setup verify release-metadata release-info images image-bundle compose-bundle release deploy rollback
+
+dev:
+	./scripts/dev.sh
 
 dev-setup:
 	./scripts/dev-setup.sh
@@ -73,6 +76,7 @@ compose-bundle: release-metadata
 			compose.yaml \
 			deploy/.env.production.example \
 			deploy/config.production.example.yaml \
+			deploy/prepare-runtime-config.sh \
 			deploy/deploy.sh \
 			deploy/rollback.sh \
 			deploy/generated/release.env \

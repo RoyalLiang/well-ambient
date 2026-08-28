@@ -2799,3 +2799,24 @@
 - 离线镜像包改为 `tar.gz`；Docker 构建上下文已排除 8.0G `.git`、约 400M SQLite 文件、约 230M `web/node_modules` 以及构建/运行产物，Dockerfile 仍为多阶段构建，构建工具链不会进入最终镜像。
 - 当前主机未安装 Docker CLI，因此无法在本机量出优化后的镜像层大小，也无法执行真实 `docker load` / `docker compose up`；这是环境验证缺口，不影响已通过的脚本、契约与构建验证。
 - 当前工作树包含多项未提交修改；自动版本会加 `dirty.<UTC timestamp>` 并在批次说明中列出文件，但不会默认阻止把这些修改打进正式发布物。
+# 2026-08-28 make deploy / 登录失败 / 本地一键服务发现
+
+- 真实浏览器初测：默认桌面失败前后 `.login-card` 边界框完全一致；390×844 下后端错误文案换行，原 42px `min-height` 增至 56.92px，导致卡片上移 7.46px。修复必须使用固定双行反馈槽，不能只设最小高度。
+- Compose 将宿主 `./deploy/runtime/data` 映射到容器 `/var/lib/well-ambient`，所以用户给出的文件应映射为 `/var/lib/well-ambient/legacy/well-ambient.db`；生产示例配置已有该路径。
+- `deploy/deploy.sh` 只在 `deploy/runtime/config.yaml` 不存在时复制新模板；旧运行配置不会补入后来新增的 `legacy_sqlite_path`。配置加载器默认该字段为空，因此旧部署即使已有正确挂载文件也不会检查或展示迁移入口。这是当前最高置信根因。
+- setup 后端在检测到 SQLite 时故意要求一次性明确选择 `migrate` 或 `skip`；部署修复应恢复“可发现并选择迁移”，不能静默覆盖既有迁移决定。
+- 登录表单已使用 `on:submit` 和 `preventDefault`，401 也绕过全局登出；但错误块是条件渲染，失败前先清空、失败后再插入，导致居中卡片高度变化和明显闪动。按钮 loading 内容也需要稳定占位验证。
+- 现有 `scripts/dev-setup.sh` 已具备隔离构建、后端重启和 Vite 代理能力，但入口名偏向数据库 setup，Makefile 只有 `dev-setup`；需要增加清晰的一键本地测试入口并复用同一实现，避免复制进程管理逻辑。
+# 2026-08-28 最终证据补充
+
+- 修复后真实浏览器：默认桌面、390×844、320×844 的失败前后 `.login-card` x/y/width/height 差值均为 0；反馈槽和按钮高度差也为 0。按钮 hover 的 1px 视觉位移不改变卡片布局。
+- 在 320px、仅 loopback 的 `WELL_AMBIENT_DEV_AUTH=1` 临时后端中，登录成功进入认证后管理台，成功路径未被错误槽/single-flight 改动破坏。
+- `./scripts/dev.sh` 实际启动隔离 API 18207 与 Vite 5185，setup 页面显示检测到 390.5 MiB、69 张表的本地 SQLite；停止后子进程与令牌临时文件均清理。
+- Impeccable 对 `web/src/App.svelte` 返回 `[]`；21 个部署/setup/登录合同、定向 Go 测试和全仓 `make verify` 均通过。Svelte 仍有仓库既有 warning，但为 0 error。
+
+## 2026-08-28 部署登录误报维护
+
+- 红灯反馈循环准确复现：WellOS HTTPS 证书校验错误进入 `handleDegradedLogin` 后，未知本地账号得到 502，响应没有结构化错误码并错误声称 `WellOS is under maintenance`。
+- 生产 server 运行层此前只从构建层复制静态 Go 二进制，没有 CA bundle；请求固定访问 `https://wellos.westwell-lab.com/api/user/login`，因此 slim 私有基础镜像是否预装根证书会直接决定登录 HTTPS 是否可用。
+- 2026-08-28 对公开端点的只读 TLS 握手验证通过：证书主题为 `wellos.westwell-lab.com`，DigiCert 链验证成功，有效期 2026-02-02 至 2027-02-01；当前证据不支持“上游处于维护”。
+- 修复边界：运行镜像显式携带 builder 的 `ca-certificates.crt` 并设置 `SSL_CERT_FILE`；所有传输故障统一返回 `wellos_unreachable` 或本地回退细分码，用户文案只陈述部署连通性，不再推断维护状态；具体上游错误保留在服务日志。

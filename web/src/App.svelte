@@ -457,6 +457,7 @@
 
   async function handleLoginSubmit(e: Event) {
     e.preventDefault();
+    if (loggingIn) return;
     if (!loginUsernamePrefix || !loginPassword) {
       loginError = '账号和密码不能为空';
       return;
@@ -920,11 +921,16 @@
       </div>
       
       <form on:submit={handleLoginSubmit} class="login-form">
-        {#if loginError}
-          <div class="login-error-alert">
-            登录失败 · {loginError}
+        <div class="login-feedback-slot" aria-live="assertive" aria-atomic="true">
+          <div
+            class="login-error-alert"
+            class:visible={!!loginError}
+            role={loginError ? 'alert' : undefined}
+            aria-hidden={!loginError}
+          >
+            {loginError ? `登录失败 · ${loginError}` : '\u00a0'}
           </div>
-        {/if}
+        </div>
         
         <div class="login-field">
           <label for="username">账号 (邮箱前缀)</label>
@@ -953,12 +959,11 @@
           />
         </div>
         
-        <button type="submit" class="login-submit-btn" disabled={loggingIn}>
+        <button type="submit" class="login-submit-btn" disabled={loggingIn} aria-busy={loggingIn}>
           {#if loggingIn}
-            <span class="spinner-mini"></span> 正在鉴权中
-          {:else}
-            立即登录
+            <span class="spinner-mini" aria-hidden="true"></span>
           {/if}
+          <span class="login-submit-label">{loggingIn ? '登录中…' : '立即登录'}</span>
         </button>
       </form>
     </div>
@@ -2151,6 +2156,11 @@
     gap: 20px;
   }
 
+  .login-feedback-slot {
+    min-height: 58px;
+    height: 58px;
+  }
+
   .login-error-alert {
     background: rgba(239, 68, 68, 0.1);
     border: 1px solid rgba(239, 68, 68, 0.3);
@@ -2159,6 +2169,19 @@
     border-radius: 8px;
     font-size: 0.78rem;
     line-height: 1.4;
+    min-height: 58px;
+    height: 58px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overflow-wrap: anywhere;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .login-error-alert.visible {
+    visibility: visible;
+    opacity: 1;
   }
 
   .login-field {
@@ -2207,6 +2230,7 @@
     justify-content: center;
     gap: 8px;
     box-shadow: 0 4px 14px rgba(2, 132, 199, 0.3);
+    min-height: 44px;
   }
 
   .login-submit-btn:hover:not(:disabled) {
@@ -2293,8 +2317,13 @@
     .notification-bell,
     .status-dot,
     .loading-spinner,
+    .spinner-mini,
     .notification-dropdown {
       animation: none !important;
+    }
+
+    .login-error-alert {
+      transition: none;
     }
   }
 </style>

@@ -1041,38 +1041,61 @@ func verifyLocalPasswordHash(password, encoded string) bool {
 	return subtle.ConstantTimeCompare(actual, expected) == 1
 }
 
+func writeLoginError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "error",
+		"code":    code,
+		"message": message,
+	})
+}
+
 func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, username, password string, upstreamErr error) {
 	if isDevAuthEnabled() && isLoopbackRequest(r) {
 		s.handleDevLogin(w, r, username, upstreamErr)
 		return
 	}
+	log.Printf("WellOS login transport failed: %T: %v", upstreamErr, upstreamErr)
 
 	if db.DB == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(fmt.Sprintf(`{"status":"error", "message":"Authentication service unreachable: %v"}`, upstreamErr)))
+		writeLoginError(
+			w,
+			http.StatusBadGateway,
+			"wellos_unreachable",
+			"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates.",
+		)
 		return
 	}
 
 	var dbUser userdb.User
 	if err := db.DB.Where("username = ?", username).First(&dbUser).Error; err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"status":"error", "message":"WellOS is under maintenance and no local session fallback is available for this account"}`))
+		writeLoginError(
+			w,
+			http.StatusBadGateway,
+			"wellos_unreachable",
+			"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates; no verified local session fallback is available for this account.",
+		)
 		return
 	}
 	if dbUser.LocalPasswordHash == "" || !verifyLocalPasswordHash(password, dbUser.LocalPasswordHash) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error", "message":"WellOS is under maintenance and local credential verification failed for this account"}`))
+		writeLoginError(
+			w,
+			http.StatusUnauthorized,
+			"local_fallback_verification_failed",
+			"Unable to reach WellOS from this deployment, and local credential verification failed for this account.",
+		)
 		return
 	}
 
 	groupNames, permCodes := loadUserAccessSnapshot(dbUser.ID)
 	if len(groupNames) == 0 || len(permCodes) == 0 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"status":"error", "message":"WellOS is under maintenance and this account has no local access snapshot"}`))
+		writeLoginError(
+			w,
+			http.StatusForbidden,
+			"local_fallback_access_missing",
+			"Unable to reach WellOS from this deployment, and this account has no local access snapshot.",
+		)
 		return
 	}
 
@@ -1085,7 +1108,7 @@ func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
-	detail := fmt.Sprintf("WellOS unavailable, issued degraded local session for existing user. upstream=%v", upstreamErr)
+	detail := fmt.Sprintf("WellOS login transport unavailable, issued degraded local session for existing user. upstream=%v", upstreamErr)
 	userdb.RecordAuditLog(db.DB, dbUser.Username, "user_login_degraded", "user", fmt.Sprintf("%d", dbUser.ID), detail, r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1094,7 +1117,7 @@ func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, use
 		"token":           token,
 		"degraded":        true,
 		"degraded_reason": "wellos_unavailable",
-		"message":         "WellOS 维护中，已使用本地已知用户资料创建临时会话",
+		"message":         "WellOS connection is unavailable from this deployment; a temporary session was created from verified local account data.",
 		"user": map[string]interface{}{
 			"username":    dbUser.Username,
 			"name":        dbUser.Name,

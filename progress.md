@@ -3592,3 +3592,29 @@
 - `make verify` 在受限沙箱首次因现有 `httptest.NewServer` 无法绑定回环地址失败；以同一命令开放本机回环后通过 Go test/vet、Svelte check/build。
 - 已执行 Impeccable 检测，更新后的部署契约测试无 UI 违规；本任务没有渲染组件或交互变化，因此没有新增浏览器状态需要验证。
 - 本机没有 Docker CLI；尚不能执行真实镜像构建、体积对比、`docker load` 与 Compose 启动验证。
+# 2026-08-28 三项修复进度
+
+- 浏览器反馈：桌面登录失败卡片位移为 0；390px 初测仍有 14.92px 增高/7.46px 上移，已定位为错误文案换行突破 `min-height`，正在改为固定双行槽后复验。
+- 工具限制：浏览器页面只读执行层不暴露 Resource Timing，无法从页面直接统计 `/api/login` 条目；请求 single-flight 由源码合同验证，真实浏览器验证聚焦 URL、错误态和几何。
+- 命令纠正：手工启动隔离 Vite 时多传一个 `--`，被 Vite 当作位置参数并回退 5174；已停止该进程并按仓库脚本的正确参数形式在 5186 启动。
+- 验证发现：`database-setup-contract` 仍硬编码改镜像前的官方 Debian/nginx 地址，与已提交私有基础镜像不一致；产品代码未失败，已把合同收敛为运行阶段与构建工具链隔离语义。
+- 工具错误：第二次跨文件补丁因 Makefile 的 tar 列表是多行结构而原子失败，确认部署脚本未被部分修改；随后按 deploy、Makefile、登录逻辑分别应用小补丁。
+- 工具错误：首次实现补丁因测试文件断言顺序与补丁上下文不一致而原子失败，确认未产生部分代码改动；已切换为逐文件精确锚点补丁。
+- 已加载项目冷启动/设计合同、planning-with-files、diagnosing-bugs、项目 Impeccable、design-taste-frontend 与 finesse-ui 规则。
+- 已完成登录失败状态的三方 UI 评审并写入计划；前端编辑门禁已开放，但尚未修改业务代码。
+- 已确认 SQLite 宿主路径与 Compose 容器路径映射正确，旧 runtime 配置不随模板演进是首个可执行根因；下一步建立红灯合同。
+- 已确认登录提交有 `preventDefault` 且 `/api/login` 不触发全局 401 登出，当前首要复现点转为条件错误块造成的布局回流。
+- 已确认一键本地服务应复用 `scripts/dev-setup.sh`，避免引入第二套后端/Vite 生命周期。
+# 2026-08-28 验证完成
+
+- 三个独立红灯均已转绿并完成真实运行验证；实现阶段结束，进入一次性交付反思门禁。
+- 定向 Go 首次在受限沙箱因既有 `httptest.NewServer` 无法监听回环失败；按权限流程原命令重跑通过，随后全仓 `make verify` 退出码 0。
+- Impeccable 检测 `[]`；21/21 定向合同通过；脚本 `bash -n`/ShellCheck、`git diff --check` 通过。
+- 真实浏览器桌面/390/320 登录失败卡片几何稳定，320 成功登录进入认证管理台；所有临时服务、浏览器页签、viewport 覆盖和 `/tmp` 数据已清理。
+
+## 2026-08-28 部署登录误报维护修复
+
+- 新增两条红灯合同：TLS 校验失败不得被报告为 maintenance，并必须返回 `wellos_unreachable`；server 运行镜像必须显式复制系统 CA bundle。
+- 实施后，5 个登录降级/本地开发认证定向 Go 测试通过，Docker/数据库 setup 合同 16/16 通过；`internal/server` 已无用户可见的 “under maintenance/维护中” 文案。
+- 本机没有 Docker CLI，无法直接构建并进入最终 server 镜像检查证书文件；已用静态 Dockerfile 合同和公开端点 TLS 握手分别锁定镜像输入与上游证书有效性，待发布主机完成真实镜像 smoke test。
+- 最终回归：5 个登录降级/开发认证定向测试通过，数据库部署合同 16/16 通过，`git diff --check` 通过，全仓 `make verify` 退出码为 0；前端只有仓库既有 Svelte/chunk-size warnings。
