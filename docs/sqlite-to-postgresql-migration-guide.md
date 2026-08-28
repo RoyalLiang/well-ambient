@@ -12,6 +12,14 @@ database:
 
 Compose 对应宿主机路径为 `deploy/runtime/data/legacy/well-ambient.db`。PostgreSQL 不由该 Compose 创建；安装页连接的是服务器已经部署或可通过受控网络访问的外部 PostgreSQL。
 
+如果是在服务器中 clone 源码后直接部署，完整路径必须是：
+
+```text
+<项目绝对路径>/deploy/runtime/data/legacy/well-ambient.db
+```
+
+需要编辑的生产运行配置是 `<项目绝对路径>/deploy/runtime/config.yaml`，不是项目根目录的 `config.yaml`。容器通过 Compose 把上述宿主文件映射为 `/var/lib/well-ambient/legacy/well-ambient.db`。
+
 自动迁移覆盖当前版本 `db.RequiredSchemaModels()` 声明的应用事实表，不复制 SQLite 专用派生表、未知旧表、`sqlite_sequence`、`daily_jira_audit_*` 或 `read_model_generations`。附件文件不在 SQLite 内，必须单独复制并验收。开发机没有真实 PostgreSQL 服务，因此上线前仍须在 Linux staging 用生产快照完整演练。
 
 ## 迁移前门禁
@@ -55,6 +63,15 @@ install -d -m 0700 deploy/runtime/data/legacy
 install -m 0400 "$migration_dir/source.snapshot.db" \
   deploy/runtime/data/legacy/well-ambient.db
 ```
+
+`deploy/.env.production` 中的 `APP_UID`、`APP_GID` 必须能读取该文件。例如二者为 `1000` 时：
+
+```bash
+sudo chown 1000:1000 deploy/runtime/data/legacy/well-ambient.db
+sudo chmod 0400 deploy/runtime/data/legacy/well-ambient.db
+```
+
+`make deploy` 会先校验 SQLite 文件头，并在 setup 模式强制重建应用容器，使进程重新加载 bind mount 中的运行配置；启动后再读取 `/api/setup/status`。只有容器实际返回 `legacy_sqlite.available=true` 才会报告迁移引导已就绪；路径、权限或文件内容有问题时部署会直接打印诊断并失败。
 
 容器运行用户必须能读取该文件。不要把快照提交 Git，也不要挂载旧系统仍在使用的原文件。
 

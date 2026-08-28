@@ -7303,3 +7303,9 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - [completed] 本地一键服务：`./scripts/dev.sh` 与 `make dev` 复用 `dev-setup.sh`，实际启动 18207/5185 后 setup 页面正常检测 SQLite。
 - [completed] 验证：21/21 定向合同、脚本语法、Impeccable `[]`、定向 Go、`make verify`、生产构建、移动登录成功进入认证后管理台均通过。
 - [completed] 用户反馈吸收：部署镜像显式携带 HTTPS CA 信任链；WellOS 传输错误与“上游维护”语义已分离。定向回归与全仓 `make verify` 通过；当前环境没有 Docker CLI，真实镜像构建 smoke test 留给发布主机。
+
+## 2026-08-28 服务器 SQLite 引导可观测性修复
+
+- [completed] 用脚本夹具证明 setup 配置与标准路径能写入，但旧合同没有验证文件有效性或容器实际检测结果。
+- [completed] 部署前校验宿主快照可读且具有 SQLite 文件头；setup 启动后通过真实 `/api/setup/status` 验证 `legacy_sqlite.available=true`。
+- [completed] 定向合同、Bash/ShellCheck、`git diff --check` 与全仓 `make verify` 均通过；真实服务器的最终原因仍需由新部署诊断输出确认。

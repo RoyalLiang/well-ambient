@@ -2820,3 +2820,12 @@
 - 生产 server 运行层此前只从构建层复制静态 Go 二进制，没有 CA bundle；请求固定访问 `https://wellos.westwell-lab.com/api/user/login`，因此 slim 私有基础镜像是否预装根证书会直接决定登录 HTTPS 是否可用。
 - 2026-08-28 对公开端点的只读 TLS 握手验证通过：证书主题为 `wellos.westwell-lab.com`，DigiCert 链验证成功，有效期 2026-02-02 至 2027-02-01；当前证据不支持“上游处于维护”。
 - 修复边界：运行镜像显式携带 builder 的 `ca-certificates.crt` 并设置 `SSL_CERT_FILE`；所有传输故障统一返回 `wellos_unreachable` 或本地回退细分码，用户文案只陈述部署连通性，不再推断维护状态；具体上游错误保留在服务日志。
+
+## 2026-08-28 服务器 SQLite 引导缺失
+
+- 远程 `main` 已确认是最新提交；用户也确认生产运行配置手动设置了 `driver: setup` 和容器路径 `/var/lib/well-ambient/legacy/well-ambient.db`。
+- 生产 Compose 只读取 `<项目根>/deploy/runtime/config.yaml`，宿主快照唯一标准位置是 `<项目根>/deploy/runtime/data/legacy/well-ambient.db`；根目录 `config.yaml` 和根目录 DB 都不会被生产容器读取。
+- 最小复现证明：helper 能给 setup 配置补路径，但旧测试使用无效文本假装 SQLite，且部署成功条件没有检查容器返回的 `legacy_sqlite.available`，因此路径/权限/损坏问题会静默表现为“没有迁移引导”。
+- 修复后 `make deploy` 在启动前验证文件可读和 SQLite 文件头，启动后查询 setup status；容器不可读时打印宿主 owner/mode、期望 `APP_UID:APP_GID` 和收敛后的 `chown/chmod` 命令。
+- 服务器实证进一步排除了挂载和权限：容器内 UID/GID 为 `1000:1000`，配置与快照路径正确，SQLite 文件头可读，但运行中的 setup API 仍返回 `available=false`。根因是 Compose 不会因 bind mount 文件内容变化而重建容器，进程持续使用增加 `legacy_sqlite_path` 前加载的内存配置。
+- setup 分支现改为 `docker compose up -d --force-recreate ...`；红灯合同先复现缺少 recreate，实施后转绿。

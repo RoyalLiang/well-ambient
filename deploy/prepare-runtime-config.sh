@@ -26,6 +26,18 @@ if [[ ! -f "$legacy_snapshot" ]]; then
   exit 0
 fi
 
+if [[ ! -r "$legacy_snapshot" ]]; then
+  echo "legacy SQLite snapshot is not readable by the deploy user: $legacy_snapshot" >&2
+  exit 2
+fi
+if ! LC_ALL=C head -c 15 "$legacy_snapshot" | grep -qx 'SQLite format 3'; then
+  echo "legacy migration source is not a valid SQLite snapshot: $legacy_snapshot" >&2
+  exit 2
+fi
+
+echo "detected legacy SQLite host snapshot: $legacy_snapshot"
+echo "configured read-only container migration source: $container_legacy_path"
+
 if awk '
   /^database:[[:space:]]*(#.*)?$/ { in_database=1; next }
   in_database && /^[^[:space:]#]/ { in_database=0 }
@@ -58,5 +70,3 @@ fi
 chmod 600 "$temporary_config"
 mv "$temporary_config" "$runtime_config"
 trap - EXIT
-
-echo "detected legacy SQLite snapshot; configured read-only migration source: $container_legacy_path"

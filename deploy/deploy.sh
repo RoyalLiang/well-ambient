@@ -70,6 +70,14 @@ if [[ ! "$http_port" =~ ^[0-9]+$ ]] || ((http_port < 1 || http_port > 65535)); t
   echo "HTTP_PORT must be an integer between 1 and 65535" >&2
   exit 2
 fi
+container_app_uid=${APP_UID:-$(sed -n 's/^APP_UID=//p' "$env_file" | tail -n 1 | tr -d '[:space:]')}
+container_app_gid=${APP_GID:-$(sed -n 's/^APP_GID=//p' "$env_file" | tail -n 1 | tr -d '[:space:]')}
+container_app_uid=${container_app_uid:-1000}
+container_app_gid=${container_app_gid:-1000}
+if [[ ! "$container_app_uid" =~ ^[0-9]+$ || ! "$container_app_gid" =~ ^[0-9]+$ ]]; then
+  echo "APP_UID and APP_GID must be numeric" >&2
+  exit 2
+fi
 setup_token=$(sed -n 's/^WELL_AMBIENT_SETUP_TOKEN=//p' "$env_file" | tail -n 1 | tr -d '\r')
 if [[ -n "$setup_token" ]] && (( ${#setup_token} < 32 )); then
   echo "WELL_AMBIENT_SETUP_TOKEN must be empty for automatic generation or contain at least 32 characters" >&2
@@ -158,13 +166,38 @@ echo "batch: $release_batch"
 "${compose[@]}" config --quiet
 
 if [[ "$database_driver" == "setup" ]]; then
-  if ! "${compose[@]}" up -d --wait --wait-timeout 240 server web; then
+  legacy_snapshot="$runtime_dir/data/legacy/well-ambient.db"
+  if [[ ! -f "$legacy_snapshot" ]]; then
+    echo "database setup mode is active, but no legacy SQLite snapshot was found." >&2
+    echo "to enable the migration guide, copy the completed snapshot to: $legacy_snapshot" >&2
+  fi
+  # Bind-mounted runtime config changes are not part of Compose's service hash.
+  # Recreate setup containers so the process reloads legacy_sqlite_path and decisions.
+  if ! "${compose[@]}" up -d --force-recreate --wait --wait-timeout 240 server web; then
     print_compose_diagnostics
     exit 1
   fi
   if ! curl --fail --silent --show-error "http://127.0.0.1:$http_port/ready" >/dev/null; then
     print_compose_diagnostics
     exit 1
+  fi
+  if [[ -f "$legacy_snapshot" ]]; then
+    if ! setup_status=$(curl --fail --silent --show-error "http://127.0.0.1:$http_port/api/setup/status"); then
+      print_compose_diagnostics
+      exit 1
+    fi
+    if ! grep -q '"legacy_sqlite":{"available":true' <<<"$setup_status"; then
+      echo "legacy SQLite exists on the host but the setup service cannot inspect it." >&2
+      echo "host path: $legacy_snapshot" >&2
+      echo "container path: /var/lib/well-ambient/legacy/well-ambient.db" >&2
+      stat -c 'host snapshot owner=%u:%g mode=%a size=%s' "$legacy_snapshot" >&2 || true
+      echo "expected container identity: $container_app_uid:$container_app_gid" >&2
+      echo "check that the snapshot is complete, then run: sudo chown $container_app_uid:$container_app_gid '$legacy_snapshot' && sudo chmod 0400 '$legacy_snapshot'" >&2
+      print_compose_diagnostics
+      exit 1
+    fi
+    echo "SQLite migration guide verified: http://127.0.0.1:$http_port"
+    echo "host snapshot: $legacy_snapshot"
   fi
   record_release_state
   echo "deployed version $version in first-install mode"

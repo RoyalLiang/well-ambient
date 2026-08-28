@@ -23,7 +23,7 @@ test('deploy backfills the mounted legacy SQLite path into an old setup config',
   writeFileSync(runtimeConfig, 'database:\n  driver: setup\n  auto_migrate: false\nserver:\n  port: 8080\n');
   writeFileSync(templateConfig, 'database:\n  driver: setup\n');
   mkdirSync(join(fixture, 'data', 'legacy'), { recursive: true });
-  writeFileSync(legacyFile, 'sqlite fixture');
+  writeFileSync(legacyFile, Buffer.from('SQLite format 3\0fixture'));
 
   const result = spawnSync(
     'bash',
@@ -49,12 +49,42 @@ test('runtime preparation preserves an explicitly configured legacy SQLite path'
   writeFileSync(runtimeConfig, 'database:\n  driver: setup\n  legacy_sqlite_path: /custom/archive.db\n');
   writeFileSync(templateConfig, 'database:\n  driver: setup\n');
   mkdirSync(join(fixture, 'data', 'legacy'), { recursive: true });
-  writeFileSync(legacyFile, 'sqlite fixture');
+  writeFileSync(legacyFile, Buffer.from('SQLite format 3\0fixture'));
 
   const result = spawnSync('bash', [helperURL.pathname, runtimeConfig, templateConfig, legacyFile], { encoding: 'utf8' });
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(readFileSync(runtimeConfig, 'utf8'), /legacy_sqlite_path: \/custom\/archive\.db/);
+});
+
+test('deployment rejects a non-SQLite legacy snapshot before starting containers', (t) => {
+  const helperURL = new URL('../../deploy/prepare-runtime-config.sh', import.meta.url);
+  const fixture = mkdtempSync(join(tmpdir(), 'well-ambient-runtime-invalid-'));
+  const runtimeConfig = join(fixture, 'config.yaml');
+  const templateConfig = join(fixture, 'template.yaml');
+  const legacyFile = join(fixture, 'well-ambient.db');
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+
+  writeFileSync(templateConfig, 'database:\n  driver: setup\n');
+  writeFileSync(legacyFile, 'incomplete upload');
+  const result = spawnSync('bash', [helperURL.pathname, runtimeConfig, templateConfig, legacyFile], {
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not a valid SQLite snapshot/);
+});
+
+test('deploy verifies the mounted snapshot through the real setup status endpoint', () => {
+  assert.match(deployment, /legacy_snapshot="\$runtime_dir\/data\/legacy\/well-ambient\.db"/);
+  assert.match(
+    deployment,
+    /if \[\[ "\$database_driver" == "setup" \]\]; then[\s\S]*?up -d --force-recreate --wait --wait-timeout 240 server web/,
+  );
+  assert.match(deployment, /\/api\/setup\/status/);
+  assert.match(deployment, /legacy_sqlite[^\n]+available/);
+  assert.match(deployment, /expected container identity/);
+  assert.match(deployment, /sudo chown \$container_app_uid:\$container_app_gid/);
 });
 
 test('one-command local test entrypoint reuses the isolated setup service lifecycle', () => {

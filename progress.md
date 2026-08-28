@@ -3618,3 +3618,11 @@
 - 实施后，5 个登录降级/本地开发认证定向 Go 测试通过，Docker/数据库 setup 合同 16/16 通过；`internal/server` 已无用户可见的 “under maintenance/维护中” 文案。
 - 本机没有 Docker CLI，无法直接构建并进入最终 server 镜像检查证书文件；已用静态 Dockerfile 合同和公开端点 TLS 握手分别锁定镜像输入与上游证书有效性，待发布主机完成真实镜像 smoke test。
 - 最终回归：5 个登录降级/开发认证定向测试通过，数据库部署合同 16/16 通过，`git diff --check` 通过，全仓 `make verify` 退出码为 0；前端只有仓库既有 Svelte/chunk-size warnings。
+
+## 2026-08-28 SQLite 引导部署验证
+
+- 新红灯准确捕获两个遗漏：非 SQLite 文件仍被 helper 接受；部署脚本没有通过 `/api/setup/status` 证明容器已识别快照。
+- 实施后部署/setup 定向合同 21/21 通过，Bash 语法、ShellCheck 和 `git diff --check` 通过。
+- 服务器侧预期路径已固定为 `<项目根>/deploy/runtime/data/legacy/well-ambient.db`，对应容器路径 `/var/lib/well-ambient/legacy/well-ambient.db`；等待全仓回归和服务器使用新诊断输出复验。
+- 全仓 `make verify` 退出码 0；Go test/vet、Svelte check/build 均通过，只有仓库既有 warning。实现阶段完成，进入一次性交付反思与服务器侧复验。
+- 服务器容器证据锁定最终根因：bind-mounted runtime YAML 已更新，但旧 setup 进程未重载。新增 `--force-recreate` 合同准确红灯，修复后部署/setup 合同恢复 21/21；当前服务器可用 `docker restart <server-container>` 立即复验。
