@@ -30,6 +30,8 @@ var legacyMigrationSeedTables = map[string]struct{}{
 }
 
 var legacyMigrationSeedDeleteOrder = []string{
+	"runtime_configs",
+	"config_versions",
 	"group_permissions",
 	"user_groups",
 	"permissions",
@@ -247,9 +249,10 @@ func MigrateLegacySQLite(
 	return report, nil
 }
 
-// LegacyMigrationTargetIsSafe reports whether the target contains only the
-// deterministic rows inserted by InitializeReferenceData. Those rows can be
-// recreated after an import; any other application row is treated as user data.
+// LegacyMigrationTargetIsSafe reports whether the target contains only
+// reconstructible bootstrap rows: deterministic reference data plus the first
+// untouched file-backed configuration snapshot. Any other application row is
+// treated as user data.
 func LegacyMigrationTargetIsSafe(target *gorm.DB) (bool, error) {
 	if target == nil {
 		return false, gorm.ErrInvalidDB
@@ -270,11 +273,45 @@ func LegacyMigrationTargetIsSafe(target *gorm.DB) (bool, error) {
 		if count == 0 {
 			continue
 		}
-		if _, seeded := legacyMigrationSeedTables[table]; !seeded {
+		setupOnly, err := legacyMigrationTableContainsOnlySetupRows(target, table, count)
+		if err != nil {
+			return false, err
+		}
+		if !setupOnly {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+func legacyMigrationTableContainsOnlySetupRows(target *gorm.DB, table string, count int64) (bool, error) {
+	if _, seeded := legacyMigrationSeedTables[table]; seeded {
+		return true, nil
+	}
+	var bootstrapRows int64
+	switch table {
+	case "config_versions":
+		if count != 1 {
+			return false, nil
+		}
+		err := target.Table(table).
+			Where("version = ? AND actor_id = ? AND actor_name = ? AND source = ? AND previous_version_id = ? AND rollback_from_version_id = ?", 1, "system", "system", "bootstrap-file", 0, 0).
+			Count(&bootstrapRows).Error
+		if err != nil {
+			return false, fmt.Errorf("inspect bootstrap config version: %w", err)
+		}
+	case "runtime_configs":
+		if count != 1 {
+			return false, nil
+		}
+		err := target.Table(table).Where("id = ? AND version = ?", 1, 1).Count(&bootstrapRows).Error
+		if err != nil {
+			return false, fmt.Errorf("inspect bootstrap runtime config: %w", err)
+		}
+	default:
+		return false, nil
+	}
+	return bootstrapRows == count, nil
 }
 
 func prepareLegacyMigrationTarget(target *gorm.DB) error {

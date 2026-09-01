@@ -85,9 +85,10 @@ func TestMigrateLegacySQLiteReplacesSetupSeedsButRejectsApplicationData(t *testi
 	if err := Migrate(target); err != nil {
 		t.Fatalf("initialize target: %v", err)
 	}
+	createBootstrapConfigFixture(t, target, 1)
 	safe, err := LegacyMigrationTargetIsSafe(target)
 	if err != nil || !safe {
-		t.Fatalf("initialized-only target safe = %v, err = %v", safe, err)
+		t.Fatalf("bootstrapped initialized-only target safe = %v, err = %v", safe, err)
 	}
 
 	if _, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil); err != nil {
@@ -107,6 +108,27 @@ func TestMigrateLegacySQLiteReplacesSetupSeedsButRejectsApplicationData(t *testi
 	}
 	if _, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil); !errors.Is(err, ErrLegacyMigrationTargetNotEmpty) {
 		t.Fatalf("second migration error = %v, want ErrLegacyMigrationTargetNotEmpty", err)
+	}
+}
+
+func TestLegacyMigrationTargetRejectsChangedRuntimeConfig(t *testing.T) {
+	target, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "target.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(target); err != nil {
+		t.Fatal(err)
+	}
+	createBootstrapConfigFixture(t, target, 2)
+
+	safe, err := LegacyMigrationTargetIsSafe(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safe {
+		t.Fatal("target with changed runtime config reported safe")
 	}
 }
 
@@ -192,6 +214,10 @@ func TestMigrateLegacySQLiteExternalSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := Migrate(target); err != nil {
+		t.Fatalf("initialize target: %v", err)
+	}
+	createBootstrapConfigFixture(t, target, 1)
 	report, err := MigrateLegacySQLite(context.Background(), path, target, nil, nil)
 	if err != nil {
 		t.Fatalf("full snapshot migration simulation failed: %v", err)
@@ -205,6 +231,19 @@ func TestMigrateLegacySQLiteExternalSnapshot(t *testing.T) {
 		report.TablesCopied,
 		report.TextValuesRepaired,
 	)
+}
+
+func createBootstrapConfigFixture(t *testing.T, target *gorm.DB, runtimeVersion int) {
+	t.Helper()
+	if err := target.Create(&ConfigVersion{
+		Version: 1, ActorID: "system", ActorName: "system", Source: "bootstrap-file",
+		ConfigJSON: "{}", RedactedConfigJSON: "{}", ChangedSectionsJSON: `["initial"]`, DiffJSON: "[]",
+	}).Error; err != nil {
+		t.Fatalf("create bootstrap config version: %v", err)
+	}
+	if err := target.Create(&RuntimeConfig{ID: 1, Version: runtimeVersion, ConfigJSON: "{}"}).Error; err != nil {
+		t.Fatalf("create bootstrap runtime config: %v", err)
+	}
 }
 
 func openLegacyMigrationFixture(t *testing.T, path string) *gorm.DB {

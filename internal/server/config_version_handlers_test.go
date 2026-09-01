@@ -113,6 +113,35 @@ func TestBootstrapVersionedConfigLoadsCurrentDatabaseConfig(t *testing.T) {
 	}
 }
 
+func TestBootstrapVersionedConfigKeepsLegacyMigrationTargetSafe(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "target.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := db.Migrate(gormDB); err != nil {
+		t.Fatalf("initialize target: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	fileConfig := config.Config{
+		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+	}
+	if err := BootstrapVersionedConfig(&fileConfig); err != nil {
+		t.Fatalf("bootstrap config: %v", err)
+	}
+
+	safe, err := db.LegacyMigrationTargetIsSafe(gormDB)
+	if err != nil {
+		t.Fatalf("inspect migration target: %v", err)
+	}
+	if !safe {
+		t.Fatal("fresh target became unsafe after normal service configuration bootstrap")
+	}
+}
+
 func TestRestoreVersionedConfigKeepsArchivedTopLevelSectionAuthoritative(t *testing.T) {
 	archivedJSON, err := json.Marshal(config.Config{
 		PerformanceBrain: config.PerformanceBrainConfig{
