@@ -1,12 +1,32 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-24T21:39:20+08:00",
+  "updated_at": "2026-09-24T22:25:00+08:00",
   "active_task": {
-    "goal": "Production online code-review skill governance and strongest-brain optimization projection",
-    "phase": "delivery_ready",
-    "next": "Deliver online skill integration evidence, production deployment boundary and Agent Runtime ADR"
+    "goal": "Agent runtime capability architecture evolution, scenario verification, and performance benchmarks based on plan 2026-09-24",
+    "phase": "verified_and_ready_to_commit",
+    "next": "Commit all changes with detailed summary, then trigger mandatory pre-delivery reflection gate"
   },
   "warm_memory": {
+    "agent_runtime_evolution_2026_09_24": {
+      "status": "implemented_and_verified",
+      "goal": "基于《agent-runtime-capability-plan-2026-09-24》实现微内核运行时、Capability Registry、ACP/1 协议、Run Lockfile、最强大脑 Replay/Canary 优化闭环及场景测试与性能压测",
+      "changes": [
+        "新增 Capability/Version/Resource/Dependency/AgentRun/Binding/Event/Evaluation/Proposal 9张领域模型表并注册入 coreSchemaModels",
+        "实现 internal/agentruntime：微内核 Manifest 校验与自计算摘要、DAG 依赖拓扑解析与循环依赖检测、Scope 级版本互斥激活与退役、权限与预算隔离",
+        "实现 Agent Context Protocol (ACP/1)：紧凑上下文呈现（较 JSON 降低 50.58% Token）、内容寻址、Delta 增量更新与 Base Hash 一致性校验",
+        "实现 Run Lockfile：冻结微内核/模型/Capability/上下文/权限/预算不可变快照，支持 SHA-256 内容地址校验与防篡改",
+        "实现 TraceCollector：线程安全 Append-only 审计事件序列追踪",
+        "实现 LegacySkillAdapter：向后兼容 Phase 0 提示词与 CodeReviewRun 映射，自动 seed 核心默认能力",
+        "实现 internal/strongestbrain：7 维治理报告提取（Quality/Evidence/Safety/Stability/Tokens/Latency/Isolation）、阈值异常自动生成提案、人工审批门禁、确定性沙箱 Replay 评测（加权评分与越权硬门禁拦截）、金丝雀灰度推进（shadow->100%）与自动熔断回滚",
+        "Server 挂载 12 个通用 Agent Runtime 与最强大脑治理 API 路由，配置 RBAC 权限与 bounded read contracts"
+      ],
+      "validation": [
+        "全量 go test ./... 与 go vet ./... PASS，零错误零警告",
+        "go test -race ./internal/agentruntime ./internal/strongestbrain PASS，无竞态无泄漏",
+        "新增 10 大场景测试（生命周期、DAG 拓扑、权限拦截、Lockfile 防篡改、ACP/1 Delta、并发 Trace、向后兼容、智能指标、人工审核、确定性 Replay、Canary 回滚、HTTP E2E）全部 PASS",
+        "压测实测（cmd/agent-runtime-bench）：100 并发 goroutines 下 DAG 解析吞吐达 20,457 QPS（平均延迟 4.78ms，p50 3.30ms）；ACP/1 实现 50.58% Token 降幅（目标 ≥ 30%）；Lockfile 校验达 851,231 ops/sec；Replay 评测达 21,101 evals/sec"
+      ]
+    },
     "online_code_review_skill_2026_09_24": {
       "status": "implemented_and_verified_reflection_pending",
       "goal": "让生产评审 worker 加载数据库中的版本化 code_review skill，并向最强大脑提供可追溯质量投影",

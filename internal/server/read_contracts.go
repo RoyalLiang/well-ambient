@@ -14,6 +14,13 @@ const (
 
 func allPageReadContracts() map[string]readmodel.Contract {
 	return map[string]readmodel.Contract{
+		"/api/agent-runtime/capabilities":              directoryRead("agent-capabilities", readmodel.MaturityBounded, "settings.ai_context", "evidence.health"),
+		"/api/agent-runtime/runs":                      detailRead("agent-runs", readmodel.MaturityBounded, 100, "settings.ai_context", "evidence.health"),
+		"/api/agent-runtime/runs/{id}/lockfile":        detailRead("agent-run-lockfile", readmodel.MaturityBounded, 1, "settings.ai_context", "evidence.health"),
+		"/api/agent-runtime/runs/{id}/trace":           timelineRead("agent-run-trace", readmodel.StrategyTopK, readmodel.MaturityBounded, "settings.ai_context", "evidence.health"),
+		"/api/agent-runtime/replays/{id}":              detailRead("agent-runtime-replay", readmodel.MaturityBounded, 1, "settings.ai_context", "evidence.health"),
+		"/api/strongest-brain/capability-intelligence": aggregateRead("strongest-brain-capability-intelligence", readmodel.MaturityBounded, "decision.agenda", "evidence.health"),
+		"/api/strongest-brain/capability-proposals":    detailRead("strongest-brain-capability-proposals", readmodel.MaturityBounded, 50, "decision.agenda", "evidence.health"),
 		"/api/code-reviews/targets":                detailRead("code-review-targets", readmodel.MaturityBounded, 100, "tasks.review"),
 		"/api/code-reviews":                        detailRead("code-review-runs", readmodel.MaturityBounded, 200, "tasks.review"),
 		"/api/code-reviews/repos":                  directoryRead("code-review-repositories", readmodel.MaturityBounded, "tasks.review"),

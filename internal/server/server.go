@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 	"well-ambient/internal/agenda"
+	"well-ambient/internal/agentruntime"
 	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
@@ -25,6 +26,7 @@ import (
 	"well-ambient/internal/server/authz"
 	"well-ambient/internal/solutioncatalog"
 	"well-ambient/internal/solutions"
+	"well-ambient/internal/strongestbrain"
 	"well-ambient/internal/telemetry"
 )
 
@@ -70,8 +72,31 @@ type Server struct {
 	solutions           *solutions.Module
 	solutionCatalog     *solutioncatalog.Module
 	performance         *performance.Module
+	capabilityRegistry  *agentruntime.Registry
+	agentTrace          *agentruntime.TraceCollector
+	legacySkillAdapter  *agentruntime.LegacySkillAdapter
+	strongestBrain      *strongestbrain.Service
 	streamingCtx        context.Context
 	stopStreaming       context.CancelFunc
+}
+
+func (s *Server) ensureAgentRuntime() {
+	if db.DB == nil {
+		return
+	}
+	if s.capabilityRegistry == nil {
+		s.capabilityRegistry = agentruntime.NewRegistry(db.DB)
+	}
+	if s.agentTrace == nil {
+		s.agentTrace = agentruntime.NewTraceCollector(db.DB)
+	}
+	if s.legacySkillAdapter == nil {
+		s.legacySkillAdapter = agentruntime.NewLegacySkillAdapter(db.DB, s.capabilityRegistry)
+		_ = s.legacySkillAdapter.EnsureDefaultCapabilities(context.Background())
+	}
+	if s.strongestBrain == nil {
+		s.strongestBrain = strongestbrain.NewService(db.DB, s.capabilityRegistry)
+	}
 }
 
 func (s *Server) streamingContext() context.Context {
@@ -118,6 +143,7 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	}
 	s.setEmailConfig(*cfg)
 	s.codeReview = s.newCodeReviewService()
+	s.ensureAgentRuntime()
 	s.routes()
 	if db.DB != nil {
 		databaseConfig, configErr := cfg.Database.Resolve()
@@ -379,6 +405,22 @@ func (s *Server) routes() {
 	// Protected Phase 4: Agenda and Decision APIs
 	s.mux.HandleFunc("GET /api/agenda/summary", s.withAuth(agenda.HandleGetAgendaSummary))
 	s.mux.HandleFunc("POST /api/agenda/decision", s.withAuth(agenda.HandlePostAgendaDecision))
+
+	// Protected Agent Runtime & Capability Registry APIs
+	s.mux.HandleFunc("GET /api/agent-runtime/capabilities", s.withPermission("ai_context:read", s.handleListAgentCapabilities))
+	s.mux.HandleFunc("POST /api/agent-runtime/capabilities", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleRegisterAgentCapability)))
+	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/activate", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleActivateAgentCapabilityVersion)))
+	s.mux.HandleFunc("POST /api/agent-runtime/resolve/preview", s.withPermission("ai_context:preview", s.handlePreviewCapabilityResolve))
+	s.mux.HandleFunc("GET /api/agent-runtime/runs", s.withPermission("ai_context:read", s.handleListAgentRuns))
+	s.mux.HandleFunc("GET /api/agent-runtime/runs/{id}/lockfile", s.withPermission("ai_context:read", s.handleGetAgentRunLockfile))
+	s.mux.HandleFunc("GET /api/agent-runtime/runs/{id}/trace", s.withPermission("ai_context:read", s.handleGetAgentRunTrace))
+	s.mux.HandleFunc("POST /api/agent-runtime/replays", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleRunAgentRuntimeReplay)))
+	s.mux.HandleFunc("GET /api/agent-runtime/replays/{id}", s.withPermission("ai_context:read", s.handleGetAgentRuntimeReplay))
+
+	// Protected Strongest Brain Capability Intelligence & Proposals
+	s.mux.HandleFunc("GET /api/strongest-brain/capability-intelligence", s.withPermission("decision:read", s.handleGetStrongestBrainCapabilityIntelligence))
+	s.mux.HandleFunc("GET /api/strongest-brain/capability-proposals", s.withPermission("decision:read", s.handleListStrongestBrainCapabilityProposals))
+	s.mux.HandleFunc("POST /api/strongest-brain/capability-proposals/{id}/review", s.withPermission("decision:read", s.withGlobalSuperAdmin(s.handleReviewStrongestBrainCapabilityProposal)))
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {

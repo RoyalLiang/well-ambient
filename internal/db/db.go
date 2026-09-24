@@ -554,6 +554,15 @@ func coreSchemaModels() []any {
 		&PerformanceEvidenceFact{},
 		&PerformanceWorkItemEvent{},
 		&PerformanceAuditEvent{},
+		&Capability{},
+		&CapabilityVersion{},
+		&CapabilityResource{},
+		&CapabilityDependency{},
+		&AgentRun{},
+		&RunCapabilityBinding{},
+		&AgentRunEvent{},
+		&CapabilityEvaluation{},
+		&CapabilityProposal{},
 	}
 }
 
