@@ -37,6 +37,8 @@
       {required}
       class="text-input"
       class:password-padding={type === 'password'}
+      aria-invalid={error ? 'true' : undefined}
+      aria-describedby={error || helperText ? `${id}-message` : undefined}
     />
 
     {#if type === 'password'}
@@ -45,7 +47,9 @@
         class="toggle-password-btn" 
         on:click={togglePassword}
         {disabled}
-        tabindex="-1"
+        aria-label={`显示${label || '密码'}`}
+        aria-pressed={showPassword}
+        aria-controls={id || undefined}
       >
         {#if showPassword}
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
@@ -57,13 +61,16 @@
   </div>
 
   {#if error}
-    <span class="error-text">{error}</span>
+    <span id={`${id}-message`} class="error-text">{error}</span>
   {:else if helperText}
-    <span class="helper-text">{helperText}</span>
+    <span id={`${id}-message`} class="helper-text">{helperText}</span>
   {/if}
 </div>
 
 <style>
+  /* finesse · component: text-input · register=product
+   * states: default · focus-visible · disabled · error
+   * tokens: inherited (modern-admin-tokens.css) */
   .input-group {
     display: flex;
     flex-direction: column;
@@ -110,7 +117,7 @@
     outline: none;
     border-color: var(--wa-border-focus, rgba(0, 143, 150, 0.86));
     box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.1);
-    background: #ffffff;
+    background: var(--wa-surface-flat, #fbfdff);
   }
 
   .text-input::placeholder {
@@ -143,12 +150,24 @@
     justify-content: center;
     padding: 4px;
     border-radius: 4px;
-    transition: all 0.2s;
+    transition: color var(--wa-duration-fast, 140ms) var(--wa-ease, ease), background var(--wa-duration-fast, 140ms) var(--wa-ease, ease);
   }
 
   .toggle-password-btn:hover:not(:disabled) {
     color: var(--wa-text-strong, #0d1722);
     background: var(--wa-accent-soft, rgba(0, 143, 150, 0.12));
+  }
+  .toggle-password-btn:focus-visible {
+    outline: 2px solid var(--wa-border-focus);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 760px) {
+    .toggle-password-btn {
+      right: 0;
+      min-width: 44px;
+      min-height: 44px;
+    }
   }
 
   .error-text {

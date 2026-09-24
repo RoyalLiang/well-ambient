@@ -20,6 +20,7 @@
     endpoint_type?: string;
     api_token: string;
     model: string;
+    reasoning_effort?: string;
     project_architecture?: string;
     delivery_workflow?: string;
     implemented_features?: string;
@@ -155,6 +156,8 @@
   let baseURL = config.base_url || '';
   let endpointType = normalizeEndpointType(config.endpoint_type);
   let apiToken = config.api_token || '';
+  const normalizeReasoningEffort = (value?: string) => value?.trim().toLowerCase() === 'middle' ? 'medium' : (value?.trim().toLowerCase() || '');
+  let reasoningEffort = normalizeReasoningEffort(config.reasoning_effort);
   let modelName = config.model || '';
   let projectArchitecture = config.project_architecture || '';
   let deliveryWorkflow = config.delivery_workflow || '';
@@ -253,6 +256,7 @@
     endpointType = normalizeEndpointType(config.endpoint_type);
     apiToken = config.api_token || '';
     modelName = config.model || '';
+    reasoningEffort = normalizeReasoningEffort(config.reasoning_effort);
     projectArchitecture = config.project_architecture || '';
     deliveryWorkflow = config.delivery_workflow || '';
     implementedFeatures = config.implemented_features || '';
@@ -321,6 +325,7 @@
             endpoint_type: endpointType,
             api_token: apiToken,
             model: modelName,
+            reasoning_effort: reasoningEffort,
             project_architecture: projectArchitecture,
             delivery_workflow: deliveryWorkflow,
             implemented_features: implementedFeatures,
@@ -356,6 +361,7 @@
       endpoint_type: endpointType,
       api_token: apiToken,
       model: modelName,
+      reasoning_effort: reasoningEffort,
       project_architecture: projectArchitecture,
       delivery_workflow: deliveryWorkflow,
       implemented_features: implementedFeatures,
@@ -693,6 +699,7 @@
         <div class="scw-read-item">
           <span>大语言模型 (Model)</span>
           <strong class="font-mono">{modelName || '未指定'}</strong>
+          <span>推理等级：{reasoningEffort || '服务商默认'}</span>
         </div>
         <div class="scw-read-item">
           <span>接口端点类型 (Endpoint Type)</span>
@@ -828,6 +835,18 @@
               helperText="指定推理模型。例如: gpt-4o、deepseek-chat、qwen-max 等。"
             />
 
+            <div class="scw-native-field">
+              <label class="scw-native-label" for="ai-reasoning-effort">推理等级</label>
+              <select id="ai-reasoning-effort" class="scw-native-input" bind:value={reasoningEffort} aria-describedby="ai-reasoning-help">
+                <option value="">服务商默认</option>
+                <option value="low">low · 低</option>
+                <option value="medium">middle / medium · 中</option>
+                <option value="high">high · 高</option>
+                <option value="xhigh">xhigh · 更高</option>
+              </select>
+              <p id="ai-reasoning-help" class="scw-helper">更高等级通常需要更多时间和 token。可用等级取决于模型，请通过健康检查确认；服务商默认不指定等级。</p>
+            </div>
+
             {#if testSuccess}
               <Alert type="success" title="测试成功" message={testSuccess}>
                 {#if testDetails}
@@ -921,6 +940,10 @@
               <span class="summary-value font-mono">{modelName || 'gpt-4o (默认)'}</span>
             </div>
             <div class="scw-summary-row">
+          <span class="summary-label">推理等级:</span>
+          <span class="summary-value">{reasoningEffort || '服务商默认'}</span>
+        </div>
+        <div class="scw-summary-row">
               <span class="summary-label">系统设计语料库:</span>
               <span class="summary-value">{activeContextFactCount} active · {defaultWorkHoursPerDay || 8} 小时/天</span>
             </div>

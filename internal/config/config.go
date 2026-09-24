@@ -12,6 +12,8 @@ import (
 
 // Config holds all configuration details for well-ambient
 type Config struct {
+	SMTP             SMTPConfig             `yaml:"smtp" json:"smtp"`
+	DailyJiraEmail   DailyJiraEmailConfig   `yaml:"daily_jira_email" json:"daily_jira_email"`
 	Database         DatabaseConfig         `yaml:"database" json:"-"`
 	Server           ServerConfig           `yaml:"server" json:"server"`
 	GitLab           GitLabConfig           `yaml:"gitlab" json:"gitlab"`
@@ -309,6 +311,7 @@ type JiraVersionSource struct {
 
 // AIConfig holds settings for LLM deconstructor
 type AIConfig struct {
+	ReasoningEffort        string  `yaml:"reasoning_effort" json:"reasoning_effort"`
 	Enabled                bool    `yaml:"enabled" json:"enabled"`
 	Provider               string  `yaml:"provider" json:"provider"` // e.g. "openai"
 	BaseURL                string  `yaml:"base_url" json:"base_url"`
@@ -428,4 +431,20 @@ func (c *AIConfig) GetRealAPIURL() string {
 	}
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/v1/" + protocol
 	return parsed.String()
+}
+
+// NormalizeReasoningEffort accepts the UI's middle spelling and keeps empty
+// configuration backward compatible with the provider's model default.
+func (c *AIConfig) NormalizeReasoningEffort() error {
+	effort := strings.ToLower(strings.TrimSpace(c.ReasoningEffort))
+	if effort == "middle" {
+		effort = "medium"
+	}
+	switch effort {
+	case "", "low", "medium", "high", "xhigh":
+		c.ReasoningEffort = effort
+		return nil
+	default:
+		return fmt.Errorf("推理等级必须为 low、middle/medium、high、xhigh 或留空使用服务商默认")
+	}
 }

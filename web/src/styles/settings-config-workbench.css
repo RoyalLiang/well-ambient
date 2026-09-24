@@ -434,6 +434,7 @@
 .scw-form-grid .input-group,
 .scw-form-grid .select-group,
 .scw-form-stack .input-group,
+.scw-form-stack .multi-select-group.settings-control,
 .scw-form-stack .select-group {
   margin-bottom: 0;
 }

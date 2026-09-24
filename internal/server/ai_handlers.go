@@ -883,8 +883,9 @@ func testAIConnection(ctx context.Context, cfg *config.AIConfig) (bool, string, 
 	log.Printf("[AI Connection Test] Outgoing HTTP POST to: %s", cfg.GetRealAPIURL())
 	log.Printf("[AI Connection Test] Target Model: %s, Protocol Mode: %s", modelName, cfg.Protocol())
 	output, err := client.Generate(ctx, providerllm.Request{
-		UserPrompt:      "ping",
-		MaxOutputTokens: 5,
+		// A five-token cap can be exhausted by reasoning before any text is emitted.
+		// Use the same provider token defaults as ordinary requests.
+		UserPrompt: "Reply only with pong.",
 	})
 	if err != nil {
 		log.Printf("[AI Connection Test] Connection error: %v", err)

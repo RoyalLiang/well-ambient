@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/delivery"
@@ -54,6 +55,7 @@ type MergeRequestHookPayload struct {
 	ObjectKind string     `json:"object_kind"`
 	User       GitLabUser `json:"user"`
 	Project    struct {
+		ID     int    `json:"id"`
 		Name   string `json:"name"`
 		WebURL string `json:"web_url"`
 	} `json:"project"`
@@ -75,8 +77,12 @@ type MergeRequestHookPayload struct {
 // HandleWebhook processes the incoming GitLab webhook POST request
 func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 	// 1. Verify token
+	if cfg.GitLab.Secret == "" {
+		http.Error(w, "GitLab webhook secret is not configured", http.StatusServiceUnavailable)
+		return
+	}
 	secret := r.Header.Get("X-Gitlab-Token")
-	if cfg.GitLab.Secret != "" && secret != cfg.GitLab.Secret {
+	if secret != cfg.GitLab.Secret {
 		http.Error(w, "Unauthorized: invalid GitLab secret token", http.StatusUnauthorized)
 		return
 	}
@@ -112,6 +118,18 @@ func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 
 	// 3. Process event
 	if event == "Push Hook" || event == "Merge Request Hook" {
+		if cfg.GitLab.Enabled && cfg.AI.Enabled {
+			if db.DB == nil {
+				http.Error(w, "Code review queue unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			reviewer := codereview.Service{DB: db.DB, Config: func() *config.Config { return cfg }}
+			if err := reviewer.Hook(r.Context(), event, body); err != nil {
+				log.Printf("Code review enqueue failed: %v", err)
+				http.Error(w, "Code review enqueue failed", http.StatusInternalServerError)
+				return
+			}
+		}
 		if err := ProcessWebhookEvent(cfg, event, body); err != nil {
 			log.Printf("Error processing event %s: %v", event, err)
 		}
@@ -123,8 +141,9 @@ func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("Event %s received", event)))
 }
 
-// ProcessWebhookEvent parses GitLab push/merge request hooks and saves telemetry
-func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
+// ProcessWebhookEvent parses GitLab push/merge request hooks and saves telemetry.
+// Code-review enqueue is owned by HandleWebhook so Kanban failures cannot drop it.
+func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultErr error) {
 	var taskID, branchName, lastCommit, repoName, assigneeName, status, mrTitle string
 	var mrIID int
 	var mrURL string
@@ -176,7 +195,9 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			}
 		}
 
-		if taskID != "" && db.DB != nil {
+		// A commit is source evidence even when no task can be associated with it.
+		// Task-specific telemetry and notifications remain gated below.
+		if db.DB != nil {
 			for _, c := range payload.Commits {
 				cMsg := strings.TrimSpace(c.Message)
 				cTaskID := ExtractTaskID(cMsg)
@@ -214,6 +235,8 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 					log.Printf("Failed to save GitCommitLog: %v", err)
 				}
 			}
+		}
+		if taskID != "" && db.DB != nil {
 			if len(payload.Commits) == 0 {
 				commitLog := db.GitCommitLog{
 					TaskID:    taskID,
@@ -294,9 +317,10 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			taskID = ExtractTaskID(lastCommit)
 		}
 		taskID = resolveCanonicalTaskID(taskID)
+		closed, policyErr := enforceMRCommitPolicy(cfg, payload)
 
 		// AI Semantic Linker fallback if taskID is not specified
-		if taskID == "" && cfg.AI.Enabled && db.DB != nil {
+		if taskID == "" && cfg.AI.Enabled && db.DB != nil && !closed && policyErr == nil {
 			taskID = trySemanticLink(cfg, branchName, mrTitle, repoName, assigneeName)
 			if taskID != "" {
 				notif := db.Notification{
@@ -312,7 +336,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 			}
 		}
 
-		if taskID != "" && db.DB != nil {
+		if db.DB != nil {
 			mrLog := db.GitCommitLog{
 				TaskID:    taskID,
 				Repo:      repoName,
@@ -333,6 +357,14 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 				log.Printf("Failed to save GitCommitLog for MR: %v", err)
 			}
 
+		}
+		if policyErr != nil {
+			return fmt.Errorf("MR commit policy: %w", policyErr)
+		}
+		if closed {
+			return nil
+		}
+		if taskID != "" && db.DB != nil {
 			// Save mr_event notification
 			notif := db.Notification{
 				Type:      "mr_event",
@@ -351,10 +383,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) error {
 				OnTelemetryBroadcast(taskID)
 			}
 
-			// Launch AI Contextual MR Reviewer in background
-			if status == "review" && cfg.AI.Enabled {
-				go runAIMrReview(cfg, taskID, repoName, branchName, mrTitle, mrURL, lastCommit, mrIID, assigneeName)
-			}
+			// Deep code review is queued independently of Jira identity after processing.
 		}
 		if db.DB != nil {
 			reconcileAutonomousExecutionMR(branchName, mrURL, action, state)
@@ -780,88 +809,6 @@ func trySemanticLink(cfg *config.Config, branchName, lastCommit, repoName, assig
 
 	log.Printf("Semantic Linker: AI successfully linked branch/commit to TaskID: %s", matched)
 	return matched
-}
-
-// runAIMrReview performs background code review by comparing MR diffs/commits with Jira stories
-func runAIMrReview(cfg *config.Config, taskID, repoName, branchName, mrTitle, mrURL, lastCommit string, mrIID int, assigneeName string) {
-	log.Printf("AI MR Review: starting reviewer daemon for task %s (MR !%d)", taskID, mrIID)
-
-	jc := NewJiraClient(&cfg.Jira)
-	issues, err := jc.SearchIssues(fmt.Sprintf("key = %s", taskID))
-	jiraTitle := ""
-	jiraDesc := ""
-	if err == nil && len(issues) > 0 {
-		jiraTitle = issues[0].Fields.Summary
-		jiraDesc = issues[0].Fields.Description
-	} else {
-		log.Printf("AI MR Review: failed to fetch Jira details for %s: %v", taskID, err)
-		jiraTitle = "Unknown Jira Title"
-		jiraDesc = "No description available."
-	}
-
-	systemPrompt := `你是一个资深的软件架构师和代码评审专家。你负责评估一次代码变更（Merge Request）与对应 Jira 需求任务描述及验收标准（AC）的一致性，识别潜在的设计风险并推荐回归测试场景。`
-	userPrompt := fmt.Sprintf(`[Jira 任务信息]
-ID: %s
-标题: %s
-描述与验收标准:
-%s
-
-[当前 Merge Request 变动]
-项目: %s
-MR 标题: %s
-最后提交消息/修改概述:
-%s
-
-请提供代码评审报告：
-1. 【业务一致性审计】：本次修改是否覆盖了 Jira 的核心诉求？是否存在严重遗漏或超出需求范围的偏离？
-2. 【架构与隐性风险】：对核心系统有什么潜在的副作用或安全/并发风险？
-3. 【推荐回归场景】：推荐 QA 重点测试的 2-3 个业务回归场景。
-请仅以清晰的 Markdown 格式输出（字数限制在 300 字以内），排版要紧凑美观。不要有废话。`, taskID, jiraTitle, compressContext(jiraDesc, 1200), repoName, mrTitle, compressContext(lastCommit, 800))
-
-	aiReport, err := queryLLM(cfg, systemPrompt, userPrompt)
-	if err != nil {
-		log.Printf("AI MR Review: LLM query failed for %s: %v", taskID, err)
-		return
-	}
-
-	aiReport = strings.TrimSpace(aiReport)
-	if aiReport == "" {
-		return
-	}
-
-	reviewLog := db.GitCommitLog{
-		TaskID:    taskID,
-		Repo:      repoName,
-		Branch:    branchName,
-		MrIID:     mrIID,
-		MrURL:     mrURL,
-		Message:   aiReport,
-		Author:    "🤖 AI Reviewer",
-		Action:    "ai_review",
-		CreatedAt: time.Now(),
-	}
-
-	if db.DB != nil {
-		if err := db.DB.Create(&reviewLog).Error; err != nil {
-			log.Printf("AI MR Review: failed to save review log: %v", err)
-		}
-
-		notif := db.Notification{
-			Type:      "ai_review",
-			TaskID:    taskID,
-			Title:     "🤖 AI 自动代码评审完成",
-			Message:   fmt.Sprintf("已完成对 %s (MR !%d) 的业务一致性审计。报告已追加至活动日志。", taskID, mrIID),
-			Assignee:  assigneeName,
-			Link:      mrURL,
-			CreatedAt: time.Now(),
-		}
-		db.DB.Create(&notif)
-
-		if OnNotificationBroadcast != nil {
-			OnNotificationBroadcast()
-		}
-	}
-	log.Printf("AI MR Review: successfully generated and saved code review report for %s", taskID)
 }
 
 // queryLLM contacts the configured Responses or Claude Messages endpoint.

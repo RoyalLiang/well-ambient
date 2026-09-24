@@ -27,8 +27,16 @@ type JiraVersion struct {
 }
 
 type JiraIssue struct {
+	BugCategory          string `json:"-"`
+	BugCategoryFieldID   string `json:"-"`
+	BugCategoryAvailable bool   `json:"-"`
+	HistoryAvailable     bool   `json:"-"`
+	rawFields            map[string]json.RawMessage
+
 	Key       string `json:"key"`
 	Changelog struct {
+		StartAt   int           `json:"startAt"`
+		Total     int           `json:"total"`
 		Histories []JiraHistory `json:"histories"`
 	} `json:"changelog"`
 	Fields struct {
@@ -100,6 +108,8 @@ type JiraHistory struct {
 		DisplayName  string `json:"displayName"`
 	} `json:"author"`
 	Items []struct {
+		From       string `json:"from"`
+		To         string `json:"to"`
 		Field      string `json:"field"`
 		FieldID    string `json:"fieldId"`
 		FromString string `json:"fromString"`
@@ -108,8 +118,9 @@ type JiraHistory struct {
 }
 
 type JiraSearchResponse struct {
-	Total  int         `json:"total"`
-	Issues []JiraIssue `json:"issues"`
+	Names  map[string]string `json:"names"`
+	Total  int               `json:"total"`
+	Issues []JiraIssue       `json:"issues"`
 }
 
 type JiraTransition struct {
@@ -161,15 +172,9 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 	var allIssues []JiraIssue
 	startAt := 0
 	maxResults := 50
-	fields := strings.Join([]string{
-		"summary", "description", "created", "issuetype", "assignee", "reporter", "status", "project",
-		"fixVersions", "versions", "updated", "resolutiondate", "duedate",
-		"timeoriginalestimate", "timetracking", "priority",
-		"parent", "issuelinks",
-	}, ",")
-
+	fields := "*all,-comment"
 	for {
-		path := fmt.Sprintf("/rest/api/2/search?jql=%s&startAt=%d&maxResults=%d&fields=%s&expand=changelog", url.QueryEscape(jql), startAt, maxResults, url.QueryEscape(fields))
+		path := fmt.Sprintf("/rest/api/2/search?jql=%s&startAt=%d&maxResults=%d&fields=%s&expand=changelog,names", url.QueryEscape(jql), startAt, maxResults, url.QueryEscape(fields))
 		req, err := jc.newRequest("GET", path, nil)
 		if err != nil {
 			return nil, err
@@ -193,6 +198,10 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 			return nil, err
 		}
 
+		for i := range res.Issues {
+			res.Issues[i].applyReportFieldNames(res.Names)
+			jc.completeReportHistory(&res.Issues[i])
+		}
 		allIssues = append(allIssues, res.Issues...)
 		if len(allIssues) >= res.Total || len(res.Issues) == 0 {
 			break

@@ -194,6 +194,9 @@ func (c Client) httpClient() *http.Client {
 }
 
 func buildPayload(cfg config.AIConfig, input Request, stream bool) (map[string]any, error) {
+	if err := cfg.NormalizeReasoningEffort(); err != nil {
+		return nil, err
+	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
 		model = defaultModel
@@ -206,13 +209,17 @@ func buildPayload(cfg config.AIConfig, input Request, stream bool) (map[string]a
 		if maxTokens <= 0 {
 			maxTokens = defaultAnthropicTokens
 		}
-		return map[string]any{
+		payload := map[string]any{
 			"model":      model,
 			"system":     input.SystemPrompt,
 			"messages":   []map[string]any{{"role": "user", "content": input.UserPrompt}},
 			"max_tokens": maxTokens,
 			"stream":     stream,
-		}, nil
+		}
+		if cfg.ReasoningEffort != "" {
+			payload["output_config"] = map[string]any{"effort": cfg.ReasoningEffort}
+		}
+		return payload, nil
 	}
 	content := make([]map[string]any, 0, len(input.FileIDs)+len(input.Files)+1)
 	for _, fileID := range input.FileIDs {
@@ -254,6 +261,9 @@ func buildPayload(cfg config.AIConfig, input Request, stream bool) (map[string]a
 	}
 	if input.MaxOutputTokens > 0 {
 		payload["max_output_tokens"] = input.MaxOutputTokens
+	}
+	if cfg.ReasoningEffort != "" {
+		payload["reasoning"] = map[string]any{"effort": cfg.ReasoningEffort}
 	}
 	return payload, nil
 }

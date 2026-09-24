@@ -82,6 +82,32 @@ performance_brain:
   busy_retry_attempts: 3
   busy_retry_delay_ms: 200
 
+# 配置中心的“邮件服务”可保存下列设置，密码不在读取接口或历史版本中返回原文。
+smtp:
+  enabled: false
+  host: smtp.example.com
+  port: 587
+  tls_mode: starttls # starttls / tls；none 仅限本机无认证测试
+  username: ""
+  password: ""
+  from: reports@example.com
+
+daily_jira_email:
+  enabled: false
+  recipients: []
+  timezone: Asia/Shanghai
+  send_time: "09:00"
+  include_commits: false
+  confluence:
+    enabled: false
+    parent_page_url: "https://confluence.westwell-lab.com/display/~zhiyuan_liang/well-infra"
+    token: ""
+  template:
+    style: brief # brief / focus / ledger
+    subject: "Jira 每日早报 · {{date}}"
+    introduction: "各位早上好，以下为 {{date}} 的研发早报（{{timezone}}）。请结合状态分布与负责人统计，优先关注近三天新建且仍未解决的事项。"
+    closing: "请相关负责人核对待办事项、明确下一步计划，并及时更新 Jira 状态。统计基于本地同步记录；如有缺失，请先检查同步与人员映射。"
+
 solution_catalog:
   interval_minutes: 30
   candidate_limit: 8

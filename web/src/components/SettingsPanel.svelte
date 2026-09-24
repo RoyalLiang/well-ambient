@@ -5,6 +5,8 @@
   import Alert from './shared/Alert.svelte';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import GitLabConfig from './config/GitLabConfig.svelte';
+  import EmailConfig from './config/EmailConfig.svelte';
+  import { defaultSMTP, defaultDailyEmail, type SMTPConfig, type DailyJiraEmailConfig } from '../lib/email-config';
   import FeishuConfig from './config/FeishuConfig.svelte';
   import JiraConfig from './config/JiraConfig.svelte';
   import PerformanceConfig from './config/PerformanceConfig.svelte';
@@ -86,6 +88,8 @@
   }
 
   interface GlobalConfig {
+    smtp: SMTPConfig;
+    daily_jira_email: DailyJiraEmailConfig;
     server: { host: string; port: number; public_url?: string; attachment_dir?: string };
     gitlab: {
       enabled?: boolean;
@@ -113,6 +117,7 @@
       endpoint_type?: string;
       api_token: string;
       model: string;
+    reasoning_effort?: string;
       project_architecture?: string;
       delivery_workflow?: string;
       implemented_features?: string;
@@ -175,6 +180,8 @@
   }
 
   let globalConfig: GlobalConfig = {
+    smtp: defaultSMTP(),
+    daily_jira_email: defaultDailyEmail(),
     server: { host: '', port: 0, public_url: '', attachment_dir: '' },
     gitlab: { base_url: '', secret_token: '', repos: [] },
     feishu: {
@@ -226,7 +233,7 @@
   let configVersionError = '';
   let rollbackLoadingID: number | null = null;
 
-  $: isIntegrationSection = ['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(activeSection);
+  $: isIntegrationSection = ['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(activeSection);
   $: visibleConfigVersions = configVersions;
   $: selectedConfigVersion = visibleConfigVersions.find(v => v.id === selectedConfigVersionID) || visibleConfigVersions[0] || null;
 
@@ -585,6 +592,7 @@
 
   function configVersionTouchesSection(version: ConfigVersion, section: string) {
     const sections = version.changed_sections || [];
+    if (section === 'email') return sections.includes('smtp') || sections.includes('daily_jira_email');
     return sections.includes(section === 'performance' ? 'performance_brain' : section);
   }
 
@@ -657,13 +665,23 @@
       }
       const result = await res.json();
       if (result.success) {
-        globalConfig = newConfig;
+        const persistedResponse = await fetch('/api/config');
+        if (!persistedResponse.ok) throw new Error(`配置已提交，但回读校验失败：${await responseErrorMessage(persistedResponse, `HTTP ${persistedResponse.status}`)}`);
+        const persistedConfig = await persistedResponse.json();
+        if (key === 'daily_jira_email') {
+          const requestedGroups = data.project_groups || [];
+          const persistedGroups = persistedConfig.daily_jira_email?.project_groups || [];
+          if (JSON.stringify(persistedGroups) !== JSON.stringify(requestedGroups)) {
+            throw new Error('分组配置未完整写入，已停止显示保存成功。请重试。');
+          }
+        }
+        globalConfig = persistedConfig;
         if (!isToggle) {
           saveSuccess = true;
           saveSuccessKey = key;
         }
         await fetchConfigVersions(true);
-        window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
+        window.dispatchEvent(new CustomEvent('config-updated', { detail: persistedConfig }));
         showToast(`${sectionDisplayName(key)}配置已保存。`, {
           title: isToggle ? '开关已更新' : '保存成功'
         });
@@ -723,6 +741,7 @@
   }
 
   function integrationDetail(section: SettingsSection) {
+    if (section === 'email') return globalConfig.daily_jira_email?.enabled ? '每日早报已启用' : '每日早报已停用';
     if (section === 'gitlab') return `${globalConfig.gitlab?.repos?.length || 0} 个仓库`;
     if (section === 'feishu') return globalConfig.feishu?.bot?.enabled ? '机器人已启用' : '机器人待配置';
     if (section === 'jira') return `${globalConfig.jira?.sync_projects?.length || 0} 个项目`;
@@ -745,13 +764,15 @@
   }
 
   function requiredPermissionLabel(section: SettingsSection) {
-    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'versions'].includes(section)) return '配置只读';
+    if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai', 'versions'].includes(section)) return '配置只读';
     if (section === 'solution_prompts') return '全局超管';
     if (section === 'ai_context') return '语料只读';
     return '成员只读';
   }
 
   function sectionDisplayName(section: string) {
+    if (section === 'smtp') return '邮件服务';
+    if (section === 'daily_jira_email') return 'Jira 邮件早报';
     if (section === 'performance_brain') return '绩效计算';
     return SETTINGS_NAV_ITEMS.find(item => item.id === section)?.label || section;
   }
@@ -762,7 +783,7 @@
 
   function sectionApiLinks(section: SettingsSection) {
     if (section === 'versions') return ['/api/config/versions', '/api/config/versions/{id}/rollback'];
-    if (['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'].includes(section)) {
+    if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'].includes(section)) {
       return ['/api/config'];
     }
     if (section === 'solution_prompts') return ['/api/solution-prompts', '/api/config'];
@@ -778,7 +799,7 @@
     return {
       id: activeSectionMeta.id,
       title: activeSectionMeta.label,
-      status: statusLabel(status),
+      status: activeSectionMeta.id === 'email' ? (globalConfig.smtp?.enabled ? '已启用 · 待测试' : '已停用') : statusLabel(status),
       tone: statusTone(status),
       facts: [
         { label: '分类', value: activeSectionMeta.group },
@@ -1369,7 +1390,7 @@
   });
 </script>
 
-<div id="settings-unified-root" class="settings-container settings-unified phase41-settings phase46-settings phase49-settings">
+<div id="settings-unified-root" class="settings-container settings-unified phase41-settings phase46-settings phase49-settings" class:email-settings={activeSection === 'email'}>
   <main class="settings-main">
     <section class="settings-content-shell" aria-labelledby="settings-content-title">
       <header class="settings-context-panel">
@@ -1411,13 +1432,15 @@
       <div class="settings-module-panel">
         <div
           class="settings-workbench-grid"
-          class:without-audit={!isIntegrationSection}
-          class:with-context={isIntegrationSection}
+          class:without-audit={!isIntegrationSection || activeSection === 'email'}
+          class:with-context={isIntegrationSection && activeSection !== 'email'}
           class:compact-config={isIntegrationSection}
         >
           <div class="settings-primary-pane" class:integration-surface={isIntegrationSection || activeSection === 'ai_context'}>
     {#if activeSection === 'gitlab'}
             <GitLabConfig config={globalConfig.gitlab} lastUpdated={lastUpdatedBySection.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
+    {:else if activeSection === 'email'}
+             <EmailConfig lastUpdated={lastUpdatedBySection.email} smtp={globalConfig.smtp} daily={globalConfig.daily_jira_email} canWrite={currentUserPermissions.includes('config:write')} coreMembers={globalConfig.jira?.sync_users || []} jiraProjects={globalConfig.jira?.sync_projects || []} jqlFallback={!!globalConfig.jira?.custom_jql?.trim()} {currentUserEmail} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} {saveSuccess} {saveSuccessKey} />
     {:else if activeSection === 'feishu'}
             <FeishuConfig config={globalConfig.feishu} lastUpdated={lastUpdatedBySection.feishu} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'feishu'} />
     {:else if activeSection === 'jira'}
@@ -1435,7 +1458,7 @@
               saveSuccess={saveSuccess && saveSuccessKey === 'performance_brain'}
             />
     {:else if activeSection === 'projects'}
-            <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} />
+            <ProjectConfig lastUpdated={lastUpdatedBySection.projects} syncProjects={globalConfig.jira?.sync_projects || []} canWrite={currentUserPermissions.includes('config:write')} />
     {:else if activeSection === 'ai'}
             <AIConfig view="engine" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'ai'} {currentUserPermissions} />
     {:else if activeSection === 'versions'}
@@ -2161,7 +2184,7 @@
     {/if}
           </div>
 
-          {#if isIntegrationSection}
+          {#if isIntegrationSection && activeSection !== 'email'}
             <aside class="settings-context-pane" aria-label="配置上下文检查器">
               <div class="settings-context-pane-header">
                 <div>
@@ -4758,6 +4781,7 @@
   .phase41-settings :global(textarea),
   .phase41-settings :global(select),
   .phase41-settings :global(.text-input),
+  .phase41-settings :global(.multi-select-group.settings-control .multi-select-trigger),
   .phase41-settings :global(.select-trigger),
   .phase41-settings :global(.select-inline-input),
   .phase41-settings :global(.context-input),
@@ -4775,6 +4799,7 @@
   .phase41-settings :global(textarea:focus),
   .phase41-settings :global(select:focus),
   .phase41-settings :global(.text-input:focus),
+  .phase41-settings :global(.multi-select-group.settings-control .multi-select-trigger:focus-within),
   .phase41-settings :global(.select-trigger.is-active),
   .phase41-settings :global(.context-input:focus),
   .phase41-settings :global(.context-textarea:focus),
@@ -8628,6 +8653,61 @@
       padding: 14px !important;
       overflow: visible !important;
     }
+  }
+
+  /* The two email panes own their structural surfaces; this wrapper is layout only. */
+  #settings-unified-root.settings-unified.email-settings .settings-workbench-grid.compact-config .settings-primary-pane {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    #settings-unified-root.settings-unified.email-settings .settings-context-panel {
+      background: var(--wa-surface-panel) !important;
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
+  }
+  /* Email owns its output preview; keep the surrounding context compact and avoid repeating its tab descriptions. */
+  #settings-unified-root.email-settings .settings-context-topline {
+    min-height: 0;
+    padding: 8px 16px 4px;
+    gap: 0;
+  }
+  #settings-unified-root.email-settings .breadcrumb-meta,
+  #settings-unified-root.email-settings .settings-kicker,
+  #settings-unified-root.email-settings .settings-title-copy > p {
+    display: none;
+  }
+  #settings-unified-root.email-settings .settings-breadcrumb-bar {
+    min-height: 0;
+  }
+  #settings-unified-root.email-settings .settings-content-header {
+    min-height: 0;
+    padding: 4px 16px 12px !important;
+    gap: 0;
+  }
+  /* Legacy settings input rules target every input; preserve native radio geometry for this field group. */
+  #settings-unified-root.email-settings :global(.email-radio input[type='radio']) {
+    width: 15px !important;
+    height: 15px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 50% !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  #settings-unified-root.email-settings .settings-content-header h1 {
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.35;
   }
 
   /* Ordinary configuration routes keep a contextual inspector; version history owns its own full-width route. */

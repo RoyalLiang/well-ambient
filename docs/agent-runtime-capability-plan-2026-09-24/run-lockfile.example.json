@@ -1,0 +1,58 @@
+{
+  "schema": "agent-run-lockfile/v1",
+  "run_id": "R82",
+  "agent_kind": "code_review",
+  "kernel": {
+    "version": "agent-runtime-v1",
+    "digest": "sha256:kernel"
+  },
+  "model_profile": {
+    "id": "review-high",
+    "version": 4,
+    "digest": "sha256:model-profile"
+  },
+  "capabilities": [
+    {
+      "id": "merge-review",
+      "kind": "skill",
+      "version": 3,
+      "digest": "sha256:merge-review",
+      "selection_reason": "intent=code-review and change_set_available",
+      "load_levels": ["L0", "L1", "L2"]
+    },
+    {
+      "id": "gitlab.snapshot",
+      "kind": "plugin",
+      "version": 2,
+      "digest": "sha256:gitlab-snapshot",
+      "selection_reason": "required by merge-review"
+    },
+    {
+      "id": "knowledge.search",
+      "kind": "context_provider",
+      "version": 1,
+      "digest": "sha256:knowledge-search",
+      "selection_reason": "business evidence required"
+    }
+  ],
+  "context_pack": {
+    "id": 812,
+    "version": 2,
+    "digest": "sha256:context-pack"
+  },
+  "permission_grant": {
+    "id": 95,
+    "digest": "sha256:permission-grant",
+    "actions": ["source.read", "knowledge.read"]
+  },
+  "budgets": {
+    "input_tokens": 18000,
+    "output_tokens": 10000,
+    "tool_calls": 30,
+    "wall_time_seconds": 480
+  },
+  "resolver": {
+    "version": "capability-resolver-v1",
+    "digest": "sha256:resolver"
+  }
+}

@@ -2,6 +2,8 @@ package solutions
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1020,6 +1022,11 @@ type SavePromptCommand struct {
 	Activate     bool
 }
 
+func promptContentHash(value string) string {
+	hash := sha256.Sum256([]byte(strings.TrimSpace(value)))
+	return hex.EncodeToString(hash[:])
+}
+
 func (module *Module) SavePrompt(ctx context.Context, command SavePromptCommand) (db.SolutionPromptTemplate, error) {
 	command.Purpose = normalizePromptPurpose(command.Purpose)
 	if !validPromptPurpose(command.Purpose) {
@@ -1039,11 +1046,17 @@ func (module *Module) SavePrompt(ctx context.Context, command SavePromptCommand)
 	if command.ScopeType == "project" && command.ScopeID == "" {
 		return db.SolutionPromptTemplate{}, fmt.Errorf("%w: project scope_id is required", ErrInvalid)
 	}
+	if command.Purpose == "code_review" && command.ScopeType != "global" {
+		return db.SolutionPromptTemplate{}, fmt.Errorf("%w: code_review skill currently supports global scope only", ErrInvalid)
+	}
 	if command.ScopeType == "project" {
 		command.ScopeID = strings.ToUpper(command.ScopeID)
 	}
 	if strings.TrimSpace(command.SystemPrompt) == "" {
 		return db.SolutionPromptTemplate{}, fmt.Errorf("%w: system_prompt is required", ErrInvalid)
+	}
+	if command.Purpose == "code_review" && command.Activate {
+		return db.SolutionPromptTemplate{}, fmt.Errorf("%w: code_review skill must be saved, tested and activated explicitly", ErrInvalid)
 	}
 	var result db.SolutionPromptTemplate
 	err := module.conn.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1070,7 +1083,8 @@ func (module *Module) SavePrompt(ctx context.Context, command SavePromptCommand)
 		result = db.SolutionPromptTemplate{
 			Purpose: command.Purpose, ScopeType: command.ScopeType, ScopeID: command.ScopeID,
 			Version: maxVersion + 1, Status: status, Name: fallback(command.Name, defaultPromptName(command.Purpose, maxVersion+1)),
-			SystemPrompt: strings.TrimSpace(command.SystemPrompt), CreatedBy: fallback(command.Actor, "unknown"),
+			SystemPrompt: strings.TrimSpace(command.SystemPrompt), ContentHash: promptContentHash(command.SystemPrompt),
+			ValidationStatus: "untested", CreatedBy: fallback(command.Actor, "unknown"),
 			ActivatedBy: activatedBy, ActivatedAt: activatedAt, CreatedAt: now,
 		}
 		return tx.Create(&result).Error
@@ -1085,13 +1099,15 @@ func defaultPromptName(purpose string, version int) string {
 		label = "需求等价性对比"
 	case "solution_compare_compatibility":
 		label = "方案兼容性对比"
+	case "code_review":
+		label = "代码评审技能"
 	}
 	return fmt.Sprintf("%s v%d", label, version)
 }
 
 func (module *Module) ListPrompts(ctx context.Context) ([]db.SolutionPromptTemplate, error) {
 	var prompts []db.SolutionPromptTemplate
-	err := module.conn.WithContext(ctx).Where("purpose IN ?", []string{"solution_polish", "solution_compare_requirement", "solution_compare_compatibility"}).
+	err := module.conn.WithContext(ctx).Where("purpose IN ?", []string{"solution_polish", "solution_compare_requirement", "solution_compare_compatibility", "code_review"}).
 		Order("purpose ASC, scope_type ASC, scope_id ASC, version DESC").Find(&prompts).Error
 	if prompts == nil {
 		prompts = []db.SolutionPromptTemplate{}
@@ -1102,10 +1118,15 @@ func (module *Module) ListPrompts(ctx context.Context) ([]db.SolutionPromptTempl
 func (module *Module) ActivatePrompt(ctx context.Context, id uint, actor string) (db.SolutionPromptTemplate, error) {
 	var result db.SolutionPromptTemplate
 	err := module.conn.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND purpose IN ?", id, []string{"solution_polish", "solution_compare_requirement", "solution_compare_compatibility"}).First(&result).Error; err != nil {
+		if err := tx.Where("id = ? AND purpose IN ?", id, []string{"solution_polish", "solution_compare_requirement", "solution_compare_compatibility", "code_review"}).First(&result).Error; err != nil {
 			return ErrNotFound
 		}
 		now := module.now()
+		if result.Purpose == "code_review" {
+			if result.ValidationStatus != "passed" || result.ContentHash != promptContentHash(result.SystemPrompt) {
+				return fmt.Errorf("%w: code_review skill must pass validation before activation", ErrConflict)
+			}
+		}
 		if err := tx.Model(&db.SolutionPromptTemplate{}).
 			Where("purpose = ? AND scope_type = ? AND scope_id = ? AND status = ? AND id != ?", result.Purpose, result.ScopeType, result.ScopeID, "active", result.ID).
 			Update("status", "retired").Error; err != nil {
@@ -1124,6 +1145,33 @@ func (module *Module) ActivatePrompt(ctx context.Context, id uint, actor string)
 	return result, err
 }
 
+func (module *Module) RecordPromptValidation(ctx context.Context, id uint, actor, summary string, passed bool) (db.SolutionPromptTemplate, error) {
+	var prompt db.SolutionPromptTemplate
+	if err := module.conn.WithContext(ctx).Where("id = ? AND purpose = ?", id, "code_review").First(&prompt).Error; err != nil {
+		return prompt, ErrNotFound
+	}
+	status := "failed"
+	if passed {
+		status = "passed"
+	}
+	now := module.now()
+	if err := module.conn.WithContext(ctx).Model(&prompt).Updates(map[string]any{
+		"content_hash":       promptContentHash(prompt.SystemPrompt),
+		"validation_status":  status,
+		"validation_summary": strings.TrimSpace(summary),
+		"validated_by":       fallback(actor, "unknown"),
+		"validated_at":       now,
+	}).Error; err != nil {
+		return prompt, err
+	}
+	prompt.ContentHash = promptContentHash(prompt.SystemPrompt)
+	prompt.ValidationStatus = status
+	prompt.ValidationSummary = strings.TrimSpace(summary)
+	prompt.ValidatedBy = fallback(actor, "unknown")
+	prompt.ValidatedAt = &now
+	return prompt, nil
+}
+
 func normalizePromptPurpose(purpose string) string {
 	purpose = strings.ToLower(strings.TrimSpace(purpose))
 	if purpose == "" {
@@ -1134,7 +1182,7 @@ func normalizePromptPurpose(purpose string) string {
 
 func validPromptPurpose(purpose string) bool {
 	switch purpose {
-	case "solution_polish", "solution_compare_requirement", "solution_compare_compatibility":
+	case "solution_polish", "solution_compare_requirement", "solution_compare_compatibility", "code_review":
 		return true
 	default:
 		return false

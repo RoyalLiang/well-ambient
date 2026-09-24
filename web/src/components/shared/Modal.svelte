@@ -11,10 +11,13 @@
   export let closeLabel = '关闭弹窗';
   export let shadowless = false;
   export let hideBodyScrollbar = false;
+  export let footerVisible = true;
+  export let stableHeight = false;
   export let layer: 'default' | 'critical' = 'default';
 
   let backdropEl: HTMLDivElement;
   let modalContainer: HTMLDivElement;
+  let modalBody: HTMLDivElement;
   let modalId = `modal-title-${Math.random().toString(36).slice(2)}`;
   let mousedownOnBackdrop = false;
   let isCurrentlyShown = false;
@@ -23,6 +26,14 @@
 
   function close() {
     dispatch('close');
+  }
+
+  export function scrollToTop(behavior: ScrollBehavior = 'auto') {
+    modalBody?.scrollTo({ top: 0, behavior });
+  }
+
+  export function focusDialog() {
+    modalContainer?.focus();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -43,6 +54,11 @@
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
+    if (!modalContainer.contains(document.activeElement)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+      return;
+    }
     if (e.shiftKey && document.activeElement === first) {
       e.preventDefault();
       last.focus();
@@ -129,6 +145,7 @@
       class:shadowless
       class:is-drawer={variant === 'drawer'}
       class:is-wide={size === 'wide' && variant === 'dialog'}
+      class:is-stable-height={stableHeight && variant === 'dialog'}
       bind:this={modalContainer}
       on:mousedown|stopPropagation
       on:mouseup|stopPropagation
@@ -141,10 +158,10 @@
         <h3 class="modal-title" id={modalId}>{title}</h3>
         <OverlayCloseButton label={closeLabel} on:click={close} />
       </header>
-      <div class:hide-body-scrollbar={hideBodyScrollbar} class="modal-body">
+      <div bind:this={modalBody} class:hide-body-scrollbar={hideBodyScrollbar} class="modal-body">
         <slot />
       </div>
-      {#if $$slots.footer}
+      {#if footerVisible && $$slots.footer}
         <footer class="modal-footer">
           <slot name="footer" />
         </footer>
@@ -230,6 +247,11 @@
     max-width: 960px;
     max-height: min(900px, calc(100vh - 48px));
     max-height: min(900px, calc(100dvh - 48px));
+  }
+
+  .modal-container.is-wide.is-stable-height {
+    height: min(900px, calc(100vh - 48px));
+    height: min(900px, calc(100dvh - 48px));
   }
 
   .modal-container.is-wide .modal-body {
@@ -333,6 +355,11 @@
       max-height: calc(100dvh - 24px);
     }
 
+    .modal-container:not(.is-drawer).is-stable-height {
+      height: calc(100vh - 24px);
+      height: calc(100dvh - 24px);
+    }
+
     .modal-container:not(.is-drawer) .modal-header {
       gap: var(--wa-space-3, 12px);
       padding: 14px 16px;
@@ -372,6 +399,10 @@
       max-height: min(900px, calc(100% - 48px));
     }
 
+    .modal-backdrop.is-workspace-scoped > .modal-container.is-wide.is-stable-height {
+      height: min(900px, calc(100% - 48px));
+    }
+
     .modal-backdrop.is-workspace-scoped > .modal-container.is-drawer {
       width: min(620px, calc(100% - 24px));
       height: 100%;
@@ -391,6 +422,10 @@
       max-height: calc(100% - 24px);
     }
 
+    .modal-backdrop.is-workspace-scoped > .modal-container:not(.is-drawer).is-stable-height {
+      height: calc(100% - 24px);
+    }
+
     .modal-backdrop.is-workspace-scoped > .modal-container.is-drawer {
       height: 100%;
       max-height: 100%;
@@ -401,6 +436,20 @@
     .modal-backdrop,
     .modal-container {
       animation: none;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .modal-backdrop,
+    .modal-backdrop.is-drawer {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    .modal-container,
+    .modal-header,
+    .modal-footer {
+      background: var(--wa-surface-panel, #fff);
     }
   }
 </style>

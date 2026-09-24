@@ -25,6 +25,7 @@ const directOverlayConsumers = new Map([
 const sharedModalConsumers = new Map([
   ['TaskKanban.svelte', 2],
   ['DecisionDashboard.svelte', 1],
+  ['CodeReviewCenter.svelte', 1],
   ['DeliveryPlan.svelte', 1],
   ['PerformanceCalculationGuide.svelte', 1]
 ]);
@@ -58,7 +59,7 @@ test('every overlay close action uses one shared 44px control', () => {
     sharedSurfaceCount += expected;
   }
 
-  assert.equal(directSurfaceCount + sharedSurfaceCount, 19);
+  assert.equal(directSurfaceCount + sharedSurfaceCount, 20);
 });
 
 test('modal headers reserve a non-shrinking close column and wrap long titles', () => {

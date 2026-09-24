@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -43,6 +45,10 @@ type WebhookLog struct {
 
 // TaskTelemetry tracks the parsed git state for tasks
 type TaskTelemetry struct {
+	JiraBugCategory        string `gorm:"size:32" json:"jira_bug_category,omitempty"`
+	JiraBugCategoryFieldID string `gorm:"size:64" json:"jira_bug_category_field_id,omitempty"`
+	JiraHistoryComplete    bool   `json:"jira_history_complete"`
+
 	TaskID            string     `gorm:"primaryKey;column:task_id" json:"task_id"`
 	ProjectKey        string     `gorm:"index;index:idx_task_jira_project_type,priority:2;size:64;column:project_key" json:"project_key"`
 	Source            string     `gorm:"index;index:idx_task_jira_project_type,priority:1;size:32" json:"source"`
@@ -482,6 +488,10 @@ func configureConnectionPool(pool *sql.DB, options Options) {
 
 func coreSchemaModels() []any {
 	return []any{
+		&MRPolicyRun{},
+		&CodeReviewPolicy{},
+		&CodeReviewRun{},
+		&CodeReviewPublication{},
 		&WebhookLog{},
 		&TaskTelemetry{},
 		&DeconstructArchive{},
@@ -493,8 +503,11 @@ func coreSchemaModels() []any {
 		&ContextPackItem{},
 		&ConfigVersion{},
 		&RuntimeConfig{},
+		&DailyJiraEmailRun{},
+		&EmailTemplateCandidate{},
 		&GitCommitLog{},
 		&JiraCommentLog{},
+		&JiraReportChange{},
 		&JiraInboundSyncState{},
 		&JiraIssueSyncState{},
 		&Notification{},
@@ -684,6 +697,7 @@ func ensureDefaultSolutionPrompts(conn *gorm.DB) error {
 		{"solution_polish", "默认方案润色", DefaultSolutionPolishPrompt},
 		{"solution_compare_requirement", "默认需求等价性对比", DefaultSolutionRequirementComparisonPrompt},
 		{"solution_compare_compatibility", "默认方案兼容性对比", DefaultSolutionCompatibilityComparisonPrompt},
+		{"code_review", "默认代码评审技能", DefaultCodeReviewSkillPrompt},
 	}
 	for _, item := range defaults {
 		var count int64
@@ -696,9 +710,12 @@ func ensureDefaultSolutionPrompts(conn *gorm.DB) error {
 			continue
 		}
 		now := time.Now()
+		hash := sha256.Sum256([]byte(item.prompt))
 		if err := conn.Create(&SolutionPromptTemplate{
 			Purpose: item.purpose, ScopeType: "global", ScopeID: "", Version: 1,
 			Status: "active", Name: item.name, SystemPrompt: item.prompt,
+			ContentHash: hex.EncodeToString(hash[:]), ValidationStatus: "passed",
+			ValidationSummary: "system default", ValidatedBy: "system", ValidatedAt: &now,
 			CreatedBy: "system", ActivatedBy: "system", ActivatedAt: &now, CreatedAt: now,
 		}).Error; err != nil {
 			return err

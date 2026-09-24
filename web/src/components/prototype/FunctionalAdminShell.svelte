@@ -46,7 +46,7 @@
   }
 
   type ScheduleView = 'board' | 'schedule' | 'releases' | 'projects';
-  type TaskView = 'status' | 'execution';
+  type TaskView = 'status' | 'execution' | 'review';
   type DecisionView = 'agenda' | 'daily_jira';
 	type KPIView = 'overview' | 'calculation';
 
@@ -64,7 +64,8 @@
 
   const taskSubnav: NavSubItem[] = [
     { section: 'status', group: '任务跟踪', label: '任务表', subtitle: '责任与状态', permissions: ['dashboard:read'] },
-    { section: 'execution', group: '任务跟踪', label: '执行追踪', subtitle: '代码与 MR', permissions: ['dashboard:read'] }
+    { section: 'execution', group: '任务跟踪', label: '执行追踪', subtitle: '代码与 MR', permissions: ['dashboard:read'] },
+    { section: 'review', group: '任务跟踪', label: '代码评审', subtitle: '知识与代码证据', permissions: ['dashboard:read'] }
   ];
 
 	const kpiSubnav: NavSubItem[] = [
@@ -233,7 +234,7 @@
       showAlerts = false;
       showProfile = false;
       mobileRailOpen = false;
-    } else if (route === 'tasks' && (section === 'status' || section === 'execution')) {
+    } else if (route === 'tasks' && (section === 'status' || section === 'execution' || section === 'review')) {
       onTaskNavigate(section);
       showAlerts = false;
       showProfile = false;

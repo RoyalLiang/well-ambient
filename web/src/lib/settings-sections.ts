@@ -1,5 +1,6 @@
 export type SettingsSection =
   | 'gitlab'
+  | 'email'
   | 'feishu'
   | 'jira'
   | 'performance'
@@ -29,6 +30,14 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     label: 'GitLab 仓库',
     summary: '维护仓库源、Webhook、令牌与同步项目。',
     domain: '仓库同步',
+    permissions: ['config:read']
+  },
+  {
+    id: 'email',
+    group: '集成设置',
+    label: '邮件服务',
+    summary: '配置发信服务、每日 Jira 早报与 Agent 邮件模板。',
+    domain: '邮件早报',
     permissions: ['config:read']
   },
   {
@@ -82,9 +91,9 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
   {
     id: 'solution_prompts',
     group: 'AI 工作台',
-    label: '方案润色规则',
-    summary: '维护方案润色提示词版本、项目覆盖规则与 Jira 方案链接地址。',
-    domain: '方案生成治理',
+    label: 'AI 技能治理',
+    summary: '管理在线 AI 技能的规则版本、作用范围与启用记录。',
+    domain: 'AI 技能治理',
     permissions: ['solution_prompt:manage']
   },
   {

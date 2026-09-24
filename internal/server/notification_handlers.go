@@ -193,6 +193,9 @@ func (s *Server) handleNotificationsSSE(w http.ResponseWriter, r *http.Request) 
 		case <-r.Context().Done():
 			// Client disconnected
 			return
+		case <-s.streamingContext().Done():
+			// Server is shutting down; gracefully close SSE connection to allow in-flight write requests to drain
+			return
 		case <-notifier:
 			if !s.sendNotificationsEvent(w, r, flusher, userID) {
 				return

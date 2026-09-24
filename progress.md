@@ -1,3 +1,25 @@
+# Session: 2026-09-17 - Jira 早报 Confluence 归档同步支持
+
+- 独立客户端包 `internal/confluence` 完成：提供 `Validate`、`Check`、`Sync`，严格 URL 校验、PAT Bearer、占位页与附件全部成功后再提交正文，单次版本冲突 409 重试与附件哈希复用；覆盖率 90.5%（-race 通过）。
+- 服务端早报逻辑集成：`internal/server/email_confluence.go` 实现 XHTML 转换、PNG 附件生成与引用；`sendDailyEmail` 保证 Confluence 同步成功后再发送邮件，同步失败不发邮件，标记 `confluence_failed` 并保留原报告日重试能力；重试成功更新 run 记录中关联的 Confluence 页面链接。
+- 前端早报设置：`EmailConfig.svelte` 增加 Confluence 配置开关、默认父页地址、Token 录入与替换、测试连接、脱敏回读；修复 `<details class="email-history">` 在状态更新时自动折叠的问题，确保重试后用户依然保留在展开的历史视图中并看到“查看 Confluence 页面”链接。
+- 自动化验证全绿：
+  - `go test -race -cover -timeout 60s ./internal/confluence`（90.5% PASS）
+  - `go test ./internal/server -run 'Email|Confluence'`（PASS）
+  - `go vet ./internal/confluence ./internal/server`（PASS）
+  - `npm --prefix web run check`（0 errors / 148既有warnings）
+  - `npm --prefix web run build`（生产构建成功）
+  - Playwright 真实浏览器 16 项流转回归全部 PASS（`outputs/confluence-ui-results.json` errors 为空，六断点截图生成且零横向溢出，fixture 优雅通过 stop 信号退出，exit code 0）。
+
+# Session: 2026-09-17 - 邮件模板四项修正
+
+- 原bash/edit/write接口schema强制提权字段导致执行前校验失败；此前重复调用错误已停止。用户切换danger-full-access/never后，用既有dev_stage能力完成本地修改/验证，未改运行时权限或DSH实现；临时工具在交付前清理。
+- 已完成三方UI审查，记录在task_plan本日节；后端6文件与前端2文件修改，新增email_revision_test.go覆盖链接/顺序/安全降级，纯文本URL亦有回归。
+- server完整回归6.824s，pnpm check零错误（148既有warning）、pnpm build、go build outputs/well-ambient-mail-revision、git diff --check均通过；Impeccable结果[]。
+- 认证fixture PID93308在临时本地端口执行48真实预览、48图库预览与48popup点击；320/390/560/561/800/1440、明暗均通过。80独立邮件布局包含有数据/空态和560px两侧。预览净化9类URL及真实popup安全验证通过。fixture stop返回204并exit0，未外发真实邮件。
+- 读图验证已进行：认证hyperframe桌面浅色、focus手机深色；完整brief/ledger桌面浅色、focus桌面深色、hyperframe手机空态。截图显示图表在前、链接有下划线、无底部重复分组统计；原SVG邮件客户端差异尚未真实收件验证。
+- 当前状态：源码与构建产物就绪，常驻8080原PID87928未替换；等待本四项任务的一次交付反思反馈。
+
 # Session: 2026-08-27 - 引导页减负、维护库渐进展示与 SQLite 迁移进度
 
 ## 2026-08-27 品牌图标替换进度
@@ -3639,3 +3661,197 @@
 - Added target safety classification, transactionally replaceable setup seeds, and a defense-in-depth refusal for targets containing application data.
 - Added `can_migrate_legacy` to database inspection and synchronized the setup UI, button labels, blocking copy, and contract tests.
 - Validated the exact 393 MiB project snapshot, full Go suite, web type/build checks, both UI detectors, and real browser states/breakpoints.
+
+## 2026-09-17 Email style not updating investigation
+
+- Scope: compare current renderer, existing artifacts, and live port 8080; preserve all existing changes.
+- Runtime binary timestamp 11:13:45 predates template update 11:46:13; live PID 87928 maps to repository well-ambient-server. This is evidence of possible runtime drift, not yet proof of exact visual symptom.
+- Plan: reproduce drift; distinguish stale binary, theme overrides, and preview caching; apply smallest fix; validate actual affected state.
+- Tool constraints: rg unavailable; use targeted grep/find. ps denied by sandbox; use permitted lsof for runtime identity.
+
+## 2026-09-17 Email preview runtime fix verification
+
+- Old live binary was built before current template; embedded template comparison failed before and passes after restart.
+- Gallery demo omitted project groups, so all four candidates used category fallback.
+- Thumbnail clips top 347 CSS px of a fixed 680px email; full preview is the visible group-layout acceptance surface.
+- Added synthetic DEMO project group and owners through existing grouping/renderer.
+- Added real gallery handler regression; preserved ungrouped and empty test branches explicitly.
+- Built and installed root well-ambient-server; old PID87928 gracefully stopped; new PID98068 on 8080 is healthy, managed job bash-10. Startup uses config.yaml --skip-migrate.
+- Red regression failed all four layouts; targeted server/config Email|DailyJira tests passed after fix.
+- 40 authenticated isolated gallery browser cases passed: four styles, five widths 320/390/560/561/1440, light/dark, no overflow/links/draft mutation.
+- Impeccable detector: 4 advisory numbered-marker findings from chart date labels; no structural change needed.
+- git diff --check and gofmt checks passed.
+- Existing live user session was not available for automated login; isolated authenticated app tested, real backend inode and /live verified.
+
+## 2026-09-17 Greeting and commit SVG completed
+
+- User confirmed the prior layout is visible and requested greeting above charts plus an embedded SVG commit section. The one-time reflection gate has been answered; no repeat gate.
+- All four styles now share one introduction between title/metadata and top charts, without duplicate greeting.
+- Commit section now shows collected commits, repositories and pre-aggregation contributor count; HTML labels plus 10px-high inline SVG share bars retain readable 13px author text at narrow widths.
+- Commit rendering retains all eight authors plus Other, exact count-based proportions, dark-theme series hooks, escaped labels and plain-text fallback; nil/zero/missing-author states remain distinct.
+- Validation: server/config Email|DailyJira tests pass; 40 authenticated gallery cases, 24 authenticated draft preview cases and 36 sanitized edge cases pass. Screenshots and JSON evidence stored in outputs.
+- Impeccable reports four advisory numbered-section detections from date labels; no zero-findings claim. Formatting and diff checks pass.
+- Installed verified backend on existing port8080; PID2507, /live=200, mapped binary contains exact template plus commit SVG/greeting markers. Managed job bash-24 intentionally remains running. Fixture bash-18 stopped.
+- Files: internal/server/email_report_template.go, email_charts.go, email_report.go, email_commit_chart_test.go, email_layouts_test.go, email_revision_test.go; previous gallery-data fix remains.
+
+## 2026-09-17 Feishu PNG/CID compatibility verification
+
+- Replaced all top and lower chart SVG output with pure-Go PNGs; HTML retains rates, all status counts, seven daily values, authors/counts/shares, including Other. Historical JSON field names are retained for compatibility.
+- Added PNG-to-CID multipart/related encoding under multipart/alternative, deduplicated attachments, bounded decoding and MIME sizes; ordinary text mentioning cid/data remains valid.
+- Full go test ./... passed. SMTP and delivery race checks passed in child. Native and CGO_ENABLED=0 Linux/amd64 builds passed.
+- Four real demo reports sent only to local SMTP: each has 10 img references and 6 deduplicated PNG parts, all decoded and CID-matched; raw EML and reconstructed mail HTML exported.
+- Browser validation passed: 40 authenticated gallery + 24 authenticated draft + 36 PNG edge cases + 32 decoded SMTP mail views. PNGs load at nonzero natural/display dimensions in light/dark and mobile/desktop; image-free text preserved.
+- Browser pixel script initially used the locator DOM element as its scenario argument, causing a zero denominator in the test. Corrected evaluate signature; production PNG geometry and subsequent 36 cases passed.
+- Isolated browser fixture bash-54 remained idle after successful browser work and hit the Go default 10m timeout. It exited and is not running; this is fixture lifecycle cleanup, not a failed browser assertion. Other temporary browser processes closed normally.
+- Impeccable: four advisory number-marker findings from date labels. Palette ratios were tested >=3 against both email card themes.
+- Installed verified backend at existing port8080; PID10889, job bash-60 remains running, /live=200, mapped binary contains PNG renderer and related MIME. Previous process exited gracefully.
+- No external email was sent. Actual Feishu receipt remains to be verified. Existing received emails are immutable; formal daily delivery is date-deduplicated and ordinary SMTP test contains no chart, so use an explicitly authorized one-recipient chart test or a future normal report.
+- Goal creation tool was unavailable (direct-human/top-level authority rejection); work continued using the structured task plan without retrying that boundary.
+
+### Feishu compatibility delivery accepted
+
+- [x] User answered the one-time reflection with "先交付修复"; deliver implemented fix now.
+- [x] Existing local backend health reconfirmed 200; keep bash-60 running.
+- Actual Feishu inbox verification is explicitly deferred, not claimed complete. No external test email sent.
+
+## 2026-09-17 Email UI and project visibility started
+
+- Read boot/core-lite/state-lite/presets and applicable root AGENTS.md; no nested AGENTS found in this repository.
+- Loaded Impeccable/planning skills, located taste/finesse/diagnosing skills; review before frontend edits.
+
+### Implementation and first validation
+
+- Frontend: shared settings project-catalog loader/watch lifecycle uses existing telemetry batching; mapped/pending rows and readonly write boundaries; email named project choices retain drafts on refresh/error.
+- UI: one outer glass workspace, flat inner panes, 1.15:1 split, form-width handshake wrapping; gallery empty/retry and mobile wrapping; grouping error associated with section.
+- npm run check: 0 errors, 148 existing warnings/11 files. npm run build passed with bundle size advisories. Impeccable four scoped Svelte files: [] findings.
+- Full Go suite passed after catalog fix. Default Go cache permission denied during new fixture build; changed GOCACHE to /tmp/well-ambient-go-build.
+- Authenticated browser real SSE sync passed both page discovery and dirty draft preservation. Save/readback exposed scorer overwriting manual names ending with 项目; delegated regression/fix before repeating sync acceptance.
+- Original fixture bash-68 stopped cleanly. Current isolated fixture bash-80 serves only in-memory DB and local SMTP; no external email sent.
+
+### Final validation and runtime installation
+
+- Corrected email-specific prefixed filter declaration order after built CSS kept only WebKit form; browser initially observed blur under reduced-transparency, now verifies none and solid background.
+- Existing browser scripts updated to grouped-chart heading and PNG-safe sandbox assertions, and explicit commit toggle state. These were stale harness assumptions, not product regressions. All 9 mail interactions and 5 edge/navigation cases now pass.
+- Final full Go suite passed after scorer immutable-mapping correction. Final UI build/check pass and scoped Impeccable [] findings.
+- Authenticated cases: 23 layout/state + 1 real sync/readback + 9 mail + 5 edges. Widths320/390/480/760/1024/1440; OS light/dark compatibility and reduced effects; templates preview and readonly included.
+- Gracefully stopped old backend PID10889 after copying binary backup; installed verified binary as well-ambient-server; new PID20391/jobbash-99 runs config.yaml --skip-migrate on8080. Existing5173 frontend untouched and serves200. Live200/catalog401 confirms health and protected new route.
+- Fixturebash-89 stopped with PASS; no external test email. Preservebash-99 as user runtime.
+- Remaining user checkpoint: once-only reflection gate; do not repeat after response.
+
+## 2026-09-17 Email template polish (five requested changes)
+
+- Three-way review agreed: preserve static email hierarchy, shared server PNG/CID and HTML facts; product rules override marketing motion/decorative surfaces.
+- Implemented Hyperframe masthead removal, relative day axes with numeric ticks, readable themed status labels, shared gradient progress with inline percentages, and three zero commit metric tracks.
+- Fixed two review findings: five-digit axis wrapping and low-contrast gradient endpoints; large daily counts now use intact day/value pairs.
+- Verified targeted Go/SMTP tests, backend build, Impeccable [] on generated HTML, 140 authenticated preview states, 16 gallery/real-preview workflows, 36 commit states. Screenshots/results: outputs/email-polish-*.
+- Updated existing backend 8080: PID24755, managed bash-127; /live and frontend5173 both200. Backup outputs/well-ambient-before-email-polish. No external mail sent.
+- Reflection gate pending once; actual email-client forced-dark rendering remains unverified.
+
+- Delivery gate completed: user selected 正式交付. Isolated fixture stopped; task-local Go cache removed; backend bash-127 remains running.
+
+### Table and split revision accepted for delivery
+
+- User requested a table and restored split during reflection. Revised EmailConfig and SettingsPanel after fresh three-way agreement.
+- Authenticated table regression:13 cases passed(10 viewport+3 state/CRUD). Default code chips, full-name metadata search/details/title, unknown-name fallback, readonly expansion, responsive internal scrolling and preview tested.
+- Reduced-transparency test initially sampled before style recomputation; verified actual computed none, then changed assertion to wait for the requested computed media state. Final pass.
+- Final check/build pass;148 unchanged existing warnings. Impeccable target scan[], git diff --check pass. Existing mail interaction9 and edge5 cases also passed after revision; runner cleaned fixture.
+- Current frontend5173 serves exact table/details and800px split CSS. Backend8080 live200; previous managed job99 exited and successorPID24755 is active. No more runtime replacement needed.
+- Screenshot evidence:outputs/email-group-table-1440.png, outputs/email-group-table-1024.png, outputs/email-group-table-390.png.
+
+- 2026-09-17：完成邮件早报发送时间/时区/收件人控件统一。时间输入非原生化并带校验，时区与时间同壳同高，收件人改为整洁 token 输入。类型检查、构建、Impeccable、桌面/平板/移动与只读登录态回归全部通过。
+
+- 2026-09-17：按 taste / finesse 二次复审重排发送计划字段。三个字段统一 head/shell/foot 层级，时间与时区高度对齐，收件人 label 与计数/清空操作分离，时区列加宽。专项布局回归、既有邮件页回归、类型检查、构建与 Impeccable 检测全部通过。
+
+- 2026-09-17：修正邮件早报输入框文字与嵌套输入的内外间距。统一 12px 水平内缩、13px/20px 行高，内层输入透明无边框，由外层 shell 统一负责视觉边界；专项间距回归、整体邮件页回归、分组表格回归、类型检查、构建与 Impeccable 检测全部通过。
+
+- 2026-09-17：优化时区下拉框原生样式残留。补齐 Safari appearance、浅色弹层、长文本截断与透明背景，保留原生键盘语义；布局回归、整体邮件页回归、类型检查与构建全部通过。
+
+- 2026-09-17：把 Agent 模板从“只改文案再复制三份”改为“选择整体版式 + 生成完整文案的一条候选”。同步更新后端校验、前端提示、图库标记与容量判断；后端测试、前端检查、构建、浏览器回归与 Impeccable 检测全部通过。
+
+- 2026-09-17：按“整版模板”意图修正 Agent 定制链路。模型现在直接选择四种受控整版布局之一并输出完整模板候选，不再只生成文案后套三种预设；相关前端文案、图库标记与回归脚本同步更新，目标测试、类型检查、构建与浏览器回归全部通过。
+
+- 2026-09-17：将 Agent 邮件模板从“只改文案、固定超框版式”修正为“整版模板生成”。模型现在返回受控 style 并生成一条完整候选，前端文案同步改为整版模板；专项 Go 测试与 9 项浏览器回归全部通过。
+
+- 2026-09-17：Agent 定制邮件模板改为生成一条整版候选。模型在四种受控版式中选择一种，后端只返回一份完整模板，前端与文档同步改为单数表述；后端邮件测试、前端类型检查、构建与浏览器回归全部通过。
+
+- 2026-09-17：把 Agent 定制邮件模板从“三份文案克隆”改为“一条整版模板候选”。模型直接选择四种内置版式之一并输出完整模板字段，服务端校验后单条入库；界面文案、按钮与图库标签同步改为整版模板语义。后端专项、类型检查、构建、整体浏览器回归、图库回归与 Impeccable 检测全部通过。
+
+- 2026-09-17：Agent 定制邮件模板改为整版替换。生成请求现在附带当前模板，并明确要求替换完整样式而非仅改招呼语；服务端测试全部通过。
+
+- 2026-09-17：收尾 Agent 整版模板语义。统一文档、按钮与提示为“整版模板候选”，澄清中止时未入库；后端、前端、整体邮件页回归、图库回归与 Impeccable 检测全部通过。
+
+- 2026-09-17：按复审把 Agent 模板文案统一为“生成整版模板候选”，帮助文案明确“从四种内置版式中选择最匹配的一种，并重写主题、开场与结尾”。前端检查、构建与 9 项浏览器回归再次通过。
+
+- 2026-09-17：把 Agent 定制邮件模板的生成目标从“文案润色”收敛为“整版样式替换”。后端提示词明确要求在四种内置版式中选择最匹配的一种并重写主题、开场与结尾；前端说明、文档与回归测试同步更新，防止退化。
+
+## 2026-09-22 日报修正进度
+- 已修：配置项目的分组不再按负责人兜底吸收其他项目；负责人匹配不再使用姓名子串。
+- 已实现：仓库/分支/提交链接表（邮件+Confluence+纯文本）；本地事件和评论更新类型；四种样式类型/分类同行。
+- 验证：go test ./internal/server -run TestEmail -count=1 通过；认证隔离预览四种样式在 480/1280px 验证，无横向溢出；Impeccable 检测 []。本地 SMTP 测试通过。
+- 待澄清：FMS/GPP 权威识别依据（标题、字段、项目范围）；coremember 是否采用历史负责人。现有默认 FMS 分类及当前负责人统计尚未更改，不宣称第1项全部完成。
+- 边界：本地 PerformanceWorkItemEvent 历史可能缺失；未触发真实邮件、Confluence 或远程同步。已停止隔离预览。
+
+## 2026-09-22 用户确认口径后的验证
+- 已完成：bug归类 权威字段解析及持久化；分类非 FMS/GPP 排除；独立 changelog 保存与历史负责人纳入；补充 WAS IN 近期同步范围；总数去重、历史核心成员分别计数；空核心配置不扩大范围。
+- 验证：go test ./internal/db ./internal/telemetry ./internal/server -count=1 通过。认证隔离预览四种样式验证：当前 External owner 的事项保留，硬件事项排除；480/1280px 检查，Impeccable []；git diff --check 通过。
+- 发布边界：未部署、未连接真实 Jira 获取字段选项、未发送真实邮件/写正式 Confluence；部署后需迁移并完成 Jira 同步才能填充旧缓存的新字段和历史。历史不足时报告显式提示。隔离进程已停止。
+- 当前阶段：实现和本地验证结束，准备按 AGENTS.md 首次执行交付前反思门，等待用户反馈后最终交付。
+
+## 2026-09-23 AI reasoning effort
+Implemented reasoning_effort config, middle alias normalization, invalid-value rejection at save and request generation, Responses reasoning.effort and Messages output_config.effort for shared streaming/non-streaming clients. Added model-adjacent selector, summary/reset/save/test payloads. Removed five-token health-check cap that can exhaust reasoning before text output.
+Validation: go test ./internal/llm ./internal/config ./internal/server passes; npm check (0 errors, existing warnings), npm build passes; Impeccable detector [] and git diff --check clean. Authenticated local browser: xhigh save/reload, middle selection/cancel, restore provider default; desktop/768/390px, no horizontal overflow. Local fixture stopped. No deployment or real-provider calls.
+Impeccable update explicitly authorized but failed with download invalid zip data; existing install preserved. Awaiting per-task pre-delivery reflection response; compatibility with user's actual gateway/model is unverified.
+
+## 2026-09-24 评审体验与 skill 融合
+
+- 已恢复 Code Review Center 续作状态并完成 Impeccable、Taste、Finesse 三方只读评审。
+- 已把最终共识、分歧裁决、响应式和验证范围写入 `task_plan.md`，满足前端编辑门禁。
+- 已融合下载的 `merge-review`、系统 defect-first 规则、Spec/Standards、十维工程检查、反证复核和证据校验。
+- `.agents/skills/merge-review` 通过 quick validator 和四个脚本的 `bash -n`，已出现在当前 available skill catalog。
+- 全局用户 skill 目录受 sandbox 拒绝；Impeccable 更新在独立 npm cache 下仍因 invalid zip data 失败，现有安装保持可用。
+- 下一步：迁移评审列表到 `AdminDataList`，收口共享 Modal 的 Markdown、动作反馈和滚动状态，再执行静态、构建和认证浏览器验证。
+
+### 2026-09-24 评审体验实现完成
+
+- 已完成 `AdminDataList` 列表迁移、标题入口、语义状态、移动端列优先级和空态/刷新状态。
+- 已完成共享宽 Modal、全宽只读 Markdown、固定依据入口、事实依据文档、Modal 内动作反馈与可靠回顶。
+- 已为共享 Modal 增加 `scrollToTop()`、条件 footer 和 reduced-transparency；现有 caller 默认行为不变。
+- 已新增 `web/tests/code-review-ui-contract.test.ts` 并扩展 `modal-close-contract.test.ts`；目标契约 22/22。
+- 最终静态验证：Svelte 0 errors / 148 existing warnings，Vite build 通过，Impeccable `[]`，diff-check 通过。
+- 最终认证浏览器：1440/1024/760/390/320，搜索空态、完整/部分/失败/排队、动作失败、只读账号、依据切换、滚动回顶、Esc 焦点返回均通过。
+- 证据：`outputs/code-review-ui-validation.json` 与 `outputs/code-review-ui-*.png`。隔离 fixture 已停止，无真实 GitLab 评论、生产数据库或服务变更。
+- 文档已同步为生产列表 + 共享宽弹窗 + Markdown/依据入口；仓库未安装 Prettier，因此未运行 Markdown formatter，手工格式保持既有风格。
+- 独立融合 skill 复审发现并完成：详情错误恢复、partial 同步资格、MR SHA 搜索、GitLab 新窗链接、稳定终态详情轮询、prose 全宽、窄屏同步状态截断。
+- skill 收集器完成 canonical URL 修复、token host 隔离、commits/diffs 自动分页与 overflow fail-closed；parser/security 和 101 项分页 mock 测试通过。
+- 最终浏览器结果新增：移动端同步状态完整可见；partial 无 mutation action；completed 4.5 秒稳定轮询不重拉详情；正文 `max-width:none`；GitLab `_blank/noopener`。
+
+## 2026-09-24 用户截图反馈修正完成
+
+- silent poll、滚动锚点、reader 固定高度、failed retry、Switch 44px/label/回滚、历史 off 手动同步已实现。
+- 动作响应成为 UI 权威状态；generation 防止旧 poll 和旧记录反馈覆盖，动作后 Modal 自动回收焦点。
+- Webhook durable review handoff 与 publication pre-POST claim 释放已实现并回归。
+- 验证：Svelte 0 errors/148 existing warnings；24/24 前端契约；codereview/telemetry/server 全包；Go vet；Vite build；Impeccable `[]`；diff-check。
+- 认证 fixture：1440/1024/760/390/320、silent poll + prepend anchor、五 pane 固定几何、failed retry、action error/race、策略开关 label/Space/失败回滚、历史 off 同步、只读态均通过。
+- skill 位置确认：本机项目 `.agents/skills/merge-review`，当前 catalog 可发现；不是在线安装，也不是用户级全局安装。
+- 最终追加回归完成：480px、1024短高、ARIA tabs、reduced-motion；`prefers-reduced-transparency` 因当前 Chromium 不支持模拟，保留静态契约与 Impeccable 证据。
+- 自动链路加固完成：webhook secret/durable handoff、field-scoped policy + project lock、retry attempt chain、publication claimed/sending lease fencing、skill incomplete-evidence fail closed。
+
+## 2026-09-24 在线评审 Skill 与最强大脑
+
+- 将融合评审策略编译为线上默认 `code_review` v1，并接入现有版本化 AI 技能治理表。
+- 完成 Run 技能版本冻结、hash 校验、无 active fail-closed、历史版本不漂移。
+- 完成 code_review 草稿/真实 dry-run/激活门禁、全局超管审计和 AI 技能治理 UI。
+- 完成 strongest-brain review-intelligence 只读投影、版本质量指标和建议生成。
+- Go db/solutions/codereview/server、vet、Svelte check/build、15 项前端契约、Impeccable、diff-check 均通过。
+- 认证浏览器完成 v1→v2 线上治理流程、旧/新 Run 版本绑定、最强大脑 active/version metrics 以及 390px 44px/无横溢验证。
+- 补充 Agent Runtime ADR：当前在线治理定位为 Phase 0；后续演进到 Capability Manifest、lazy loader、run lockfile、compact context protocol 和 replay/canary。
+- 已输出 8 个文件的 Agent Runtime 落地执行包，含路线、schema、Context Protocol、最强大脑闭环、迁移验收和示例 manifest/lockfile。
+- JSON/YAML 语法、目录完整性、占位符和 diff hygiene 检查通过。
+
+### 2026-09-24 交付反馈修正
+
+- 三方 follow-up review 一致确认 5 项根因：共享 Markdown 行宽、visible poll、Modal natural height、retry UI 缺口、Switch 本地状态与 policy save 回滚。
+- 已实现 `fullWidthPreview`、`stableHeight`、silent poll、failed retry、父组件 policy optimistic/rollback、Switch label/saving。
+- `TestCodeReviewAPI` 使用工作区 GOCACHE 通过；Svelte check 0 errors，24/24 contracts，Vite build 与 Impeccable 通过。
+- 认证 fixture 证实：五 pane 桌面/移动外框不变，后台 poll 无 overlay/文案/scroll 变化，失败重试进入队列，Commit/MR 开关 true/false 持久化且 500 回滚。
+- 证据新增 `outputs/code-review-ui-1024-modal-retry.png`、`outputs/code-review-ui-1024-policy-switches.png`，验证 JSON 已更新；fixture 正常停止。

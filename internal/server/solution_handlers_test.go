@@ -12,11 +12,68 @@ import (
 	"testing"
 	"time"
 
+	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
 	"well-ambient/internal/solutions"
 )
+
+func TestCodeReviewSkillMustPassRealValidationBeforeActivation(t *testing.T) {
+	setupServerTestDB(t)
+	cfg := &config.Config{}
+	cfg.AI.Enabled = true
+	srv := NewServer(cfg, "")
+	report := codereview.Report{
+		Summary:  "发现空输入被当作成功。",
+		Scenario: "通用软件场景",
+		Findings: []codereview.Finding{{
+			Dimension: "robustness", Severity: "medium", Title: "空输入被当作成功",
+			File: "dispatch/completion.go", Line: 3, Evidence: `return feedback == ""`,
+			Impact: "调用方无法区分失败", Suggestion: "返回明确错误", Verification: "增加空输入测试",
+			KnowledgeIDs: []uint{1},
+		}},
+	}
+	for _, dimension := range codereview.Dimensions {
+		report.Assessments = append(report.Assessments, codereview.Assessment{Dimension: dimension, Analysis: "已检查"})
+	}
+	srv.codeReview.Generate = func(context.Context, string, string) (string, error) {
+		data, _ := json.Marshal(report)
+		return string(data), nil
+	}
+	prompt, err := srv.solutions.SavePrompt(context.Background(), solutions.SavePromptCommand{
+		Purpose: "code_review", ScopeType: "global", Name: "评审技能候选",
+		SystemPrompt: "只报告有证据的问题", Actor: "Root", Activate: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = srv.solutions.ActivatePrompt(context.Background(), prompt.ID, "Root"); !strings.Contains(fmt.Sprint(err), "must pass validation") {
+		t.Fatalf("untested activation err=%v", err)
+	}
+	token := superAdminToken(t, "root@example.com", "Root", []string{"solution_prompt:manage"})
+	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/solution-prompts/%d/test", prompt.ID), nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	srv.mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"passed":true`) {
+		t.Fatalf("test status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/solution-prompts/%d/activate", prompt.ID), nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	srv.mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("activate status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	var stored db.SolutionPromptTemplate
+	if err = db.DB.First(&stored, prompt.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "active" || stored.ValidationStatus != "passed" || stored.ValidatedAt == nil {
+		t.Fatalf("validated skill=%+v", stored)
+	}
+}
 
 func TestSolutionWorkerCreatesCandidateWithoutOverwritingDraftAndDoesNotQueueJiraComment(t *testing.T) {
 	setupServerTestDB(t)
@@ -144,7 +201,9 @@ func TestSolutionPromptRequiresGlobalSuperAdminInAdditionToPermission(t *testing
 	request.Header.Set("Authorization", "Bearer "+superToken)
 	recorder = httptest.NewRecorder()
 	srv.mux.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "资深软件方案编辑") {
+	if recorder.Code != http.StatusOK ||
+		!strings.Contains(recorder.Body.String(), "资深软件方案编辑") ||
+		!strings.Contains(recorder.Body.String(), "证据优先、缺陷优先") {
 		t.Fatalf("super admin status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

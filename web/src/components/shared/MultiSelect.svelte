@@ -29,6 +29,9 @@
   export let showClear = false;
   export let clearText = '清除筛选';
   export let shadowless = false;
+  export let allowCustom = false;
+  export let appearance: 'default' | 'settings' = 'default';
+  export let separated = false;
 
   let isOpen = false;
   let searchText = '';
@@ -49,7 +52,7 @@
   $: listboxId = id ? `${id}-listbox` : generatedListboxId;
   $: selectedSet = new Set(values);
   $: selectedOptions = values
-    .map((value) => options.find((option) => option.value === value))
+    .map((value) => options.find((option) => option.value === value) || (allowCustom ? { value, label: value } : undefined))
     .filter((option): option is SelectOption => Boolean(option));
   $: selectionSummary = selectedOptions.length === 0
     ? placeholder
@@ -81,13 +84,29 @@
     const viewportPadding = 12;
     const triggerRect = selectWrapper.getBoundingClientRect();
     const maximumWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
-    dropdownWidth = Math.min(Math.max(triggerRect.width, 280), Math.min(520, maximumWidth));
+    dropdownWidth = appearance === 'settings'
+      ? Math.min(triggerRect.width, maximumWidth)
+      : Math.min(Math.max(triggerRect.width, 280), Math.min(520, maximumWidth));
     dropdownLeft = Math.min(
       Math.max(viewportPadding, triggerRect.left),
       Math.max(viewportPadding, window.innerWidth - viewportPadding - dropdownWidth)
     );
     const spaceBelow = window.innerHeight - triggerRect.bottom - viewportPadding;
     const spaceAbove = triggerRect.top - viewportPadding;
+    if (appearance === 'settings') {
+      const optionsHeight = dropdownEl.querySelector('.multi-select-options')?.scrollHeight || 96;
+      const footerHeight = dropdownEl.querySelector('.multi-select-footer')?.getBoundingClientRect().height || 40;
+      const desired = Math.min(216, optionsHeight) + footerHeight + 2;
+      // Prefer the space above a settings field so its following form actions
+      // remain clickable. Measure natural options, not last placement's cap.
+      dropdownPlacement = spaceAbove >= Math.min(desired + 8, 144) ? 'up' : 'down';
+      const available = dropdownPlacement === 'up' ? spaceAbove : spaceBelow;
+      dropdownMaxHeight = Math.max(44, Math.min(216, available - footerHeight - 10));
+      const height = Math.min(optionsHeight, dropdownMaxHeight) + footerHeight + 2;
+      dropdownTop = dropdownPlacement === 'up' ? Math.max(viewportPadding, triggerRect.top - height - 8) : triggerRect.bottom + 8;
+      dropdownPositioned = true;
+      return;
+    }
     const desiredHeight = Math.min(272, dropdownEl.scrollHeight);
     dropdownPlacement = spaceBelow < desiredHeight && spaceAbove > spaceBelow ? 'up' : 'down';
     const availableSpace = dropdownPlacement === 'up' ? spaceAbove : spaceBelow;
@@ -177,7 +196,22 @@
     event.stopPropagation();
   }
 
+  function commitPendingCustom(): boolean {
+    const rawValues = searchText.split(/[,;，；\n]+/).map(value => value.trim()).filter(Boolean);
+    if (!allowCustom || rawValues.length === 0) return false;
+    const nextValues = [...values];
+    for (const raw of rawValues) {
+      const exact = options.find((option) => option.value.toLowerCase() === raw.toLowerCase());
+      const value = exact?.value || raw;
+      if (!nextValues.some((item) => item.toLowerCase() === value.toLowerCase())) nextValues.push(value);
+    }
+    commit(nextValues);
+    searchText = '';
+    return true;
+  }
+
   function handleInputKeydown(event: KeyboardEvent) {
+    if (event.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       closeDropdown();
@@ -190,11 +224,14 @@
       return;
     }
     if (event.key === 'Enter' && isOpen) {
-      const firstEnabled = filteredOptions.find((option) => !option.disabled);
-      if (firstEnabled) {
-        event.preventDefault();
-        toggleOption(firstEnabled);
+      event.preventDefault();
+      if (allowCustom && searchText.trim()) {
+        commitPendingCustom();
+        closeDropdown();
+        return;
       }
+      const firstEnabled = filteredOptions.find((option) => !option.disabled);
+      if (firstEnabled) toggleOption(firstEnabled);
       return;
     }
     if (event.key === 'Backspace' && !searchText && values.length) {
@@ -203,12 +240,18 @@
   }
 
   function handleFocusOut(event: FocusEvent) {
-    if (isOpen && selectContainer && focusLeftSelect(selectContainer, event, [dropdownEl])) closeDropdown();
+    if (!selectContainer || !focusLeftSelect(selectContainer, event, [dropdownEl])) return;
+    if (allowCustom) commitPendingCustom();
+    if (isOpen) closeDropdown();
   }
 
   function handleLifecycleClose(reason: SelectCloseReason) {
-    if (reason === 'escape') void finishSelection();
-    else closeDropdown();
+    if (reason === 'escape') {
+      void finishSelection();
+      return;
+    }
+    if (allowCustom) commitPendingCustom();
+    closeDropdown();
   }
 
   function handleDropdownKeydown(event: KeyboardEvent) {
@@ -236,7 +279,7 @@
   });
 </script>
 
-<div class="multi-select-group" class:disabled class:compact class:summary-mode={summaryMode} class:overlay class:shadowless bind:this={selectContainer} on:focusout={handleFocusOut}>
+<div class="multi-select-group" class:settings-control={appearance === 'settings'} class:disabled class:compact class:summary-mode={summaryMode} class:overlay class:shadowless bind:this={selectContainer} on:focusout={handleFocusOut}>
   {#if label}
     <label class="multi-select-label" for={id}>
       {label}{#if required}<span class="required-star">*</span>{/if}
@@ -249,12 +292,13 @@
       class:is-active={isOpen}
       class:has-selection={selectedOptions.length > 0}
       class:is-disabled={disabled}
+      class:is-separated={separated}
       role="presentation"
     >
       {#if summaryMode}
         {#if controlLabel}<span class="multi-select-prefix">{controlLabel}</span>{/if}
         {#if !isOpen}<span class="multi-select-summary" title={selectionSummary}>{selectionSummary}</span>{/if}
-      {:else}
+      {:else if !separated}
         {#each selectedOptions as option (option.value)}
           <span class="selection-chip">
             <span>{option.label}</span>
@@ -274,7 +318,7 @@
         bind:this={searchInput}
         bind:value={searchText}
         type="search"
-        placeholder={summaryMode ? (isOpen ? searchPlaceholder : '') : (selectedOptions.length ? searchPlaceholder : placeholder)}
+        placeholder={summaryMode ? (isOpen ? searchPlaceholder : '') : (separated ? (isOpen ? searchPlaceholder : placeholder) : (selectedOptions.length ? searchPlaceholder : placeholder))}
         autocomplete="off"
         {disabled}
         aria-label={ariaLabel || controlLabel || label || placeholder}
@@ -308,6 +352,7 @@
     {#if isOpen && !disabled}
       <div
         class="multi-select-dropdown"
+        class:settings-control={appearance === 'settings'}
         class:shadowless
         class:is-overlay={overlay}
         class:is-positioned={dropdownPositioned}
@@ -348,6 +393,21 @@
               </button>
             {/each}
           {/if}
+          {#if allowCustom && normalizedSearch && !options.some(o => o.value.toLowerCase() === normalizedSearch)}
+            <button
+              type="button"
+              class="dropdown-item dropdown-item-custom"
+              role="option"
+              aria-selected={false}
+              on:click={() => {
+                commitPendingCustom();
+                closeDropdown();
+              }}
+            >
+              <span class="option-check" aria-hidden="true">+</span>
+              <span class="option-copy"><strong>添加 "{searchText.trim()}"</strong></span>
+            </button>
+          {/if}
         </div>
         <div class="multi-select-footer">
           <span aria-live="polite">已选 {values.length} 项</span>
@@ -362,10 +422,32 @@
     {/if}
   </div>
 
+  {#if separated && selectedOptions.length > 0}
+    <div class="multi-select-chips-separated" role="list" aria-label={ariaLabel || label || '已选选项'}>
+      {#each selectedOptions as option (option.value)}
+        <span class="selection-chip" role="listitem" title={option.meta ? `${option.label}：${option.meta}` : option.label}>
+          <span>{option.label}</span>
+          {#if !disabled}
+            <button
+              type="button"
+              aria-label={`移除 ${option.label}`}
+              on:pointerdown={handleRemovePointerDown}
+              on:click={(event) => removeValue(option.value, event)}
+            >×</button>
+          {/if}
+        </span>
+      {/each}
+      <slot name="after-chips" />
+    </div>
+  {/if}
+
   {#if helperText}<span class="helper-text">{helperText}</span>{/if}
 </div>
 
 <style>
+  /* finesse · component: multi-select · register=product
+   * states: default · hover · focus-visible · active · disabled · selected · custom
+   * tokens: inherited (modern-admin-tokens.css) */
   .multi-select-group { position: relative; z-index: 1; width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 7px; box-sizing: border-box; }
   .multi-select-group:focus-within { z-index: 2; }
   .multi-select-group:not(.compact) { margin-bottom: 16px; }
@@ -384,6 +466,9 @@
   .multi-select-group.summary-mode .multi-select-trigger { height: var(--wa-control-h, 38px); min-height: var(--wa-control-h, 38px); flex-wrap: nowrap; gap: 8px; padding: 0 36px 0 10px; cursor: pointer; }
   .multi-select-group.summary-mode .multi-select-trigger input { min-width: 0; flex: 1 1 auto; }
   .multi-select-group.summary-mode .multi-select-trigger:not(.is-active) input { position: absolute; inset: 0 32px 0 0; width: auto; height: 100%; opacity: 0; cursor: pointer; }
+  .multi-select-trigger.is-separated { flex-wrap: nowrap; padding-right: 36px; }
+  .multi-select-trigger.is-separated input { min-width: 0; width: 100%; flex: 1 1 auto; }
+  .multi-select-chips-separated { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; min-height: 24px; }
   .multi-select-prefix { flex: none; color: var(--wa-text-muted, #667789); font-size: 11px; font-weight: 760; white-space: nowrap; }
   .multi-select-summary { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--wa-text-main, #293847); font-size: 12px; font-weight: 700; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
   .selection-chip { min-width: 0; max-width: 100%; height: 26px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid #c5e0dc; border-radius: 7px; padding: 0 5px 0 8px; background: #edf7f5; color: #176f66; font-size: 11px; font-weight: 700; }
@@ -417,6 +502,43 @@
   .option-copy small { color: var(--wa-text-muted, #667789); font-size: 10px; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
   .dropdown-empty { padding: 16px 10px; color: var(--wa-text-muted, #667789); font-size: 12px; text-align: center; }
   .helper-text { color: var(--wa-text-muted, #667789); font-size: 10px; line-height: 1.4; }
+  /* Opt-in settings skin stays on the portal root as well as the trigger. */
+  .multi-select-group.settings-control { margin-bottom: 0; gap: 7px; }
+  .settings-control .multi-select-label { color: var(--wa-text-main); font-size: 13px; font-weight: 700; }
+  .settings-control .multi-select-trigger { min-height: 38px; font-size: 13px; padding: 4px 36px 4px 8px; gap: 4px; border-color: var(--wa-border-strong); border-radius: var(--wa-radius-sm); background: var(--wa-surface-panel); box-shadow: none; }
+  .settings-control .multi-select-trigger.is-separated { min-height: 36px; height: 36px; padding: 0 34px 0 10px; }
+  .settings-control .multi-select-trigger input,
+  .settings-control .multi-select-trigger input:focus { min-width: 80px; min-height: 0 !important; height: 26px; padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; color: var(--wa-text-main); font-size: 13px; }
+  .settings-control .multi-select-trigger.is-separated input,
+  .settings-control .multi-select-trigger.is-separated input:focus { min-width: 0; width: 100%; height: 100%; }
+  .settings-control .multi-select-trigger:focus-within { outline: 2px solid var(--wa-accent-strong); outline-offset: 2px; }
+  .settings-control .multi-select-chips-separated { gap: 6px; margin-top: 6px; }
+  .settings-control .selection-chip { height: 24px; padding: 0 0 0 7px; gap: 3px; border: 1px solid var(--wa-border-soft); border-radius: var(--wa-radius-xs); background: var(--wa-surface-inset); color: var(--wa-text-main); font-size: 12px; font-weight: 500; }
+  .settings-control .selection-chip button { flex: none; width: 24px; height: 24px; color: var(--wa-text-muted); background: transparent; }
+  .settings-control .multi-select-chevron { right: 4px; color: var(--wa-text-muted); }
+  .settings-control .selection-chip button:focus-visible,
+  .settings-control .multi-select-chevron:focus-visible,
+  .settings-control .dropdown-item:focus-visible,
+  .settings-control .multi-select-done:focus-visible,
+  .settings-control .multi-select-clear:focus-visible { outline: 2px solid var(--wa-accent-strong); outline-offset: -2px; }
+  .multi-select-dropdown.settings-control.is-overlay { min-width: 0; }
+  .multi-select-dropdown.settings-control { font-family: var(--wa-font-sans); color: var(--wa-text-main); background: var(--wa-surface-overlay); border-color: var(--wa-border-strong); border-radius: var(--wa-radius-sm); box-shadow: var(--wa-shadow-sm); }
+  .settings-control .dropdown-item { min-height: 40px; color: var(--wa-text-main); border-radius: var(--wa-radius-xs); }
+  .settings-control .dropdown-item.is-selected { background: var(--wa-accent-soft); color: var(--wa-accent-strong); }
+  .settings-control .option-check { border-color: var(--wa-border-strong); color: var(--wa-accent-strong); }
+  .settings-control .is-selected .option-check { border-color: var(--wa-accent-strong); background: var(--wa-accent-soft); }
+  .settings-control .multi-select-footer { border-color: var(--wa-border-soft); background: var(--wa-surface-inset); }
+  .settings-control .multi-select-done { border-color: var(--wa-border-strong); color: var(--wa-accent-strong); background: var(--wa-surface-panel); border-radius: var(--wa-radius-xs); }
+  .settings-control .helper-text { font-size: 12px; line-height: 1.45; color: var(--wa-text-muted); }
+  @media (hover: hover) { .settings-control .dropdown-item:hover { background: var(--wa-row-hover); color: var(--wa-text-strong); } .settings-control .selection-chip button:hover { color: var(--wa-text-strong); background: transparent; } }
+  @media (max-width: 760px), (pointer: coarse) {
+    .settings-control .multi-select-trigger { min-height: 44px; padding-right: 48px; }
+    .settings-control .selection-chip { position: relative; height: 44px; background: transparent; border: 0; }
+    .settings-control .selection-chip::before { content: ''; position: absolute; inset: 8px 0; border-radius: var(--wa-radius-xs); background: var(--wa-surface-inset); border: 1px solid var(--wa-border-soft); pointer-events: none; }
+    .settings-control .selection-chip > span, .settings-control .selection-chip button { position: relative; }
+    .settings-control .selection-chip button, .settings-control .multi-select-chevron { width: 44px; height: 44px; }
+    .settings-control .dropdown-item, .settings-control .multi-select-done, .settings-control .multi-select-clear { min-height: 44px; }
+  }
   @media (max-width: 560px) {
     .multi-select-trigger input { min-width: 88px; }
     .multi-select-options { max-height: 192px; }

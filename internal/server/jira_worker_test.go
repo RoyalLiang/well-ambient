@@ -339,7 +339,8 @@ func TestSyncPerformanceJiraHistoryPersistsCompletionEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !changed || !strings.Contains(receivedJQL, "resolutiondate >= -90d") || !strings.Contains(receivedFields, "parent") || !strings.Contains(receivedFields, "issuelinks") {
+	hasRelationshipFields := strings.Contains(receivedFields, "*all") || (strings.Contains(receivedFields, "parent") && strings.Contains(receivedFields, "issuelinks"))
+	if !changed || !strings.Contains(receivedJQL, "resolutiondate >= -90d") || !hasRelationshipFields {
 		t.Fatalf("history sync did not execute its bounded evidence query: changed=%v jql=%q fields=%q", changed, receivedJQL, receivedFields)
 	}
 	var task db.TaskTelemetry
@@ -1852,5 +1853,20 @@ func TestJiraSyncUsesJiraUpdatedAsRecentActivity(t *testing.T) {
 		if !got.Equal(want) {
 			t.Errorf("%s recent activity = %s, want Jira updated %s", issueKey, got.Format(time.RFC3339), want.Format(time.RFC3339))
 		}
+	}
+}
+
+func TestSyncJiraProjectToLocalAutoHarvestsProjectConfig(t *testing.T) {
+	setupServerTestDB(t)
+	s := NewServer(&config.Config{}, "")
+
+	s.syncJiraProjectToLocal("AUTOJIRA", "自动化收录系统项目")
+
+	var cfg db.ProjectConfig
+	if err := db.DB.Where("project_key = ?", "AUTOJIRA").First(&cfg).Error; err != nil {
+		t.Fatalf("expected ProjectConfig to be auto-harvested, got error: %v", err)
+	}
+	if cfg.ProjectName != "自动化收录系统项目" {
+		t.Errorf("expected project name '自动化收录系统项目', got %s", cfg.ProjectName)
 	}
 }

@@ -18,23 +18,8 @@ func (s *Server) handleGetProjectConfigs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var filtered []db.ProjectConfig
-	syncProjects := appconfig.JiraProjectKeys(&s.config.Jira)
-	if len(syncProjects) > 0 {
-		for _, conf := range configs {
-			for _, sp := range syncProjects {
-				if strings.EqualFold(strings.TrimSpace(sp), conf.ProjectKey) {
-					filtered = append(filtered, conf)
-					break
-				}
-			}
-		}
-	} else {
-		filtered = configs
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(filtered)
+	json.NewEncoder(w).Encode(configs)
 }
 
 // handleSaveProjectConfig saves or updates a project configuration

@@ -106,6 +106,10 @@ func (s *Server) handleRollbackConfigVersion(w http.ResponseWriter, r *http.Requ
 	previous := *s.config
 	restored.Database = previous.Database
 	mergeConfiguredSecrets(&restored, previous)
+	if err := config.ValidateMailSettings(restored); err != nil {
+		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	version, err := s.recordConfigVersion(previous, restored, r, "rollback", target.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to persist restored configuration: %v", err), http.StatusInternalServerError)
@@ -249,9 +253,11 @@ func restoreVersionedConfig(fileConfig config.Config, archivedJSON string) (conf
 
 func (s *Server) applyConfig(next config.Config) error {
 	*s.config = next
+	s.setEmailConfig(next)
 	if s.performance != nil {
 		s.performance.Reconfigure(s.performanceSettings())
 	}
+	s.triggerEmailWorker()
 	return nil
 }
 

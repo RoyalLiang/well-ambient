@@ -1,6 +1,8 @@
 package telemetry
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,8 @@ import (
 	"well-ambient/internal/db"
 	"well-ambient/internal/kanban"
 )
+
+const reviewWebhookHead = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 const sampleMarkdown = `# well-ambient 任务看板
 
@@ -221,6 +225,134 @@ func TestProcessWebhookEvent(t *testing.T) {
 	}
 	if tele104.Status != "done" {
 		t.Errorf("Expected status 'done', got %q", tele104.Status)
+	}
+}
+
+func TestHandleWebhookPersistsReviewBeforeKanbanFailure(t *testing.T) {
+	oldDB := db.DB
+	oldKanbanPath := kanban.KanbanFilePath
+	t.Cleanup(func() {
+		db.DB = oldDB
+		kanban.KanbanFilePath = oldKanbanPath
+	})
+	conn, err := gorm.Open(sqlite.Open("file:webhook_review_handoff?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.DB = conn
+	if err = db.DB.AutoMigrate(
+		&db.WebhookLog{},
+		&db.TaskTelemetry{},
+		&db.GitCommitLog{},
+		&db.Notification{},
+		&db.CodeReviewPolicy{},
+		&db.CodeReviewRun{},
+		&db.CodeReviewPublication{},
+		&db.SolutionPromptTemplate{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err = db.DB.Create(&db.SolutionPromptTemplate{
+		Purpose: "code_review", ScopeType: "global", ScopeID: "", Version: 1,
+		Status: "active", Name: "fixture review skill", SystemPrompt: db.DefaultCodeReviewSkillPrompt,
+		ContentHash: "fixture", ValidationStatus: "passed", CreatedBy: "system",
+		ActivatedBy: "system", ActivatedAt: &now, CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	kanban.KanbanFilePath = t.TempDir() // A directory forces the unrelated Kanban write to fail.
+	cfg := &config.Config{}
+	cfg.GitLab = config.GitLabConfig{
+		Enabled:  true,
+		APIToken: "fixture",
+		Secret:   "secret",
+		Repos: []config.RepoMapping{{
+			ProjectID: "10",
+			Name:      "backend-core",
+			Path:      "group/backend-core",
+		}},
+	}
+	cfg.AI.Enabled = true
+	body := `{
+		"project":{"id":10,"name":"backend-core"},
+		"object_attributes":{
+			"iid":7,
+			"state":"opened",
+			"action":"open",
+			"updated_at":"2026-09-24T19:00:00Z",
+			"source_branch":"dev/task-104-review",
+			"last_commit":{"id":"` + reviewWebhookHead + `","message":"feat(#task-104): review"}
+		}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/webhook/gitlab", strings.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
+	recorder := httptest.NewRecorder()
+	HandleWebhook(cfg, recorder, req)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status/body = %d/%s", recorder.Code, recorder.Body.String())
+	}
+	var runs []db.CodeReviewRun
+	if err = db.DB.Find(&runs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != "queued" || runs[0].Ref != "7" {
+		t.Fatalf("review handoff = %+v", runs)
+	}
+}
+
+func TestHandleWebhookRejectsWhenReviewHandoffIsNotDurable(t *testing.T) {
+	oldDB := db.DB
+	t.Cleanup(func() { db.DB = oldDB })
+	conn, err := gorm.Open(sqlite.Open("file:webhook_review_failure?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.DB = conn
+	if err = db.DB.AutoMigrate(&db.WebhookLog{}, &db.CodeReviewRun{}, &db.CodeReviewPolicy{}, &db.SolutionPromptTemplate{}); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.GitLab = config.GitLabConfig{
+		Enabled:  true,
+		APIToken: "fixture",
+		Secret:   "secret",
+		Repos: []config.RepoMapping{{
+			ProjectID: "10",
+			Name:      "backend-core",
+			Path:      "group/backend-core",
+		}},
+	}
+	cfg.AI.Enabled = true
+	body := `{"project":{"id":10},"object_attributes":{"iid":7,"state":"opened","last_commit":{"id":"` + reviewWebhookHead + `"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/webhook/gitlab", strings.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "secret")
+	req.Header.Set("X-Gitlab-Event", "Merge Request Hook")
+	recorder := httptest.NewRecorder()
+	HandleWebhook(cfg, recorder, req)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status/body = %d/%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHandleWebhookRequiresConfiguredSecret(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.GitLab.Enabled = true
+	cfg.AI.Enabled = true
+	req := httptest.NewRequest(http.MethodPost, "/api/webhook/gitlab", strings.NewReader(`{"project":{"id":10}}`))
+	req.Header.Set("X-Gitlab-Event", "Push Hook")
+	recorder := httptest.NewRecorder()
+	HandleWebhook(cfg, recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status/body = %d/%s", recorder.Code, recorder.Body.String())
 	}
 }
 

@@ -6,7 +6,7 @@
   import Select from '../shared/Select.svelte';
   import { showToast } from '../../lib/toast';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
-  import { fetchDeliveryDirectory } from '../../lib/delivery-directory';
+  import { watchProjectCatalog, type ProjectCatalogOption } from '../../lib/project-catalog';
 
   const phaseOptions = [
     { value: 'POC', label: 'POC' },
@@ -26,6 +26,7 @@
 
   export let lastUpdated = '';
   export let syncProjects: string[] = [];
+  export let canWrite = false;
 
   interface ProjectConfig {
     id?: number;
@@ -54,10 +55,16 @@
   let formBaseScoreWeightPercent = '10';
 
   let jiraProjectMap: {[key: string]: string} = {};
+  let catalogProjects: ProjectCatalogOption[] = [];
+  let catalogError = '';
+  let catalogLoading = true;
+  let refreshCatalog: () => void = () => {};
 
-  $: availableKeys = syncProjects.filter(key => {
-    return !projects.some(p => p.project_key.toUpperCase() === key.toUpperCase());
-  });
+  $: availableKeys = Array.from(new Set([
+    ...catalogProjects.map(project => project.project_key), ...syncProjects
+  ].map(key => key.trim().toUpperCase()))).filter(key => {
+    return key && !projects.some(p => p.project_key.trim().toUpperCase() === key);
+  }).sort();
 
   $: projectKeyOptions = availableKeys.map((key) => {
     const projectName = cleanProjectName(jiraProjectMap[key.toUpperCase()] || '');
@@ -77,22 +84,23 @@
       ? errorMsg
       : projects.length > 0
         ? `已维护 ${projects.length} 个项目映射，其中 ${highPriorityCount} 个为 P0/P1。`
-        : '尚未创建项目映射。新增项目后，优先级与阶段会用于排期和健康度计算。';
+        : availableKeys.length
+          ? `已收录 ${availableKeys.length} 个待映射项目，可直接配置阶段与优先级。`
+          : '尚未创建项目映射。新增项目后，优先级与阶段会用于排期和健康度计算。';
 
-  onMount(async () => {
-    await Promise.all([fetchProjects(), fetchJiraProjectMap()]);
+  onMount(() => {
+    void fetchProjects();
+    const catalog = watchProjectCatalog(
+      entries => {
+        catalogProjects = entries;
+        jiraProjectMap = Object.fromEntries(entries.map(project => [project.project_key, project.project_name]));
+        catalogError = ''; catalogLoading = false;
+      },
+      message => { catalogError = message; catalogLoading = false; }
+    );
+    refreshCatalog = () => { catalogLoading = true; void catalog.refresh(); };
+    return catalog.destroy;
   });
-
-  async function fetchJiraProjectMap() {
-    try {
-      const directory = await fetchDeliveryDirectory();
-      jiraProjectMap = Object.fromEntries(
-        directory.projects.map((project) => [project.project_key, project.project_name || project.project_key])
-      );
-    } catch (err) {
-      console.error('Failed to fetch shared project directory for project autocomplete:', err);
-    }
-  }
 
   async function fetchProjects() {
     loading = true;
@@ -103,7 +111,7 @@
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('获取项目配置失败');
-      projects = await res.json();
+      projects = (await res.json()) || [];
     } catch (err: any) {
       errorMsg = err.message || '加载项目配置失败';
     } finally {
@@ -112,6 +120,7 @@
   }
 
   function startCreate() {
+    if (!canWrite) return;
     isEditing = true;
     editingProject = null;
     formProjectName = '';
@@ -122,6 +131,12 @@
     formBaseScoreWeightPercent = '10';
     errorMsg = '';
     resetSettingsWorkspaceScroll();
+  }
+
+  function startPending(key: string) {
+    startCreate();
+    formProjectKey = key;
+    formProjectName = cleanProjectName(jiraProjectMap[key] || key);
   }
 
   function cleanProjectName(name: string): string {
@@ -138,6 +153,7 @@
   }
 
   function startEdit(project: ProjectConfig) {
+    if (!canWrite) return;
     isEditing = true;
     editingProject = project;
     const keyUpper = project.project_key.toUpperCase();
@@ -158,6 +174,7 @@
   }
 
   async function saveProject() {
+    if (!canWrite || saving) return;
     if (!formProjectKey.trim() || !formProjectName.trim()) {
       errorMsg = '项目键与项目名称为必选项';
       return;
@@ -237,7 +254,7 @@
           <h4>项目优先级与阶段</h4>
           <p>维护 Jira Project Key、项目阶段和基准优先级，供排期、健康度与治理规则统一引用。</p>
         </div>
-        <div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>
+        {#if canWrite}<div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>{/if}
       </header>
 
       <div class="scw-status tone-{projectStatusTone}">
@@ -255,13 +272,17 @@
         <div class="scw-metric"><span>最近更新</span><strong>{formatUpdated(lastUpdated)}</strong></div>
       </div>
 
-    {#if loading && projects.length === 0}
+    {#if catalogError}
+      <Alert type="error" message={catalogError} />
+      <div class="scw-section-actions"><Button variant="secondary" on:click={refreshCatalog}>重试项目目录</Button></div>
+    {/if}
+    {#if (loading || catalogLoading) && projects.length === 0 && availableKeys.length === 0}
       <div class="scw-skeleton" aria-label="项目映射加载中"><span></span><span></span><span></span></div>
-    {:else if projects.length === 0}
+    {:else if projects.length === 0 && availableKeys.length === 0}
       <div class="scw-empty">
         <strong>暂无项目映射</strong>
         <p>先从 Jira 同步项目中选择一个 Project Key，再设置阶段、优先级和健康度基准。</p>
-        <div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>
+        {#if canWrite}<div class="scw-section-actions"><Button variant="primary" on:click={startCreate}>新建项目映射</Button></div>{/if}
       </div>
     {:else}
       <div class="scw-table-wrap">
@@ -302,8 +323,16 @@
                   </span>
                 </td>
                 <td class="numeric">
-                  <Button size="small" variant="ghost" on:click={() => startEdit(project)}>编辑</Button>
+                  {#if canWrite}<Button size="small" variant="ghost" on:click={() => startEdit(project)}>编辑</Button>{:else}<span class="scw-badge">只读</span>{/if}
                 </td>
+              </tr>
+            {/each}
+            {#each availableKeys as key (key)}
+              <tr data-pending-project={key}>
+                <td class="scw-primary-cell"><strong>{cleanProjectName(jiraProjectMap[key] || key)}</strong><span class="scw-mono">{key}</span></td>
+                <td><span class="scw-badge">待映射</span></td>
+                <td colspan="2">项目已收录，尚未设置阶段与优先级</td>
+                <td class="numeric">{#if canWrite}<Button size="small" variant="ghost" on:click={() => startPending(key)}>配置映射</Button>{:else}<span class="scw-badge">只读</span>{/if}</td>
               </tr>
             {/each}
           </tbody>

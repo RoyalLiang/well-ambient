@@ -5,8 +5,12 @@
   export let label = '';
   export let disabled = false;
   export let id = '';
+  export let saving = false;
+  export let expandedHitArea = false;
 
   const dispatch = createEventDispatcher();
+  const generatedId = `switch-${Math.random().toString(36).slice(2)}`;
+  $: controlId = id || generatedId;
 
   function toggle() {
     if (!disabled) {
@@ -23,14 +27,19 @@
   }
 </script>
 
-<div class="switch-container" class:disabled>
+<div
+  class="switch-container"
+  class:disabled={disabled || saving}
+  class:expanded-hit-area={expandedHitArea}
+  aria-busy={saving}
+>
   <button
-    {id}
+    id={controlId}
     type="button"
     role="switch"
     aria-checked={checked}
     aria-label={label}
-    {disabled}
+    disabled={disabled || saving}
     class="switch-control"
     class:checked
     on:click={toggle}
@@ -40,8 +49,9 @@
   </button>
   
   {#if label}
-    <span class="switch-label">{label}</span>
+    <label class="switch-label" for={controlId}>{label}</label>
   {/if}
+  {#if saving}<span class="switch-state" role="status">保存中…</span>{/if}
 </div>
 
 <style>
@@ -67,7 +77,7 @@
     outline: none;
   }
 
-  .switch-control:focus {
+  .switch-control:focus-visible {
     box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.14);
   }
 
@@ -91,10 +101,43 @@
     transform: translateX(20px);
   }
 
+  .expanded-hit-area {
+    min-height: 44px;
+  }
+
+  .expanded-hit-area .switch-control {
+    height: 44px;
+    background: transparent;
+  }
+
+  .expanded-hit-area .switch-control::before {
+    content: '';
+    position: absolute;
+    inset: 10px 0;
+    border-radius: 9999px;
+    background-color: #c8d1d8;
+    transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .expanded-hit-area .switch-control.checked::before {
+    background-color: var(--wa-accent, #008f96);
+  }
+
+  .expanded-hit-area .switch-thumb {
+    top: 13px;
+  }
+
   .switch-label {
     font-size: 0.875rem;
     font-weight: 500;
     color: var(--wa-text-main, #293847);
+    cursor: pointer;
+  }
+
+  .switch-state {
+    color: var(--wa-text-muted, #667789);
+    font-size: 11px;
+    white-space: nowrap;
   }
 
   /* Disabled State */

@@ -295,7 +295,7 @@ func (s *Server) handleSaveSolutionPrompt(w http.ResponseWriter, r *http.Request
 		writeSolutionError(w, err)
 		return
 	}
-	_ = userdb.RecordAuditLog(db.DB, authenticatedActor(r), "solution_prompt_create", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("scope=%s:%s version=%d active=%t", prompt.ScopeType, prompt.ScopeID, prompt.Version, prompt.Status == "active"), r.RemoteAddr)
+	_ = userdb.RecordAuditLog(db.DB, authenticatedActor(r), "solution_prompt_create", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("purpose=%s scope=%s:%s version=%d active=%t hash=%s", prompt.Purpose, prompt.ScopeType, prompt.ScopeID, prompt.Version, prompt.Status == "active", prompt.ContentHash), r.RemoteAddr)
 	writeJSON(w, http.StatusCreated, map[string]any{"prompt": prompt})
 }
 
@@ -310,8 +310,41 @@ func (s *Server) handleActivateSolutionPrompt(w http.ResponseWriter, r *http.Req
 		writeSolutionError(w, err)
 		return
 	}
-	_ = userdb.RecordAuditLog(db.DB, authenticatedActor(r), "solution_prompt_activate", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("scope=%s:%s version=%d", prompt.ScopeType, prompt.ScopeID, prompt.Version), r.RemoteAddr)
+	_ = userdb.RecordAuditLog(db.DB, authenticatedActor(r), "solution_prompt_activate", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("purpose=%s scope=%s:%s version=%d hash=%s validation=%s", prompt.Purpose, prompt.ScopeType, prompt.ScopeID, prompt.Version, prompt.ContentHash, prompt.ValidationStatus), r.RemoteAddr)
 	writeJSON(w, http.StatusOK, map[string]any{"prompt": prompt})
+}
+
+func (s *Server) handleTestStoredCodeReviewSkill(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUint(r, "id")
+	if err != nil || id == 0 {
+		http.Error(w, "invalid prompt id", http.StatusBadRequest)
+		return
+	}
+	var prompt db.SolutionPromptTemplate
+	if err = db.DB.WithContext(r.Context()).Where("id = ? AND purpose = ?", id, "code_review").First(&prompt).Error; err != nil {
+		http.Error(w, "code_review skill version not found", http.StatusNotFound)
+		return
+	}
+	result, validationErr := s.codeReview.ValidateReviewSkill(r.Context(), prompt.SystemPrompt)
+	actor := authenticatedActor(r)
+	if validationErr != nil {
+		updated, recordErr := s.solutions.RecordPromptValidation(r.Context(), prompt.ID, actor, validationErr.Error(), false)
+		if recordErr != nil {
+			http.Error(w, recordErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = userdb.RecordAuditLog(db.DB, actor, "solution_prompt_test", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("purpose=code_review version=%d hash=%s passed=false error=%s", updated.Version, updated.ContentHash, validationErr.Error()), r.RemoteAddr)
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"prompt": updated, "passed": false, "error": validationErr.Error()})
+		return
+	}
+	summaryJSON, _ := json.Marshal(result)
+	updated, err := s.solutions.RecordPromptValidation(r.Context(), prompt.ID, actor, string(summaryJSON), true)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = userdb.RecordAuditLog(db.DB, actor, "solution_prompt_test", "solution_prompt", strconv.FormatUint(uint64(prompt.ID), 10), fmt.Sprintf("purpose=code_review version=%d hash=%s passed=true", updated.Version, updated.ContentHash), r.RemoteAddr)
+	writeJSON(w, http.StatusOK, map[string]any{"prompt": updated, "result": result, "passed": true})
 }
 
 func (s *Server) handleTestSolutionPrompt(w http.ResponseWriter, r *http.Request) {

@@ -1,0 +1,61 @@
+schema: capability-manifest/v1
+id: merge-review
+kind: skill
+version: 3
+digest: sha256:example
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents:
+    - code-review
+    - merge-review
+  conditions:
+    - change_set_available
+provides:
+  - diff-review
+  - evidence-validation
+  - structured-review-report
+requires:
+  - id: gitlab.snapshot
+    kind: plugin
+    version: ">=2"
+  - id: knowledge.search
+    kind: context_provider
+    version: ">=1"
+optional:
+  - id: repository.callgraph
+    kind: context_provider
+permissions:
+  - source.read
+  - knowledge.read
+resources:
+  - key: review-method
+    load_level: L1
+    content_ref: blob:sha256:review-method
+  - key: evidence-contract
+    load_level: L1
+    content_ref: blob:sha256:evidence-contract
+  - key: examples
+    load_level: L2
+    content_ref: blob:sha256:examples
+tools:
+  - repository.read
+  - gitlab.snapshot
+budgets:
+  instruction_tokens: 1800
+  evidence_tokens: 12000
+  raw_tokens: 0
+  tool_calls: 30
+  wall_time_seconds: 480
+validation:
+  suite: merge-review-v3
+  required:
+    - schema_valid
+    - evidence_complete
+    - ten_dimensions
+    - no_permission_expansion
+activation:
+  mode: human_approved
+  canary_required: true

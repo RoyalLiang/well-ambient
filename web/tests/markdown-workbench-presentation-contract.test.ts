@@ -36,10 +36,22 @@ test('embedded workbenches can remove the secondary card surface without changin
   );
 });
 
+test('full-width preview is an explicit opt-in owned by the Markdown workbench', () => {
+  assert.match(markdownWorkbench, /export let fullWidthPreview = false/);
+  assert.match(markdownWorkbench, /class:full-width-preview=\{fullWidthPreview\}/);
+  assert.match(
+    markdownWorkbench,
+    /\.full-width-preview \.markdown-body :global\(p\),[\s\S]*?max-width: none/,
+  );
+});
+
 test('modals can hide a redundant body scrollbar without disabling body scrolling', () => {
   assert.match(modal, /export let hideBodyScrollbar = false/);
   assert.match(modal, /class:hide-body-scrollbar=\{hideBodyScrollbar\}/);
   assert.match(modal, /\.modal-body\.hide-body-scrollbar\s*\{[^}]*scrollbar-width:\s*none/s);
   assert.match(modal, /\.modal-body\.hide-body-scrollbar::-webkit-scrollbar\s*\{[^}]*display:\s*none/s);
   assert.match(modal, /\.modal-body\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(modal, /export let stableHeight = false/);
+  assert.match(modal, /class:is-stable-height=\{stableHeight && variant === 'dialog'\}/);
+  assert.match(modal, /\.modal-container\.is-wide\.is-stable-height\s*\{[^}]*height:/s);
 });

@@ -431,3 +431,12 @@ func TestRestoreVersionedConfigInheritsCurrentSecrets(t *testing.T) {
 		t.Fatalf("restore did not combine historical non-secrets with current secret: %#v", restored.Jira)
 	}
 }
+
+func TestSaveConfigRejectsInvalidReasoningEffort(t *testing.T) {
+	s := &Server{config: &config.Config{AI: config.AIConfig{ReasoningEffort: "low"}}}
+	rr := httptest.NewRecorder()
+	s.handleSaveConfig(rr, httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(`{"ai":{"reasoning_effort":"invalid"}}`)))
+	if rr.Code != http.StatusBadRequest || s.config.AI.ReasoningEffort != "low" {
+		t.Fatalf("invalid config applied: status %d", rr.Code)
+	}
+}

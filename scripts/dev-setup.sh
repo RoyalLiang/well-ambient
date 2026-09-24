@@ -28,12 +28,39 @@ runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/well-ambient-dev-setup.XXXXXX")
 config_path="$runtime_dir/config.yaml"
 server_binary="$runtime_dir/well-ambient-server"
 backend_pid=""
+frontend_pid=""
 
 cleanup() {
   exit_code=$?
   trap - EXIT INT TERM
+  if [[ -n "$frontend_pid" ]] && kill -0 "$frontend_pid" >/dev/null 2>&1; then
+    pkill -TERM -P "$frontend_pid" >/dev/null 2>&1 || true
+    kill -TERM "$frontend_pid" >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+      if ! kill -0 "$frontend_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.05
+    done
+    if kill -0 "$frontend_pid" >/dev/null 2>&1; then
+      pkill -KILL -P "$frontend_pid" >/dev/null 2>&1 || true
+      kill -KILL "$frontend_pid" >/dev/null 2>&1 || true
+    fi
+    wait "$frontend_pid" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$backend_pid" ]] && kill -0 "$backend_pid" >/dev/null 2>&1; then
+    pkill -TERM -P "$backend_pid" >/dev/null 2>&1 || true
     kill -TERM "$backend_pid" >/dev/null 2>&1 || true
+    for _ in {1..30}; do
+      if ! kill -0 "$backend_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.05
+    done
+    if kill -0 "$backend_pid" >/dev/null 2>&1; then
+      pkill -KILL -P "$backend_pid" >/dev/null 2>&1 || true
+      kill -KILL "$backend_pid" >/dev/null 2>&1 || true
+    fi
     wait "$backend_pid" >/dev/null 2>&1 || true
   fi
   rm -f "$config_path" "$server_binary"
@@ -75,6 +102,15 @@ run_backend() {
   stop_child() {
     if [[ -n "$child_pid" ]] && kill -0 "$child_pid" >/dev/null 2>&1; then
       kill -TERM "$child_pid" >/dev/null 2>&1 || true
+      for _ in {1..30}; do
+        if ! kill -0 "$child_pid" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 0.05
+      done
+      if kill -0 "$child_pid" >/dev/null 2>&1; then
+        kill -KILL "$child_pid" >/dev/null 2>&1 || true
+      fi
       wait "$child_pid" >/dev/null 2>&1 || true
     fi
     exit 0
@@ -134,4 +170,11 @@ echo "Local PostgreSQL setup page: http://$web_host:$web_port/"
 echo "The generated setup token and its temporary file path are printed by the backend above."
 
 cd "$project_root"
-VITE_API_PROXY_TARGET="http://$api_host:$api_port" pnpm -C web dev --host "$web_host" --port "$web_port"
+VITE_API_PROXY_TARGET="http://$api_host:$api_port" pnpm -C web dev --host "$web_host" --port "$web_port" &
+frontend_pid=$!
+set +e
+wait "$frontend_pid"
+frontend_status=$?
+set -e
+frontend_pid=""
+exit "$frontend_status"

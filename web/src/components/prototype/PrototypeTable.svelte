@@ -21,6 +21,8 @@
 
   export let rows: PrototypeIssue[] = [];
   export let selectedKey = '';
+  export let columns: string[] = [];
+  export let ariaLabel = '事项列表';
   export let onSelect: (key: string) => void = () => {};
 
   function riskLabel(risk: RiskTone): string {
@@ -32,9 +34,10 @@
 </script>
 
 <div class="prototype-table-shell">
-  <table class="prototype-table">
+  <table class="prototype-table" aria-label={ariaLabel}>
     <thead>
       <tr>
+        {#if columns.length}{#each columns as column}<th scope="col">{column}</th>{/each}{:else}
         <th scope="col">事项</th>
         <th scope="col">风险</th>
         <th scope="col">负责人</th>
@@ -42,9 +45,11 @@
         <th scope="col">到期</th>
         <th scope="col">证据</th>
         <th scope="col">下一步</th>
+        {/if}
       </tr>
     </thead>
     <tbody>
+      {#if columns.length}<slot name="rows" />{:else}
       {#each rows as row}
         <tr class:active={row.key === selectedKey}>
           <td class="issue-cell">
@@ -69,6 +74,7 @@
           <td class="next-cell">{row.nextAction}</td>
         </tr>
       {/each}
+      {/if}
     </tbody>
   </table>
 </div>

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 	"well-ambient/internal/agenda"
+	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/deliveryplanning"
@@ -47,6 +48,13 @@ func SetBuildInfo(version, commit, buildTime string) {
 
 // Server encapsulates the HTTP server logic
 type Server struct {
+	codeReview          *codereview.Service
+	emailConfigMu       sync.RWMutex
+	emailConfigSnapshot *config.Config
+	emailWorkerWakeup   chan struct{}
+	emailLLM            func(context.Context, string, string) (string, error)
+	emailSender         func(context.Context, config.SMTPConfig, []string, string, string, string) error
+	emailConfluenceSync func(context.Context, config.ConfluenceSyncConfig, *emailReport) (string, error)
 	config              *config.Config
 	configPath          string
 	mux                 *http.ServeMux
@@ -62,6 +70,15 @@ type Server struct {
 	solutions           *solutions.Module
 	solutionCatalog     *solutioncatalog.Module
 	performance         *performance.Module
+	streamingCtx        context.Context
+	stopStreaming       context.CancelFunc
+}
+
+func (s *Server) streamingContext() context.Context {
+	if s == nil || s.streamingCtx == nil {
+		return context.Background()
+	}
+	return s.streamingCtx
 }
 
 // NewServer creates a new server instance
@@ -71,11 +88,15 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	if err := solutionModule.MigrateLegacyInitialDrafts(context.Background()); err != nil {
 		log.Printf("Solution lifecycle migration failed: %v", err)
 	}
+	streamingCtx, stopStreaming := context.WithCancel(context.Background())
 	s := &Server{
-		config:     cfg,
-		configPath: configPath,
-		mux:        http.NewServeMux(),
-		solutions:  solutionModule,
+		config:            cfg,
+		configPath:        configPath,
+		mux:               http.NewServeMux(),
+		solutions:         solutionModule,
+		streamingCtx:      streamingCtx,
+		stopStreaming:     stopStreaming,
+		emailWorkerWakeup: make(chan struct{}, 1),
 		solutionCatalog: solutioncatalog.New(db.DB, solutioncatalog.Settings{
 			Interval:        time.Duration(catalogConfig.IntervalMinutes) * time.Minute,
 			CandidateLimit:  catalogConfig.CandidateLimit,
@@ -95,6 +116,8 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	s.solutionLLM = func(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 		return queryServerLLMContext(ctx, s.config, systemPrompt, userPrompt)
 	}
+	s.setEmailConfig(*cfg)
+	s.codeReview = s.newCodeReviewService()
 	s.routes()
 	if db.DB != nil {
 		databaseConfig, configErr := cfg.Database.Resolve()
@@ -149,6 +172,15 @@ func (s *Server) performanceSettings() performance.Settings {
 
 // routes sets up API routing
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/code-reviews/repos", s.withPermission("dashboard:read", s.handleCodeReviewRepos))
+	s.mux.HandleFunc("GET /api/code-reviews/targets", s.withPermission("dashboard:read", s.handleCodeReviewTargets))
+	s.mux.HandleFunc("PUT /api/code-reviews/policy", s.withPermission("config:write", s.handleSaveCodeReviewPolicy))
+	s.mux.HandleFunc("GET /api/code-reviews", s.withPermission("dashboard:read", s.handleListCodeReviews))
+	s.mux.HandleFunc("POST /api/code-reviews", s.withPermission("config:write", s.handleCreateCodeReview))
+	s.mux.HandleFunc("GET /api/code-reviews/{id}", s.withPermission("dashboard:read", s.withPermission("ai_context:preview", s.handleGetCodeReview)))
+	s.mux.HandleFunc("POST /api/code-reviews/{id}/cancel", s.withPermission("config:write", s.handleCancelCodeReview))
+	s.mux.HandleFunc("POST /api/code-reviews/{id}/retry", s.withPermission("config:write", s.handleRetryCodeReview))
+	s.mux.HandleFunc("POST /api/code-reviews/{id}/sync", s.withPermission("config:write", s.handleSyncCodeReview))
 	// Status and Health Check (No Auth)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /ready", s.handleHealth)
@@ -179,6 +211,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/strongest-brain/demand-readiness", s.withPermission("demands:read", s.handleGetStrongestBrainDemandReadiness))
 	s.mux.HandleFunc("GET /api/strongest-brain/override-audit", s.withPermission("decision:read", s.handleGetStrongestBrainOverrideAudit))
 	s.mux.HandleFunc("GET /api/strongest-brain/ai-traces", s.withPermission("ai_context:read", s.handleGetStrongestBrainAITraces))
+	s.mux.HandleFunc("GET /api/strongest-brain/review-intelligence", s.withPermission("decision:read", s.handleGetStrongestBrainReviewIntelligence))
 	s.mux.HandleFunc("POST /api/strongest-brain/intervention", s.withPermission("demands:write", s.handleStrongestBrainIntervention))
 	s.mux.HandleFunc("GET /api/decision/daily-jira", s.withPermission("decision:read", s.handleGetDailyJiraAudit))
 	s.mux.HandleFunc("POST /api/decision/daily-jira/sync", s.withPermission("decision:read", s.handlePostDailyJiraSync))
@@ -194,6 +227,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/jira/link-config", s.withAuth(s.handleGetJiraLinkConfig))
 	s.mux.HandleFunc("POST /api/config", s.withPermission("config:write", s.handleSaveConfig))
 	s.mux.HandleFunc("POST /api/config/test", s.withPermission("config:write", s.handleTestConnection))
+	s.mux.HandleFunc("POST /api/daily-jira-email/template", s.withPermission("config:write", s.handleGenerateEmailTemplate))
+	s.mux.HandleFunc("POST /api/daily-jira-email/preview", s.withPermission("config:write", s.handlePreviewEmail))
+	s.mux.HandleFunc("POST /api/daily-jira-email/send", s.withPermission("config:write", s.handleSendEmail))
+	s.mux.HandleFunc("GET /api/daily-jira-email/candidate-owners", s.withPermission("config:read", s.handleGetEmailCandidateOwners))
+	s.mux.HandleFunc("GET /api/daily-jira-email/runs", s.withPermission("config:read", s.handleEmailRuns))
+	s.mux.HandleFunc("GET /api/daily-jira-email/templates", s.withPermission("config:read", s.handleListEmailTemplates))
+	s.mux.HandleFunc("POST /api/daily-jira-email/templates", s.withPermission("config:write", s.handleCreateEmailTemplates))
+	s.mux.HandleFunc("DELETE /api/daily-jira-email/templates/{id}", s.withPermission("config:write", s.handleDeleteEmailTemplate))
 	s.mux.HandleFunc("GET /api/config/versions", s.withPermission("config:read", s.handleListConfigVersions))
 	s.mux.HandleFunc("POST /api/config/versions/{id}/rollback", s.withPermission("config:write", s.handleRollbackConfigVersion))
 	s.mux.HandleFunc("GET /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
@@ -254,6 +295,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleListSolutionPrompts)))
 	s.mux.HandleFunc("POST /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleSaveSolutionPrompt)))
 	s.mux.HandleFunc("POST /api/solution-prompts/test", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleTestSolutionPrompt)))
+	s.mux.HandleFunc("POST /api/solution-prompts/{id}/test", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleTestStoredCodeReviewSkill)))
 	s.mux.HandleFunc("POST /api/solution-prompts/{id}/activate", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleActivateSolutionPrompt)))
 	s.mux.HandleFunc("GET /api/review-contracts", s.withPermission("demand_spec:read", s.handleGetReviewContract))
 	s.mux.HandleFunc("POST /api/review-contracts", s.withPermission("review_contract:manage", s.handleSaveReviewContract))
@@ -272,6 +314,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/corpus-candidates/{id}/publish", s.withPermission("corpus_candidate:review", s.withPermission("ai_context:preview", s.handlePublishCorpusCandidate)))
 
 	// Protected Project Configs & Brain Scores
+	s.mux.HandleFunc("GET /api/projects/catalog", s.withPermission("config:read", s.handleGetProjectCatalog))
 	s.mux.HandleFunc("GET /api/projects/config", s.withAuth(s.handleGetProjectConfigs))
 	s.mux.HandleFunc("POST /api/projects/config", s.withPermission("config:write", s.handleSaveProjectConfig))
 	s.mux.HandleFunc("GET /api/projects/scores", s.withAuth(s.handleGetProjectScores))
@@ -417,6 +460,15 @@ func authorizationResourceFromRequest(requiredPermission string, r *http.Request
 		RequestPath: r.URL.Path,
 		IPAddress:   r.RemoteAddr,
 	}
+	// Review responses contain source code and knowledge across configured repositories.
+	// Query parameters must not downgrade this global permission check to one repository.
+	if strings.HasPrefix(r.URL.Path, "/api/code-reviews") {
+		return resource
+	}
+	// Runtime settings (including SMTP credentials) are always global resources.
+	if strings.HasPrefix(requiredPermission, "config:") && (r.URL.Path == "/api/config" || strings.HasPrefix(r.URL.Path, "/api/config/") || r.URL.Path == "/api/projects/catalog" || strings.HasPrefix(r.URL.Path, "/api/daily-jira-email/")) {
+		return resource
+	}
 	if repoName != "" {
 		resource.Type = "repo"
 		resource.ID = repoName
@@ -451,6 +503,10 @@ func resourceTypeForPermission(permission string) string {
 func (s *Server) Start() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 	return s.Serve(ctx)
 }
 
@@ -461,10 +517,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	log.Printf("Starting well-ambient server on %s", addr)
 	workerContext, stopWorkers := context.WithCancel(ctx)
+	emailWorkerDone := s.startEmailWorker(workerContext)
 
 	// Keep the latency-sensitive Jira projection independent from heavy history replay.
 	s.startJiraSyncWorkers(workerContext)
-	go s.startSolutionWorker()
+	go s.startSolutionWorker(workerContext)
+	go s.startCodeReviewWorker(workerContext)
 	go s.startDailyJiraProjectionWorker(workerContext)
 	catalogStarted := s.solutionCatalog != nil && s.solutionCatalog.Start(workerContext)
 	if s.performance != nil {
@@ -472,6 +530,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	defer func() {
 		stopWorkers()
+		<-emailWorkerDone
 		if s.performance != nil {
 			s.performance.Stop()
 		}
@@ -502,12 +561,18 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		return err
 	case <-ctx.Done():
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		log.Println("收到关闭信号 (Ctrl+C / SIGTERM)，正在关闭 SSE/流式长连接，保留缓冲期等待在途普通写请求排空...")
+		if s.stopStreaming != nil {
+			s.stopStreaming()
+		}
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownContext); err != nil {
+			log.Printf("在途普通写请求排空超时或失败，强制关闭连接: %v", err)
 			_ = httpServer.Close()
 			return fmt.Errorf("graceful HTTP shutdown: %w", err)
 		}
+		log.Println("在途普通写请求已全部排空，HTTP 服务已成功退出。")
 		err := <-serverError
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err

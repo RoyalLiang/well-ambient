@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"well-ambient/internal/config"
+	"well-ambient/internal/confluence"
+	"well-ambient/internal/mailreport"
 	"well-ambient/internal/telemetry"
 )
 
@@ -28,6 +30,8 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	response := *s.config
 	response.PerformanceBrain = response.PerformanceBrain.Normalized()
+	response.SMTP = response.SMTP.Normalized()
+	response.DailyJiraEmail = response.DailyJiraEmail.Normalized()
 	redactConfiguredSecrets(&response)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Error encoding config: %v", err)
@@ -74,6 +78,14 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// Preserve the file-loaded values across ordinary integration config saves.
 	newCfg.Database = s.config.Database
 	mergeConfiguredSecrets(&newCfg, *s.config)
+	if err := newCfg.AI.NormalizeReasoningEffort(); err != nil {
+		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := config.ValidateMailSettings(newCfg); err != nil {
+		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := config.NormalizeJiraVersionSources(&newCfg.Jira); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid Jira version sources: %v", err), http.StatusBadRequest)
 		return
@@ -136,11 +148,14 @@ func writeConfigSaveError(w http.ResponseWriter, status int, message string) {
 }
 
 type ConnectionTestRequest struct {
-	Type   string               `json:"type"`
-	GitLab *config.GitLabConfig `json:"gitlab,omitempty"`
-	Feishu *config.FeishuConfig `json:"feishu,omitempty"`
-	Jira   *config.JiraConfig   `json:"jira,omitempty"`
-	AI     *config.AIConfig     `json:"ai,omitempty"`
+	Confluence *config.ConfluenceSyncConfig `json:"confluence,omitempty"`
+	SMTP       *config.SMTPConfig           `json:"smtp,omitempty"`
+	Recipient  string                       `json:"recipient,omitempty"`
+	Type       string                       `json:"type"`
+	GitLab     *config.GitLabConfig         `json:"gitlab,omitempty"`
+	Feishu     *config.FeishuConfig         `json:"feishu,omitempty"`
+	Jira       *config.JiraConfig           `json:"jira,omitempty"`
+	AI         *config.AIConfig             `json:"ai,omitempty"`
 }
 
 type ConnectionTestResponse struct {
@@ -168,6 +183,36 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	var res ConnectionTestResponse
 
 	switch req.Type {
+	case "confluence":
+		if req.Confluence == nil {
+			res.Message = "请填写 Confluence 同步配置"
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			defer cancel()
+			parent, err := confluence.Check(ctx, confluence.Config{
+				ParentPageURL: req.Confluence.ParentPageURL, Token: req.Confluence.Token,
+			})
+			res.Success = err == nil
+			if err != nil {
+				res.Message = err.Error()
+			} else {
+				res.Message = fmt.Sprintf("已连接父页面「%s」。本次仅检查读取权限；发送时还需创建子页和上传附件的权限。", parent.Title)
+			}
+		}
+	case "smtp":
+		if req.SMTP == nil {
+			res.Message = "SMTP config is missing in test request"
+		} else {
+			smtpConfig := *req.SMTP
+			smtpConfig.Enabled = true
+			err := mailreport.Send(r.Context(), smtpConfig, []string{req.Recipient}, "Well Ambient SMTP 测试", "这是一封由你手动触发的 SMTP 测试邮件。", "<p>这是一封由你手动触发的 SMTP 测试邮件。</p>")
+			res.Success = err == nil
+			if err != nil {
+				res.Message = err.Error()
+			} else {
+				res.Message = "SMTP 已接受测试邮件，请在收件箱确认"
+			}
+		}
 	case "gitlab":
 		if req.GitLab == nil {
 			res.Success = false
@@ -403,6 +448,8 @@ func redactConfiguredSecrets(cfg *config.Config) {
 	if cfg == nil {
 		return
 	}
+	cfg.SMTP.Password = redactConfiguredSecret(cfg.SMTP.Password)
+	cfg.DailyJiraEmail.Confluence.Token = redactConfiguredSecret(cfg.DailyJiraEmail.Confluence.Token)
 	cfg.GitLab.Secret = redactConfiguredSecret(cfg.GitLab.Secret)
 	cfg.GitLab.APIToken = redactConfiguredSecret(cfg.GitLab.APIToken)
 	cfg.Feishu.AppSecret = redactConfiguredSecret(cfg.Feishu.AppSecret)
@@ -421,6 +468,15 @@ func redactConfiguredSecret(value string) string {
 func mergeConfiguredSecrets(next *config.Config, current config.Config) {
 	if next == nil {
 		return
+	}
+	next.SMTP.Password = resolveConfiguredSecret(next.SMTP.Password, current.SMTP.Password)
+	// A stored token is bound to its destination. Changing the parent URL must
+	// explicitly supply a credential instead of forwarding the old one.
+	if next.DailyJiraEmail.Confluence.Token == configuredSecretPlaceholder &&
+		next.DailyJiraEmail.Confluence.Normalized().ParentPageURL != current.DailyJiraEmail.Confluence.Normalized().ParentPageURL {
+		next.DailyJiraEmail.Confluence.Token = ""
+	} else {
+		next.DailyJiraEmail.Confluence.Token = resolveConfiguredSecret(next.DailyJiraEmail.Confluence.Token, current.DailyJiraEmail.Confluence.Token)
 	}
 	next.GitLab.Secret = resolveConfiguredSecret(next.GitLab.Secret, current.GitLab.Secret)
 	next.GitLab.APIToken = resolveConfiguredSecret(next.GitLab.APIToken, current.GitLab.APIToken)
@@ -444,6 +500,17 @@ func mergeConnectionTestSecrets(req *ConnectionTestRequest, current config.Confi
 	}
 	if req.Jira != nil {
 		req.Jira.APIToken = resolveConfiguredSecret(req.Jira.APIToken, current.Jira.APIToken)
+	}
+	if req.SMTP != nil {
+		req.SMTP.Password = resolveConfiguredSecret(req.SMTP.Password, current.SMTP.Password)
+	}
+	if req.Confluence != nil {
+		if req.Confluence.Token == configuredSecretPlaceholder &&
+			req.Confluence.Normalized().ParentPageURL != current.DailyJiraEmail.Confluence.Normalized().ParentPageURL {
+			req.Confluence.Token = ""
+		} else {
+			req.Confluence.Token = resolveConfiguredSecret(req.Confluence.Token, current.DailyJiraEmail.Confluence.Token)
+		}
 	}
 	if req.AI != nil {
 		req.AI.APIToken = resolveConfiguredSecret(req.AI.APIToken, current.AI.APIToken)

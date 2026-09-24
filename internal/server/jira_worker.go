@@ -121,6 +121,9 @@ func (s *Server) syncJiraTasks() {
 	}
 
 	scopes := buildJiraQueryScopes(&s.config.Jira)
+	if historical := buildEmailHistoricalJiraScope(*s.config); historical != "" {
+		scopes = append(scopes, jiraQueryScope{Name: "email-historical-assignees", JQL: historical})
+	}
 	if len(scopes) == 0 {
 		finishJiraInboundCycle(checkpoint, cycleStartedAt, 0, 0, []error{errors.New("Jira inbound sync scope is empty")})
 		return
@@ -316,6 +319,9 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 	if issue.Key == "" {
 		return false, nil
 	}
+	if err := persistJiraReportChanges(issue); err != nil {
+		return false, fmt.Errorf("persist Jira report history %s: %w", issue.Key, err)
+	}
 	assigneeName := jiraIssueAssigneeName(issue)
 	reporterName, reporterUser := jiraIssueReporterIdentity(issue)
 	if issue.Fields.Assignee != nil {
@@ -326,6 +332,14 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 	createdTime := parseJiraTime(issue.Fields.Created)
 	sourceUpdatedAt := parseOptionalJiraTime(issue.Fields.Updated)
 	projectKey := deliveryplanning.NormalizeProjectKey(issue.Fields.Project.Key)
+	projectName := strings.TrimSpace(issue.Fields.Project.Name)
+	if projectName != "" && projectName != projectKey {
+		s.syncJiraProjectToLocal(projectKey, projectName)
+	}
+	repoLabel := "-"
+	if projectName != "" && projectName != projectKey {
+		repoLabel = fmt.Sprintf("%s (%s)", projectName, projectKey)
+	}
 	changed := false
 
 	var existing db.TaskTelemetry
@@ -335,11 +349,12 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 		existing = db.TaskTelemetry{
 			TaskID: issue.Key, ProjectKey: projectKey, Source: "jira", ExternalKey: issue.Key,
 			PlanningState: deliveryplanning.PlanningReady, Title: issue.Fields.Summary,
-			Repo: "-", Assignee: assigneeName, JiraReporter: reporterName, JiraReporterUser: reporterUser,
+			Repo: repoLabel, Assignee: assigneeName, JiraReporter: reporterName, JiraReporterUser: reporterUser,
 			Branch: "-", LastCommit: "-",
 			Status: jiraMappedStatus, IssueType: issueType, TaskCreatedAt: createdTime,
 			LastUpdate: time.Now(), SourceUpdatedAt: sourceUpdatedAt,
 		}
+		applyJiraReportFields(&existing, issue)
 		applyJiraPerformanceFields(&existing, issue)
 		if createErr := db.DB.Create(&existing).Error; createErr != nil {
 			return false, fmt.Errorf("create Jira issue %s: %w", issue.Key, createErr)
@@ -352,7 +367,11 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 	case loadErr != nil:
 		return false, fmt.Errorf("load Jira issue %s: %w", issue.Key, loadErr)
 	default:
-		hasChanges := false
+		hasChanges := applyJiraReportFields(&existing, issue)
+		if (existing.Repo == "" || existing.Repo == "-") && repoLabel != "-" {
+			existing.Repo = repoLabel
+			hasChanges = true
+		}
 		if existing.Title != issue.Fields.Summary {
 			existing.Title = issue.Fields.Summary
 			hasChanges = true
@@ -494,6 +513,9 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 		if parseOptionalJiraTime(issue.Fields.ResolutionDate).IsZero() && parseOptionalJiraDate(issue.Fields.DueDate) == nil {
 			continue
 		}
+		if err := persistJiraReportChanges(issue); err != nil {
+			return changed, err
+		}
 		eventsChanged, eventErr := s.appendJiraPerformanceEvents(issue)
 		if eventErr != nil {
 			return changed, fmt.Errorf("append historical Jira events for %s: %w", issue.Key, eventErr)
@@ -504,6 +526,14 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 			s.syncJiraUserToLocal(issue.Fields.Assignee.Name, issue.Fields.Assignee.DisplayName, issue.Fields.Assignee.EmailAddress)
 		}
 		projectKey := deliveryplanning.NormalizeProjectKey(issue.Fields.Project.Key)
+		projectName := strings.TrimSpace(issue.Fields.Project.Name)
+		if projectName != "" && projectName != projectKey {
+			s.syncJiraProjectToLocal(projectKey, projectName)
+		}
+		repoLabel := "-"
+		if projectName != "" && projectName != projectKey {
+			repoLabel = fmt.Sprintf("%s (%s)", projectName, projectKey)
+		}
 		sourceUpdatedAt := parseOptionalJiraTime(issue.Fields.Updated)
 
 		var task db.TaskTelemetry
@@ -512,10 +542,11 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 			task = db.TaskTelemetry{
 				TaskID: issue.Key, ProjectKey: projectKey, Source: "jira", ExternalKey: issue.Key,
 				PlanningState: deliveryplanning.PlanningReady, Title: issue.Fields.Summary,
-				Repo: "-", Assignee: assigneeName, Branch: "-", LastCommit: "-",
+				Repo: repoLabel, Assignee: assigneeName, Branch: "-", LastCommit: "-",
 				Status: mapJiraStatus(issue.Fields.Status.Name), IssueType: mapJiraIssueType(issue.Fields.IssueType.Name),
 				TaskCreatedAt: parseJiraTime(issue.Fields.Created), LastUpdate: now, SourceUpdatedAt: sourceUpdatedAt,
 			}
+			applyJiraReportFields(&task, issue)
 			applyJiraPerformanceFields(&task, issue)
 			if err := db.DB.Create(&task).Error; err != nil {
 				return changed, fmt.Errorf("create historical Jira issue %s: %w", issue.Key, err)
@@ -527,7 +558,11 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 			return changed, fmt.Errorf("load historical Jira issue %s: %w", issue.Key, err)
 		}
 
-		taskChanged := false
+		taskChanged := applyJiraReportFields(&task, issue)
+		if (task.Repo == "" || task.Repo == "-") && repoLabel != "-" {
+			task.Repo = repoLabel
+			taskChanged = true
+		}
 		for current, incoming := range map[*string]string{
 			&task.Title: issue.Fields.Summary, &task.Assignee: assigneeName,
 			&task.ProjectKey: projectKey, &task.Source: "jira", &task.ExternalKey: issue.Key,
@@ -1323,6 +1358,43 @@ func (s *Server) syncJiraUserToLocal(username, displayName, email string) {
 			if err := db.DB.Save(&user).Error; err == nil {
 				log.Printf("Jira sync user: updated local user name mapping for %s: %s -> %s", username, user.Name, displayName)
 			}
+		}
+	}
+}
+
+// syncJiraProjectToLocal automatically records or updates the project name retrieved from Jira into ProjectConfig.
+func (s *Server) syncJiraProjectToLocal(projectKey, rawName string) {
+	key := deliveryplanning.NormalizeProjectKey(projectKey)
+	name := strings.TrimSpace(rawName)
+	if key == "" || name == "" || strings.EqualFold(key, name) {
+		return
+	}
+	var existing db.ProjectConfig
+	err := db.DB.Where("project_key = ?", key).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		config := db.ProjectConfig{
+			ProjectKey:      key,
+			ProjectName:     name,
+			GitReposJSON:    "[]",
+			BasePriority:    "P2",
+			ProjectPhase:    "交付",
+			BaseScore:       60.0,
+			BaseScoreWeight: 0.10,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		if err := db.DB.Create(&config).Error; err != nil {
+			log.Printf("Jira sync project: failed to auto-record ProjectConfig for %s (%s): %v", key, name, err)
+		} else {
+			log.Printf("Jira sync project: automatically recorded project name for %s -> %s", key, name)
+		}
+	} else if err == nil && (existing.ProjectName == "" || strings.EqualFold(existing.ProjectName, existing.ProjectKey)) {
+		existing.ProjectName = name
+		existing.UpdatedAt = time.Now()
+		if err := db.DB.Save(&existing).Error; err != nil {
+			log.Printf("Jira sync project: failed to update project name for %s: %v", key, err)
+		} else {
+			log.Printf("Jira sync project: updated project name for %s -> %s", key, name)
 		}
 	}
 }

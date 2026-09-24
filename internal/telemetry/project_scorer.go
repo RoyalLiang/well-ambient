@@ -143,8 +143,8 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 			}
 		}
 
-		// 2. Project configuration is authoritative input. Scoring is read-model
-		// computation and must never create project facts from telemetry prefixes.
+		// 2. Project configuration is authoritative, read-only input. Scoring
+		// must not infer or overwrite saved project facts from telemetry labels.
 		projectConfig, hasProjectConfig := projectConfigByKey[projKeyUpper]
 		if !hasProjectConfig {
 			defaultName := projKey
@@ -158,23 +158,6 @@ func CalculateAndSaveScores() ([]db.ProjectScore, error) {
 				GitReposJSON:    "[]",
 				BaseScore:       60.0,
 				BaseScoreWeight: 0.10,
-			}
-		} else {
-			// Auto correct legacy default name (like "CHQ项目") to full clean name if available
-			if extractedName != "" && (projectConfig.ProjectName == "" || projectConfig.ProjectName == projKey+"项目" || strings.HasSuffix(projectConfig.ProjectName, "项目")) {
-				targetName := extractedName
-				// Avoid UNIQUE name collision: check if name already exists for other key
-				var existingWithSameName db.ProjectConfig
-				if errCheck := db.DB.Where("project_name = ? AND project_key != ?", targetName, projKey).First(&existingWithSameName).Error; errCheck == nil {
-					targetName = fmt.Sprintf("%s (%s)", extractedName, projKey)
-				}
-
-				projectConfig.ProjectName = targetName
-				db.DB.Save(&projectConfig)
-				projectConfigByKey[projKeyUpper] = projectConfig
-
-				// ALSO update all past ProjectScore records for this project key to prevent legacy names showing in history
-				db.DB.Model(&db.ProjectScore{}).Where("project_key = ?", projKey).Update("project_name", targetName)
 			}
 		}
 

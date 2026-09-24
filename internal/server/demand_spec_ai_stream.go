@@ -96,6 +96,8 @@ func (s *Server) handleStreamAIDemandSpec(w http.ResponseWriter, r *http.Request
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.streamingContext().Done():
+			return
 		case <-ticker.C:
 			if !writeEvent(demandSpecStreamEvent{Type: "heartbeat", Phase: "generating", Message: "AI 仍在生成，请保持页面开启"}) {
 				return

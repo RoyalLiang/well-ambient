@@ -45,7 +45,7 @@ func InitializeSeeds(db *gorm.DB) error {
 		{Code: "solution:read", Name: "查看需求方案", Description: "有权查看需求的方案草案、候选版本、已发布版本及其来源状态"},
 		{Code: "solution:write", Name: "编辑与润色需求方案", Description: "有权编辑需求方案草案、请求 Agent 润色并人工应用候选版本"},
 		{Code: "solution:publish", Name: "发布需求方案", Description: "有权把人工确认的需求方案草案发布为需求当前方案"},
-		{Code: "solution_prompt:manage", Name: "管理方案润色提示词", Description: "仅全局超级管理员可新增、测试、启用和回滚方案润色提示词版本"},
+		{Code: "solution_prompt:manage", Name: "管理在线 AI 技能", Description: "仅全局超级管理员可新增、测试、启用和回滚在线 AI 技能版本"},
 	}
 
 	log.Println("Seeding default permissions (incremental)...")

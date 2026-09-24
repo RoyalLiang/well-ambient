@@ -38,6 +38,7 @@
   export let showToolbar = true;
   export let showDocumentMeta = false;
   export let embedded = false;
+  export let fullWidthPreview = false;
   export let streaming = false;
   export let inlineEditing = false;
   export let saving = false;
@@ -438,6 +439,7 @@
   class:toolbar-hidden={!showToolbar}
   class:workbench-header-hidden={!showInlineEditStatus && !showWorkbenchToolbar}
   class:embedded
+  class:full-width-preview={fullWidthPreview}
   class:inline-editable={inlineEditing && !readonly}
   class:editing-inline={inlineEditing && mode === 'edit'}
   class:auto-height={autoHeight}
@@ -620,6 +622,10 @@
   .markdown-body :global(th) { background: #f3f7f7; color: #31454e; font-weight: 750; }
   .markdown-body :global(hr) { height: 1px; margin: 26px 0; border: 0; background: #e3e8eb; }
   .markdown-body :global(input[type='checkbox']) { margin-right: 7px; accent-color: var(--wa-accent, #008f96); }
+  .full-width-preview .markdown-body :global(p),
+  .full-width-preview .markdown-body :global(ul),
+  .full-width-preview .markdown-body :global(ol),
+  .full-width-preview .markdown-body :global(blockquote) { max-width: none; }
   .empty-document { color: var(--wa-text-muted, #667789); }
   .workbench-status { min-height: 28px; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 0 12px; border-top: 1px solid var(--wa-border-soft, rgba(123, 143, 160, .18)); background: var(--wa-surface-inset, #f5f8fb); color: var(--wa-text-muted, #667789); font: 10px/1.2 var(--wa-font-mono, monospace); }
   .streaming .preview-pane::after { content: ''; display: inline-block; width: 2px; height: 1.05em; margin-left: 3px; border-radius: 2px; background: var(--wa-accent, #008f96); vertical-align: -.15em; animation: caret-blink .8s steps(1) infinite; }

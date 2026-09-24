@@ -573,6 +573,60 @@ func TestComparisonPromptsAreVersionedByPurpose(t *testing.T) {
 	}
 }
 
+func TestCodeReviewSkillPurposeIsVersionedAndActivatable(t *testing.T) {
+	module, _ := testModule(t, 0)
+	ctx := context.Background()
+	created, err := module.SavePrompt(ctx, SavePromptCommand{
+		Purpose: "code_review", ScopeType: "global", Name: "代码评审技能 v1",
+		SystemPrompt: "只报告有证据的问题", Actor: "Root", Activate: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Purpose != "code_review" || created.Status != "draft" || created.Version != 1 {
+		t.Fatalf("created skill = %+v", created)
+	}
+	if _, err = module.ActivatePrompt(ctx, created.ID, "Root"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("untested skill activation err=%v", err)
+	}
+	if _, err = module.RecordPromptValidation(ctx, created.ID, "Root", "fixture passed", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = module.ActivatePrompt(ctx, created.ID, "Root"); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := module.SavePrompt(ctx, SavePromptCommand{
+		Purpose: "code_review", ScopeType: "global", Name: "代码评审技能 v2",
+		SystemPrompt: "增加反证复核", Actor: "Root", Activate: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = module.RecordPromptValidation(ctx, draft.ID, "Root", "fixture passed", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = module.ActivatePrompt(ctx, draft.ID, "Root"); err != nil {
+		t.Fatal(err)
+	}
+	active, err := module.ActivePrompt(ctx, "code_review", "")
+	if err != nil || active.ID != draft.ID || active.Version != 2 {
+		t.Fatalf("active code review skill = %+v err=%v", active, err)
+	}
+	all, err := module.ListPrompts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, prompt := range all {
+		if prompt.Purpose == "code_review" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("code review skill versions=%d, prompts=%+v", found, all)
+	}
+}
+
 func TestProjectPromptMissFallsBackWithoutRecordNotFoundLog(t *testing.T) {
 	var output bytes.Buffer
 	conn, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{

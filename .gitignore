@@ -71,3 +71,6 @@ Thumbs.db
 /deploy/.state/
 /deploy/bundles/
 /deploy/generated/
+
+*.xlsx
+/.agent-runtime/

@@ -1,5 +1,21 @@
 # Findings & Decisions
 
+## 2026-09-17 Jira 早报 Confluence 归档同步支持
+
+- 架构与设计决策：
+  1. Confluence 客户端设计为高复用独立包 `internal/confluence`，对外仅暴露无网络静态校验 `Validate(Config)`、只读检查 `Check(ctx, cfg)`（明确声明不保证写入权限，避免对外部 Confluence 产生非预期写入）与完整同步 `Sync(ctx, cfg, title, storage, attachments)`。
+  2. 同步策略：先创建或确认子页面占位，确保全部附件上传成功后再提交正文 PUT，避免附件未齐导致的图表失效；附件采用内容寻址 SHA-256 命名（`daily-jira-chart-<hash>.png`），重试时自动复用已上传附件。
+  3. 发信原子序：发送逻辑遵循“先同步 Confluence，成功后再触发 SMTP 发送”。若 Confluence 同步失败，阻断 SMTP 发送并持久化标记为 `confluence_failed`，允许管理员在配置页中按原报告日期单次重试，杜绝邮件重复外发。
+  4. 前端交互与可访问性：Token 仅在保存时提交，回读后严格显示脱敏标记 `__configured__`；更换父页面 URL 时强制要求重新输入或确认 Token；修复了 `<details class="email-history">` 在状态更新时失去 open 状态的问题，确保重试完成异步回读后保留在展开视图中，可直达生成的 Confluence 页面链接。
+
+## 2026-09-17 邮件模板四项修正
+
+- 根因：报告emailIssue没有URL且HTML各样式渲染普通编号；完整预览iframe禁止popup，sanitizer默认不保留target。现按配置HTTP(S) Jira基址构造转义链接，共享jira_link覆盖四样式及各事项分支；纯文本追加URL。非法/缺失基址仅显示原编号。完整预览只开放popup，新窗noopener/noreferrer；缩略图仍不可交互。
+- 三张图表统一在标题日期后、正文引言/概览/明细之前；HTML底部删除重复项目组统计，保留顶部组卡及分组明细；纯文本顶部组概览保留且改名。删除同名警告副作用，不改变同名事项/提交排除规则。
+- 验证：链接/顺序/同名提示及纯文本缺URL均先红后绿；server全包最新6.824s；前端0错误/148既有warning、双端build通过；Impeccable []。48认证真实预览+图库+popup、80独立渲染、2合法/7非法预览链接通过。read_image此次可用，实际目视了认证桌面/手机及brief/focus/ledger和hyperframe空态完整截图，未见新增遮挡/溢出。
+- 边界：隔离内存DB认证fixture已正常退出，未发真实邮件；常驻8080仍旧实例。新版可执行文件 outputs/well-ambient-mail-revision 已完成最终构建。真实收件客户端的SVG/链接策略未实测。
+
+
 ## 2026-08-27 品牌图标替换发现
 
 - `web/index.html` 仍引用 Vite 默认的 `/favicon.svg`；该 SVG 是紫色闪电/渐变风格，与 Phase 41 的深色左轨和薄荷青品牌色不一致。
@@ -2849,3 +2865,129 @@
 - Responsive evidence at 320/375/414/768: document scroll width equals viewport width and all affected buttons remain 44px high. Impeccable and finesse static detectors both reported zero findings.
 - Initial broad Go package test failed only because the sandbox denied an `httptest` IPv6 listener. The same full `go test ./... -count=1` suite passed outside that listener restriction.
 - `node --test` cannot load `.ts` directly on the installed Node 22; rerunning with `--experimental-strip-types` passed all 16 database setup contract tests.
+
+## 2026-09-17 Email style not updating investigation
+
+- Scope: compare current renderer, existing artifacts, and live port 8080; preserve all existing changes.
+- Runtime binary timestamp 11:13:45 predates template update 11:46:13; live PID 87928 maps to repository well-ambient-server. This is evidence of possible runtime drift, not yet proof of exact visual symptom.
+- Plan: reproduce drift; distinguish stale binary, theme overrides, and preview caching; apply smallest fix; validate actual affected state.
+- Tool constraints: rg unavailable; use targeted grep/find. ps denied by sandbox; use permitted lsof for runtime identity.
+
+## 2026-09-17 Email preview runtime fix verification
+
+- Old live binary was built before current template; embedded template comparison failed before and passes after restart.
+- Gallery demo omitted project groups, so all four candidates used category fallback.
+- Thumbnail clips top 347 CSS px of a fixed 680px email; full preview is the visible group-layout acceptance surface.
+- Added synthetic DEMO project group and owners through existing grouping/renderer.
+- Added real gallery handler regression; preserved ungrouped and empty test branches explicitly.
+- Built and installed root well-ambient-server; old PID87928 gracefully stopped; new PID98068 on 8080 is healthy, managed job bash-10. Startup uses config.yaml --skip-migrate.
+- Red regression failed all four layouts; targeted server/config Email|DailyJira tests passed after fix.
+- 40 authenticated isolated gallery browser cases passed: four styles, five widths 320/390/560/561/1440, light/dark, no overflow/links/draft mutation.
+- Impeccable detector: 4 advisory numbered-marker findings from chart date labels; no structural change needed.
+- git diff --check and gofmt checks passed.
+- Existing live user session was not available for automated login; isolated authenticated app tested, real backend inode and /live verified.
+
+## 2026-09-17 Greeting and commit SVG completed
+
+- User confirmed the prior layout is visible and requested greeting above charts plus an embedded SVG commit section. The one-time reflection gate has been answered; no repeat gate.
+- All four styles now share one introduction between title/metadata and top charts, without duplicate greeting.
+- Commit section now shows collected commits, repositories and pre-aggregation contributor count; HTML labels plus 10px-high inline SVG share bars retain readable 13px author text at narrow widths.
+- Commit rendering retains all eight authors plus Other, exact count-based proportions, dark-theme series hooks, escaped labels and plain-text fallback; nil/zero/missing-author states remain distinct.
+- Validation: server/config Email|DailyJira tests pass; 40 authenticated gallery cases, 24 authenticated draft preview cases and 36 sanitized edge cases pass. Screenshots and JSON evidence stored in outputs.
+- Impeccable reports four advisory numbered-section detections from date labels; no zero-findings claim. Formatting and diff checks pass.
+- Installed verified backend on existing port8080; PID2507, /live=200, mapped binary contains exact template plus commit SVG/greeting markers. Managed job bash-24 intentionally remains running. Fixture bash-18 stopped.
+- Files: internal/server/email_report_template.go, email_charts.go, email_report.go, email_commit_chart_test.go, email_layouts_test.go, email_revision_test.go; previous gallery-data fix remains.
+
+## 2026-09-17 Feishu PNG/CID compatibility verification
+
+- Replaced all top and lower chart SVG output with pure-Go PNGs; HTML retains rates, all status counts, seven daily values, authors/counts/shares, including Other. Historical JSON field names are retained for compatibility.
+- Added PNG-to-CID multipart/related encoding under multipart/alternative, deduplicated attachments, bounded decoding and MIME sizes; ordinary text mentioning cid/data remains valid.
+- Full go test ./... passed. SMTP and delivery race checks passed in child. Native and CGO_ENABLED=0 Linux/amd64 builds passed.
+- Four real demo reports sent only to local SMTP: each has 10 img references and 6 deduplicated PNG parts, all decoded and CID-matched; raw EML and reconstructed mail HTML exported.
+- Browser validation passed: 40 authenticated gallery + 24 authenticated draft + 36 PNG edge cases + 32 decoded SMTP mail views. PNGs load at nonzero natural/display dimensions in light/dark and mobile/desktop; image-free text preserved.
+- Browser pixel script initially used the locator DOM element as its scenario argument, causing a zero denominator in the test. Corrected evaluate signature; production PNG geometry and subsequent 36 cases passed.
+- Isolated browser fixture bash-54 remained idle after successful browser work and hit the Go default 10m timeout. It exited and is not running; this is fixture lifecycle cleanup, not a failed browser assertion. Other temporary browser processes closed normally.
+- Impeccable: four advisory number-marker findings from date labels. Palette ratios were tested >=3 against both email card themes.
+- Installed verified backend at existing port8080; PID10889, job bash-60 remains running, /live=200, mapped binary contains PNG renderer and related MIME. Previous process exited gracefully.
+- No external email was sent. Actual Feishu receipt remains to be verified. Existing received emails are immutable; formal daily delivery is date-deduplicated and ordinary SMTP test contains no chart, so use an explicitly authorized one-recipient chart test or a future normal report.
+- Goal creation tool was unavailable (direct-human/top-level authority rejection); work continued using the structured task plan without retrying that boundary.
+
+## 2026-09-17 Email UI and Jira project discovery
+
+- Existing uncommitted email implementation and shared settings changes must be preserved.
+- SettingsPanel supplies daily email Jira choices and ProjectConfig syncProjects from jira.sync_projects; investigate distinction between sync filters and discovered projects.
+- DESIGN.md requires compact contextual header, one frosted workspace, optional audit pane; flat fields, no nested glass.
+- Impeccable context: no PRODUCT.md; scoped refinement proceeds with DESIGN.md and existing code.
+
+### Implemented direction and confirmed diagnosis
+
+- Three-way review has no blocking disagreement. Current email outer workspace was transparent, with two peer glass panes; changed ownership to one frosted outer workspace and flat inner panes (not claiming prior triple nesting).
+- Backend red tests reproduced 404 on missing catalog and hidden NEW mapped project. Existing business project-preference scope remains unchanged; a settings-only config:read catalog merges real Jira tasks, config/version sources and manual mappings. GET must not create facts.
+- Frontend now shares catalog normalization and lifecycle watcher, uses existing telemetry-refresh event coalescer plus config/mapping/focus signals, preserves drafts. Mapping shows explicit pending rows; email options use name+key.
+- Scoped UI edits preserve existing dirty work. apply_patch had one out-of-order hunk failure: SettingsPanel portion applied, EmailConfig portion did not; verified state then applied corrected independent patch.
+- No app-wide dark theme exists in current source; preserve tokens and test OS dark compatibility/preview themes, do not claim a newly implemented dark theme.
+
+## 2026-09-22 日报证据
+- groupIssues 原先对未声明项目按任意组负责人兜底，和 issueMatchesGroup 的项目约束不一致，已修复并更新回归期望。
+- GitCommitLog 已有 Branch/Message；提交 URL 从 GitLab 配置的唯一仓库路径构造，无法确定时不造链接。总数按仓库+SHA去重，分支行按仓库+分支+SHA去重。
+- 更新证据使用 JiraCommentLog.CreatedAt/SourceUpdatedAt 和 PerformanceWorkItemEvent.OccurredAt；缺失类型标注未记录，不以采集时间猜测。历史负责人已经可读取，尚未接入成员计数，等待口径确认。
+
+## 2026-09-22 确认后的统计口径
+- 字段：按 search 的 names 展开精确定位 bug归类，自定义字段值只接受 FMS/GPP（含 select/multi/cascade 的 value/child）；不以标题、姓名或项目名分类。缺失/冲突/其他分类不默认为 FMS。
+- 范围：核心成员来自 Jira sync_users 或 JQL 成员配置，项目组 owners 不冒充核心成员。历史 From/To 的账号与显示名结合用户目录匹配；每个核心成员每事项计一次，总汇总每事项计一次。
+- 来源：新增 JiraReportChange，脱离可选绩效模块保存所有字段变更；截断历史优先请求完整 issue，再尝试分页；未补全就保留不完整标志。预览仅读本地，不触发外部同步。
+- 已有日报、Confluence、提交链接和布局优化均保留；相关旧测试样例补充显式分类字段，以符合新的输入契约。
+
+## 2026-09-24 评审体验续作发现
+
+- 当前 `CodeReviewCenter` 已使用与“决策事项”相同的共享 `Modal size="wide" shadowless`，但列表仍是历史 `PrototypeTable`，移动端详情入口位于 1000px 表格最右列。
+- 页面顶层 `error/notice` 会被打开的 Modal 遮住；同步或取消失败不可见。详情请求成功后才打开 Modal，慢请求无即时反馈。
+- `detailScroller` 绑定到不滚动的 `.cr-reading`，实际滚动 owner 是共享 Modal body，因此选择记录和切换依据的回顶当前无效。
+- Markdown surface 仍受 `max-width: 880px` 和双重 padding 限制；正确目标是 surface 全宽、prose 保持可读行长、代码/表格独立横向滚动。
+- 三方评审一致要求 `AdminDataList + shared Modal + MarkdownWorkbench` 的单一所有权，状态语义、44px 触控、键盘焦点和认证浏览器矩阵作为发布门禁。
+- 融合后的 `merge-review` 已进入当前 skill catalog；全局用户目录写入受 sandbox 限制，但项目系统级安装可被会话发现。
+- 初次窄屏浏览器验证发现同步状态固定列会把 320px 主标题列压到 0；将同步列设为 secondary，并在首列移动端摘要保留同步状态后，标题入口恢复为 114x44。
+- Modal 依据链接源码为 44px；Chromium 入场动画中间帧会出现 43.996px 子像素值，等待动画完成后的最终几何为 44px。
+- 轮询详情失败不应覆盖已加载报告；`detailError` 现只由显式详情加载产生，重试开始时会清掉旧错误。
+- 认证 fixture 最终确认：五个断点无页面横向溢出，Modal Markdown surface 宽 958/958px，事实/代码切换回顶，Esc 焦点回原触发器，动作错误在 Modal 内可见，只读账号无 mutation action。
+- 用户要求的“全宽”最终按正文内容本身落实；评审弹窗局部覆盖 MarkdownWorkbench 的 `p/ul/ol/blockquote` 行宽上限，浏览器计算值为 `max-width: none`。
+- completed 详情的列表轮询只合并摘要字段，不再每 4 秒下载 report/snapshot/knowledge；mutable 状态和首次终态报告仍会刷新。
+- 部分评审与后端同步契约已经对齐：`partial + blocked` 保留 footer 状态但没有同步按钮。
+- `merge-review` 原始 MR URL 解析存在两类高风险：canonical `/-/` 会被贪婪匹配吞入 project，URL host 又可能接收 token。现已精确解析 origin/path，并要求 token + 自建 URL 必须匹配显式 `GITLAB_HOST`。
+- MR commits/diffs 不再停在 100 条/page 1；collector 循环读取到短页，超过 100 页、分页失败或旧接口 overflow 都中止评审。
+
+## 2026-09-24 评审反馈修正发现
+
+- 自动刷新闪烁不是表格重建，而是 poll 共用 manual refresh 状态，周期性触发“正在刷新”、按钮禁用、AdminDataList retained-loading overlay 和 aria-live。
+- 评审 Modal 原先只有 max-height；短 facts/rules/failed 会缩窗。`stableHeight` 作为 shared Modal opt-in reader 能保持其他决策/任务弹窗原行为。
+- 失败重评采用新 Run 而不是重置旧 Run：`manual-retry:<failed_id>` 使同一失败记录重复点击幂等，重试再次失败时可从新 ID 继续链式重评。
+- 历史完整报告的 `publish_status=off` 只表示生成时开关关闭；当前开关开启后，后端 Publish 会重新校验策略并允许手动同步，因此 UI 不能按历史 off 隐藏按钮。
+- Switch 后端保存本身可用；实际 UX 缺口是 24px 命中、label 非表单关联、全局 busy 和远距离反馈。expanded hit area + optimistic rollback + 行内字段反馈后闭环。
+- Webhook 评审入队此前依赖 Kanban 成功且错误仍 ACK 202；评审 handoff 提前并独立后，GitLab 只有在 durable enqueue 成功后停止重投。
+- Publication claim 在第二次策略/MR 校验或已知 HTTP 拒绝时属于确定未 POST；此时保留 unknown 会永久堵塞安全重试。释放 claim + sync_failed 后可恢复并只 POST 一次。
+- 最终浏览器实测：静默 poll 4.5 秒可见状态不变；插入新记录后原 row id/offset 不变；旧列表响应不能覆盖 cancel；retry 同窗切 queued；策略保存失败回滚；历史 off 报告同步成功。
+- 策略更新必须字段级合并并在项目锁中读取/保存；completion 的 publish_status 判定和 final GitLab POST 也使用同一锁，保证开关响应与不可逆写入线性化。
+- Publication ledger 最终采用 `claimed`（可超时 CAS 回收）与 `sending`（不可回收，只能核对/unknown）两态，并用 `lease_token` fence 所有删除、unknown 更新与 POST 前 heartbeat。
+- Webhook secret 为空时拒绝入口；合法 webhook 先 durable review enqueue，再执行可能失败的 telemetry/Kanban，从而不再 ACK 后永久漏评。
+- Skill collector 对 `too_large`、`collapsed`、空 diff、compare timeout 全部 fail closed；本地 merge 必须显式 ref 或 `--latest`。
+
+## 2026-09-24 在线代码评审 Skill
+
+- `.agents/skills/merge-review` 只属于开发代理；生产 worker 原先只读取编译期 `ReviewPrompt`，不会加载本机文件。生产级集成必须通过数据库版本资产和服务端固定执行器完成。
+- 复用 `SolutionPromptTemplate` 比新增平行 skill 表更稳：已有 append-only version、active/draft/retired、global super-admin、审计和回滚语义。
+- 在线 skill 不等于完整系统 prompt。可编辑部分只定义评审策略；非可信输入、安全边界、JSON schema、十维覆盖、证据校验、两轮复核和发布权限必须留在不可变 Go runtime contract。
+- enqueue-time freeze 是审计关键：Run 保存 skill ID/version/hash，激活 v2 后已经入队的 v1 仍按 v1 执行。
+- `code_review` 首版限定 global scope，避免把方案/Jira Project Key 与 GitLab Project ID 混用；仓库差异继续由 CodeReviewPolicy rules/knowledge scope 管理。
+- “测试提示词”必须是生产等价 dry-run，而不是 Markdown 单轮生成。验证端点使用固定 snapshot、两轮生成、parseReport 和源码/知识证据校验。
+- 最强大脑不能自动改/启用 skill。它只读聚合版本表现与证据缺口，提出“补知识、调规则、检查模型、建立下一草稿”等建议，由超管验证并显式激活。
+- 认证 fixture 证明默认 v1 由 seed 生效，v2 验证激活后旧 Run 保持 v1、新 Run 绑定 v2；review-intelligence 返回 v2 active 和版本指标，且不泄露 prompt/report/snapshot 正文。
+- 全局 Prompt 与完全动态 Runtime 都不是终局：推荐微内核保留不可变安全/权限/预算/状态/审计，业务能力通过受治理 manifest 懒加载。
+- token 优化不能只换 JSON 为二进制；应拆分 canonical storage、binary transport 和 schema-aware LLM view，并使用 ID 去重、内容寻址、分层证据和 context delta。
+- Agent Runtime 落地必须先做 Registry/Lockfile，再做 MCP/plugin 动态化；否则动态加载没有可复现和权限基座。
+- 当前 CodeReviewRun/在线 skill 能作为首个兼容适配样板，不应并行迁移所有 Agent。
+- 最强大脑优化的对象应包括 resolver、预算、上下文层级、工具顺序和模型路由；Prompt 文本只是候选类型之一。
+- 用户截图中的 Markdown 窄列来自旧渲染或共享组件 75ch 规则；当前 5173 已实时提供页面覆盖。为消除 scoped CSS 顺序不确定性，最终把全宽能力收归 `MarkdownWorkbench.fullWidthPreview`，浏览器计算确认 `none`。
+- 列表闪烁根因是定时器复用 visible refresh：每 4 秒设置 `refreshing=true` 并触发 AdminDataList loading overlay。poll 独立后不再触发任何可见 loading 状态。
+- 弹窗变形根因是 wide Modal 只有 max-height，Markdown 又是 autoHeight。`stableHeight` 仅对 CodeReview opt-in，不改变 Decision/Task 等其他消费者。
+- Failed retry 的后端 route/handler/service/idempotency 原已存在，缺口仅在前端 action model；现成功后直接切换到新 queued run。
+- 同步开关的高风险是 shared Switch 先改内部值、保存失败时父值未变化，子组件可能继续显示错误状态。父组件乐观更新确保失败时 boolean 真正反向变化并强制恢复；认证浏览器模拟 500 已验证 UI/服务器一致。

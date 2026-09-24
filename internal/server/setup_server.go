@@ -894,6 +894,10 @@ func (s *SetupServer) Handler() http.Handler { return s.mux }
 func (s *SetupServer) Start() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 	return s.Serve(ctx)
 }
 
@@ -912,14 +916,18 @@ func (s *SetupServer) Serve(ctx context.Context) error {
 		}
 		return err
 	case <-ctx.Done():
+		log.Println("收到关闭信号 (Ctrl+C / SIGTERM)，正在排空设置服务在途请求...")
 	case <-s.completed:
+		log.Println("数据库配置已完成，正在排空设置服务在途请求...")
 	}
-	shutdownContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownContext); err != nil {
+		log.Printf("设置服务在途请求排空超时或失败，强制关闭连接: %v", err)
 		_ = httpServer.Close()
 		return fmt.Errorf("graceful setup HTTP shutdown: %w", err)
 	}
+	log.Println("设置服务在途请求已全部排空，服务已成功退出。")
 	err := <-serverError
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

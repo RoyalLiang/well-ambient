@@ -1,30 +1,274 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-08-27T19:50:57+08:00",
+  "updated_at": "2026-09-24T21:39:20+08:00",
   "active_task": {
-    "goal": "Generate a well-ambient brand mark and replace the default browser-tab and shared app-shell icons",
-    "intent": "brand_mark_refresh",
-    "complexity": "multi_step",
-    "continuity": "new_task",
-    "freshness": "current_workspace_and_local_prototype_browser",
-    "risk": "low",
-    "phase": "prototype_verified_reflection_gate_pending",
-    "loaded_modules": [
-      "core-lite",
-      "state-lite",
-      "workflow/default",
-      "domains/coding",
-      "runtime/memory",
-      "planning-with-files",
-      "self-improving",
-      "imagegen",
-      "impeccable",
-      "design-taste-frontend",
-      "finesse-ui",
-      "browser"
-    ]
+    "goal": "Production online code-review skill governance and strongest-brain optimization projection",
+    "phase": "delivery_ready",
+    "next": "Deliver online skill integration evidence, production deployment boundary and Agent Runtime ADR"
   },
   "warm_memory": {
+    "online_code_review_skill_2026_09_24": {
+      "status": "implemented_and_verified_reflection_pending",
+      "goal": "让生产评审 worker 加载数据库中的版本化 code_review skill，并向最强大脑提供可追溯质量投影",
+      "changes": [
+        "复用 SolutionPromptTemplate 新增 code_review purpose、默认 global v1 seed、draft/test/activate 门禁",
+        "CodeReviewRun 冻结 skill id/version/name/scope/hash/retry source；worker 按冻结 ID/hash 加载",
+        "可编辑 skill 被不可变 runtime security/evidence/JSON/two-pass contract 包裹",
+        "AI 技能治理 UI 支持代码评审草稿、真实 dry-run、确认激活、版本与最近启用记录",
+        "新增 strongest-brain/review-intelligence 版本质量、证据缺口、风险发现、重评率和治理建议"
+      ],
+      "validation": [
+        "db/solutions/codereview/server 全包与 vet PASS；无 active skill fail-closed、v1 freeze/v2 activation tests PASS",
+        "Svelte 0 errors/既有 warnings、Vite build、15/15 target contracts、Impeccable []、diff-check PASS",
+        "认证 fixture: default v1 active；v2 draft->two-pass validation->active；old run=v1/new run=v2；brain active=v2；390px无横溢且按钮>=44px"
+      ],
+      "outputs": [
+        "outputs/code-review-ui-validation.json",
+        "outputs/online-code-review-skill-1024.png",
+        "outputs/online-code-review-skill-390.png",
+        "docs/code-review.md",
+        "docs/agent-runtime-capability-architecture.md"
+      ],
+      "limits": [
+        "代码已实现并通过本地迁移/fixture，但未部署生产、未执行生产 migration",
+        "未连接真实 GitLab/模型/评论发布验证在线技能版本",
+        "最强大脑仅提供只读建议，不自动修改或激活 skill"
+      ],
+      "next": "正式交付；生产需 migrate-only、部署新后端/web dist、由全局超管确认 active skill；微内核 Runtime 按 ADR 分 Phase 实施"
+    },
+    "code_review_ui_and_merge_skill_2026_09_24": {
+      "status": "implemented_and_verified",
+      "goal": "评审列表/详情统一决策事项范式，并安装融合后的 merge-review system skill",
+      "changes": [
+        "CodeReviewCenter 使用 AdminListFilterBar + AdminDataList；标题为主详情入口，状态/同步语义化，移动端同步状态不截断",
+        "详情复用 shared Modal wide+shadowless；全宽只读 Markdown；事实/代码/知识/规则与 GitLab 新窗链接位于右上",
+        "Modal 新增 scrollToTop、footerVisible 和 reduced-transparency；动作反馈留在 Modal 内",
+        "稳定终态不重复拉详情；partial 不显示同步动作；MR 搜索覆盖 head/base SHA",
+        "交付反馈新增 fullWidthPreview、stableHeight、silent poll/scroll anchor、failed retry、action generation、policy optimistic rollback 和 44px Switch label",
+        "Webhook 要求配置 secret，先持久入队再 ACK；publication 使用 claimed/sending + lease_token fencing，pre-POST/已知 HTTP 失败可恢复且不双发",
+        "策略 API 改为字段级合并并与 completion/final POST 使用项目锁；retry terminal child 可创建下一 attempt；可见刷新在 poll 后排队执行",
+        "merge-review 融合 defect/spec/standards/十维/反证/证据规则，MR collector 增加 host-token 隔离与自动分页"
+      ],
+      "validation": [
+        "svelte-check 0 errors/148 existing warnings；24/24 target contracts；Vite build；Impeccable []；diff-check",
+        "skill quick_validate、全部 bash -n、parser/security、101 commits/101 diffs pagination、incomplete diff/compare timeout/explicit merge ref tests PASS",
+        "codereview/telemetry/server 全包与 Go vet PASS；Webhook auth+durable handoff、claim fencing/recovery、known HTTP retryable、field patch/lock tests通过",
+        "认证 fixture 1440/1024/760/480/390/320 + 1024短高；五 pane 固定尺寸、silent poll+anchor、failed retry、policy label/Space/500 rollback、off->enabled sync、action race、ARIA tabs、reduced motion PASS"
+      ],
+      "outputs": [
+        "outputs/code-review-ui-validation.json",
+        "outputs/code-review-ui-1440-modal-review.png",
+        "outputs/code-review-ui-390-modal-review.png",
+        ".agents/skills/merge-review"
+      ],
+      "limits": [
+        "workspace sandbox 禁止写 ~/.codex/skills；项目级 skill 已被当前 catalog 自动发现",
+        "Impeccable update 下载 invalid zip，保留 v3.9.1",
+        "未部署、未迁移生产数据库、未发布真实 GitLab 评论"
+      ],
+      "next": "正式交付；生产部署和用户级全局 skill 安装仍需外部授权环境"
+    },
+    "sqlite_migration_diagnosis_2026_09_16": {
+      "status": "local_diagnosis_verified_reflection_pending",
+      "findings": [
+        "活跃本地源以immutable读取，performance_audit_events预计223178行、复制223179行，实际失败回滚",
+        "backup API独立快照两次复制504191行/65表成功；目标均临时SQLite",
+        "dev-setup直接指运行库；历史schema-only跳过缺陷当前定向回归通过",
+        "生产同因未定案，缺少现场阶段/版本/快照来源；没有真实PG验证"
+      ],
+      "outputs": [
+        "outputs/sqlite-migration-diagnosis-2026-09-16.md"
+      ],
+      "next": "一次自审门并结合生产反馈完善结论；未修改应用或生产数据"
+    },
+    "email_daily_jira": {
+      "four_template_fixes_2026_09_17": {
+        "status": "implemented_browser_verified_reflection_pending",
+        "changes": [
+          "四样式标题日期后先显示三张统计图",
+          "删除同名提示但保留歧义身份排除",
+          "HTML及纯文本使用配置Jira基址链接，预览允许安全新窗",
+          "删除底部重复项目组统计，保留顶部概览与分组事项"
+        ],
+        "validation": [
+          "server全包通过6.824s，前端check0错误/148既有warning、前后端构建、diff-check通过",
+          "48认证真实预览+48图库+48实际popup，六宽度明暗通过",
+          "80独立有数据/空态布局，Impeccable[]，9类sanitizer URL通过",
+          "read_image已目视桌面/手机、明暗、空态代表截图；fixture已exit0"
+        ],
+        "files": [
+          "internal/server/email_report.go",
+          "internal/server/email_report_template.go",
+          "internal/server/email_revision_test.go",
+          "internal/server/email_identity_test.go",
+          "internal/server/email_report_test.go",
+          "internal/server/email_browser_fixture_test.go",
+          "web/src/lib/email-preview.ts",
+          "web/src/components/config/EmailReportPreview.svelte"
+        ],
+        "outputs": [
+          "outputs/email-revision-brief.html",
+          "outputs/email-revision-focus.html",
+          "outputs/email-revision-ledger.html",
+          "outputs/email-revision-hyperframe.html",
+          "outputs/email-revision-layout-results.json",
+          "outputs/well-ambient-mail-revision"
+        ],
+        "limits": [
+          "常驻8080原PID87928未替换",
+          "未真实SMTP外发或实测Gmail/Outlook收件"
+        ],
+        "next": "执行一次交付反思门，收到用户反馈后完成交付；如授权上线则替换运行实例并核验"
+      },
+      "group_visual_unification_feedback": {
+        "status": "implemented_automated_verified_visual_pending",
+        "changes": [
+          "邮件分组选择器settings外观与portal根一致；默认选择器不变",
+          "自身容器断点、去重复组名/彩色序号、紧凑标签底色",
+          "邮件分组去侧色条与嵌套内层底板",
+          "保存遮挡与撤销draft_id误判已通过回归"
+        ],
+        "validation": [
+          "config/server、check/build通过",
+          "认证编辑器1440/1024/760/390/320及邮件390/800明暗检查通过",
+          "保存排序刷新、回读异常、图库与原邮件流程通过；Impeccable无发现"
+        ],
+        "outputs": [
+          "outputs/group-unified-review.md",
+          "outputs/group-unified-editor-1440.png",
+          "outputs/group-unified-editor-390.png",
+          "outputs/group-unified-mail-light-800.png"
+        ],
+        "limits": "当前模型无图像输入，未目视验收；未重启常驻服务或改真实DB；上轮反思门已执行，本反馈不重复"
+      },
+      "project_grouping_refinement_2026_09_16": {
+        "status": "implemented_and_automated_verified_visual_review_pending",
+        "root_cause": "MultiSelect中可见的自定义负责人只是搜索态，点击外部保存时outside-pointer先清空输入；父设置页又用提交快照乐观显示成功而不回读校验。",
+        "changes": [
+          "自定义值在回车/失焦/外部点击时提交，支持逗号分隔与IME保护",
+          "项目和负责人统一可搜索多选；稳定draft_id；删除重复批量输入；分组扁平化",
+          "保存成功前GET回读并核对project_groups；后端要求名称和至少一个范围；保存/GET/Bootstrap往返测试"
+        ],
+        "validation": [
+          "原精确浏览器红灯已转绿；保存、排序、刷新数据不串组",
+          "回读丢字段不得显示成功；1440/760/480/320无横向溢出且移动触控目标44px",
+          "go test ./...、svelte-check 0错误、Vite build、原邮件16组+图库7组认证回归通过",
+          "Impeccable无发现；Finesse P0=0，MultiSelect保留既有fallback色P2"
+        ],
+        "limits": [
+          "当前模型及视觉复核子代理均不能读取截图，未完成目视审美验收",
+          "隔离fixture验证，未修改真实数据库或重启常驻服务"
+        ],
+        "outputs": [
+          "outputs/email-group-persistence-result.json",
+          "outputs/email-group-visual-results.json",
+          "outputs/email-group-1440.png",
+          "outputs/email-group-480.png"
+        ],
+        "next": "执行本任务一次交付反思门；收到反馈后交付，或由图像模型补截图目视验收"
+      },
+      "theme_refinement_2026_09_16": {
+        "status": "source_and_automated_checks_verified_visual_review_pending",
+        "changes": [
+          "共用media与ogsc/ogsb主题映射，补齐数值、SVG、图例、空态、边框",
+          "窄屏展开图表/分类卡；零分母显示—；指定无commit提示已移除并回归",
+          "七日图采用同成员范围本地最后更新时间分布，独立限额/超时，不再伪造趋势或阻断核心日报"
+        ],
+        "validation": [
+          "config/mailreport/db/server回归通过；主题/空态/七日时区边界及10001记录限额race通过",
+          "36浏览器渲染场景对比度/溢出检查通过；390/1440认证净化后16个明暗模板预览通过；图库7组流程通过",
+          "Impeccable无发现；Finesse P0=0，保留内联颜色等P2提示"
+        ],
+        "limits": [
+          "read_image明确拒绝：gpt-6-astra未声明图像输入，未完成截图目视验收",
+          "未做实际邮箱客户端收信验证",
+          "常驻8080健康检查200；未替换/重启常驻进程，未外发真实邮件或改真实DB"
+        ],
+        "outputs": [
+          "outputs/email-theme-review.md",
+          "outputs/email-theme-hyperframe-dark-800.png",
+          "outputs/email-theme-hyperframe-light-800.png",
+          "outputs/email-theme-hyperframe-dark-390.png",
+          "outputs/email-theme-ui-results.json"
+        ],
+        "next": "交付可审阅产物并如实说明视觉验收限制；原邮件任务反思gate已执行，不重复"
+      },
+      "template_gallery": {
+        "status": "implemented_and_verified",
+        "changes": [
+          "900px以上等宽同级双pane，外层透明，标题与材质一致",
+          "横向真实HTML缩略图库，brief/focus/ledger三内置布局；生成3候选、查看/使用/撤销/保存分离",
+          "服务端候选库最多30条，确认删除且不影响草稿或已保存copy",
+          "样式示例隐藏发送操作，净化+CSP+sandbox隔离，view intent避免异步旧响应抢视图"
+        ],
+        "validation": [
+          "config/mailreport/db/server完整测试及Email/SMTP race通过",
+          "前端check零错误、build通过；Finesse/Impeccable无发现",
+          "7组图库认证流程与12布局记录通过，旧14业务/18布局及899/900阈值回归通过",
+          "仅临时内存DB、本机SMTP及fixture AI；未验证真实Postgres锁分支或邮箱客户端"
+        ],
+        "outputs": [
+          "outputs/email-gallery-review.md",
+          "outputs/email-gallery-1440-expanded-templates.png",
+          "outputs/email-gallery-1440-expanded-smtp.png",
+          "outputs/email-gallery-390-mobile-templates.png",
+          "outputs/email-template-brief.html",
+          "outputs/email-template-focus.html",
+          "outputs/email-template-ledger.html"
+        ],
+        "deployment": "既有迁移流程需新增email_template_candidates；未执行生产迁移"
+      },
+      "ui_refinement": {
+        "status": "source_review_and_authenticated_browser_verified",
+        "changes": [
+          "真实scw-workbench/shared tabs/form-grid/native控件接入，去掉双重padding",
+          "email专属取消generic API inspector，仅一个测试/预览aside，900px组件断点",
+          "上下文头71px，原生radio15x15，旧muted token映射回统一色，手机按钮44px"
+        ],
+        "validation": [
+          "check零错误且邮件组件无新警告；build和diff-check通过",
+          "Finesse/Impeccable发现项为空，14业务检查与18布局测量、899/900断点通过",
+          "文字对比度抽样最小5.416；原390业务起点510降至356，桌面400降至331",
+          "未做截图目视审美验收，截图保留给用户直接查看"
+        ],
+        "outputs": [
+          "outputs/email-ui-review.md",
+          "outputs/email-ui-after-1440-expanded-0.png",
+          "outputs/email-ui-after-1440-expanded-2.png",
+          "outputs/email-ui-after-390-mobile-0.png"
+        ],
+        "files": [
+          "web/src/components/config/EmailConfig.svelte",
+          "web/src/components/config/EmailReportPreview.svelte",
+          "web/src/components/SettingsPanel.svelte"
+        ]
+      },
+      "status": "implemented_and_verified",
+      "goal": "SMTP设置及测试、每日Jira早报、默认及Agent模板、邮件兼容图表分析",
+      "findings": [
+        "SMTP显式STARTTLS/隐式TLS/本机明文，常用端口自动匹配且保留自定义端口",
+        "Jira使用source_updated_at昨日与created前三日未解决，coremember映射，commit按采集时间",
+        "默认完整中文模板与候选应用流程，固定安全HTML横条图，Top8加其他，纯文本fallback",
+        "每天最多一次发送尝试，失败或未知不自动重发；配置和邮件API保持全局权限"
+      ],
+      "validation": [
+        "相关Go包测试与邮件race通过，TLS/STARTTLS本地真实握手、认证及不可信证书拒绝通过",
+        "前端check/build通过，Impeccable无发现，认证浏览器默认模板/图表/权限/错误恢复及390至1440断点通过",
+        "仅使用内存数据库、本地SMTP和fixture AI，未变更生产服务/数据库或外发真实邮件"
+      ],
+      "outputs": [
+        "docs/email-daily-jira.md",
+        "outputs/email-default-preview.html",
+        "outputs/email-browser-results.json",
+        "outputs/email-browser-edge-results.json"
+      ],
+      "constraints": [
+        "用户自审gate已执行并给出追加需求，已实现，不再重复gate",
+        "真实SMTP服务商投递和Gmail/Outlook客户端未测试",
+        "HyperFrames为可选建议，未引入依赖，采用无脚本的邮件兼容表格图表"
+      ],
+      "next": "交付说明；生产迁移和启用需按既有部署流程执行"
+    },
     "brand_mark_refresh": {
       "status": "prototype_verified_reflection_gate_pending",
       "findings": [
@@ -292,8 +536,8 @@
       "Jira Task is the demand mainline in this deployment; execution subtasks are supporting evidence",
       "Continue the UI redesign by routing real modules through the new shell while avoiding broad rewrites of legacy business panels",
       "Browser visual verification currently requires a real login; do not attempt browser policy workarounds",
-      "Every UI delivery requires browser simulation and screenshot review of the affected authenticated state; if authentication blocks access, wait for the user"
-      ,"Do not start the main database with temporary YAML for validation because active database configuration supersedes the file and can re-enable external integrations"
+      "Every UI delivery requires browser simulation and screenshot review of the affected authenticated state; if authentication blocks access, wait for the user",
+      "Do not start the main database with temporary YAML for validation because active database configuration supersedes the file and can re-enable external integrations"
     ],
     "decisions": [
       "Unify Daily Jira through the existing Phase 41 tokens, 16/20px radius scale, matte structural panels, and table/inspector geometry; do not copy DecisionDashboard metric-card theater or introduce a second component system.",
@@ -322,16 +566,16 @@
       "Let the left Settings configuration surface determine desktop row height; absolutely contain the audit panel so long diffs cannot inflate both columns.",
       "Treat the new-demand and AI pre-deconstruction dialogs as one centered desktop group with a 16px gap and measured equal height.",
       "Keep demand title and description as separate UI fields and serialize them into labeled LLM prompt sections instead of concatenating unmarked text.",
-      "Keep demand search inside the association dropdown so operators can filter and select without leaving the current AI workflow."
-      ,"Stream human-readable Markdown before a fixed delimiter and structured JSON after it; display the Markdown live while retaining the JSON as the governed persistence model."
-      ,"Emit stream completion only after both the demand spec and default review contract commit successfully."
-      ,"Treat Markdown as the canonical editable document surface while retaining structured specification fields as progressively disclosed execution metadata."
-      ,"Use one bounded CodeMirror workbench boundary and hairline-separated sections instead of delivery-stage or preview cards nested inside the detail modal."
-      ,"Keep persisted demand specifications preview-only at rest; use double-click direct manipulation for editing and commit changed Markdown when the pointer moves outside the workbench."
-      ,"Use a 960px demand-detail maximum and a two-group reviewer/policy contract rather than equal three-column form density."
-      ,"Keep KPI as a top-level metric surface only; Settings route metadata must not expose a duplicate KPI configuration page."
-      ,"Use glass only for Settings structural chrome, primary workbench, audit inspector, and overlays; keep inner facts, forms, tables, and permission branches flat with hairlines."
-      ,"Centralize Settings section labels, permissions, fallback order, and navigation metadata in web/src/lib/settings-sections.ts."
+      "Keep demand search inside the association dropdown so operators can filter and select without leaving the current AI workflow.",
+      "Stream human-readable Markdown before a fixed delimiter and structured JSON after it; display the Markdown live while retaining the JSON as the governed persistence model.",
+      "Emit stream completion only after both the demand spec and default review contract commit successfully.",
+      "Treat Markdown as the canonical editable document surface while retaining structured specification fields as progressively disclosed execution metadata.",
+      "Use one bounded CodeMirror workbench boundary and hairline-separated sections instead of delivery-stage or preview cards nested inside the detail modal.",
+      "Keep persisted demand specifications preview-only at rest; use double-click direct manipulation for editing and commit changed Markdown when the pointer moves outside the workbench.",
+      "Use a 960px demand-detail maximum and a two-group reviewer/policy contract rather than equal three-column form density.",
+      "Keep KPI as a top-level metric surface only; Settings route metadata must not expose a duplicate KPI configuration page.",
+      "Use glass only for Settings structural chrome, primary workbench, audit inspector, and overlays; keep inner facts, forms, tables, and permission branches flat with hairlines.",
+      "Centralize Settings section labels, permissions, fallback order, and navigation metadata in web/src/lib/settings-sections.ts."
     ],
     "findings": [
       "Authenticated 2133x903 validation measured the Daily Jira table and inspector at the same 691px height/top edge; medium 3-row state contracts the table to 340px and places the inspector 16px below it.",
@@ -366,15 +610,15 @@
       "Authenticated browser validation filtered the 101-item demand association menu to HR-4202, selected it successfully, closed the menu, retained the association, and reported no console errors or horizontal overflow.",
       "Global search returned exact ZPU-2769 and HR-4202 results; selecting HR-4202 focused both the schedule table row and inspector after navigation.",
       "At 2133x902 the inspector facts render as eight 30px pills in a 67px wrapping block with no horizontal overflow.",
-      "At 1280x720 the isolated login preview renders a transparent prefix input and 32px rounded suffix inside one 49px field surface."
-      ,"The original AI draft flow serialized two slow LLM calls and used a 30-second deconstruction provider timeout, delaying first byte and compounding proxy timeout risk."
-      ,"The stream regression exposed and fixed a real UTF-8 boundary bug when delimiter look-behind bisected multibyte Chinese output."
-      ,"The post-Phase-53 nested-card complaint was caused by retaining delivery-control, delivery-stage, and markdown-preview/spec-editor container styling after changing only the rendered content."
-      ,"Authenticated DG-319 testing measured a 460px workbench with equal 351px desktop split panes; at 760px split mode expands to 700px with two unclipped 282px panes and no horizontal overflow."
-      ,"Authenticated Phase 55 testing verified no visible mode switch, successful double-click entry, a 1136-to-1137 trailing-space edit, outside-click temporary save, payload trimming, and automatic return to preview."
-      ,"At 1280px the detail modal measures 960px with 475px and 404px review groups; at 760px it remains 732px and collapses the review groups into one overflow-free column."
-      ,"Authenticated Settings validation opened all 10 remaining routes with the expected page heading and region, no KPI Settings entry, and no load-failure state."
-      ,"Settings screenshots passed at 2133x902, 1024x900, 760x900, and 480x900; the first phone pass exposed and corrected a switch inflated by the generic 44px touch rule."
+      "At 1280x720 the isolated login preview renders a transparent prefix input and 32px rounded suffix inside one 49px field surface.",
+      "The original AI draft flow serialized two slow LLM calls and used a 30-second deconstruction provider timeout, delaying first byte and compounding proxy timeout risk.",
+      "The stream regression exposed and fixed a real UTF-8 boundary bug when delimiter look-behind bisected multibyte Chinese output.",
+      "The post-Phase-53 nested-card complaint was caused by retaining delivery-control, delivery-stage, and markdown-preview/spec-editor container styling after changing only the rendered content.",
+      "Authenticated DG-319 testing measured a 460px workbench with equal 351px desktop split panes; at 760px split mode expands to 700px with two unclipped 282px panes and no horizontal overflow.",
+      "Authenticated Phase 55 testing verified no visible mode switch, successful double-click entry, a 1136-to-1137 trailing-space edit, outside-click temporary save, payload trimming, and automatic return to preview.",
+      "At 1280px the detail modal measures 960px with 475px and 404px review groups; at 760px it remains 732px and collapses the review groups into one overflow-free column.",
+      "Authenticated Settings validation opened all 10 remaining routes with the expected page heading and region, no KPI Settings entry, and no load-failure state.",
+      "Settings screenshots passed at 2133x902, 1024x900, 760x900, and 480x900; the first phone pass exposed and corrected a switch inflated by the generic 44px touch rule."
     ],
     "touched_files": [
       "internal/server/daily_jira_handlers.go",
@@ -410,30 +654,30 @@
       "web/src/components/prototype/SettingsConfigPreview.svelte",
       "task_plan.md",
       "findings.md",
-      "progress.md"
-      ,"internal/db/autonomous_delivery.go"
-      ,"internal/server/autonomous_delivery_handlers.go"
-      ,"internal/server/demand_spec_ai_stream.go"
-      ,"internal/server/demand_spec_ai_stream_test.go"
-      ,"internal/server/notification_handlers.go"
-      ,"internal/server/server.go"
-      ,"web/src/components/DemandDeliveryControl.svelte"
-      ,"web/src/components/shared/MarkdownWorkbench.svelte"
-      ,"web/package.json"
-      ,"web/pnpm-lock.yaml"
-      ,"AGENTS.md"
-      ,".agents/skills/impeccable"
-      ,"output/ui-validation-markdown-workbench-desktop.png"
-      ,"output/ui-validation-markdown-workbench-split.png"
-      ,"output/ui-validation-markdown-workbench-760.png"
-      ,"output/ui-validation-markdown-workbench-preview-760.png"
-      ,"output/ui-validation-inline-markdown-preview.png"
-      ,"output/ui-validation-review-contract-wide.png"
-      ,"output/ui-validation-review-contract-760.png"
-      ,"web/src/lib/settings-sections.ts"
-      ,"web/src/components/config/GitLabConfig.svelte"
-      ,"web/src/components/config/CorpusCandidateReview.svelte"
-      ,"web/src/styles/settings-config-workbench.css"
+      "progress.md",
+      "internal/db/autonomous_delivery.go",
+      "internal/server/autonomous_delivery_handlers.go",
+      "internal/server/demand_spec_ai_stream.go",
+      "internal/server/demand_spec_ai_stream_test.go",
+      "internal/server/notification_handlers.go",
+      "internal/server/server.go",
+      "web/src/components/DemandDeliveryControl.svelte",
+      "web/src/components/shared/MarkdownWorkbench.svelte",
+      "web/package.json",
+      "web/pnpm-lock.yaml",
+      "AGENTS.md",
+      ".agents/skills/impeccable",
+      "output/ui-validation-markdown-workbench-desktop.png",
+      "output/ui-validation-markdown-workbench-split.png",
+      "output/ui-validation-markdown-workbench-760.png",
+      "output/ui-validation-markdown-workbench-preview-760.png",
+      "output/ui-validation-inline-markdown-preview.png",
+      "output/ui-validation-review-contract-wide.png",
+      "output/ui-validation-review-contract-760.png",
+      "web/src/lib/settings-sections.ts",
+      "web/src/components/config/GitLabConfig.svelte",
+      "web/src/components/config/CorpusCandidateReview.svelte",
+      "web/src/styles/settings-config-workbench.css"
     ],
     "validation": [
       "Daily Jira visual unification: pnpm -C web check and app TypeScript passed with 0 errors; 74 existing warnings remain outside DailyJiraAudit",
@@ -478,31 +722,229 @@
       "Demand association search `pnpm build`, `pnpm exec tsc -p tsconfig.app.json --pretty false`, and `git diff --check` passed",
       "Phase 52 `pnpm -C web exec tsc -p tsconfig.app.json --pretty false`, `pnpm -C web build`, and `git diff --check` passed",
       "Authenticated global search returned and selected non-first-row HR-4202 with exact table/inspector focus and zero console errors",
-      "Authenticated 2133x902 schedule screenshot and isolated 1280x720 login screenshot passed visual hierarchy, spacing, alignment, overflow, and focus-state review"
-      ,"Focused TestStreamAIDemandSpec plus DemandSpec lifecycle tests passed with loopback permission"
-      ,"Focused loopback development-login tests passed and confirm the guarded local path does not require WellOS"
-      ,"DemandDeliveryControl TypeScript compilation and production build passed; existing repository-wide Svelte warnings remain"
-      ,"git diff --check passed"
-      ,"Authenticated DG-319 flow-board detail preview passed at 1280x720 with 14 headings, 6 lists, zero result textareas, modal-owned scrolling, and no horizontal overflow"
-      ,"Authenticated 760x900 narrow preview passed with a 732px modal, 14px side safety space, stacked header controls, and no horizontal overflow"
-      ,"Preview/Edit interaction passed without saving or mutating business data; browser console errors were zero"
-      ,"Visual evidence saved to output/ui-validation-ai-spec-markdown-desktop.png, output/ui-validation-ai-spec-markdown-body.png, output/ui-validation-ai-spec-edit-mode.png, and output/ui-validation-ai-spec-markdown-760.png"
-      ,"Impeccable detector returned [] for MarkdownWorkbench.svelte and DemandDeliveryControl.svelte"
-      ,"Phase 54 pnpm check passed with 0 errors; 78 existing warnings remain outside the target files"
-      ,"Phase 54 pnpm build and git diff --check passed"
-      ,"Authenticated DG-319 edit/split/preview tests passed at 1280x720 and 760x900 with zero console errors, no nested workbench, no clipped narrow split panes, and no horizontal overflow"
-      ,"Phase 55 targeted complete Impeccable scan and three-file layout-scope scan returned []"
-      ,"Phase 55 pnpm check passed with 0 errors; pnpm build and git diff --check passed"
-      ,"Authenticated DG-319 double-click edit and outside-click temporary save returned to preview with the trimmed Markdown unchanged"
-      ,"Authenticated 1280x720 and 760x900 review-contract layout checks passed with zero browser console errors and no horizontal overflow"
-      ,"Phase 63 TypeScript compilation, Svelte check with 0 errors, production build, targeted Impeccable detection, and git diff --check passed"
-      ,"Authenticated Phase 63 browser audit passed for all 10 Settings routes, GitLab overview/edit states, 2133x902, 1024x900, 760x900, and 480x900 with zero console errors"
-      ,"Viewport-height demand drawer passed authenticated 2133x1038 and 760x800 screenshot/geometry validation, linked AI companion separation, Escape/backdrop/focus/body-scroll behavior, zero horizontal overflow, and empty console errors"
-      ,"Dark teal filled controls passed authenticated computed-style and wide/mobile visual validation at 5.70:1 contrast; light drawer and dark rail pairings remain above AA"
-      ,"Viewport drawer and surface contrast pnpm -C web check, pnpm -C web build, git diff --check, reduced-motion, and detector P0 gates passed"
+      "Authenticated 2133x902 schedule screenshot and isolated 1280x720 login screenshot passed visual hierarchy, spacing, alignment, overflow, and focus-state review",
+      "Focused TestStreamAIDemandSpec plus DemandSpec lifecycle tests passed with loopback permission",
+      "Focused loopback development-login tests passed and confirm the guarded local path does not require WellOS",
+      "DemandDeliveryControl TypeScript compilation and production build passed; existing repository-wide Svelte warnings remain",
+      "git diff --check passed",
+      "Authenticated DG-319 flow-board detail preview passed at 1280x720 with 14 headings, 6 lists, zero result textareas, modal-owned scrolling, and no horizontal overflow",
+      "Authenticated 760x900 narrow preview passed with a 732px modal, 14px side safety space, stacked header controls, and no horizontal overflow",
+      "Preview/Edit interaction passed without saving or mutating business data; browser console errors were zero",
+      "Visual evidence saved to output/ui-validation-ai-spec-markdown-desktop.png, output/ui-validation-ai-spec-markdown-body.png, output/ui-validation-ai-spec-edit-mode.png, and output/ui-validation-ai-spec-markdown-760.png",
+      "Impeccable detector returned [] for MarkdownWorkbench.svelte and DemandDeliveryControl.svelte",
+      "Phase 54 pnpm check passed with 0 errors; 78 existing warnings remain outside the target files",
+      "Phase 54 pnpm build and git diff --check passed",
+      "Authenticated DG-319 edit/split/preview tests passed at 1280x720 and 760x900 with zero console errors, no nested workbench, no clipped narrow split panes, and no horizontal overflow",
+      "Phase 55 targeted complete Impeccable scan and three-file layout-scope scan returned []",
+      "Phase 55 pnpm check passed with 0 errors; pnpm build and git diff --check passed",
+      "Authenticated DG-319 double-click edit and outside-click temporary save returned to preview with the trimmed Markdown unchanged",
+      "Authenticated 1280x720 and 760x900 review-contract layout checks passed with zero browser console errors and no horizontal overflow",
+      "Phase 63 TypeScript compilation, Svelte check with 0 errors, production build, targeted Impeccable detection, and git diff --check passed",
+      "Authenticated Phase 63 browser audit passed for all 10 Settings routes, GitLab overview/edit states, 2133x902, 1024x900, 760x900, and 480x900 with zero console errors",
+      "Viewport-height demand drawer passed authenticated 2133x1038 and 760x800 screenshot/geometry validation, linked AI companion separation, Escape/backdrop/focus/body-scroll behavior, zero horizontal overflow, and empty console errors",
+      "Dark teal filled controls passed authenticated computed-style and wide/mobile visual validation at 5.70:1 contrast; light drawer and dark rail pairings remain above AA",
+      "Viewport drawer and surface contrast pnpm -C web check, pnpm -C web build, git diff --check, reduced-motion, and detector P0 gates passed"
     ],
     "blockers": [],
-    "next_action": "Restart through the normal controlled deployment path, restore valid Jira authentication, and verify NS2-2262 end to end; no deployment, main-database change, or real Jira write was performed."
+    "next_action": "Restart through the normal controlled deployment path, restore valid Jira authentication, and verify NS2-2262 end to end; no deployment, main-database change, or real Jira write was performed.",
+    "email_style_preview_fix": {
+      "goal": "Fix Settings email template previews appearing unchanged",
+      "phase": "completed",
+      "findings": [
+        "Old live binary was built before current template; embedded template comparison failed before and passes after restart.",
+        "Gallery demo omitted project groups, so all four candidates used category fallback.",
+        "Thumbnail clips top 347 CSS px of a fixed 680px email; full preview is the visible group-layout acceptance surface."
+      ],
+      "changes": [
+        "Added synthetic DEMO project group and owners through existing grouping/renderer.",
+        "Added real gallery handler regression; preserved ungrouped and empty test branches explicitly.",
+        "Built and installed root well-ambient-server; old PID87928 gracefully stopped; new PID98068 on 8080 is healthy, managed job bash-10. Startup uses config.yaml --skip-migrate."
+      ],
+      "validation": [
+        "Red regression failed all four layouts; targeted server/config Email|DailyJira tests passed after fix.",
+        "40 authenticated isolated gallery browser cases passed: four styles, five widths 320/390/560/561/1440, light/dark, no overflow/links/draft mutation.",
+        "Impeccable detector: 4 advisory numbered-marker findings from chart date labels; no structural change needed.",
+        "git diff --check and gofmt checks passed.",
+        "Existing live user session was not available for automated login; isolated authenticated app tested, real backend inode and /live verified."
+      ],
+      "files": [
+        "internal/server/email_template_gallery.go",
+        "internal/server/email_template_gallery_test.go",
+        "internal/server/email_layouts_test.go",
+        "internal/server/email_revision_test.go",
+        "outputs/email-gallery-style-check.mjs",
+        "outputs/email-gallery-style-results.json",
+        "outputs/email-style-runtime-check.json",
+        "outputs/email-style-runtime-after.json"
+      ],
+      "next": "User can refresh Settings email templates to view greeting and commit SVG changes. Keep bash-24 running as the local backend.",
+      "follow_up": [
+        "User confirmed the prior layout is visible and requested greeting above charts plus an embedded SVG commit section. The one-time reflection gate has been answered; no repeat gate.",
+        "All four styles now share one introduction between title/metadata and top charts, without duplicate greeting.",
+        "Commit section now shows collected commits, repositories and pre-aggregation contributor count; HTML labels plus 10px-high inline SVG share bars retain readable 13px author text at narrow widths.",
+        "Commit rendering retains all eight authors plus Other, exact count-based proportions, dark-theme series hooks, escaped labels and plain-text fallback; nil/zero/missing-author states remain distinct.",
+        "Validation: server/config Email|DailyJira tests pass; 40 authenticated gallery cases, 24 authenticated draft preview cases and 36 sanitized edge cases pass. Screenshots and JSON evidence stored in outputs.",
+        "Impeccable reports four advisory numbered-section detections from date labels; no zero-findings claim. Formatting and diff checks pass.",
+        "Installed verified backend on existing port8080; PID2507, /live=200, mapped binary contains exact template plus commit SVG/greeting markers. Managed job bash-24 intentionally remains running. Fixture bash-18 stopped.",
+        "Files: internal/server/email_report_template.go, email_charts.go, email_report.go, email_commit_chart_test.go, email_layouts_test.go, email_revision_test.go; previous gallery-data fix remains."
+      ],
+      "runtime": {
+        "liveStatus": 200,
+        "pids": [
+          "2507"
+        ],
+        "templateMatchesSource": true,
+        "hasCommitSVG": true,
+        "hasGreeting": true,
+        "sha256": "b1e29c3b8deb8a361d4bcc848cff3b5ad69590e2e3c28c181fe5d223aad4631f",
+        "job": "bash-24"
+      }
+    },
+    "email_feishu_chart_fix": {
+      "goal": "Fix invisible charts in Feishu email",
+      "phase": "completed; actual Feishu receipt validation explicitly deferred by user",
+      "findings": [
+        "Replaced all top and lower chart SVG output with pure-Go PNGs; HTML retains rates, all status counts, seven daily values, authors/counts/shares, including Other. Historical JSON field names are retained for compatibility.",
+        "Added PNG-to-CID multipart/related encoding under multipart/alternative, deduplicated attachments, bounded decoding and MIME sizes; ordinary text mentioning cid/data remains valid.",
+        "Full go test ./... passed. SMTP and delivery race checks passed in child. Native and CGO_ENABLED=0 Linux/amd64 builds passed.",
+        "Four real demo reports sent only to local SMTP: each has 10 img references and 6 deduplicated PNG parts, all decoded and CID-matched; raw EML and reconstructed mail HTML exported.",
+        "Browser validation passed: 40 authenticated gallery + 24 authenticated draft + 36 PNG edge cases + 32 decoded SMTP mail views. PNGs load at nonzero natural/display dimensions in light/dark and mobile/desktop; image-free text preserved.",
+        "Browser pixel script initially used the locator DOM element as its scenario argument, causing a zero denominator in the test. Corrected evaluate signature; production PNG geometry and subsequent 36 cases passed.",
+        "Isolated browser fixture bash-54 remained idle after successful browser work and hit the Go default 10m timeout. It exited and is not running; this is fixture lifecycle cleanup, not a failed browser assertion. Other temporary browser processes closed normally.",
+        "Impeccable: four advisory number-marker findings from date labels. Palette ratios were tested >=3 against both email card themes.",
+        "Installed verified backend at existing port8080; PID10889, job bash-60 remains running, /live=200, mapped binary contains PNG renderer and related MIME. Previous process exited gracefully.",
+        "No external email was sent. Actual Feishu receipt remains to be verified. Existing received emails are immutable; formal daily delivery is date-deduplicated and ordinary SMTP test contains no chart, so use an explicitly authorized one-recipient chart test or a future normal report.",
+        "Goal creation tool was unavailable (direct-human/top-level authority rejection); work continued using the structured task plan without retrying that boundary."
+      ],
+      "runtime": {
+        "liveStatus": 200,
+        "pids": [
+          "10889"
+        ],
+        "job": "bash-60",
+        "hasPNGRenderer": true,
+        "hasRelatedMIME": true,
+        "sha256": "2880125b7661d8292ea7cac284cf37d1660c2ac0d6f90894edcf353b853a4ca1"
+      },
+      "files": [
+        "internal/server/email_chart_images.go",
+        "internal/server/email_charts.go",
+        "internal/server/email_report.go",
+        "internal/mailreport/smtp.go",
+        "internal/mailreport/smtp_images.go",
+        "internal/mailreport/smtp_images_test.go",
+        "internal/server/email_chart_images_test.go",
+        "internal/server/email_png_delivery_test.go",
+        "go.mod",
+        "go.sum"
+      ],
+      "next": "No external test email authorized. User requested delivery now. New normal reports use PNG/CID; existing received emails are unchanged. Keep managed backend bash-60 running.",
+      "reflection_gate": "completed once; user replied 先交付修复"
+    },
+    "email_ui_project_catalog_2026_09_17": {
+      "status": "completed_user_feedback_incorporated",
+      "decisions": [
+        "Three-way Impeccable/taste/finesse agreement: single structural glass, flat inner forms and preview, shared controls, responsive actual form container",
+        "Settings-only config:read canonical project catalog; do not widen business project-preference scope or auto-create mappings",
+        "Persisted mapping names are authoritative and scorer must not overwrite them"
+      ],
+      "files": [
+        "web/src/components/config/EmailConfig.svelte",
+        "web/src/components/config/EmailTemplateGallery.svelte",
+        "web/src/components/config/ProjectConfig.svelte",
+        "web/src/components/SettingsPanel.svelte",
+        "web/src/lib/project-catalog.ts",
+        "internal/server/project_catalog_handlers.go",
+        "internal/server/project_catalog_handlers_test.go",
+        "internal/server/project_handlers.go",
+        "internal/server/server.go",
+        "internal/server/read_contracts.go",
+        "internal/server/email_browser_fixture_test.go",
+        "internal/telemetry/project_scorer.go"
+      ],
+      "validation": [
+        "full go test ./... pass",
+        "web check 0 errors, 148 existing warnings",
+        "web build pass",
+        "scoped impeccable []",
+        "23 layout/state + 1 sync/readback + 9 mail interactions + 5 edges; no page errors",
+        "live8080 /live200; protected catalog401; frontend5173 HTTP200"
+      ],
+      "runtime": {
+        "port": 8080,
+        "current_pid": 24755,
+        "original_job": "bash-99 exited cleanly; successor already running",
+        "frontend": 5173,
+        "fixtures": "stopped",
+        "backup": "outputs/well-ambient-before-project-catalog"
+      },
+      "limits": [
+        "No fresh external Jira sync or existing user-login validation; real authenticated isolated app was tested",
+        "Unnamed synchronized projects fall back to keys; no external test email",
+        "Previous scorer-overwritten names need manual re-entry if necessary"
+      ],
+      "next": "Final delivery; no further gate",
+      "final_ui": [
+        "User replaced initial single-surface direction with group table + restored split",
+        "Two peer structural glass panels with transparent exterior;800px container breakpoint,1.8fr/min340px right pane",
+        "680px native table scrolls locally; key-only project chips, full-name dropdown metadata and click/hover details; readonly details works"
+      ],
+      "final_validation": [
+        "13 authenticated table/split cases across10 widths",
+        "9 mail interaction and5 edge/navigation cases rerun passed",
+        "final web check0errors/148 preexisting warnings;build pass;Impeccable[];diff check pass",
+        "existing5173 source/css verified current;8080 live200"
+      ],
+      "screenshots": [
+        "outputs/email-group-table-1440.png",
+        "outputs/email-group-table-1024.png",
+        "outputs/email-group-table-390.png"
+      ],
+      "reflection": "answered by user; UX corrections implemented; do not repeat"
+    },
+    "email_template_polish_20260917": {
+      "goal": "Remove Hyperframe masthead; relative numeric trend axes; readable dark legend; inline gradient progress; zero commit charts.",
+      "phase": "complete",
+      "files": [
+        "internal/server/email_report_template.go",
+        "internal/server/email_chart_images.go",
+        "internal/server/email_charts.go",
+        "internal/server/email_theme.go",
+        "internal/server/email_polish_test.go"
+      ],
+      "decisions": [
+        "Three-way review agreed on existing static email layout and PNG/CID plus HTML facts.",
+        "Category/group resolution uses shared accurate two-cell 24px gradient progress, 0/100 endpoints and undefined denominator.",
+        "Trend -7d through -1d, integer numeric y-axis, nowrap ticks and wrapping day/value pairs for >=1000 counts.",
+        "Semantic status swatches match PNG; dedicated light/dark readable labels.",
+        "Zero commits show three neutral metric tracks; missing author data and disabled commits remain distinct."
+      ],
+      "validation": {
+        "go": "GOCACHE=$PWD/outputs/go-cache go test ./internal/server ./internal/mailreport -run TestEmail|Test.*Inline|Test.*SMTP -count=1 passed",
+        "build": "go build ./cmd/server passed",
+        "browser": "140 authenticated preview states; iframe widths include 560/561; four templates, light/dark, zero/missing/large counts/progress 0/1/49/50/99/100; 16 gallery/real previews; 36 commit image checks",
+        "impeccable": "outputs/email-polish-detect.json []",
+        "artifacts": [
+          "outputs/email-polish-browser-results.json",
+          "outputs/email-polish-tests.log",
+          "outputs/email-polish-390-dark-normal.png"
+        ]
+      },
+      "runtime": {
+        "job": "bash-127",
+        "pid": 24755,
+        "port": 8080,
+        "backup": "outputs/well-ambient-before-email-polish",
+        "health": "8080/live=200; 5173=200",
+        "fixture": "Stopped; managed fixture job bash-115 killed after shutdown request."
+      },
+      "limits": [
+        "No external email sent; browser and local SMTP tests do not verify forced-dark rendering in every email client.",
+        "Authentication tests use real app with isolated in-memory fixture; edge responses use server-rendered fixtures through actual authenticated preview UI."
+      ],
+      "next": "Regenerate the current email preview to see changes; keep backend bash-127 running.",
+      "reflection_gate": "Completed once; user selected 正式交付."
+    }
   },
   "compression": {
     "meaningful_tool_calls": 154,

@@ -8,6 +8,7 @@
   import ProjectBoard from './components/ProjectBoard.svelte';
   import SolutionCenter from './components/SolutionCenter.svelte';
   import TaskKanban from './components/TaskKanban.svelte';
+  import CodeReviewCenter from './components/CodeReviewCenter.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
   import DatabaseSetup from './components/DatabaseSetup.svelte';
@@ -24,7 +25,7 @@
   type AppTab = 'decision' | 'schedule' | 'solutions' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
   type DecisionView = 'agenda' | 'daily_jira';
   type DemandView = 'board' | 'schedule' | 'releases' | 'projects';
-  type TaskView = 'status' | 'execution';
+  type TaskView = 'status' | 'execution' | 'review';
 	type KPIView = 'overview' | 'calculation';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
@@ -318,7 +319,7 @@
       : activeTab === 'solutions'
         ? ['管理台', '方案中心']
       : activeTab === 'tasks'
-        ? ['管理台', '任务跟踪', activeTaskView === 'status' ? '任务表' : '执行追踪']
+        ? ['管理台', '任务跟踪', activeTaskView === 'status' ? '任务表' : activeTaskView === 'review' ? '代码评审' : '执行追踪']
 				: activeTab === 'kpi'
 					? ['管理台', '度量洞察', activeKPIView === 'calculation' ? '计算说明' : '度量概览']
         : ['管理台', activeWorkspace.title];
@@ -658,7 +659,7 @@
 
   function handleTaskNavigate(view: TaskView | string) {
     if (!hasPermission('dashboard:read')) return;
-    activeTaskView = view === 'execution' ? 'execution' : 'status';
+    activeTaskView = view === 'review' ? 'review' : view === 'execution' ? 'execution' : 'status';
     activeTab = 'tasks';
   }
 
@@ -1042,11 +1043,11 @@
       {:else if activeTab === 'solutions'}
         <SolutionCenter currentUserPermissions={currentUserPermissions} />
       {:else if activeTab === 'tasks'}
-        <TaskKanban
-          activeTaskView={activeTaskView}
-          onTaskViewChange={handleTaskNavigate}
-          onOpenDeliveryPlan={openDeliveryPlan}
-        />
+        {#if activeTaskView === 'review'}
+          <CodeReviewCenter {currentUserPermissions} />
+        {:else}
+          <TaskKanban activeTaskView={activeTaskView} onTaskViewChange={handleTaskNavigate} onOpenDeliveryPlan={openDeliveryPlan} />
+        {/if}
       {:else if activeTab === 'kpi'}
 				<InsightsWorkspace activeLens={activeKPIView === 'calculation' ? 'performance' : 'kpi'} />
       {:else if activeTab === 'settings'}

@@ -86,18 +86,23 @@ type SolutionPolishJob struct {
 // SolutionPromptTemplate is append-only by version. Activation retires the
 // former active version without changing historical generation records.
 type SolutionPromptTemplate struct {
-	ID           uint       `gorm:"primaryKey" json:"id"`
-	Purpose      string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:1;index;size:64;not null" json:"purpose"`
-	ScopeType    string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:2;index;size:32;not null" json:"scope_type"`
-	ScopeID      string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:3;index;size:160;not null" json:"scope_id"`
-	Version      int        `gorm:"uniqueIndex:idx_solution_prompt_version,priority:4;not null" json:"version"`
-	Status       string     `gorm:"index;size:32;not null" json:"status"`
-	Name         string     `gorm:"size:160;not null" json:"name"`
-	SystemPrompt string     `gorm:"type:text;not null;column:system_prompt" json:"system_prompt"`
-	CreatedBy    string     `gorm:"size:160;not null;column:created_by" json:"created_by"`
-	ActivatedBy  string     `gorm:"size:160;column:activated_by" json:"activated_by"`
-	ActivatedAt  *time.Time `json:"activated_at"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID                uint       `gorm:"primaryKey" json:"id"`
+	Purpose           string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:1;index;size:64;not null" json:"purpose"`
+	ScopeType         string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:2;index;size:32;not null" json:"scope_type"`
+	ScopeID           string     `gorm:"uniqueIndex:idx_solution_prompt_version,priority:3;index;size:160;not null" json:"scope_id"`
+	Version           int        `gorm:"uniqueIndex:idx_solution_prompt_version,priority:4;not null" json:"version"`
+	Status            string     `gorm:"index;size:32;not null" json:"status"`
+	Name              string     `gorm:"size:160;not null" json:"name"`
+	SystemPrompt      string     `gorm:"type:text;not null;column:system_prompt" json:"system_prompt"`
+	ContentHash       string     `gorm:"size:64;not null;default:'';column:content_hash" json:"content_hash"`
+	ValidationStatus  string     `gorm:"index;size:32;not null;default:untested;column:validation_status" json:"validation_status"`
+	ValidationSummary string     `gorm:"type:text;column:validation_summary" json:"validation_summary"`
+	ValidatedBy       string     `gorm:"size:160;column:validated_by" json:"validated_by"`
+	ValidatedAt       *time.Time `json:"validated_at"`
+	CreatedBy         string     `gorm:"size:160;not null;column:created_by" json:"created_by"`
+	ActivatedBy       string     `gorm:"size:160;column:activated_by" json:"activated_by"`
+	ActivatedAt       *time.Time `json:"activated_at"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 // SolutionJiraOutbox is retained for schema compatibility with historical
@@ -137,3 +142,18 @@ const DefaultSolutionCompatibilityComparisonPrompt = `你是跨项目方案标�
 {"compatible":true,"standardizable":true,"score":0.0,"summary":"","common_core":[],"project_variations":[{"project_key":"","items":[]}],"conflicts":[],"proposal_title":"","proposal_markdown":""}
 
 score 必须在 0 到 1。只有公共核心足够稳定且冲突可以作为显式项目差异时才 standardizable=true。proposal_markdown 必须保留适用范围、公共流程、项目差异、冲突、回退、验收和待确认项。`
+
+// DefaultCodeReviewSkillPrompt is the online, versioned review strategy. The
+// codereview runtime adds non-overridable security, evidence and JSON contracts
+// around this content before calling the model.
+const DefaultCodeReviewSkillPrompt = `你是证据优先、缺陷优先的软件工程评审专家。只评审当前变更实际引入或暴露的问题，不把存量代码、个人偏好或无法证明的猜测写成缺陷。
+
+请按四个相互独立的视角完成评审：
+1. 变更意图与规格：逐条核对标题、描述、提交意图与验收要求，识别缺失、部分实现、错误实现、范围外改动和搭车改动。
+2. 缺陷与风险：检查正确性、边界、错误恢复、兼容性、安全、性能、资源生命周期、迁移、回滚和可观测性。
+3. 仓库规范与设计质量：项目明确规范优先；重复代码、职责扩散、错误抽象、状态泄漏等只能作为有具体影响的判断线索。
+4. 十个工程维度：业务与需求、健壮性、可复用性、抽象设计、封装与职责、并发一致性、安全权限、性能与资源、测试与可测性、交付与运维。
+
+一条问题只有同时满足以下条件才能成立：由本次变更引入或暴露；触发路径可由已读代码或权威知识证明；位置落在当前新代码的 diff 行；影响具体；修改建议可执行；开发者知道后大概率会修复。业务结论必须引用适用的系统知识；缺少规格、调用链、环境或业务事实时应进入待确认项。
+
+完成初审后主动寻找反证：检查完整文件、调用方、保护条件、测试和兼容逻辑，删除存量问题、重复问题、过时行号、已被其他代码保护的问题和纯风格意见。没有合格问题时如实说明，不为凑数制造问题。`
