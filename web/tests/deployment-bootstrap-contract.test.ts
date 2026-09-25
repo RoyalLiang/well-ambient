@@ -88,10 +88,20 @@ test('deploy verifies the mounted snapshot through the real setup status endpoin
 });
 
 test('one-command local test entrypoint reuses the isolated setup service lifecycle', () => {
-  const localScriptURL = new URL('../../scripts/dev.sh', import.meta.url);
+  const localScriptURL = new URL('../../scripts/dev-setup.sh', import.meta.url);
   const localScript = readFileSync(localScriptURL, 'utf8');
 
-  assert.ok((statSync(localScriptURL).mode & 0o111) !== 0, 'scripts/dev.sh must be executable');
-  assert.match(localScript, /exec "\$project_root\/scripts\/dev-setup\.sh" "\$@"/);
-  assert.match(makefile, /^dev:\n\t\.\/scripts\/dev\.sh$/m);
+  assert.ok((statSync(localScriptURL).mode & 0o111) !== 0, 'scripts/dev-setup.sh must be executable');
+  assert.match(localScript, /run_backend/);
+  assert.match(makefile, /^dev-setup:\n\t\.\/scripts\/dev-setup\.sh$/m);
+});
+
+test('deploy script supports importing local SQLite snapshot via CLI flag, env var, or candidate auto-detection', () => {
+  assert.match(deployment, /--legacy-sqlite/);
+  assert.match(deployment, /WELL_AMBIENT_LEGACY_SQLITE/);
+  assert.match(deployment, /import_legacy_sqlite_snapshot/);
+  assert.match(deployment, /sqlite3[^\n]+\.backup/);
+  assert.match(deployment, /chmod 0755/);
+  assert.match(makefile, /LEGACY_SQLITE \?=/);
+  assert.match(makefile, /SQLITE_PATH \?=/);
 });

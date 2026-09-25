@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"well-ambient/internal/agentruntime"
 	"well-ambient/internal/db"
@@ -132,8 +133,24 @@ func (s *Server) handleListAgentCapabilities(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Database not initialized", http.StatusInternalServerError)
 		return
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	filterStatus := r.URL.Query().Get("status")
+	filterKind := r.URL.Query().Get("kind")
+
+	query := db.DB.WithContext(r.Context()).Order("capability_key ASC")
+	if filterStatus != "" {
+		query = query.Where("status = ?", filterStatus)
+	}
+	if filterKind != "" {
+		query = query.Where("kind = ?", filterKind)
+	}
+	if search != "" {
+		like := "%" + search + "%"
+		query = query.Where("capability_key LIKE ? OR owner LIKE ? OR description LIKE ?", like, like, like)
+	}
+
 	var caps []db.Capability
-	if err := db.DB.WithContext(r.Context()).Order("capability_key ASC").Find(&caps).Error; err != nil {
+	if err := query.Find(&caps).Error; err != nil {
 		http.Error(w, "Failed to query capabilities", http.StatusInternalServerError)
 		return
 	}
@@ -142,37 +159,397 @@ func (s *Server) handleListAgentCapabilities(w http.ResponseWriter, r *http.Requ
 	_ = db.DB.WithContext(r.Context()).Order("version DESC").Find(&versions).Error
 
 	capVersionsMap := make(map[uint][]db.CapabilityVersion)
+	var verIDs []uint
+	verBytesMap := make(map[uint]int64)
 	for _, v := range versions {
 		capVersionsMap[v.CapabilityID] = append(capVersionsMap[v.CapabilityID], v)
+		verIDs = append(verIDs, v.ID)
+		verBytesMap[v.ID] = int64(len(v.ManifestJSON))
+	}
+
+	// Compute resource contents disk size per version
+	if len(verIDs) > 0 {
+		var resources []db.CapabilityResource
+		_ = db.DB.WithContext(r.Context()).Select("capability_version_id, content").Where("capability_version_id IN ?", verIDs).Find(&resources).Error
+		for _, res := range resources {
+			verBytesMap[res.CapabilityVersionID] += int64(len(res.Content))
+		}
+	}
+
+	// Aggregate run capability bindings count per capability key
+	var bindingCounts []struct {
+		CapabilityKey string `gorm:"column:capability_key"`
+		Count         int64  `gorm:"column:count"`
+	}
+	_ = db.DB.WithContext(r.Context()).Model(&db.RunCapabilityBinding{}).
+		Select("capability_key, count(*) as count").
+		Group("capability_key").
+		Scan(&bindingCounts).Error
+	capBindingsMap := make(map[string]int64, len(bindingCounts))
+	for _, bc := range bindingCounts {
+		capBindingsMap[bc.CapabilityKey] = bc.Count
 	}
 
 	type CapabilityDTO struct {
-		ID            uint                   `json:"id"`
-		CapabilityKey string                 `json:"capability_key"`
-		Kind          string                 `json:"kind"`
-		Status        string                 `json:"status"`
-		Owner         string                 `json:"owner"`
-		Sensitivity   string                 `json:"sensitivity"`
-		Versions      []db.CapabilityVersion `json:"versions"`
+		ID                 uint                                  `json:"id"`
+		CapabilityKey      string                                `json:"capability_key"`
+		Kind               string                                `json:"kind"`
+		Status             string                                `json:"status"`
+		Owner              string                                `json:"owner"`
+		Sensitivity        string                                `json:"sensitivity"`
+		Description        string                                `json:"description"`
+		DiskSizeBytes      int64                                 `json:"disk_size_bytes"`
+		DiskSizeFormatted  string                                `json:"disk_size_formatted"`
+		BindingsCount      int64                                 `json:"bindings_count"`
+		IsArchived         bool                                  `json:"is_archived"`
+		IsTopLevelSkill    bool                                  `json:"is_top_level_skill"`
+		ParentSkillKey     string                                `json:"parent_skill_key,omitempty"`
+		IncludedComponents []agentruntime.IncludedComponentDTO   `json:"included_components,omitempty"`
+		LatestVersion      int                                   `json:"latest_version"`
+		Versions           []db.CapabilityVersion                `json:"versions"`
+		CreatedAt          string                                `json:"created_at"`
+		UpdatedAt          string                                `json:"updated_at"`
 	}
 
+	var totalDiskSize int64
 	result := make([]CapabilityDTO, 0, len(caps))
 	for _, c := range caps {
+		vers := capVersionsMap[c.ID]
+		var capDiskSize int64
+		latestVer := 0
+		for _, v := range vers {
+			capDiskSize += verBytesMap[v.ID]
+			if v.Version > latestVer {
+				latestVer = v.Version
+			}
+		}
+		totalDiskSize += capDiskSize
+
+		isTopLevel := c.Kind == agentruntime.KindSkill
+		parentKey := ""
+		if c.CapabilityKey == "gitlab.snapshot" || c.CapabilityKey == "knowledge.search" {
+			parentKey = "code_review"
+		}
+
+		var incComps []agentruntime.IncludedComponentDTO
+		if c.CapabilityKey == "code_review" {
+			incComps = []agentruntime.IncludedComponentDTO{
+				{
+					Key:         "gitlab.snapshot",
+					Kind:        "plugin",
+					Name:        "GitLab 快照插件",
+					Description: "GitLab 代码与 MR 快照提取插件，负责 diff 与 commit 历史切片抽取",
+					Tools:       []string{"gitlab.snapshot", "repository.read"},
+				},
+				{
+					Key:         "knowledge.search",
+					Kind:        "context_provider",
+					Name:        "知识库检索提供方",
+					Description: "系统领域知识与工程架构规范检索源，负责注入规范设计语料",
+					Tools:       []string{"knowledge.query"},
+				},
+			}
+		}
+
 		result = append(result, CapabilityDTO{
-			ID:            c.ID,
-			CapabilityKey: c.CapabilityKey,
-			Kind:          c.Kind,
-			Status:        c.Status,
-			Owner:         c.Owner,
-			Sensitivity:   c.Sensitivity,
-			Versions:      capVersionsMap[c.ID],
+			ID:                 c.ID,
+			CapabilityKey:      c.CapabilityKey,
+			Kind:               c.Kind,
+			Status:             c.Status,
+			Owner:              c.Owner,
+			Sensitivity:        c.Sensitivity,
+			Description:        c.Description,
+			DiskSizeBytes:      capDiskSize,
+			DiskSizeFormatted:  agentruntime.FormatBytes(capDiskSize),
+			BindingsCount:      capBindingsMap[c.CapabilityKey],
+			IsArchived:         c.Status == "archived",
+			IsTopLevelSkill:    isTopLevel,
+			ParentSkillKey:     parentKey,
+			IncludedComponents: incComps,
+			LatestVersion:      latestVer,
+			Versions:           vers,
+			CreatedAt:          c.CreatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt:          c.UpdatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"capabilities": result,
-		"total":        len(result),
+		"capabilities":              result,
+		"total":                     len(result),
+		"total_disk_size_bytes":     totalDiskSize,
+		"total_disk_size_formatted": agentruntime.FormatBytes(totalDiskSize),
+	})
+}
+
+// handleGetAgentCapabilityDetail handles GET /api/agent-runtime/capabilities/{id}
+func (s *Server) handleGetAgentCapabilityDetail(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
+		return
+	}
+
+	detail, err := s.capabilityRegistry.GetCapabilityDetail(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(detail)
+}
+
+// handleUpdateAgentCapabilityStatus handles PATCH /api/agent-runtime/capabilities/{id}/status
+func (s *Server) handleUpdateAgentCapabilityStatus(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Status string `json:"status"` // active, disabled
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Status != "active" && req.Status != "disabled" {
+		http.Error(w, "status must be 'active' or 'disabled'", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.capabilityRegistry.UpdateCapabilityStatus(r.Context(), id, req.Status); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":     id,
+		"status": req.Status,
+	})
+}
+
+// handleUninstallAgentCapability handles DELETE /api/agent-runtime/capabilities/{id}
+func (s *Server) handleUninstallAgentCapability(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
+		return
+	}
+
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	if mode == "" && r.Body != nil {
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mode = strings.TrimSpace(req.Mode)
+	}
+
+	if err := s.capabilityRegistry.UninstallCapability(r.Context(), id, mode); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	status := "uninstalled"
+	msg := "技能已成功卸载并清理磁盘占用，已保留安装记录供回溯与恢复"
+	if mode == "cold_archive" {
+		status = "archived"
+		msg = "技能已成功冷归档，已保留运行审计凭据与可重放能力"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  status,
+		"message": msg,
+		"id":      id,
+	})
+}
+
+// handleReinstallAgentCapability handles POST /api/agent-runtime/capabilities/{id}/reinstall
+func (s *Server) handleReinstallAgentCapability(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.capabilityRegistry.ReinstallCapability(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "active",
+		"message": "技能已成功从历史安装记录重新安装并恢复",
+		"id":      id,
+	})
+}
+
+// handleRemoteInstallAgentCapability handles POST /api/agent-runtime/capabilities/remote-install
+func (s *Server) handleRemoteInstallAgentCapability(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		URL          string `json:"url"`
+		AutoActivate bool   `json:"auto_activate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	req.URL = strings.TrimSpace(req.URL)
+	if req.URL == "" {
+		http.Error(w, "url is required", http.StatusBadRequest)
+		return
+	}
+	if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
+		http.Error(w, "only http or https protocols are allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch remote manifest safely with timeout and size cap
+	client := &http.Client{Timeout: 15 * time.Second}
+	httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, req.URL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid URL: %v", err), http.StatusBadRequest)
+		return
+	}
+	httpReq.Header.Set("User-Agent", "WellAmbient-AgentRuntime/1.0")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to fetch remote capability manifest: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		http.Error(w, fmt.Sprintf("remote server returned HTTP %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	bodyData, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB limit
+	if err != nil {
+		http.Error(w, "failed to read remote content", http.StatusInternalServerError)
+		return
+	}
+
+	manifest, err := agentruntime.ParseManifest(bodyData)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid remote capability manifest: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	ver, err := s.capabilityRegistry.Register(r.Context(), manifest)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to register capability: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.AutoActivate {
+		scopeType := manifest.Scope.Type
+		if scopeType == "" {
+			scopeType = "global"
+		}
+		_ = s.capabilityRegistry.ActivateVersion(r.Context(), manifest.ID, manifest.Version, scopeType, manifest.Scope.ID)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":         "installed",
+		"capability_key": manifest.ID,
+		"version":        ver.Version,
+		"digest":         ver.ContentDigest,
+		"manifest":       manifest,
+	})
+}
+
+// handleUpgradeAgentCapability handles POST /api/agent-runtime/capabilities/{id}/upgrade
+func (s *Server) handleUpgradeAgentCapability(w http.ResponseWriter, r *http.Request) {
+	if s.capabilityRegistry == nil || db.DB == nil {
+		http.Error(w, "Capability registry not initialized", http.StatusInternalServerError)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	// Could be either JSON payload with "url" or direct manifest YAML/JSON
+	var urlPayload struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(data, &urlPayload); err == nil && urlPayload.URL != "" {
+		client := &http.Client{Timeout: 15 * time.Second}
+		httpReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, urlPayload.URL, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid upgrade URL: %v", err), http.StatusBadRequest)
+			return
+		}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to fetch remote upgrade manifest: %v", err), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		data, err = io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		if err != nil {
+			http.Error(w, "failed to read remote content", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	manifest, err := agentruntime.ParseManifest(data)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid upgrade manifest: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	ver, err := s.capabilityRegistry.UpgradeCapability(r.Context(), id, manifest)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to upgrade capability: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "upgraded",
+		"id":      id,
+		"version": ver.Version,
+		"digest":  ver.ContentDigest,
 	})
 }
 

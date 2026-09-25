@@ -73,6 +73,13 @@
 		{ section: 'calculation', group: '度量洞察', label: '计算说明', subtitle: '口径与审计', permissions: ['kpi:read'], roles: ['super_admin'] }
 	];
 
+  const aiGovernanceSubnav: NavSubItem[] = [
+    { section: 'skills', group: 'AI 治理', label: '技能治理中心', subtitle: '微内核能力与生命周期', permissions: ['ai_context:read', 'solution_prompt:manage', 'config:read'] },
+    { section: 'prompts', group: 'AI 治理', label: '提示词管理', subtitle: '多轮场景与版本管理', permissions: ['solution_prompt:manage', 'ai_context:read', 'config:read'] },
+    { section: 'rules', group: 'AI 治理', label: '规则与标准', subtitle: '工程策略与合规审查', permissions: ['ai_context:read', 'config:read'] },
+    { section: 'context', group: 'AI 治理', label: '上下文语料库', subtitle: '设计语料库与解构上下文', permissions: ['ai_context:read', 'config:read'] }
+  ];
+
   const settingsSubnav: NavSubItem[] = SETTINGS_SECTION_DEFINITIONS.map((section) => ({
     section: section.id,
     group: section.group,
@@ -88,6 +95,7 @@
     { route: 'evidence', label: '证据链', subtitle: '健康与解构', icon: 'network', tone: 'amber' },
     { route: 'tasks', label: '任务跟踪', subtitle: '执行闭环', icon: 'checklist', tone: 'rose', children: taskSubnav },
     { route: 'kpi', label: '度量洞察', subtitle: '绩效事实', icon: 'analytics', tone: 'violet', children: kpiSubnav },
+    { route: 'ai_governance', label: 'AI 治理', subtitle: '技能与标准', icon: 'sparkles', tone: 'violet', children: aiGovernanceSubnav },
     { route: 'settings', label: '配置中心', subtitle: '规则与用户', icon: 'settings', tone: 'slate', children: settingsSubnav }
   ];
 
@@ -97,6 +105,7 @@
   export let activeScheduleView: ScheduleView = 'schedule';
   export let activeTaskView: TaskView = 'status';
 	export let activeKPIView: KPIView = 'overview';
+  export let activeAIGovernanceSection = 'skills';
   export let availableRoutes: string[] = [];
   export let currentUserName = '';
   export let currentUserEmail = '';
@@ -114,6 +123,7 @@
   export let onScheduleNavigate: (view: ScheduleView) => void = () => {};
   export let onTaskNavigate: (view: TaskView) => void = () => {};
 	export let onKPINavigate: (view: KPIView) => void = () => {};
+  export let onAIGovernanceNavigate: (section: string) => void = () => {};
   export let onLogout: () => void = () => {};
   export let onClearAlerts: () => void | Promise<void> = () => {};
   export let onDismissAlert: (alert: ConsoleAlert) => void | Promise<void> = () => {};
@@ -197,6 +207,9 @@
   }
 
   function canAccessSubItem(item: NavSubItem) {
+    if (currentUserRole === 'super_admin' || currentUserRole === 'admin') {
+      return !item.roles || item.roles.includes(currentUserRole);
+    }
 		const roleAllowed = !item.roles || item.roles.includes(currentUserRole);
 		return roleAllowed && item.permissions.some((permission) => currentUserPermissions.includes(permission));
   }
@@ -218,6 +231,7 @@
     if (route === 'schedule') return activeScheduleView === section;
     if (route === 'tasks') return activeTaskView === section;
 		if (route === 'kpi') return activeKPIView === section;
+    if (route === 'ai_governance') return activeAIGovernanceSection === section;
     return false;
   }
 
@@ -229,6 +243,11 @@
       mobileRailOpen = false;
     } else if (route === 'settings') {
       navigateSettingsSection(section);
+    } else if (route === 'ai_governance') {
+      onAIGovernanceNavigate(section);
+      showAlerts = false;
+      showProfile = false;
+      mobileRailOpen = false;
     } else if (route === 'schedule' && (section === 'board' || section === 'schedule' || section === 'releases' || section === 'projects')) {
       onScheduleNavigate(section);
       showAlerts = false;

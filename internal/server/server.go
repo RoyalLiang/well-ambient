@@ -408,7 +408,13 @@ func (s *Server) routes() {
 
 	// Protected Agent Runtime & Capability Registry APIs
 	s.mux.HandleFunc("GET /api/agent-runtime/capabilities", s.withPermission("ai_context:read", s.handleListAgentCapabilities))
+	s.mux.HandleFunc("GET /api/agent-runtime/capabilities/{id}", s.withPermission("ai_context:read", s.handleGetAgentCapabilityDetail))
 	s.mux.HandleFunc("POST /api/agent-runtime/capabilities", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleRegisterAgentCapability)))
+	s.mux.HandleFunc("PATCH /api/agent-runtime/capabilities/{id}/status", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleUpdateAgentCapabilityStatus)))
+	s.mux.HandleFunc("DELETE /api/agent-runtime/capabilities/{id}", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleUninstallAgentCapability)))
+	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/reinstall", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleReinstallAgentCapability)))
+	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/upgrade", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleUpgradeAgentCapability)))
+	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/remote-install", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleRemoteInstallAgentCapability)))
 	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/activate", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleActivateAgentCapabilityVersion)))
 	s.mux.HandleFunc("POST /api/agent-runtime/resolve/preview", s.withPermission("ai_context:preview", s.handlePreviewCapabilityResolve))
 	s.mux.HandleFunc("GET /api/agent-runtime/runs", s.withPermission("ai_context:read", s.handleListAgentRuns))

@@ -657,7 +657,6 @@
 | NS2-2514 | ⭐【修改路线】【回放】【日志】VX106在纵八路左转HO堆场触发二层 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 刘雪健 | - | - |
 | ICA-11220 | AT02到达换电终点后，没有开始对位任务。 | PRJ22013-墨西哥ICAVE-QTruck (ICA) | 刘昊和 | - | - |
 | TH-3292 | UI页面操作时卡滞 | COP25050-中远海运南通通海IGV项目 (TH) | 王财和 | - | - |
-| CR-845 | YT007 在FMS設立禁行區後依然規畫路徑 | PRJ26033-长荣高雄七柜-Qtruck+EL4 (CR) | 王玉珏 | - | - |
 | HACTL2-715 | ⭐【关闭长路径模式，复测】【回放】【日志】【一期】AET03和AET02路口交互死锁 | PRJ25132-香港HACTL交付3台Q-tractor (HACTL2) | jira公用账号-Q-Tractor | - | - |
 | TPY-7097 | 两艘船无法绑定同一个锁站 | PRJ23029-天津太平洋-IGV (TPY) | 朱祥 | - | - |
 | CR-809 | FMS UI停车位显示修正 | PRJ26033-长荣高雄七柜-Qtruck+EL4 (CR) | 王财和 | - | - |
@@ -674,11 +673,9 @@
 | HKAA-1081 | 【旁边拖挂有入侵，颖颖临时先修改地图，跑圈耐久结束，可以打开避障，解决此类被卡主问题】【AA跑圈】AET204转弯处有挂车，触发碰撞风险检测 （挂车摆放在白线内） | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | HKAA-1006 | ⭐【触发防坠海，麻烦地图修改一下】【回放】【日志】AET202经过半月弯时触发地理围栏 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | jira公用账号-Q-Tractor | - | - |
 | HKAA-1080 | ⭐【挂头突出路面，跑耐久期间不开避障，颖颖先修改地图】【无对应避让功能符合预期】【AA跑圈】AET204 前方挂头超过白线侵入道路触发一层 人工接管 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
-| HKAA-1078 | ⭐【旁边石墩子入侵，排查是不是定位问题】【AA跑圈】AET204环岛转弯触发碰撞风险 人工接管 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | HKAA-1007 | ⭐【触发防坠海，麻烦地图修改一下】【回放】【日志】AET02在弯道一直触发二层断控制 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | jira公用账号-Q-Tractor | - | - |
 | HR-4442 | 上报IGV休眠模式- | PRJ21087-厦门海润-IGV (HR) | 刘子翔 | - | - |
 | ICA-11212 | ⭐【FMS下发原地任务】【回放】【日志】[5.3.889p9-test] Deadlock on quayside lines 4 and 5 | PRJ22013-墨西哥ICAVE-QTruck (ICA) | jira公用-墨西哥韦拉克鲁斯ICA | - | - |
-| FEL2WD-3032 | 【FMS】AT05 - 5.3.886p10 在zone8下方主干道转入VPB时报到达短路径终点 停车不走 | 英国二期 (FEL2WD) | 王玉珏 | - | - |
 | HIT-1146 | 【回放】【日志】AT003 cut out过程中异常停车 | PRJ25053_HIT香港Q-Truck二期 (HIT) | 纵涵 | - | - |
 | FEL2WD-3031 | 【FMS】AT48 - 5.3.905p5 从HT9出来后规划出了由BT8的service lane去QC27的路径 没有优先选择堆场bypass | 英国二期 (FEL2WD) | 喻祥兴 | - | - |
 | FZ-2597 | 015车在做重进重出作业时，已经在安舟锦程的QC001岸桥下完成卸船收箱指令，接收到了去瀚海68的QC003岸桥装船送箱的指令，需要规划从安舟锦程的下档口下岸桥，途径前沿，然后在瀚海68的上档口再上岸桥到达QC003岸桥完成装船送箱指令，但实际并没有达到预期效果，只是盛成了一个向后倒车的路线，导致015车停在QC001岸桥下完全不动 | COP25048-福州江阴港IGV项目 (FZ) | 梁志远 | - | - |
@@ -693,7 +690,25 @@
 | HKAA-1068 | ⭐【地图接力排查】【回放】【日志】【AA跑圈】AET205出环岛后，车辆偏左 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | HKAA-1027 | ⭐【请地图同事把这个soft_stop替换成none】【AA跑圈】【回放】【日志】AET202路口让行线测试不通过 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | NS2-2566 | 【hotfix: QP-51312 due: 2026/09/24】⭐【待加入回归】【回放】【日志】VX112在HP场尾误触防坠海导致断控 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | jira公用-南沙二期码头 | - | - |
-| FEL2WD-2952 | 【生产】AT62 - 5.3.886p10 在CT9到达短路径终点后停车不走，在CT9 入口处触发 L0 级别主动安全 | 英国二期 (FEL2WD) | 王玉珏 | - | - |
+| FEL2WD-3050 | 【耐久】AT48在KT8发parking任务不走 发点任务才生成短路径 | 英国二期 (FEL2WD) | 朱祥 | - | - |
+| HKAA-1078 | ⭐【旁边石墩子入侵，定位排查没有问题，先修改地图】【AA跑圈】AET204环岛转弯触发碰撞风险 人工接管 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
+| FEL2WD-3058 | 【生产】AT43在KT8没有任务但是有短路径，挡住了AT37 —— 人工拉车 | 英国二期 (FEL2WD) | 朱祥 | - | - |
+| HKAA-1096 | ⭐【在曲率大的弯道旁边相邻车道车影响了自车 1. 短期看看从地图调整一下 2. 长期轨控讨论如何规避这种情况，是否通过车道边界判断】【AA跑圈】【WCA-X7】AET202下隧道转弯邻车道来车AET点刹减速 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 岳颖颖 | - | - |
+| FEL2WD-3070 | 【FMS】AT52在QC25下完成装箱任务后 收到一个卸船任务 AT生成绕圈路径 | 英国二期 (FEL2WD) | 邓强 | - | - |
+| FEL2WD-3073 | 【生产】AT40在TL-23装完锁绕一圈后上岸桥 没有直接转入VPB78 | 英国二期 (FEL2WD) | 朱祥 | - | - |
+| FEL2WD-3074 | 【生产】AT16任务从DT6切换至ET7 规划上Berth6岸桥绕圈路径 | 英国二期 (FEL2WD) | 朱祥 | - | - |
+| FEL2WD-3076 | 【生产】AT37在TL-20去GT9 规划穿行TR12下方UA的路线-人工拉车 | 英国二期 (FEL2WD) | 朱祥 | - | - |
+| FEL2WD-3032 | 【FMS】AT05 - 5.3.886p10 在zone8下方主干道转入VPB时报到达短路径终点 停车不走 | 英国二期 (FEL2WD) | jira公用-现场交付团队 | - | - |
+| FEL2WD-2952 | 【生产】AT62 - 5.3.886p10 在CT9到达短路径终点后停车不走，在CT9 入口处触发 L0 级别主动安全 | 英国二期 (FEL2WD) | jira公用-现场交付团队 | - | - |
+| FEL2WD-3060 | 【生产】岸桥绑定vpb的新功能异常 Berth 7 lane 4绑定的vpb47没有被选用 AT03 AT44 选用vpb49上岸桥lane 4 | 英国二期 (FEL2WD) | 李厚奇 | - | - |
+| TH-3294 | 【日志】TH05车收到的指令是312堆场的指令，但是路径规划不是最优，绕一大圈 | COP25050-中远海运南通通海IGV项目 (TH) | 纵涵 | - | - |
+| AB-3732 | ⭐【短路径终点不合理导致停超】IGV_AP001 not parking properly at TS station | COP24114-阿联酋AbuDhabi-QTruck WellDriver (AB) | 穆陆振 | - | - |
+| TH-3300 | TH07车在作业时，收到卸船指令，但是QC9桥装船还未结束，接受指令有误导致绕圈影响效率过大 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | - | - |
+| TH-3298 | 【日志】TH15车在往泛亚一路往引桥行驶时，出现多余绕弯的路径 | COP25050-中远海运南通通海IGV项目 (TH) | 纵涵 | - | - |
+| TH-3296 | 【日志】TH10车在做完前箱后，后箱指令需更改指令，中控修改后，车辆迟迟收不到TOS指令 | COP25050-中远海运南通通海IGV项目 (TH) | 朱家聪 | - | - |
+| TH-3295 | 空箱区作业车道路权过高，需求修改 | COP25050-中远海运南通通海IGV项目 (TH) | 纵涵 | - | - |
+| CR-821 | ⭐【短路径在自车脚下】【回放】【日志】【无数据】YT002 停止於橋機軌道上 | PRJ26033-长荣高雄七柜-Qtruck+EL4 (CR) | 纵涵 | - | - |
+| CR-845 | YT007 在FMS設立禁行區後依然規畫路徑 | PRJ26033-长荣高雄七柜-Qtruck+EL4 (CR) | jira公用-现场交付团队 | - | - |
 
 ## 进行中 (In Progress)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -767,6 +782,7 @@
 | ICA-10041 | 墨西哥铁路区域作业任务流程需求总单 | PRJ22013-墨西哥ICAVE-QTruck (ICA) | 陈伟华 | - | - |
 | rz-1 | Merge remote-tracking branch 'origin/prod_delivery_rz' into prod_delivery_rz | vehicle_manager | qiang.deng | production | Merge branch 'prod_delivery_rz' into 'production'  Prod delivery rz  See merge request fms3.0-malaysia/vehicle_manager!813 |
 | HIT-1082 | 【movelist方案上线】V2X感知结果帮助gzn给出合适的变道区间 | PRJ25053_HIT香港Q-Truck二期 (HIT) | 鲁新峰 | - | - |
+| fms-21081 | Merge branch 'prod_delivery_eng_cwh_fms21081' into 'prod_delivery_eng' | vehicle_manager | houqi.li | prod_delivery_eng_cwh | test: 删除_load_vm_module死代码——qiang.deng评审nitpick  评审指出该函数定义后从未调用,属开发过程遗留,删除。 8项测试+全量47项不受影响。 |
 
 ## 代码评审 (In Review)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -777,6 +793,7 @@
 | PRJ25024-452 | 【通知中心】【测试环境】fms来源的消息只推送有故障码的，没有故障码的消息本期版本不要推送 | PRJ25024-Reewell调度算法 2.0 (PRJ25024) | 孙海峰 | - | - |
 | fltp-4 | fix: EWA/FL点位缺heading键时兜底-0.6457,不再把None发给PP | vehicle_manager | qiang.deng | prod_delivery_eng_cwh_fms21081 | fix: 下线等待中mission_data读取失败防御——None时跳过本轮,不误判换代不噪声  qiang.deng !817 审核意见(timer_request_path.py 下线分支): request_get_node 失败(redis超时/异常的except分支无return)时返回None, mission_dict.get("vehicleMissionId") 抛 AttributeError 落入外层except, 功能自愈但日志混进大报错噪声。  修复: 读取返回None时按'本轮跳过待重试'处理(warning一条+repeat_num 自增+sleep重试),不退出循环。不复用 or {} 写法——空dict会让.get返回 None≠run_mission_id,把redis临时故障误判成任务换代而退出循环。  回归: 新增None防御3场景(失败期无大报错有warning/不误判退出循环存活 /恢复后续上PP) + 原下线等待5场景复验 + VM全量套件41 passed全过 |
 | supervisor-20260923 | Mr/prod delivery ghost supervisor 20260923 | vehicle_manager | zhiyuan.liang | mr/prod-delivery-ghost-supervisor-20260923 | fix(redis): restore async scan iteration for well-redis client  Provide an explicit scan_iter async generator for the actual ManagedAsyncRedis clients used by vehicle_manager. Keep managed paginated SCAN for single/sentinel mode and use the native cluster iterator for cluster mode. Add production-client and lock-area regression coverage. |
+| wd-2840 | revert: FEL2WD-2840 撤销 !248 的直接merge——改走qiang.deng审核merge流程 | task_executor | qiang.deng | prod_delivery_eng_cwh | fix: ts_status三值域等值过滤对齐旧SQL——codex第4轮审核意见2  codex第4轮意见2(属实): ts_status='off'原静默放行全量。旧接口 值域{on,off}做SQL等值匹配(GUI schema注释明确'锁站开闭状态on/off'), WHERE ts_status='off'返回off状态锁站。  修复: on→ts_state=='OPEN' / off→ts_state!='OPEN' / 非法值→空 (与S1非法job_type同款不静默放行) / 空串→不过滤(旧接口空值不进WHERE)。  第4轮意见1(get_vpb路径)不成立: 本仓库task_executor的get_vpb.py 位于src/project/england/sender/get_vpb.py(测试引用正确,13项全过); src/services/sender/get_vpb.py不存在——审核混淆了VM仓库结构。  测试: 新增S2三值域用例(14项)+全量57项;变异验证(删off分支→S2红, 恢复全绿)。 |
 
 ## 已完成 (Done)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -2689,8 +2706,6 @@
 | HKAA-848 | 【hotfix: QP-48153 due: 2026/08/21】⭐【5车没有修改参数 use_dis_to_check_road_right: true，现场去车上检查一下这个参数】【回放】【日志】MOMB路口让行逻辑不符合预期，直行车让转弯车，建议不要短路径 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | jira公用账号-Q-Tractor | - | - |
 | tl-2 | fix: 锁站号提取改正则取首段数字——修复单位数/三位数锁站错配固定清单 | vehicle_manager | qiang.deng | prod_delivery_eng_cwh | fix: 锁站号提取改正则取首段数字——修复单位数/三位数锁站错配固定清单  qiang.deng !815 审核意见(timer_request_path.py:212-213): 原实现把去杠后 的全字符串数字取前两位,锁站号与贝位数字拼在一起时错配: - 'TL1-02'(1号锁站) → 提取'10',若10在固定清单会误判固定锁站,跳过灵活锁站ts_lane车道级 - 'TL2-03' → 错提取'20'; 'TL100-01' → 错提取'10'(100号锁站错配) - 'TL041'(前导零) → 错提取'4'(应为41)  修复: re.match(r'^T[SL](\d+)', destination) 取TS/TL前缀后的第一段连续 数字(到字母/横杠/结尾为止),单位数/两位数/三位数/前导零全形态正确。  当前生产数据形态碰不到(automatic_ts_switch全两位数TL41-47/TL99,TE传 纯锁站名无贝位后缀);但working_point存在TL-2/3/4单位数与TL-100三位数 点位,一旦上游传带贝位后缀格式即触发,属防御性修复。  回归: - 提取矩阵17形态全过(旧逻辑5形态错,新逻辑全对) - get_vpb锁站分支6场景: 纯名TL1/TL11/TL100分流正确+带后缀TL1-02不误   命中固定清单+VSDS不进锁站分支(行为不变) - VM全量套件41 passed;VPB四级链纯函数无波及;容器级冒烟(生产镜像)通过 |
 | fms-21068 | Revert FMS-21068 crane !191 直接merge —— 改走审核流程 | crane_manager | qiang.deng | fms-21068-qc-idle-prod | log: QC 空闲快照读取补全 debug 摘要  load_qc_idle_map 读完后输出记录条数与空闲桥列表（含 ts）， 现场排查"为什么某桥一直注入 false"时可定位是快照为空还是 该桥无记录；测试 DummyLogger 补 debug 方法配合。 |
-| wd-2840 | revert: FEL2WD-2840 撤销 !248 的直接merge——改走qiang.deng审核merge流程 | gui_server | qiang.deng | fel2wd-2840-gui-resubmit | feat: use latest VPB for GUI path updates  Co-Authored-By: Claude Fable 5 <noreply@anthropic.com> |
-| fms-21081 | Merge branch 'prod_delivery_eng_cwh_fms21081' into 'prod_delivery_eng' | vehicle_manager | qiang.deng | prod_delivery_eng_cwh_fms21081 | fix: 下线等待中mission_data读取失败防御——None时跳过本轮,不误判换代不噪声  qiang.deng !817 审核意见(timer_request_path.py 下线分支): request_get_node 失败(redis超时/异常的except分支无return)时返回None, mission_dict.get("vehicleMissionId") 抛 AttributeError 落入外层except, 功能自愈但日志混进大报错噪声。  修复: 读取返回None时按'本轮跳过待重试'处理(warning一条+repeat_num 自增+sleep重试),不退出循环。不复用 or {} 写法——空dict会让.get返回 None≠run_mission_id,把redis临时故障误判成任务换代而退出循环。  回归: 新增None防御3场景(失败期无大报错有warning/不误判退出循环存活 /恢复后续上PP) + 原下线等待5场景复验 + VM全量套件41 passed全过 |
 | wd-2909 | Revert FEL2WD-2909/2866 CMS !43 直接merge —— 改走审核流程 | cms_spreader_info | qiang.deng | fel2wd-2909-cms-final | feat: 停车计时增加豁免区域——车停在这两个坐标区域内不计入停车计时  现场需求(2026-09-22): 两个四边形区域(闸口/充电区等常态停靠点)内 停车不算计时,保持其它业务逻辑不变。  实现: - STOP_EXEMPT_ZONES 常量: 两个区域的多边形顶点(x,y与v_bsm同坐标系) - point_in_polygon(17行): 射线法点在多边形内判定(平级纯函数) - in_stop_exempt_zone(6行): 遍历区域返回编号,不在返回-1 - get_vehicle_position(10行): 从v_bsm取x/y,坐标异常返回None   (不影响速度判定,仅跳过豁免判定按普通停车处理) - judge_one_vehicle: 在线+低速时先判坐标,在豁免区域返回STATE_EXEMPT - handle_vehicle: EXEMPT处理 = 清防抖(防出区域后带旧计时触发start)   + 此前在停车计时中则推end(车从外面开进区域说明动过了,计时结束)  日志: 车辆落入豁免区域记INFO(含速度/坐标/区域编号/不计入原因); 进入区域触发end记INFO;坐标异常记WARNING。  语义对照表: - 区域内低速: 不触发start(计时根本不开始) - 区域外低速后开进区域(计时中): 推end(计时结束) - 区域内开出到区域外低速: 从零防抖重新计时 - 车恰在边界线上: 射线法半开区间约定判不在(概率≈0,BSM浮点坐标)  配套: 专项27用例(几何: 质心必在/边内外侧1单位/外部点; 状态机: 区域内不触发start/区域外正常计时/停车中进区域触发end/ 出区域从零防抖/无坐标bsm按普通停车)全过。 |
 | wd-2872 | Merge branch 'prod_delivery_eng_cwh' into 'prod_delivery_eng' | tos_interface | qiang.deng | prod_delivery_eng_cwh | RMPI && RMGR类型修改 |
 | FEL2WD-2204 | 【单独对每个RTG的垂直偏移值做调整】【FMS】AT49 5.3.772p14-test 在CT4 by pass lane直走时被RTG禁行区阻挡 | 英国二期 (FEL2WD) | jira公用-现场交付团队 | - | - |

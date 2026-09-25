@@ -549,41 +549,90 @@ func TestFailedRunManualRetryIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retry.ID == failed.ID || retry.Status != "queued" || retry.PublishStatus != "waiting_review" {
-		t.Fatalf("unexpected retry: %+v", retry)
-	}
-	replayed, err := f.s.Retry(context.Background(), failed.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.ID != retry.ID {
-		t.Fatalf("retry was not idempotent: first=%d second=%d", retry.ID, replayed.ID)
+	// 就地重试：保留原 ID，不增加新记录
+	if retry.ID != failed.ID || retry.Status != "queued" || retry.PublishStatus != "waiting_review" || retry.Error != "" {
+		t.Fatalf("unexpected in-place retry: %+v", retry)
 	}
 	var count int64
 	if err = f.s.DB.Model(&db.CodeReviewRun{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("run count=%d, want original plus one retry", count)
+	if count != 1 {
+		t.Fatalf("run count=%d, want 1 (in-place retry should not add new records)", count)
 	}
+	// 处于 queued 状态不可重复重试
 	if _, err = f.s.Retry(context.Background(), retry.ID); err == nil {
 		t.Fatal("queued retry accepted")
 	}
-	if err = f.s.Cancel(retry.ID); err != nil {
+
+	// 模拟执行后再次失败，再次重试依然保持只有 1 条记录
+	if err = f.s.DB.Model(&failed).Updates(map[string]any{
+		"status": "failed",
+		"phase":  "评审失败",
+		"error":  "second failure",
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	nextAttempt, err := f.s.Retry(context.Background(), failed.ID)
+	secondRetry, err := f.s.Retry(context.Background(), failed.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nextAttempt.ID == retry.ID || nextAttempt.Status != "queued" {
-		t.Fatalf("terminal retry child was reused: first=%+v next=%+v", retry, nextAttempt)
+	if secondRetry.ID != failed.ID || secondRetry.Status != "queued" {
+		t.Fatalf("unexpected second retry: %+v", secondRetry)
 	}
 	if err = f.s.DB.Model(&db.CodeReviewRun{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
-		t.Fatalf("run count=%d, want original plus two retry attempts", count)
+	if count != 1 {
+		t.Fatalf("run count=%d, multiple retries should strictly never increase records", count)
+	}
+}
+
+func TestPushHookDoesNotSplitOpenedMRCommits(t *testing.T) {
+	f := newFixture(t)
+	// 模拟 transport 返回该分支对应的 opened MR
+	f.s.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
+		headers := make(http.Header)
+		if strings.Contains(r.URL.Path, "/merge_requests") && strings.Contains(r.URL.RawQuery, "state=opened") {
+			body := `[{"iid":42,"state":"opened","updated_at":"2026-09-24T20:00:00Z","diff_refs":{"base_sha":"` + base + `","head_sha":"` + head + `"}}]`
+			return &http.Response{
+				StatusCode: 200,
+				Header:     headers,
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Header:     headers,
+			Body:       io.NopCloser(strings.NewReader(`{}`)),
+		}, nil
+	})}
+
+	// 推送包含 3 个 commit 的 Push Hook
+	body := []byte(`{
+		"project": {"id": 10},
+		"ref": "refs/heads/feature-vehicle-dispatch",
+		"after": "` + head + `",
+		"commits": [
+			{"id": "1111111111111111111111111111111111111111"},
+			{"id": "2222222222222222222222222222222222222222"},
+			{"id": "3333333333333333333333333333333333333333"}
+		]
+	}`)
+
+	if err := f.s.Hook(context.Background(), "Push Hook", body); err != nil {
+		t.Fatal(err)
+	}
+
+	var runs []db.CodeReviewRun
+	f.s.DB.Find(&runs)
+
+	// 验证：不会被拆分成 3 个 commit 评审，而是仅有 1 个针对 MR 42 的评审
+	if len(runs) != 1 {
+		t.Fatalf("expected exactly 1 MR run, got %d runs: %+v", len(runs), runs)
+	}
+	if runs[0].Kind != "mr" || runs[0].Ref != "42" {
+		t.Fatalf("expected MR run for iid 42, got kind=%s ref=%s", runs[0].Kind, runs[0].Ref)
 	}
 }
 

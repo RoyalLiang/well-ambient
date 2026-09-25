@@ -1,3 +1,55 @@
+# Session: 2026-09-25 - 技能中心筛选样式美化、按钮防换行、技能包含层级标识与 SKILL.md 文档化展现
+
+- **Phase 1 (后端 DTO 技能血缘与 SKILL.md 生成):** completed
+  - `internal/agentruntime/manifest.go`：新增 `Description` 字段，实现 `GenerateSkillMarkdown(resources)` 标准生成器；
+  - `internal/agentruntime/adapter.go`：补全 `gitlab.snapshot`、`knowledge.search` 与 `code_review` 的权威语义描述，支持对已有空记录自动回填；
+  - `internal/agentruntime/registry.go`：`CapabilityDetail` 新增 `is_top_level_skill`、`parent_skill_key`、`included_components` 与 `skill_markdown`，优先挂载本地 `.agents/skills/merge-review/SKILL.md`；
+  - `internal/server/strongest_brain_capability_handlers.go`：列表 DTO 暴露包含关系与技能层级标记。
+- **Phase 2 (前端筛选控件与按钮防折行):** completed
+  - `AIGovernanceCenter.svelte`：重构筛选器为 `.custom-select-wrap` + `.modern-select`，清除原生浏览器灰色粗糙外观，集成居右 SVG Chevron 与 `--wa-focus-ring` 焦点环；
+  - 表格操作列 `.btn`、`.btn-sm` 与 `.action-btn-group` 强力实施 `white-space: nowrap !important; word-break: keep-all !important; flex-shrink: 0 !important;`，锁定最小 230px 宽度，根除任何按钮文字折行。
+- **Phase 3 (技能层级与血缘标识):** completed
+  - 表格行内标识：`code_review` 显示 `⭐ 业务技能` 徽章与 `包含组件: 🧩 gitlab.snapshot, 📚 knowledge.search` 胶囊；
+  - 子组件显示 `🏷️ 包含于: code_review` 归属徽章；
+  - 类别筛选器支持“⭐ 仅看业务技能 (Skills)”快速过滤。
+- **Phase 4 (详情抽屉 SKILL.md 文档化与实际内容呈现):** completed
+  - 详情抽屉增设双视图切换 Tab：默认呈现「📄 技能说明与规约 (SKILL.md)」，第二视图为「🧩 微内核切片与版本 (Slices)」；
+  - 首选视图通过 `marked` + `DOMPurify` 渲染 Markdown 技术文档，结构化展示内聚组件卡片、Prompt 提示词、触发意图、权限预算，支持一键复制原文。
+- **Phase 5 (全链路回归与门禁验证):** completed
+  - 前端契约测试：`node --experimental-strip-types --test web/tests/ai-governance-capability-contract.test.ts`（5/5 全部 PASS）；
+  - 前端类型检查：`pnpm --dir web run check`（0 errors）；
+  - 前端生产构建：`pnpm --dir web run build`（打包成功）；
+  - Impeccable detect 门禁：`node .agents/skills/impeccable/scripts/detect.mjs`（0 anti-patterns，clean）；
+  - 后端 Go 测试：`go test ./internal/server ./internal/agentruntime`（全部 PASS）。
+- **Phase 6 (交付前反思门禁):** in_progress
+
+---
+
+# Session: 2026-09-25 - AI 治理页面切换与技能生命周期冷归档/引用计数增强
+
+- **Phase 1 (AI 治理切换修复):** completed
+  - `App.svelte` 权限放行全面修复：增加 `super_admin` 与 `admin` 角色免检，`tabPermissions.ai_governance` 补充通用读取兼容；
+  - `FunctionalAdminShell.svelte` 二级子菜单放行管理员权限，保证左侧导航项无阻断渲染；
+  - `AIGovernanceCenter.svelte` 内部 Tab 切换通过 `onSectionChange` 双向同步至父级 `activeAIGovernanceSection`，实现侧边栏与页面 Tab 100% 同频；
+  - `App.svelte` 中的 `applyLocationIntent` 增加对 `?tab=ai_governance` 与子路由参数的解析支持。
+- **Phase 2 (引用计数与冷归档机制):** completed
+  - `internal/agentruntime/registry.go`：新增 `GetCapabilityRunBindingsCount`，重构 `UninstallCapability` 支持 `mode="cold_archive"`（保留资源内容与校验指纹，隔离新任务但保障历史重放）与 `mode="purge"`（物理清空释放磁盘），缺省智能分流；
+  - `internal/server/strongest_brain_capability_handlers.go`：`handleListAgentCapabilities` 聚合查询 `run_capability_bindings`，DTO 扩展 `bindings_count` 与 `is_archived`；
+  - 补充场景单元测试 `TestCapability_ReferenceCountingAndColdArchive`（100% PASS）。
+- **Phase 3 (前端冷归档与确认交互):** completed
+  - `AIGovernanceCenter.svelte` 表格增设“关联运行”指标列，展示执行次数徽章；
+  - 卸载确认弹窗检测到 `bindings_count > 0` 时，呈现审计风险警示，提供“冷归档（推荐）”与“强力清除”单选卡；无绑定时安全清理；
+  - 针对冷归档与卸载状态均提供一键“重新安装/恢复”能力；
+  - 修复 `capabilityDetail` 潜在空指针报错并清理废弃 props。
+- **Phase 4 (回归测试与验证):** completed
+  - 新增前端契约测试 `web/tests/ai-governance-capability-contract.test.ts`（3/3 PASS）；
+  - `pnpm run check` 0 errors；`pnpm run build` 成功；
+  - Impeccable detect 门禁检测结果为 `[]`；
+  - 后端 Go 测试全量通过。
+- **Phase 5 (交付前反思门禁):** in_progress
+
+---
+
 # Session: 2026-09-17 - Jira 早报 Confluence 归档同步支持
 
 - 独立客户端包 `internal/confluence` 完成：提供 `Validate`、`Check`、`Sync`，严格 URL 校验、PAT Bearer、占位页与附件全部成功后再提交正文，单次版本冲突 409 重试与附件哈希复用；覆盖率 90.5%（-race 通过）。

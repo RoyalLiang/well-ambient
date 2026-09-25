@@ -1,3 +1,50 @@
+# Task Plan: AI 治理技能中心交互优化、技能标识体系与 SKILL.md 文档化展示
+
+## 2026-09-25 技能中心筛选样式现代美化、按钮文字防换行、技能包含层级标识与 SKILL.md 文档化展现
+
+### 三方 UI 会审结论（实现前冻结）
+
+- **Impeccable（管理台产品模式与工匠标准）：**
+  - **1. 筛选控件现代工程化（Eliminate Native Select Quirks）**：
+    - 废除原生灰色粗糙下拉外观，使用 `.wa-select-control` 封装结构；
+    - 采用 `appearance: none; -webkit-appearance: none;`，集成极简 SVG Chevron 下拉箭头（右侧留白 30px）；
+    - 高度统一定为 32px，圆角 6px，深浅模式边框统一采用 `--wa-border`，Focus 状态呈现 `--wa-focus-ring` 与柔和外发光（0 0 0 3px rgba(0,143,150,0.15)），严格保证原生键盘可访问性（Tab / 方向键导航）。
+  - **2. 按钮文字防折行（Strict Button No-Wrap）**：
+    - 表格操作列 `.btn`、`.btn-sm` 与 `.action-btn-group` 全面施加 `white-space: nowrap !important; word-break: keep-all; flex-shrink: 0;`；
+    - 调整“生命周期操作”列最小宽度（`min-width: 230px`），确保中英文在任意缩放状态下均保持单行水平排列。
+  - **3. 技能层级与标识体系（Clear Skill vs Component Hierarchy）**：
+    - 业务技能（`code_review`）为一级主体，下属组件（`gitlab.snapshot` 插件、`knowledge.search` 语料提供方）为包含切片；
+    - 表格行中提供清晰的双向血缘标识：主技能展示 `[包含组件: gitlab.snapshot, knowledge.search]` 胶囊，下属组件展示 `[归属于: code_review]` 溯源标识；
+    - 类别筛选器支持快速聚焦业务技能（“⭐ 仅看业务技能”）。
+  - **4. 技能实际内容与 SKILL.md 说明呈现（Canonical SKILL.md & Markdown Rendering）**：
+    - 详情抽屉 Drawer 默认呈现“📄 技能规范文档 (SKILL.md)”视图，支持结构化 YAML Frontmatter 解析与基于 `marked` + `dompurify` 的 Markdown 优雅排版；
+    - 后端自动挂载或无损合成完整的通用标准 `SKILL.md`（包含触发意图、包含插件、审查规则、Prompt 切片与输出契约），彻底解决“看不到实际内容和说明”的问题。
+- **design-taste-frontend（Preserve 模式）：**
+  - 参数：`DESIGN_VARIANCE=4 / MOTION_INTENSITY=2 / VISUAL_DENSITY=7`；
+  - 严格保持 Phase 41 / Modern Admin 浅色工作台基线，严禁 AI 紫色、多余阴影或嵌套卡片；
+  - Markdown 排版遵循工程规范，代码块采用等宽字体（`ui-monospace`），标题层次鲜明，列表与表格间距清爽。
+- **finesse-ui（产品工作台模式 / AI Workbench 规范）：**
+  - 参数：`SOUL=4 / SPECTACLE=1 / DENSITY=8`。
+  - 组件归属：
+    - `AIGovernanceCenter.svelte`：
+      - 拥有 `.wa-select-control`、按钮防折行排版、技能/组件层级胶囊与展开面板、抽屉内 `SKILL.md` Markdown 渲染引擎；
+    - 后端 `internal/server/strongest_brain_capability_handlers.go` & `internal/agentruntime`：
+      - 在 DTO 中输出 `is_top_level_skill`、`parent_skill_key`、`included_components` 以及完整的 `skill_markdown` 文本（挂载本地 `.agents/skills/merge-review/SKILL.md` 或标准生成）。
+- **响应式与验证范围：**
+  - 覆盖桌面端（1440px/1024px）与移动端（760px/390px/320px）全断点，确保筛选框、表格按钮与抽屉 Markdown 均无任何水平溢出与折行瑕疵；
+  - 自动化验证包括 Go 后端单测、前端 Svelte 类型检查、Vite 生产构建以及真实浏览器与契约测试。
+
+### 阶段与任务
+
+- [completed] Phase 1：后端增强 DTO，输出技能包含层级关系（`included_components`, `parent_skill_key`）与标准的 `skill_markdown` 文档（挂载本地 merge-review/SKILL.md 与通用生成）。
+- [completed] Phase 2：优化前端筛选控件样式为系统级现代下拉，彻底修复表格操作按钮文字折行问题。
+- [completed] Phase 3：前端技能列表呈现技能与包含组件的层级标识（主技能展示包含插件/语料源标签，下属组件展示归属标签），并支持类型筛选区分。
+- [completed] Phase 4：详情抽屉 Drawer 实现「📄 技能规范文档 (SKILL.md)」首选视图，优雅渲染 Markdown 内容与 Frontmatter 元数据卡片。
+- [completed] Phase 5：执行端到端回归验证（后端单测、TypeScript 类型检查、生产构建打包、Impeccable 检测）。
+- [in_progress] Phase 6：执行交付前反思门禁（Pre-delivery reflection gate）。
+
+---
+
 # Task Plan: Implementation Plan Check and Fix
 
 ## 2026-09-17 Jira 早报设置四项优化（项目全名自动收录、高度对齐、收件人胶囊输入与时间时区规范化）

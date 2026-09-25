@@ -75,6 +75,7 @@ type CapabilityManifest struct {
 	Version     int    `yaml:"version" json:"version"`
 	Digest      string `yaml:"digest,omitempty" json:"digest,omitempty"`
 	Owner       string `yaml:"owner,omitempty" json:"owner,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Sensitivity string `yaml:"sensitivity,omitempty" json:"sensitivity,omitempty"` // public, internal, restricted
 	Runtime     struct {
 		MinKernel string `yaml:"min_kernel" json:"min_kernel"`
@@ -200,3 +201,118 @@ func (m *CapabilityManifest) CheckPermissionGrant(granted []string) (bool, []str
 	}
 	return true, nil
 }
+
+// GenerateSkillMarkdown converts a CapabilityManifest and its loaded resource slices into a standard SKILL.md document.
+func (m *CapabilityManifest) GenerateSkillMarkdown(resources []ResourceDef) string {
+	var sb strings.Builder
+
+	// 1. YAML Frontmatter
+	sb.WriteString("---\n")
+	sb.WriteString(fmt.Sprintf("name: %s\n", m.ID))
+	if m.Description != "" {
+		sb.WriteString(fmt.Sprintf("description: %s\n", m.Description))
+	} else {
+		sb.WriteString(fmt.Sprintf("description: Agent capability %s (%s)\n", m.ID, m.Kind))
+	}
+	sb.WriteString(fmt.Sprintf("kind: %s\n", m.Kind))
+	sb.WriteString(fmt.Sprintf("version: %d\n", m.Version))
+	if m.Owner != "" {
+		sb.WriteString(fmt.Sprintf("owner: %s\n", m.Owner))
+	}
+	if len(m.Permissions) > 0 {
+		sb.WriteString("permissions:\n")
+		for _, p := range m.Permissions {
+			sb.WriteString(fmt.Sprintf("  - %s\n", p))
+		}
+	}
+	if len(m.Tools) > 0 {
+		sb.WriteString("tools:\n")
+		for _, t := range m.Tools {
+			sb.WriteString(fmt.Sprintf("  - %s\n", t))
+		}
+	}
+	if len(m.Requires) > 0 {
+		sb.WriteString("requires:\n")
+		for _, r := range m.Requires {
+			sb.WriteString(fmt.Sprintf("  - id: %s\n    kind: %s\n    version: \"%s\"\n", r.ID, r.Kind, r.Version))
+		}
+	}
+	sb.WriteString("---\n\n")
+
+	// 2. Title & Overview
+	title := m.ID
+	if m.ID == "code_review" {
+		title = "Code Review (代码审查与合规治理技能)"
+	} else if m.ID == "gitlab.snapshot" {
+		title = "GitLab Snapshot (代码快照提取插件)"
+	} else if m.ID == "knowledge.search" {
+		title = "Knowledge Search (领域知识检索提供方)"
+	}
+	sb.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	if m.Description != "" {
+		sb.WriteString(fmt.Sprintf("> %s\n\n", m.Description))
+	}
+
+	// 3. Hierarchy & Included Components
+	if len(m.Requires) > 0 {
+		sb.WriteString("## 包含的微内核能力组件 (Included Components)\n\n")
+		sb.WriteString("本技能通过微内核声明式组装以下依赖组件与能力插件：\n\n")
+		for _, req := range m.Requires {
+			compDesc := "下属依赖切片"
+			if req.ID == "gitlab.snapshot" {
+				compDesc = "负责拉取合并请求 (MR) 的完整 Diff、Commit 变更日志与分支元数据"
+			} else if req.ID == "knowledge.search" {
+				compDesc = "负责检索系统领域知识、业务术语与代码架构合规准则"
+			}
+			sb.WriteString(fmt.Sprintf("- **`%s`** (`%s` 版本: `%s`)：%s\n", req.ID, req.Kind, req.Version, compDesc))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 4. Intent Triggers
+	if len(m.Triggers.Intents) > 0 {
+		sb.WriteString("## 触发意图与适用场景 (Triggers & Intents)\n\n")
+		sb.WriteString("当求解器识别到以下任务意图时，将自动调度本能力：\n\n")
+		for _, intent := range m.Triggers.Intents {
+			sb.WriteString(fmt.Sprintf("- 🎯 `%s`\n", intent))
+		}
+		sb.WriteString("\n")
+	}
+
+	// 5. Tools & Permissions
+	sb.WriteString("## 工具权限与执行契约 (Tools & Permissions)\n\n")
+	if len(m.Tools) > 0 {
+		sb.WriteString(fmt.Sprintf("- **受权工具**: `%s`\n", strings.Join(m.Tools, "`, `")))
+	}
+	if len(m.Permissions) > 0 {
+		sb.WriteString(fmt.Sprintf("- **所需权限**: `%s`\n", strings.Join(m.Permissions, "`, `")))
+	}
+	if m.Budgets.InstructionTokens > 0 || m.Budgets.EvidenceTokens > 0 {
+		sb.WriteString(fmt.Sprintf("- **资源预算**: 指令 %d tokens，证据 %d tokens，最多允许 %d 次工具调用，超时 %d 秒\n",
+			m.Budgets.InstructionTokens, m.Budgets.EvidenceTokens, m.Budgets.ToolCalls, m.Budgets.WallTimeSeconds))
+	}
+	sb.WriteString("\n")
+
+	// 6. Resources & Instructions
+	sb.WriteString("## 核心指令与资源切片 (Resource Slices)\n\n")
+	if len(resources) == 0 {
+		sb.WriteString("*暂无加载的具体指令切片。*\n")
+	} else {
+		for _, res := range resources {
+			sb.WriteString(fmt.Sprintf("### 切片: `%s` (%s)\n\n", res.Key, res.LoadLevel))
+			if res.ContentKind == "json" {
+				sb.WriteString("```json\n")
+				sb.WriteString(strings.TrimSpace(res.Content))
+				sb.WriteString("\n```\n\n")
+			} else {
+				sb.WriteString("```markdown\n")
+				sb.WriteString(strings.TrimSpace(res.Content))
+				sb.WriteString("\n```\n\n")
+			}
+		}
+	}
+
+	return sb.String()
+}
+

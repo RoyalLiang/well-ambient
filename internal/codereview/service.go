@@ -159,6 +159,28 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 	}
 	var err error
 	if event == "Push Hook" {
+		branch := ""
+		if strings.HasPrefix(p.Ref, "refs/heads/") {
+			branch = strings.TrimPrefix(p.Ref, "refs/heads/")
+		}
+		var openMRs []mr
+		if branch != "" {
+			openMRs, _ = s.git().OpenMRsForBranch(ctx, id, branch)
+		}
+		if len(openMRs) > 0 {
+			// 若当前分支已存在处于 opened 状态的 MR，提交归属于该 MR。
+			// 跳过 commit 级别入队，避免将 MR 拆成多条 commit 评审。
+			for _, m := range openMRs {
+				key := m.DiffRefs.Head + ":" + m.UpdatedAt
+				if key == ":" || m.DiffRefs.Head == "" {
+					key = fmt.Sprintf("mr:%d:%s", m.IID, p.After)
+				}
+				if _, err = s.Enqueue(ctx, id, "mr", strconv.Itoa(m.IID), key); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		for _, c := range p.Commits {
 			if _, err = s.Enqueue(ctx, id, "commit", c.ID, "push:"+c.ID); err != nil {
 				return err
@@ -397,32 +419,23 @@ func (s *Service) Retry(ctx context.Context, id uint) (db.CodeReviewRun, error) 
 	if failed.Status != "failed" {
 		return db.CodeReviewRun{}, errors.New("仅失败的评审可以重新评审")
 	}
-	eventKey := fmt.Sprintf("manual-retry:%d", failed.ID)
-	for attempt := 0; attempt < 32; attempt++ {
-		retry, retryErr := s.Enqueue(ctx, failed.ProjectID, failed.Kind, failed.Ref, eventKey)
-		if retryErr != nil {
-			return db.CodeReviewRun{}, retryErr
-		}
-		switch retry.Status {
-		case "queued", "running":
-			if retry.RetryOfID == 0 {
-				if updateErr := s.DB.Model(&db.CodeReviewRun{}).
-					Where("id = ? AND retry_of_id = 0", retry.ID).
-					Update("retry_of_id", failed.ID).Error; updateErr != nil {
-					return db.CodeReviewRun{}, updateErr
-				}
-				retry.RetryOfID = failed.ID
-			}
-			return retry, nil
-		case "failed", "cancelled":
-			eventKey = fmt.Sprintf("manual-retry:%d:%d", failed.ID, retry.ID)
-		case "completed", "partial":
-			return db.CodeReviewRun{}, errors.New("该失败记录已有重评结果")
-		default:
-			return db.CodeReviewRun{}, errors.New("重评任务状态无效")
-		}
+	res := s.DB.WithContext(ctx).Model(&db.CodeReviewRun{}).
+		Where("id = ? AND status = ?", failed.ID, "failed").
+		Updates(map[string]any{
+			"status":         "queued",
+			"phase":          "等待重试",
+			"error":          "",
+			"publish_status": "waiting_review",
+			"publish_error":  "",
+			"updated_at":     time.Now(),
+		})
+	if res.Error != nil {
+		return db.CodeReviewRun{}, res.Error
 	}
-	return db.CodeReviewRun{}, errors.New("重评次数过多")
+	if res.RowsAffected == 0 {
+		return db.CodeReviewRun{}, errors.New("仅失败的评审可以重新评审")
+	}
+	return s.Get(id)
 }
 func (s *Service) List(limit int) ([]db.CodeReviewRun, error) {
 	ids := []string{}

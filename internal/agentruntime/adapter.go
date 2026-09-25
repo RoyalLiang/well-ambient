@@ -33,11 +33,12 @@ func NewLegacySkillAdapter(database *gorm.DB, registry *Registry) *LegacySkillAd
 func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) error {
 	// 1. gitlab.snapshot Plugin
 	snapshotManifest := &CapabilityManifest{
-		Schema:  "capability-manifest/v1",
-		ID:      "gitlab.snapshot",
-		Kind:    KindPlugin,
-		Version: 1,
-		Owner:   "platform-team",
+		Schema:      "capability-manifest/v1",
+		ID:          "gitlab.snapshot",
+		Kind:        KindPlugin,
+		Version:     1,
+		Owner:       "platform-team",
+		Description: "GitLab 代码仓库与 MR 快照提取插件，由 code_review 技能调用，负责 diff 与 commit 历史切片抽取",
 		Provides: []string{
 			"gitlab.diff",
 			"gitlab.commit_log",
@@ -56,22 +57,27 @@ func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) erro
 	snapshotManifest.Triggers.Intents = []string{"code-review", "merge-review"}
 
 	var capSnaps []db.Capability
-	if err := a.db.WithContext(ctx).Where("capability_key = ?", "gitlab.snapshot").Limit(1).Find(&capSnaps).Error; err == nil && len(capSnaps) == 0 {
-		if _, err := a.registry.Register(ctx, snapshotManifest); err != nil {
-			return fmt.Errorf("failed to register gitlab.snapshot: %w", err)
-		}
-		if err := a.registry.ActivateVersion(ctx, "gitlab.snapshot", 1, "global", ""); err != nil {
-			return fmt.Errorf("failed to activate gitlab.snapshot: %w", err)
+	if err := a.db.WithContext(ctx).Where("capability_key = ?", "gitlab.snapshot").Limit(1).Find(&capSnaps).Error; err == nil {
+		if len(capSnaps) == 0 {
+			if _, err := a.registry.Register(ctx, snapshotManifest); err != nil {
+				return fmt.Errorf("failed to register gitlab.snapshot: %w", err)
+			}
+			if err := a.registry.ActivateVersion(ctx, "gitlab.snapshot", 1, "global", ""); err != nil {
+				return fmt.Errorf("failed to activate gitlab.snapshot: %w", err)
+			}
+		} else if capSnaps[0].Description == "" {
+			_ = a.db.WithContext(ctx).Model(&capSnaps[0]).Update("description", snapshotManifest.Description).Error
 		}
 	}
 
 	// 2. knowledge.search ContextProvider
 	knowledgeManifest := &CapabilityManifest{
-		Schema:  "capability-manifest/v1",
-		ID:      "knowledge.search",
-		Kind:    KindContextProvider,
-		Version: 1,
-		Owner:   "architecture-team",
+		Schema:      "capability-manifest/v1",
+		ID:          "knowledge.search",
+		Kind:        KindContextProvider,
+		Version:     1,
+		Owner:       "architecture-team",
+		Description: "系统领域知识与工程架构规范检索源，由 code_review 技能调用，负责注入规范设计语料",
 		Provides: []string{
 			"system.knowledge",
 			"domain.contracts",
@@ -89,12 +95,16 @@ func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) erro
 	knowledgeManifest.Triggers.Intents = []string{"code-review", "merge-review"}
 
 	var capKnowledges []db.Capability
-	if err := a.db.WithContext(ctx).Where("capability_key = ?", "knowledge.search").Limit(1).Find(&capKnowledges).Error; err == nil && len(capKnowledges) == 0 {
-		if _, err := a.registry.Register(ctx, knowledgeManifest); err != nil {
-			return fmt.Errorf("failed to register knowledge.search: %w", err)
-		}
-		if err := a.registry.ActivateVersion(ctx, "knowledge.search", 1, "global", ""); err != nil {
-			return fmt.Errorf("failed to activate knowledge.search: %w", err)
+	if err := a.db.WithContext(ctx).Where("capability_key = ?", "knowledge.search").Limit(1).Find(&capKnowledges).Error; err == nil {
+		if len(capKnowledges) == 0 {
+			if _, err := a.registry.Register(ctx, knowledgeManifest); err != nil {
+				return fmt.Errorf("failed to register knowledge.search: %w", err)
+			}
+			if err := a.registry.ActivateVersion(ctx, "knowledge.search", 1, "global", ""); err != nil {
+				return fmt.Errorf("failed to activate knowledge.search: %w", err)
+			}
+		} else if capKnowledges[0].Description == "" {
+			_ = a.db.WithContext(ctx).Model(&capKnowledges[0]).Update("description", knowledgeManifest.Description).Error
 		}
 	}
 
@@ -115,13 +125,14 @@ func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) erro
 	}
 
 	var capReviews []db.Capability
-	if err := a.db.WithContext(ctx).Where("capability_key = ?", "code_review").Limit(1).Find(&capReviews).Error; err == nil && len(capReviews) == 0 {
+	if err := a.db.WithContext(ctx).Where("capability_key = ?", "code_review").Limit(1).Find(&capReviews).Error; err == nil {
 		reviewManifest := &CapabilityManifest{
 			Schema:      "capability-manifest/v1",
 			ID:          "code_review",
 			Kind:        KindSkill,
 			Version:     version,
 			Owner:       "engineering-governance",
+			Description: "代码评审顶级业务技能，统一调度 gitlab.snapshot 快照插件与 knowledge.search 领域知识库，输出结构化报告",
 			Sensitivity: "internal",
 			Provides: []string{
 				"diff-review",
@@ -159,11 +170,15 @@ func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) erro
 		reviewManifest.Scope.Type = "global"
 		reviewManifest.Triggers.Intents = []string{"code-review", "merge-review"}
 
-		if _, err := a.registry.Register(ctx, reviewManifest); err != nil {
-			return fmt.Errorf("failed to register code_review skill: %w", err)
-		}
-		if err := a.registry.ActivateVersion(ctx, "code_review", version, "global", ""); err != nil {
-			return fmt.Errorf("failed to activate code_review skill: %w", err)
+		if len(capReviews) == 0 {
+			if _, err := a.registry.Register(ctx, reviewManifest); err != nil {
+				return fmt.Errorf("failed to register code_review skill: %w", err)
+			}
+			if err := a.registry.ActivateVersion(ctx, "code_review", version, "global", ""); err != nil {
+				return fmt.Errorf("failed to activate code_review skill: %w", err)
+			}
+		} else if capReviews[0].Description == "" {
+			_ = a.db.WithContext(ctx).Model(&capReviews[0]).Update("description", reviewManifest.Description).Error
 		}
 	}
 

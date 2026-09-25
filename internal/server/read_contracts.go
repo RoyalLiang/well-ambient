@@ -15,6 +15,7 @@ const (
 func allPageReadContracts() map[string]readmodel.Contract {
 	return map[string]readmodel.Contract{
 		"/api/agent-runtime/capabilities":              directoryRead("agent-capabilities", readmodel.MaturityBounded, "settings.ai_context", "evidence.health"),
+		"/api/agent-runtime/capabilities/{id}":         detailRead("agent-capability-detail", readmodel.MaturityBounded, 1, "settings.ai_context", "evidence.health"),
 		"/api/agent-runtime/runs":                      detailRead("agent-runs", readmodel.MaturityBounded, 100, "settings.ai_context", "evidence.health"),
 		"/api/agent-runtime/runs/{id}/lockfile":        detailRead("agent-run-lockfile", readmodel.MaturityBounded, 1, "settings.ai_context", "evidence.health"),
 		"/api/agent-runtime/runs/{id}/trace":           timelineRead("agent-run-trace", readmodel.StrategyTopK, readmodel.MaturityBounded, "settings.ai_context", "evidence.health"),

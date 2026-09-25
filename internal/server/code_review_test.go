@@ -187,14 +187,20 @@ func TestCodeReviewAPI(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &retry); err != nil {
 		t.Fatal(err)
 	}
-	if retry.ID == failed.ID || retry.Status != "queued" || retry.Ref != failed.Ref {
+	// 就地重试：保留原 ID，状态变为 queued
+	if retry.ID != failed.ID || retry.Status != "queued" || retry.Ref != failed.Ref {
 		t.Fatalf("unexpected retry response: %+v", retry)
 	}
+	// 重复对已处于 queued 状态的任务请求 retry 会被拒绝 (409 Conflict)
 	w = reviewRequest(srv, token, "POST", fmt.Sprintf("/api/code-reviews/%d/retry", failed.ID), "")
-	var replayed db.CodeReviewRun
-	_ = json.Unmarshal(w.Body.Bytes(), &replayed)
-	if w.Code != 202 || replayed.ID != retry.ID {
-		t.Fatalf("retry replay status/body = %d/%s", w.Code, w.Body.String())
+	if w.Code != 409 {
+		t.Fatalf("expected 409 when retrying queued run, got %d", w.Code)
+	}
+	// 验证总记录数依然为 2 (run + failed)
+	var totalRuns int64
+	db.DB.Model(&db.CodeReviewRun{}).Count(&totalRuns)
+	if totalRuns != 2 {
+		t.Fatalf("expected 2 runs (no duplicate added), got %d", totalRuns)
 	}
 	req := httptest.NewRequest("GET", "/api/code-reviews/1?repo=unrelated", nil)
 	resource := authorizationResourceFromRequest("dashboard:read", req)

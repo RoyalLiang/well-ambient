@@ -1,5 +1,64 @@
 # Findings & Decisions
 
+## 2026-09-25 技能中心筛选样式美化、按钮文字防换行、技能包含层级标识与 SKILL.md 文档化展现
+
+### 1. 筛选控件原生样式与按钮换行问题分析与解决
+- **筛选控件原生样式根因与重构：**
+  - 之前的 `<select>` 使用浏览器默认的外观与灰色边框，在 macOS Chrome/Safari 上呈现双箭头和原生焦点轮廓，与系统的 Finesse UI / Modern Admin 风格割裂；
+  - 采用现代工程封装：使用 `.custom-select-wrap` + `.modern-select`，通过 `appearance: none; -webkit-appearance: none;` 彻底清除系统原生杂乱控件外观，以精雕细琢的 SVG Chevron 箭头居右垂直居中（`pointer-events: none`），配合 `--wa-border`、Hover 提亮与 Focus 时的 `--wa-focus-ring`（0 0 0 3px rgba(0,143,150,0.15)），兼顾现代视觉与键盘 A11y 语义。
+- **按钮文字换行根因与解决：**
+  - 表格操作列 `.btn`、`.btn-sm` 与 `.action-btn-group` 未设置 `white-space: nowrap` 与 `flex-shrink: 0`；在视口宽度缩窄时，中文按钮文字（如“查看详情”、“卸载清理”）会被挤压折行；
+  - 为 `.btn`、`.btn-sm`、`.action-btn-group` 强力施加 `white-space: nowrap !important; word-break: keep-all !important; flex-shrink: 0 !important;`，并将操作列最小宽度锁定在 `min-width: 230px`，确保中英文字符在任何缩放下绝不折行。
+
+### 2. 技能与内置组件层级关系标识（Skill vs Included Components）
+- **领域概念澄清：**
+  - 用户心智中，“技能治理中心”管理的是**业务技能**。`code_review`（代码评审）是顶层的业务技能，面向代码审查任务，调度完整的工作流；
+  - 而 `gitlab.snapshot`（代码/MR 快照提取）是底层 **Plugin（插件）**，`knowledge.search`（规则与契约检索）是底层 **ContextProvider（语料源）**，它们是 `code_review` 技能所内聚组装的核心组件，而不是孤立并列的平级技能。
+- **界面血缘呈现：**
+  - 在后端 DTO 中计算暴露 `is_top_level_skill`、`parent_skill_key` 与 `included_components`；
+  - 在主表格中，`code_review` 行显著展示 `⭐ 业务技能` 徽章与 `包含组件: 🧩 gitlab.snapshot, 📚 knowledge.search` 胶囊，直观表达组合关系；
+  - 对于下属组件，明确标注 `🏷️ 包含于: code_review`，消除孤立平铺带来的困惑；
+  - 筛选下拉框增设“⭐ 仅看业务技能 (Skills)”选项，支持一键过滤纯业务技能。
+
+### 3. 技能实际内容与 Canonical SKILL.md 文档化呈现
+- **为什么之前看不到 SKILL.md 等说明：**
+  - 之前详情抽屉只暴露了生硬的 JSON dump 和零散的代码块，没有将技能的 YAML Frontmatter、业务背景、评审指令（Prompt）、输出格式和包含插件结构化地串联起来。
+- **双视图抽屉与 Markdown 渲染引擎：**
+  - 详情抽屉首屏提供双视图切换：默认直达「📄 技能说明与规约 (SKILL.md)」，第二视图为「🧩 微内核切片与版本 (Slices)」；
+  - 后端提供 `GenerateSkillMarkdown` 标准生成器，并优先读取真实存在的权威文件（如本地 `.agents/skills/merge-review/SKILL.md`）；
+  - 前端利用 `marked` 与 `DOMPurify` 进行严谨的安全排版渲染，并提供内聚组件展示卡片与“📋 复制 SKILL.md 原文”按钮，全方位满足研发审计与技能查阅需求。
+
+---
+
+## 2026-09-25 AI 治理页面切换与技能生命周期冷归档/引用计数增强
+
+### 1. AI 治理页面无法切换显示根因分析
+- **根因 A（路由权限判断缺失管理员特权）：**
+  在 `web/src/App.svelte` 中，`canAccessTab(tab)` 调用了 `hasPermission`，而 `hasPermission` 仅简单判断 `currentUserPermissions.includes(p)`。
+  对于 `ai_governance`，要求的权限是 `['ai_context:read', 'solution_prompt:manage', 'config:read']`。
+  当当前登录用户为 `super_admin` 或 `admin` 角色时，或者在临时降级会话下，如果其 permissions 数组未显式包含上述权限字符串，`canAccessTab('ai_governance')` 直接返回 `false`。
+  导致：
+  1. `availableRoutes` 中直接剔除 `ai_governance`；
+  2. 点击一级菜单“AI 治理”，`handleConsoleNavigate('ai_governance')` 因 `!canAccessTab(nextTab)` 直接拦截，点击无响应！
+  3. `FunctionalAdminShell.svelte` 的 `canAccessSubItem` 同样没有为管理员角色免检，导致左侧展开的子菜单被全部过滤。
+- **根因 B（页面内 Tab 与父级导航状态未双向绑定）：**
+  在 `AIGovernanceCenter.svelte` 内部，点击顶部 Tab 仅改变了局部变量 `activeSection`，未向父级同步，导致父组件 `activeAIGovernanceSection` 脱节，侧边栏二级高亮不会同步。
+- **根因 C（URL 参数未解析 `ai_governance`）：**
+  `applyLocationIntent` 仅处理了 `solutions` 和 `schedule`，缺失对 `?tab=ai_governance` 与子视图参数的处理。
+
+### 2. 技能 Run 绑定引用计数与冷归档机制决策
+- **业务矛盾与平衡：**
+  若直接物理删除已执行过 `AgentRun` 的技能内容，历史重放（`RunCapabilityBinding` / `ReplayCommand`）将缺失真实指令和微内核资源，破坏审计合规性；但若不清理，磁盘空间无法释放。
+- **技术决策：**
+  1. **引用计数（Bindings Count）**：通过查询 `run_capability_bindings` 表统计各个能力被实际执行调用的总次数，并在列表 DTO 和详情中暴露 `bindings_count` 与 `is_archived`；
+  2. **智能分流与双模式卸载**：
+     - `mode="cold_archive"`（推荐）：标记为 `archived`，从运行时活跃解析池（`CapabilityPlan`）剔除，但保留内容和指纹凭据，保证历史重放完全可重现；
+     - `mode="purge"`（强力清除）：清空 `CapabilityResource.content = ""`，释放 100% 物理磁盘空间，保留版本记录，历史重放降级为只读摘要；
+     - 未指定 mode 时：`bindings_count > 0` 默认走冷归档，`bindings_count == 0` 走安全物理清理。
+  3. **双向恢复能力**：无论是冷归档还是彻底清除，均支持通过 `reinstall` 快速恢复并重新激活。
+
+---
+
 ## 2026-09-17 Jira 早报 Confluence 归档同步支持
 
 - 架构与设计决策：

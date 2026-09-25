@@ -114,6 +114,7 @@ type Snapshot struct {
 	Gaps        []string    `json:"gaps"`
 }
 type mr struct {
+	IID         int    `json:"iid"`
 	Author struct {
 		Name     string `json:"name"`
 		Username string `json:"username"`
@@ -123,6 +124,7 @@ type mr struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	URL         string `json:"web_url"`
+	UpdatedAt   string `json:"updated_at"`
 	DiffRefs    struct {
 		Base string `json:"base_sha"`
 		Head string `json:"head_sha"`
@@ -133,6 +135,16 @@ func (g GitLab) mr(ctx context.Context, project, ref string) (mr, error) {
 	var x mr
 	_, err := g.request(ctx, http.MethodGet, projectPath(project)+"/merge_requests/"+ref, nil, &x)
 	return x, err
+}
+
+func (g GitLab) OpenMRsForBranch(ctx context.Context, project, branch string) ([]mr, error) {
+	if branch == "" {
+		return nil, nil
+	}
+	var list []mr
+	path := projectPath(project) + "/merge_requests?source_branch=" + url.QueryEscape(branch) + "&state=opened&per_page=5"
+	_, err := g.request(ctx, http.MethodGet, path, nil, &list)
+	return list, err
 }
 func (g GitLab) Snapshot(ctx context.Context, project, kind, ref string) (Snapshot, error) {
 	s := Snapshot{Complete: true, Files: []File{}, Knowledge: []Knowledge{}, Gaps: []string{}}

@@ -12,6 +12,7 @@
   import SettingsPanel from './components/SettingsPanel.svelte';
   import ProfilePanel from './components/ProfilePanel.svelte';
   import DatabaseSetup from './components/DatabaseSetup.svelte';
+  import AIGovernanceCenter from './components/AIGovernanceCenter.svelte';
   import FunctionalAdminShell from './components/prototype/FunctionalAdminShell.svelte';
   import FunctionalWorkspace from './components/prototype/FunctionalWorkspace.svelte';
   import {
@@ -22,11 +23,12 @@
     type SettingsSection
   } from './lib/settings-sections';
 
-  type AppTab = 'decision' | 'schedule' | 'solutions' | 'evidence' | 'tasks' | 'kpi' | 'settings' | 'no_permission';
+  type AppTab = 'decision' | 'schedule' | 'solutions' | 'evidence' | 'tasks' | 'kpi' | 'ai_governance' | 'settings' | 'no_permission';
   type DecisionView = 'agenda' | 'daily_jira';
   type DemandView = 'board' | 'schedule' | 'releases' | 'projects';
   type TaskView = 'status' | 'execution' | 'review';
 	type KPIView = 'overview' | 'calculation';
+  type AIGovernanceSection = 'skills' | 'prompts' | 'rules' | 'context';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
   type SetupGateState = 'checking' | 'required' | 'configured' | 'unavailable';
@@ -63,7 +65,7 @@
     dateTime: string;
   }
 
-  const consoleTabs: AppTab[] = ['decision', 'schedule', 'solutions', 'evidence', 'tasks', 'kpi', 'settings'];
+  const consoleTabs: AppTab[] = ['decision', 'schedule', 'solutions', 'evidence', 'tasks', 'kpi', 'ai_governance', 'settings'];
   const tabPermissions: Record<Exclude<AppTab, 'no_permission'>, string[]> = {
     decision: ['decision:read'],
     schedule: ['demands:read'],
@@ -71,6 +73,7 @@
     evidence: ['dashboard:read'],
     tasks: ['dashboard:read'],
     kpi: ['kpi:read'],
+    ai_governance: ['ai_governance:read', 'ai_context:read', 'solution_prompt:manage', 'config:read', 'dashboard:read', 'decision:read'],
     settings: SETTINGS_ROUTE_PERMISSIONS
   };
 
@@ -137,18 +140,29 @@
       statusLabel: '日报周报可预览',
       tone: 'violet',
       actions: [
-        { label: '打开配置中心', route: 'settings', kind: 'primary' },
-        { label: '回到任务跟踪', route: 'tasks' }
+        { label: 'AI 治理中心', route: 'ai_governance', kind: 'primary' },
+        { label: '打开配置中心', route: 'settings' }
+      ]
+    },
+    ai_governance: {
+      kicker: 'AI GOVERNANCE',
+      title: 'AI 治理中心',
+      summary: '基于通用 Agent Runtime 微内核规约，统一治理技能生命周期、多轮提示词工程、合规审查规则与设计语料库。',
+      statusLabel: '微内核就绪',
+      tone: 'violet',
+      actions: [
+        { label: '查看方案中心', route: 'solutions', kind: 'primary' },
+        { label: '打开配置中心', route: 'settings' }
       ]
     },
     settings: {
       kicker: 'CONTROL CENTER',
       title: '配置中心',
-      summary: '维护权限、项目集成与 AI 策略，所有治理规则从这里进入系统。',
+      summary: '维护权限、项目集成与安全策略，所有基础设施规则从这里进入系统。',
       statusLabel: '权限受控',
       tone: 'slate',
       actions: [
-        { label: '查看 KPI 洞察', route: 'kpi', kind: 'primary' },
+        { label: '进入 AI 治理', route: 'ai_governance', kind: 'primary' },
         { label: '回到决策看板', route: 'decision' }
       ]
     }
@@ -160,6 +174,7 @@
   let activeDemandView: DemandView = 'schedule';
   let activeTaskView: TaskView = 'status';
 	let activeKPIView: KPIView = 'overview';
+  let activeAIGovernanceSection: AIGovernanceSection = 'skills';
   let availableRoutes: AppTab[] = [];
   let latestDecisionEventSummary: WorkspaceDecisionEventSummary | null = null;
   let decisionTimelineDrawerRequest = 0;
@@ -221,7 +236,8 @@
   let loggingIn = false;
 
   function hasPermission(p: string): boolean {
-    return currentUserPermissions.includes(p);
+    if (currentUserRole === 'super_admin' || currentUserRole === 'admin') return true;
+    return currentUserPermissions.includes(p) || currentUserPermissions.includes('*');
   }
 
   function getWorkspacePresentation(tab: AppTab): WorkspacePresentation {
@@ -239,6 +255,7 @@
 
   function canAccessTab(tab: AppTab): boolean {
     if (tab === 'no_permission') return false;
+    if (currentUserRole === 'super_admin' || currentUserRole === 'admin') return true;
     return tabPermissions[tab].some((permission) => hasPermission(permission));
   }
 
@@ -354,6 +371,15 @@
     if (params.get('tab') === 'schedule' && hasPermission('demands:read')) {
       activeTab = 'schedule';
       activeDemandView = 'schedule';
+    }
+    const aiGovParam = params.get('tab') === 'ai_governance' ? params.get('section') || params.get('ai_governance') : params.get('ai_governance');
+    if (params.get('tab') === 'ai_governance' || aiGovParam) {
+      if (canAccessTab('ai_governance')) {
+        activeTab = 'ai_governance';
+        if (aiGovParam === 'prompts' || aiGovParam === 'rules' || aiGovParam === 'context' || aiGovParam === 'skills') {
+          activeAIGovernanceSection = aiGovParam;
+        }
+      }
     }
     const settingsSection = params.get('settings');
     if (settingsSection && isSettingsSection(settingsSection) && canAccessSettingsSection(settingsSection)) {
@@ -688,6 +714,11 @@
     }, 50);
   }
 
+  function handleAIGovernanceNavigate(section: string) {
+    activeAIGovernanceSection = (section === 'prompts' || section === 'rules' || section === 'context') ? section : 'skills';
+    activeTab = 'ai_governance';
+  }
+
   function handleSettingsSectionChange(section: string) {
     if (isSettingsSection(section)) {
       activeSettingsSection = section;
@@ -986,6 +1017,7 @@
     activeScheduleView={activeDemandView}
     activeTaskView={activeTaskView}
 		activeKPIView={activeKPIView}
+    activeAIGovernanceSection={activeAIGovernanceSection}
     authDegraded={authDegraded}
     authDegradedMessage={authDegradedMessage}
     onNavigate={handleConsoleNavigate}
@@ -994,6 +1026,7 @@
     onScheduleNavigate={handleScheduleNavigate}
     onTaskNavigate={handleTaskNavigate}
 		onKPINavigate={handleKPINavigate}
+    onAIGovernanceNavigate={handleAIGovernanceNavigate}
     onLogout={logout}
     onClearAlerts={clearAllAlerts}
     onDismissAlert={dismissAlert}
@@ -1050,6 +1083,12 @@
         {/if}
       {:else if activeTab === 'kpi'}
 				<InsightsWorkspace activeLens={activeKPIView === 'calculation' ? 'performance' : 'kpi'} />
+      {:else if activeTab === 'ai_governance'}
+        <AIGovernanceCenter
+          {currentUserPermissions}
+          activeSection={activeAIGovernanceSection}
+          onSectionChange={handleAIGovernanceNavigate}
+        />
       {:else if activeTab === 'settings'}
         {#key activeSettingsSection}
           <SettingsPanel
