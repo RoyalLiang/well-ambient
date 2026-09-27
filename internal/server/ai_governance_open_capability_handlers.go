@@ -218,17 +218,18 @@ func (s *Server) handleIssueAIGovernanceCredential(w http.ResponseWriter, r *htt
 	if sourceID == "" {
 		sourceID = "target-agent"
 	}
-	ttlHours := req.TTLHours
-	if ttlHours <= 0 {
-		ttlHours = 720 // default 30 days
-	}
-
 	// Ensure source exists
 	if _, err := s.openAccess.Source(r.Context(), sourceID); err != nil {
 		_, _ = s.openAccess.CreateSource(r.Context(), sourceID, strings.ToUpper(sourceID), "AI Governance", openaccess.DefaultQuotaProfile)
 	}
 
-	issued, err := s.openAccess.IssueCredential(r.Context(), sourceID, time.Duration(ttlHours)*time.Hour)
+	var issued openaccess.IssuedCredential
+	var err error
+	if req.TTLHours <= 0 {
+		issued, err = s.openAccess.IssuePermanentCredential(r.Context(), sourceID)
+	} else {
+		issued, err = s.openAccess.IssueCredential(r.Context(), sourceID, time.Duration(req.TTLHours)*time.Hour)
+	}
 	if err != nil {
 		writeOpenError(w, "", err)
 		return

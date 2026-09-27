@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
+  import Select from './shared/Select.svelte';
+  import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
   import OpenCapabilitiesConfig from './config/OpenCapabilitiesConfig.svelte';
@@ -148,6 +150,34 @@
   let searchKeyword = '';
   let filterKind = 'all';
   let filterStatus = 'all';
+
+  const kindOptions = [
+    { value: 'all', label: '全类别 (含内置组件)' },
+    { value: 'skills_only', label: '⭐ 仅看业务技能 (Skills)' },
+    { value: 'skill', label: 'Skill 业务技能' },
+    { value: 'plugin', label: 'Plugin 底层插件' },
+    { value: 'context_provider', label: 'Context 语料源' },
+    { value: 'mcp', label: 'MCP 扩展工具' },
+    { value: 'policy', label: 'Policy 治理策略' }
+  ];
+
+  const statusOptions = [
+    { value: 'all', label: '全状态' },
+    { value: 'active', label: '已启用 (Active)' },
+    { value: 'disabled', label: '已禁用 (Disabled)' },
+    { value: 'archived', label: '已冷归档 (Archived)' },
+    { value: 'uninstalled', label: '已卸载 (Uninstalled)' }
+  ];
+
+  function portalToConsole(node: HTMLElement) {
+    const target = document.querySelector<HTMLElement>('.functional-console') || document.body;
+    target.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
 
   // Derived filtered capability list for skills_only view
   $: displayCapabilities = capabilities.filter(c => {
@@ -366,6 +396,7 @@ activation:
     const requestID = ++detailRequestID;
     selectedCapability = cap;
     detailDrawerOpen = true;
+    lockBodyScroll();
     loadingDetail = true;
     capabilityDetail = null;
     activeVersionTab = 0;
@@ -395,7 +426,20 @@ activation:
     detailDrawerOpen = false;
     loadingDetail = false;
     capabilityDetail = null;
+    unlockBodyScroll();
   }
+
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && detailDrawerOpen) {
+      closeDetailDrawer();
+    }
+  }
+
+  onDestroy(() => {
+    if (detailDrawerOpen) {
+      unlockBodyScroll();
+    }
+  });
 
   function requireSkillMutationAccess() {
     if (!canManageSkills) throw new Error('需要全局超级管理员和 solution_prompt:manage 权限');
@@ -779,6 +823,8 @@ activation:
   });
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 <div class="gov-workbench">
   <!-- Top Header & Metrics Strip -->
   <header class="gov-header">
@@ -927,39 +973,43 @@ activation:
         </div>
 
         <div class="filter-controls">
-          <label class="filter-label">
-            类别:
-            <div class="custom-select-wrap">
-              <select class="modern-select" bind:value={filterKind} on:change={() => loadCapabilities()}>
-                <option value="all">全类别 (含内置组件)</option>
-                <option value="skills_only">⭐ 仅看业务技能 (Skills)</option>
-                <option value="skill">Skill 业务技能</option>
-                <option value="plugin">Plugin 底层插件</option>
-                <option value="context_provider">Context 语料源</option>
-                <option value="mcp">MCP 扩展工具</option>
-                <option value="policy">Policy 治理策略</option>
-              </select>
-              <svg class="select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
+          <div class="filter-field">
+            <span class="filter-field-label">类别:</span>
+            <div class="filter-select-wrap">
+              <Select
+                id="gov-filter-kind"
+                ariaLabel="类别"
+                value={filterKind}
+                options={kindOptions}
+                searchable={false}
+                compact
+                shadowless
+                on:change={(e) => {
+                  filterKind = e.detail;
+                  loadCapabilities();
+                }}
+              />
             </div>
-          </label>
+          </div>
 
-          <label class="filter-label">
-            状态:
-            <div class="custom-select-wrap">
-              <select class="modern-select" bind:value={filterStatus} on:change={() => loadCapabilities()}>
-                <option value="all">全状态</option>
-                <option value="active">已启用 (Active)</option>
-                <option value="disabled">已禁用 (Disabled)</option>
-                <option value="archived">已冷归档 (Archived)</option>
-                <option value="uninstalled">已卸载 (Uninstalled)</option>
-              </select>
-              <svg class="select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <path d="m6 9 6 6 6-6"/>
-              </svg>
+          <div class="filter-field">
+            <span class="filter-field-label">状态:</span>
+            <div class="filter-select-wrap">
+              <Select
+                id="gov-filter-status"
+                ariaLabel="状态"
+                value={filterStatus}
+                options={statusOptions}
+                searchable={false}
+                compact
+                shadowless
+                on:change={(e) => {
+                  filterStatus = e.detail;
+                  loadCapabilities();
+                }}
+              />
             </div>
-          </label>
+          </div>
         </div>
       </div>
 
@@ -1314,8 +1364,9 @@ activation:
 
 <!-- 1. Capability Detail Drawer -->
 {#if detailDrawerOpen}
-  <div class="drawer-backdrop" role="presentation" on:click={closeDetailDrawer}></div>
-  <aside class="gov-drawer" role="dialog" aria-modal="true" aria-label="技能详细规约">
+  <div use:portalToConsole class="drawer-portal-layer">
+    <div class="drawer-backdrop" role="presentation" on:click={closeDetailDrawer}></div>
+    <aside class="gov-drawer" role="dialog" aria-modal="true" aria-label="技能详细规约">
     <div class="drawer-header">
       <div>
         <span class="drawer-kicker">{selectedCapability?.kind?.toUpperCase()} 规约详情</span>
@@ -1514,6 +1565,7 @@ activation:
       {/if}
     </div>
   </aside>
+  </div>
 {/if}
 
 <!-- 2. Import / Remote Install Modal -->
@@ -1971,7 +2023,49 @@ activation:
   .filter-controls {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .filter-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .filter-field-label {
+    font-size: 13px;
+    color: var(--wa-text-muted, #4a5568);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .filter-select-wrap {
+    min-width: 175px;
+  }
+
+  .filter-select-wrap :global(.select-group) {
+    margin-bottom: 0;
+  }
+
+  .filter-select-wrap :global(.select-trigger) {
+    min-height: 32px;
+    height: 32px;
+    padding: 0 10px;
+    font-size: 13px;
+    border-radius: 6px;
+    background: #ffffff;
+    border-color: var(--wa-border, #cbd5e0);
+  }
+
+  .filter-select-wrap :global(.select-trigger:hover) {
+    border-color: #a0aec0;
+    background: #fcfdfe;
+  }
+
+  .filter-select-wrap :global(.select-trigger:focus-within) {
+    border-color: var(--wa-focus-ring, #008f96);
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.15);
   }
 
   .filter-label {
@@ -2517,12 +2611,22 @@ activation:
   }
 
   /* Drawer */
+  .drawer-portal-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 2200;
+    pointer-events: none;
+  }
+
   .drawer-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.3);
-    z-index: 1000;
-    backdrop-filter: blur(1px);
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 2201;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    pointer-events: auto;
+    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .gov-drawer {
@@ -2530,14 +2634,27 @@ activation:
     top: 0;
     right: 0;
     bottom: 0;
+    height: 100vh;
+    height: 100dvh;
     width: 680px;
     max-width: 90vw;
     background: #ffffff;
-    z-index: 1001;
-    box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+    z-index: 2202;
+    box-shadow: -8px 0 32px rgba(15, 23, 42, 0.18);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    pointer-events: auto;
+    animation: drawerSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes drawerSlideIn {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
   }
 
   .drawer-header {

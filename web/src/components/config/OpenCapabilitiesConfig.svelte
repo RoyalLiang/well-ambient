@@ -4,8 +4,17 @@
   import Button from '../shared/Button.svelte';
   import Switch from '../shared/Switch.svelte';
   import Modal from '../shared/Modal.svelte';
+  import Select from '../shared/Select.svelte';
 
   export let canWrite = false;
+
+  const ttlOptions = [
+    { value: '0', label: '永久有效 (Permanent)' },
+    { value: '168', label: '7 天 (168h)' },
+    { value: '720', label: '30 天 (720h - 默认推荐)' },
+    { value: '2160', label: '90 天 (2160h)' },
+    { value: '8760', label: '1 年 (8760h)' }
+  ];
 
   interface OpenCapabilitiesConfigState {
     enabled: boolean;
@@ -886,13 +895,16 @@
         </div>
 
         <div class="form-item">
-          <label for="issue-ttl">有效期 (TTL 时长):</label>
-          <select id="issue-ttl" bind:value={newKeyTTLHours} class="gov-select">
-            <option value={168}>7 天 (168h)</option>
-            <option value={720}>30 天 (720h - 默认推荐)</option>
-            <option value={2160}>90 天 (2160h)</option>
-            <option value={8760}>1 年 (8760h)</option>
-          </select>
+          <Select
+            id="issue-ttl"
+            label="有效期 (TTL 时长)"
+            value={String(newKeyTTLHours)}
+            options={ttlOptions}
+            searchable={false}
+            compact
+            shadowless
+            on:change={(e) => newKeyTTLHours = Number(e.detail)}
+          />
         </div>
       {/if}
     </div>
@@ -984,6 +996,17 @@
   .btn-ghost:hover:not(:disabled) {
     background: #edf2f7;
     color: var(--wa-text-strong, #1a202c);
+  }
+  .btn-danger {
+    border-color: rgba(221, 75, 62, 0.24);
+    background: var(--wa-danger-soft, rgba(221, 75, 62, 0.12));
+    color: var(--wa-danger, #dd4b3e);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--wa-danger, #dd4b3e);
+    border-color: var(--wa-danger, #dd4b3e);
+    color: #ffffff;
+    box-shadow: 0 4px 12px rgba(221, 75, 62, 0.2);
   }
   .btn:disabled {
     opacity: 0.5;

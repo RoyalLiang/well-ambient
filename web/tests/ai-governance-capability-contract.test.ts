@@ -29,14 +29,14 @@ const serverPath = path.resolve(rootDir, '../internal/server/server.go');
 const source = (filePath: string) => fs.readFileSync(filePath, 'utf8');
 
 test('AI governance permission personas use the shared section contract without admin bypass', () => {
-  assert.deepEqual(AI_GOVERNANCE_SECTION_DEFINITIONS.map(section => section.id), ['skills', 'prompts', 'rules', 'context']);
+  assert.deepEqual(AI_GOVERNANCE_SECTION_DEFINITIONS.map(section => section.id), ['skills', 'prompts', 'rules', 'context', 'open_capabilities']);
 
   const personas = [
     {
       name: 'context reader',
       role: 'member',
       permissions: ['ai_context:read'],
-      accessible: ['skills', 'context'],
+      accessible: ['skills', 'context', 'open_capabilities'],
     },
     {
       name: 'rules reader',
@@ -54,13 +54,13 @@ test('AI governance permission personas use the shared section contract without 
       name: 'admin with every named permission',
       role: 'admin',
       permissions: ['ai_context:read', 'solution_prompt:manage', 'dashboard:read', 'config:read', 'config:write'],
-      accessible: ['skills', 'rules', 'context'],
+      accessible: ['skills', 'rules', 'context', 'open_capabilities'],
     },
     {
       name: 'full super admin',
       role: 'super_admin',
       permissions: ['*'],
-      accessible: ['skills', 'prompts', 'rules', 'context'],
+      accessible: ['skills', 'prompts', 'rules', 'context', 'open_capabilities'],
     },
     {
       name: 'no governance access',
@@ -204,10 +204,9 @@ test('AIGovernanceCenter supports run bindings count and cold archive workflow',
 test('AIGovernanceCenter keeps styled selects, responsive table scrolling, and reduced motion', () => {
   const content = source(aiGovPath);
 
-  assert.match(content, /class="custom-select-wrap"/);
-  assert.match(content, /class="modern-select"/);
-  assert.match(content, /class="select-chevron"/);
-  assert.match(content, /appearance:\s*none;/);
+  assert.match(content, /id="gov-filter-kind"/);
+  assert.match(content, /id="gov-filter-status"/);
+  assert.match(content, /class="filter-select-wrap"/);
   assert.match(content, /box-shadow:\s*0 0 0 3px rgba\(0,\s*143,\s*150,\s*0\.15\);/);
   assert.match(content, /\.action-btn-group\s*\{[\s\S]*?white-space:\s*nowrap\s*!important;/);
   assert.match(content, /\.btn\s*\{[\s\S]*?word-break:\s*keep-all\s*!important;/);

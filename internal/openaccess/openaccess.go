@@ -294,6 +294,40 @@ func (s *Service) IssueCredential(ctx context.Context, sourceID string, ttl time
 	return IssuedCredential{KeyID: keyID, Prefix: prefix, Secret: secret, ExpiresAt: expiresAt}, nil
 }
 
+func (s *Service) IssuePermanentCredential(ctx context.Context, sourceID string) (IssuedCredential, error) {
+	var source db.IntegrationSource
+	if err := s.db.WithContext(ctx).First(&source, "id = ?", strings.TrimSpace(sourceID)).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return IssuedCredential{}, newError("not_found", "integration source was not found")
+		}
+		return IssuedCredential{}, fmt.Errorf("load integration source: %w", err)
+	}
+	if source.Status != SourceActive {
+		return IssuedCredential{}, newError("forbidden", "integration source is disabled")
+	}
+
+	keyID, err := randomToken(s.random, 9)
+	if err != nil {
+		return IssuedCredential{}, fmt.Errorf("generate credential id: %w", err)
+	}
+	secretPart, err := randomToken(s.random, 32)
+	if err != nil {
+		return IssuedCredential{}, fmt.Errorf("generate credential secret: %w", err)
+	}
+	prefix := "wa_live_" + keyID
+	secret := prefix + "." + secretPart
+	now := s.now().UTC()
+	credential := db.IntegrationCredential{
+		KeyID: keyID, SourceID: source.ID, Prefix: prefix,
+		Verifier: credentialVerifier(secret), Status: CredentialActive,
+		ExpiresAt: nil, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.db.WithContext(ctx).Create(&credential).Error; err != nil {
+		return IssuedCredential{}, fmt.Errorf("persist integration credential: %w", err)
+	}
+	return IssuedCredential{KeyID: keyID, Prefix: prefix, Secret: secret, ExpiresAt: nil}, nil
+}
+
 func (s *Service) SetCredentialStatus(ctx context.Context, keyID, status string) error {
 	if status != CredentialActive && status != CredentialDisabled {
 		return newError("invalid_request", "credential status must be active or disabled")

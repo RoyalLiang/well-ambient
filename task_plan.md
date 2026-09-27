@@ -57,6 +57,32 @@
 - 重构布局结构：单层表面 + 扁平分隔线 + 高密度信息组织。
 - 验证范围：前端类型检查 (`check`)、构建校验 (`build`)、1440/1024/760/480 断点测试。
 
+## 2026-09-27 令牌有效期、原生下拉框、抽屉层级与菜单栏 AI 子项治理
+
+### Problem Scope
+1. **MCP 令牌撤销样式与永久有效期**：撤销按钮需确保在任何状态下均为规范的 Danger 按钮，后端支持 `ttl_hours <= 0` 签发永久有效凭证（`ExpiresAt = nil`），前端提供“永久有效 (Permanent)”选项。
+2. **MCP 令牌有效期下拉框**：替换原生 `<select>` 为定制的 `Select.svelte` 组件。
+3. **AI 治理中心类别与状态下拉框**：替换原生 `<select class="modern-select">` 为定制的 `Select.svelte` 组件。
+4. **AI 治理中心右侧抽屉遮挡**：抽屉在 `.workspace-stage` 的局部层叠上下文中导致被外部 `console-topbar` (z-index: 50) 遮盖，需使用 `portalToConsole` 挂载至顶层 DOM 并配置 `z-index: 2000`。
+5. **菜单栏 AI 子菜单移除**：移除左侧导航 `ai_governance` 的 `children`，统一通过 `AIGovernanceCenter` 内部的横向 Tab 切换各子模块。
+
+### Mandatory Three-Way Review
+- **Impeccable / Product Register**:
+  - 全面清理所有页面中的原生 `<select>`，使用统一定制的无边框阴影小尺寸 `Select.svelte`。
+  - 抽屉遮罩层使用 `rgba(15, 23, 42, 0.45)` + `backdrop-filter: blur(4px)`，置于最高层级（`z-index: 2000+`），确保抽屉内容从视口顶部至底部完全展现，不可被顶部固定的 Topbar 遮挡。
+- **design-taste-frontend / Redesign-Preserve**:
+  - 侧边栏保持简约：主菜单项“AI 治理”不再展开繁杂子菜单，与“方案中心”、“证据链”保持完全一致的行为，进入工作区后由横向 Tab 承载子功能导航。
+- **finesse-ui / Product Workflow**:
+  - 抽屉打开时锁住外层滚动，抽屉内部独立平滑滚动；
+  - 令牌撤销按钮明确提示并支持即时 loading 状态反馈。
+
+### Implementation Steps
+- [x] 1. 在 `OpenCapabilitiesConfig.svelte` 中使用 `Select.svelte` 替换原生有效期下拉框，增加“永久有效 (Permanent)”选项。
+- [x] 2. 在 `AIGovernanceCenter.svelte` 中使用 `Select.svelte` 替换“类别”与“状态”原生下拉框。
+- [x] 3. 在 `AIGovernanceCenter.svelte` 中通过 `portalToConsole` 将规约详情抽屉挂载至顶层并提升 `z-index` 至 2000+。
+- [x] 4. 在 `FunctionalAdminShell.svelte` 中移除 `ai_governance` 路由的 `children: aiGovernanceSubnav`。
+- [x] 5. 全量编译测试（Go 单元测试、Svelte 类型检查与构建验证）。
+
 ---
 
 
