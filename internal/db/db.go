@@ -563,6 +563,18 @@ func coreSchemaModels() []any {
 		&AgentRunEvent{},
 		&CapabilityEvaluation{},
 		&CapabilityProposal{},
+		&IntegrationSource{},
+		&IntegrationCredential{},
+		&IntegrationQuotaWindow{},
+		&IntegrationQuotaLease{},
+		&IntegrationPolicyVersion{},
+		&JiraExecutionBinding{},
+		&DecisionPlan{},
+		&OpenOperation{},
+		&OpenOperationAction{},
+		&OpenOutbox{},
+		&CapabilityInvocation{},
+		&OpenQuerySnapshot{},
 	}
 }
 
@@ -636,6 +648,28 @@ func MigrateSchema(conn *gorm.DB) error {
 			ON daily_jira_decisions (task_id, created_at DESC, id DESC)`,
 	}
 	for _, statement := range taskTrackingIndexes {
+		if err := conn.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	openCapabilityIndexes := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_integration_policy_single_active
+			ON integration_policy_versions (status)
+			WHERE status = 'active'`,
+		`CREATE INDEX IF NOT EXISTS idx_open_outbox_claim
+			ON open_outboxes (state, next_attempt_at, leased_until, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_open_operation_state_updated
+			ON open_operations (state, updated_at DESC, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_capability_invocation_tool_created
+			ON capability_invocations (tool_name, created_at DESC, outcome)`,
+		`CREATE INDEX IF NOT EXISTS idx_open_query_snapshot_expiry
+			ON open_query_snapshots (expires_at, contract, policy_version)`,
+		`CREATE INDEX IF NOT EXISTS idx_integration_quota_window_cleanup
+			ON integration_quota_windows (window_start)`,
+		`CREATE INDEX IF NOT EXISTS idx_integration_quota_lease_source_expiry
+			ON integration_quota_leases (source_id, expires_at)`,
+	}
+	for _, statement := range openCapabilityIndexes {
 		if err := conn.Exec(statement).Error; err != nil {
 			return err
 		}

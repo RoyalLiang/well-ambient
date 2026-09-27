@@ -23,7 +23,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
-    -o /out/well-ambient ./cmd/server
+    -o /out/well-ambient ./cmd/server && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags="-s -w" -o /out/open-access-admin ./cmd/open-access-admin && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
+    -ldflags="-s -w" -o /out/open-mcp-stdio ./cmd/open-mcp-stdio
 
 FROM registry.cn-hangzhou.aliyuncs.com/rookiehouse/debian:bookworm-slim AS server
 ARG VERSION=dev
@@ -35,6 +39,8 @@ LABEL org.opencontainers.image.title="Well Ambient server" \
       org.opencontainers.image.created="${BUILD_TIME}"
 
 COPY --from=server-build /out/well-ambient /usr/local/bin/well-ambient
+COPY --from=server-build /out/open-access-admin /usr/local/bin/open-access-admin
+COPY --from=server-build /out/open-mcp-stdio /usr/local/bin/open-mcp-stdio
 COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 

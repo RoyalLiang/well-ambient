@@ -1,0 +1,217 @@
+openapi: 3.1.0
+info:
+  title: Well Ambient Open Capabilities
+  version: 1.0.0
+servers:
+  - url: /open/v1
+security:
+  - integrationKey: []
+paths:
+  /jira/schema:
+    get:
+      operationId: jiraDescribeSchema
+      responses:
+        "200":
+          description: Published Jira schema and completeness
+          content:
+            application/json:
+              schema: {type: object}
+  /jira/issues/search:
+    post:
+      operationId: jiraSearchIssues
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/JiraSearchRequest"}
+      responses:
+        "200":
+          description: Stable issue page
+          content:
+            application/json:
+              schema: {type: object}
+  /jira/issues/{key}:
+    get:
+      operationId: jiraGetIssue
+      parameters:
+        - {name: key, in: path, required: true, schema: {type: string}}
+        - {name: fields, in: query, schema: {type: string}}
+        - {name: include_history, in: query, schema: {type: boolean}}
+        - {name: history_cursor, in: query, schema: {type: string}}
+        - {name: history_limit, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        "200":
+          description: Issue detail and optional history
+          content:
+            application/json:
+              schema: {type: object}
+  /jira/aggregations:
+    post:
+      operationId: jiraAggregateIssues
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/JiraAggregateRequest"}
+      responses:
+        "200":
+          description: Complete-set aggregate
+          content:
+            application/json:
+              schema: {type: object}
+  /decisions/context:
+    post:
+      operationId: decisionGetContext
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issue_key]
+              properties: {issue_key: {type: string}}
+      responses:
+        "200": {description: Current state and allowed actions}
+  /decisions/plans:
+    post:
+      operationId: decisionPrepare
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DecisionPrepareRequest"}
+      responses:
+        "201": {description: Frozen decision plan}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /decisions/executions:
+    post:
+      operationId: decisionExecute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, idempotency_key]
+              properties:
+                plan_id: {type: string}
+                idempotency_key: {type: string}
+              additionalProperties: false
+      responses:
+        "202": {description: Accepted operation}
+        "200": {description: Existing terminal operation}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /operations/{id}:
+    get:
+      operationId: decisionGetOperation
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Operation and action states}
+  /reviews/search:
+    post:
+      operationId: reviewSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ReviewSearchRequest"}
+      responses:
+        "200": {description: Published review page}
+  /reviews/{id}:
+    get:
+      operationId: reviewGet
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, minimum: 1}}
+        - {name: severities, in: query, schema: {type: string}}
+        - {name: dimensions, in: query, schema: {type: string}}
+        - {name: files, in: query, schema: {type: string}}
+        - {name: current_head_sha, in: query, schema: {type: string}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        "200": {description: Public review report}
+components:
+  securitySchemes:
+    integrationKey:
+      type: http
+      scheme: bearer
+  responses:
+    Conflict:
+      description: Stale plan or idempotency conflict
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            request_id: {type: string}
+          additionalProperties: false
+      additionalProperties: false
+    JiraFilters:
+      type: object
+      properties:
+        projects: {type: array, items: {type: string}}
+        issue_types: {type: array, items: {type: string}}
+        statuses: {type: array, items: {type: string}}
+        assignees: {type: array, items: {type: string}}
+        priorities: {type: array, items: {type: string}}
+        bug_categories: {type: array, items: {type: string}}
+        updated_from: {type: string, format: date-time}
+        updated_until: {type: string, format: date-time}
+        due_before: {type: string, format: date-time}
+        unassigned: {type: boolean}
+        overdue: {type: boolean}
+    JiraSearchRequest:
+      type: object
+      properties:
+        filters: {$ref: "#/components/schemas/JiraFilters"}
+        fields: {type: array, items: {type: string}}
+        cursor: {type: string}
+        limit: {type: integer, minimum: 1}
+    JiraAggregateRequest:
+      type: object
+      required: [metrics]
+      properties:
+        filters: {$ref: "#/components/schemas/JiraFilters"}
+        metrics: {type: array, items: {type: string}}
+        group_by: {type: array, items: {type: string}}
+        event_from: {type: string, format: date-time}
+        event_until: {type: string, format: date-time}
+        time_bucket: {enum: [day, week]}
+    DecisionPrepareRequest:
+      type: object
+      required: [issue_key]
+      properties:
+        issue_key: {type: string}
+        assignee: {type: string}
+        due_date: {type: string, format: date}
+        ttl_seconds: {type: integer, minimum: 1, maximum: 3600}
+      anyOf:
+        - required: [assignee]
+        - required: [due_date]
+      additionalProperties: false
+    ReviewSearchRequest:
+      type: object
+      properties:
+        repositories: {type: array, items: {type: string}}
+        kind: {type: string}
+        ref: {type: string}
+        head_sha: {type: string}
+        base_sha: {type: string}
+        statuses:
+          type: array
+          items: {enum: [completed, partial, failed]}
+        created_from: {type: string, format: date-time}
+        created_until: {type: string, format: date-time}
+        cursor: {type: string}
+        limit: {type: integer, minimum: 1}
+      additionalProperties: false

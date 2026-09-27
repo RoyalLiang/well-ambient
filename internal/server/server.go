@@ -20,9 +20,13 @@ import (
 	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+	"well-ambient/internal/decisioncommands"
 	"well-ambient/internal/deliveryplanning"
+	"well-ambient/internal/jiraquery"
+	"well-ambient/internal/openaccess"
 	"well-ambient/internal/performance"
 	"well-ambient/internal/readmodel"
+	"well-ambient/internal/reviewread"
 	"well-ambient/internal/server/authz"
 	"well-ambient/internal/solutioncatalog"
 	"well-ambient/internal/solutions"
@@ -77,6 +81,13 @@ type Server struct {
 	agentTrace          *agentruntime.TraceCollector
 	legacySkillAdapter  *agentruntime.LegacySkillAdapter
 	strongestBrain      *strongestbrain.Service
+	openAccess          *openaccess.Service
+	openLimiter         *openaccess.Limiter
+	jiraQuery           *jiraquery.Module
+	reviewRead          *reviewread.Module
+	decisionCommands    *decisioncommands.Module
+	openMCPHandler      http.Handler
+	openFeatures        openCapabilityFeatures
 	streamingCtx        context.Context
 	stopStreaming       context.CancelFunc
 }
@@ -145,6 +156,7 @@ func NewServer(cfg *config.Config, configPath string) *Server {
 	s.setEmailConfig(*cfg)
 	s.codeReview = s.newCodeReviewService()
 	s.ensureAgentRuntime()
+	s.ensureOpenCapabilities()
 	s.routes()
 	if db.DB != nil {
 		databaseConfig, configErr := cfg.Database.Resolve()
@@ -431,8 +443,10 @@ func (s *Server) routes() {
 
 	// Protected Strongest Brain Capability Intelligence & Proposals
 	s.mux.HandleFunc("GET /api/strongest-brain/capability-intelligence", s.withPermission("decision:read", s.handleGetStrongestBrainCapabilityIntelligence))
+	s.mux.HandleFunc("GET /api/strongest-brain/open-capability-intelligence", s.withPermission("decision:read", s.handleGetStrongestBrainOpenCapabilityIntelligence))
 	s.mux.HandleFunc("GET /api/strongest-brain/capability-proposals", s.withPermission("decision:read", s.handleListStrongestBrainCapabilityProposals))
 	s.mux.HandleFunc("POST /api/strongest-brain/capability-proposals/{id}/review", s.withPermission("decision:read", s.withGlobalSuperAdmin(s.handleReviewStrongestBrainCapabilityProposal)))
+	s.registerOpenCapabilityRoutes()
 }
 
 func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -578,6 +592,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	go s.startSolutionWorker(workerContext)
 	go s.startCodeReviewWorker(workerContext)
 	go s.startDailyJiraProjectionWorker(workerContext)
+	if s.decisionCommands != nil {
+		go s.decisionCommands.Run(workerContext, time.Second)
+	}
+	if s.jiraQuery != nil {
+		go s.jiraQuery.RunSnapshotCleanup(workerContext, 10*time.Minute)
+	}
 	catalogStarted := s.solutionCatalog != nil && s.solutionCatalog.Start(workerContext)
 	if s.performance != nil {
 		s.performance.Start(workerContext)

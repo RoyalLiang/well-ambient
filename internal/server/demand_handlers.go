@@ -687,6 +687,12 @@ func (s *Server) handleScheduleTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	telemetry.LastUpdate = time.Now()
+	if s.openFeatures.Execute && s.config.Jira.Enabled &&
+		!strings.HasPrefix(telemetry.TaskID, "TASK-") &&
+		(assigneeChanged || req.DueDate != "") {
+		writeLegacyJiraSenderDisabled(w)
+		return
+	}
 
 	if err := db.DB.Save(&telemetry).Error; err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update schedule: %v", err), http.StatusInternalServerError)

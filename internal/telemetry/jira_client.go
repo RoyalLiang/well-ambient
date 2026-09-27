@@ -70,6 +70,10 @@ type JiraIssue struct {
 		Status struct {
 			Name string `json:"name"`
 		} `json:"status"`
+		Security *struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"security"`
 		Project struct {
 			Key  string `json:"key"`
 			Name string `json:"name"`
@@ -138,6 +142,20 @@ type JiraTransitionsResponse struct {
 type JiraClient struct {
 	Config *config.JiraConfig
 	client *http.Client
+}
+
+type JiraAPIError struct {
+	Operation  string
+	StatusCode int
+	Body       string
+}
+
+func (e *JiraAPIError) Error() string {
+	return fmt.Sprintf("Jira %s failed with status %d: %s", e.Operation, e.StatusCode, e.Body)
+}
+
+func (e *JiraAPIError) DefiniteFailure() bool {
+	return e.StatusCode >= http.StatusBadRequest && e.StatusCode < http.StatusInternalServerError
 }
 
 func NewJiraClient(cfg *config.JiraConfig) *JiraClient {
@@ -210,6 +228,39 @@ func (jc *JiraClient) SearchIssues(jql string) ([]JiraIssue, error) {
 	}
 
 	return allIssues, nil
+}
+
+// GetIssue reads the exact remote fields used by decision preconditions and
+// post-dispatch confirmation without downloading an unbounded changelog.
+func (jc *JiraClient) GetIssue(ctx context.Context, issueKey string) (JiraIssue, error) {
+	issueKey = strings.TrimSpace(issueKey)
+	if issueKey == "" {
+		return JiraIssue{}, fmt.Errorf("issue key is required")
+	}
+	path := fmt.Sprintf(
+		"/rest/api/2/issue/%s?fields=%s",
+		url.PathEscape(issueKey),
+		url.QueryEscape("summary,project,assignee,duedate,updated,security"),
+	)
+	req, err := jc.newRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return JiraIssue{}, err
+	}
+	req = req.WithContext(ctx)
+	resp, err := jc.client.Do(req)
+	if err != nil {
+		return JiraIssue{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return JiraIssue{}, fmt.Errorf("Jira issue read failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var issue JiraIssue
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&issue); err != nil {
+		return JiraIssue{}, err
+	}
+	return issue, nil
 }
 
 // ValidateJQL asks Jira to parse and authorize a query without downloading the
@@ -491,6 +542,10 @@ func (jc *JiraClient) TransitionIssue(issueKey, transitionID string) error {
 }
 
 func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error {
+	return jc.UpdateAssigneeContext(context.Background(), issueKey, assigneeName)
+}
+
+func (jc *JiraClient) UpdateAssigneeContext(ctx context.Context, issueKey string, assigneeName string) error {
 	var payload map[string]interface{}
 	if assigneeName == "" {
 		payload = map[string]interface{}{
@@ -509,6 +564,7 @@ func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error
 	if err != nil {
 		return err
 	}
+	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := jc.client.Do(req)
 	if err != nil {
@@ -518,7 +574,7 @@ func (jc *JiraClient) UpdateAssignee(issueKey string, assigneeName string) error
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Jira API returned status %s: %s", resp.Status, string(respBytes))
+		return &JiraAPIError{Operation: "assignee update", StatusCode: resp.StatusCode, Body: string(respBytes)}
 	}
 	return nil
 }
@@ -571,6 +627,10 @@ func (jc *JiraClient) UpdateIssueWithComment(issueKey string, assigneeName *stri
 }
 
 func (jc *JiraClient) UpdateDueDate(issueKey, dueDate string) error {
+	return jc.UpdateDueDateContext(context.Background(), issueKey, dueDate)
+}
+
+func (jc *JiraClient) UpdateDueDateContext(ctx context.Context, issueKey, dueDate string) error {
 	payload := map[string]interface{}{
 		"fields": map[string]string{
 			"duedate": dueDate,
@@ -584,6 +644,7 @@ func (jc *JiraClient) UpdateDueDate(issueKey, dueDate string) error {
 	if err != nil {
 		return err
 	}
+	req = req.WithContext(ctx)
 	resp, err := jc.client.Do(req)
 	if err != nil {
 		return err
@@ -592,7 +653,7 @@ func (jc *JiraClient) UpdateDueDate(issueKey, dueDate string) error {
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Jira due date update failed with status %s: %s", resp.Status, string(respBytes))
+		return &JiraAPIError{Operation: "due date update", StatusCode: resp.StatusCode, Body: string(respBytes)}
 	}
 	return nil
 }

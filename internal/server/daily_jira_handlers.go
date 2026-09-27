@@ -390,6 +390,10 @@ func (s *Server) handlePostDailyJiraReview(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "assignee is required for reassign", http.StatusBadRequest)
 		return
 	}
+	if s.openFeatures.Execute && req.Decision == "reassign" {
+		writeLegacyJiraSenderDisabled(w)
+		return
+	}
 	if utf8.RuneCountInString(req.Note) > 500 {
 		http.Error(w, "note must be 500 characters or fewer", http.StatusBadRequest)
 		return

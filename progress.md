@@ -3982,3 +3982,30 @@ Impeccable update explicitly authorized but failed with download invalid zip dat
 - 已实现 SQLite 默认禁用 Jira 早报自动 worker；隔离测试需显式设置 `WELL_AMBIENT_ALLOW_SQLITE_EMAIL_SCHEDULER=1`。
 - 已新增配置保存/worker 唤醒的精确回归测试：09:30 发送后改为 13:30、19:14，SMTP 调用始终为 1，台账不变。
 - 全仓 `go test ./... -count=1`、`go vet ./...` 和 `git diff --check` 全部通过；生产数据库未修改。
+
+## 2026-09-27 对外开放能力与最强大脑
+
+- 已读取仓库冷启动约束、完整路由/核心/状态/工具规则和实施方案。
+- 已确认任务分类为高风险、跨模块、跨轮次的 coding + design；建立持久目标和执行计划。
+- 已读取全局 `domain-modeling` 与 `codebase-design` 规则，采用领域术语、深 Module、小 Interface 和 Adapter seam 设计。
+- 已确认工作区启动时无未提交改动，Go 包枚举成功。
+- 已记录 `rg` 缺失和 skill tool 暴露差异，切换到可用工具继续。
+- 下一步：并行盘点数据库/路由、Jira 查询与写入、Code Review 读取、Agent Runtime/最强大脑复用点。
+- 已启动两个只读子任务，分别盘点 Go 领域复用点与 Agent/Skill/MCP 打包约定。
+- 已读取根领域语言和 ADR 索引；确认新增开放能力术语应并入现有根上下文。
+- 已枚举 server/db/runtime/review/brain 文件与路由/迁移线索，准备进入具体接口和装配点核查。
+- 已定位 Server 集中路由、GORM schema 清单、Agent Runtime manifest/registry/trace、Jira 历史持久化、Code Review Service 和 Strongest Brain intelligence 入口。
+- 已确定开放层需要独立 API Key middleware 与应用 Module interface；内部 JWT handler 和 MCP/HTTP Adapter 只能作为调用方。
+- 已核对服务器 worker 生命周期与 Jira 客户端写能力；确认 Outbox 可纳入现有 Serve context，且必须新增写后确认 Adapter。
+- 已核对 2026-09-27 官方 MCP/Agent Skills 规范，选定 MCP Go SDK v1.8.0、stateless Streamable HTTP + stdio 双 transport、2026/2025 双协议兼容。
+- 已新增开放能力数据库模型并接入 GORM 核心 schema：Source、Credential、Policy、Execution Binding、Plan、Operation/Action/Outbox、Invocation。
+- 已完成并验证 Integration Access、Jira Query、Review Read、Decision Command 核心 Module；五包定向测试全部通过。
+- 已补充 context-aware Jira 单 Issue 读取与写入 Adapter，准备接入 Server HTTP 和 Outbox worker 生命周期。
+- 已完成 `/open/v1` 十项 HTTP 契约、远程 `/mcp`、stdio bridge、管理 CLI、默认关闭开关和 read-contract 观测。
+- 已完成 Jira immutable Query Snapshot、当前与历史指标、history 字段白名单、GitLab ProjectID 授权和 Review 公共 DTO 脱敏。
+- 已完成 Decision Key/来源/策略/审批/binding/Issue Security 发送前重验、顺序 fail-stop、租约 fencing、崩溃核验恢复和 Jira 4xx certainty。
+- 已完成旧 Jira sender ownership gate；新 execute 打开时旧转派/改期入口返回 `legacy_sender_disabled`。
+- 已完成 strongest-brain open capability intelligence，只生成只读指标和治理建议。
+- 已生成三个可发现 Skill、MCP package、darwin/arm64 stdio/admin 二进制和 checksums。
+- 最终验证通过：全仓 Go test、vet、三命令 build、核心包 race、diff-check；Docker CLI 不可用，未执行本机 Compose/Docker 运行验证。
+- 已将来源配额从进程内存升级为数据库共享分钟窗口与并发 lease；两个独立 Limiter 实例和轮换 Key 共用计数，lease heartbeat 防止长请求误释放，崩溃后自动过期。

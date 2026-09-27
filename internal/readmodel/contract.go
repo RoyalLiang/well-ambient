@@ -301,7 +301,9 @@ func NewRegistry(contracts map[string]Contract) (*Registry, error) {
 		order:     make([]string, 0, len(contracts)),
 	}
 	for route, contract := range contracts {
-		if !strings.HasPrefix(route, "/api/") && route != "/api/status" {
+		if !strings.HasPrefix(route, "/api/") &&
+			!strings.HasPrefix(route, "/open/v1/") &&
+			route != "/api/status" {
 			return nil, fmt.Errorf("read contract route must be an API path: %s", route)
 		}
 		if err := contract.Validate(); err != nil {

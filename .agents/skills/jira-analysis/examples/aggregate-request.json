@@ -1,0 +1,8 @@
+{
+  "filters": {
+    "projects": ["WA"],
+    "statuses": ["progress", "review"]
+  },
+  "metrics": ["issue_count", "unassigned_count", "overdue_count"],
+  "group_by": ["status", "priority"]
+}

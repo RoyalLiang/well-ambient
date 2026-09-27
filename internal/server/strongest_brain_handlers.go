@@ -2101,6 +2101,10 @@ func (s *Server) handleStrongestBrainIntervention(w http.ResponseWriter, r *http
 		http.Error(w, "Bad Request: task_id, action, and value are required", http.StatusBadRequest)
 		return
 	}
+	if s.openFeatures.Execute && (req.Action == "reassign" || req.Action == "reschedule") {
+		writeLegacyJiraSenderDisabled(w)
+		return
+	}
 
 	var task db.TaskTelemetry
 	if err := db.DB.Where("task_id = ?", req.TaskID).First(&task).Error; err != nil {

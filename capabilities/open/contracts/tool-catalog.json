@@ -1,0 +1,16 @@
+{
+  "schema": "well-ambient-open-tools/v1",
+  "version": "1.0.0",
+  "tools": [
+    {"name": "jira_describe_schema", "capability": "jira.read"},
+    {"name": "jira_search_issues", "capability": "jira.read"},
+    {"name": "jira_get_issue", "capability": "jira.read"},
+    {"name": "jira_aggregate_issues", "capability": "jira.read"},
+    {"name": "decision_get_context", "capability": "decision.read"},
+    {"name": "decision_prepare", "capability": "decision.prepare"},
+    {"name": "decision_execute", "capability": "decision.execute"},
+    {"name": "decision_get_operation", "capability": "decision.read"},
+    {"name": "review_search", "capability": "review.read"},
+    {"name": "review_get", "capability": "review.read"}
+  ]
+}

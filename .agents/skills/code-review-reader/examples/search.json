@@ -1,0 +1,7 @@
+{
+  "repositories": ["123"],
+  "kind": "mr",
+  "ref": "42",
+  "statuses": ["completed", "partial"],
+  "limit": 20
+}

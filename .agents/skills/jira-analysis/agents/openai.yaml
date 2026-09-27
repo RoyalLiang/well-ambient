@@ -1,0 +1,7 @@
+interface:
+  display_name: "Jira Analysis"
+  short_description: "Analyze governed Jira facts and metrics"
+  default_prompt: "Use $jira-analysis to answer this Jira question with server-side metrics, snapshot metadata, evidence, and explicit history gaps."
+
+policy:
+  allow_implicit_invocation: true

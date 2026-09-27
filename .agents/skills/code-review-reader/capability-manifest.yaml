@@ -1,0 +1,51 @@
+schema: capability-manifest/v1
+id: well-ambient.code-review-reader
+kind: skill
+version: 1
+owner: well-ambient
+description: Version-aware lookup and evidence reading for existing code review reports.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: [code-review-read, review-report, review-findings]
+  conditions: []
+provides: [review-report-reading, review-evidence]
+requires:
+  - id: well-ambient.open-capabilities-mcp
+    kind: mcp
+    version: ">=1"
+permissions: [review.read]
+resources:
+  - key: workflow
+    load_level: L1
+    content_ref: SKILL.md
+    content_kind: text
+    token_estimate: 550
+  - key: applicability
+    load_level: L1
+    content_ref: references/report-applicability.md
+    content_kind: text
+    token_estimate: 450
+  - key: examples
+    load_level: L2
+    content_ref: examples
+    content_kind: json
+    token_estimate: 300
+tools:
+  - review_search
+  - review_get
+budgets:
+  instruction_tokens: 1400
+  evidence_tokens: 9000
+  raw_tokens: 0
+  tool_calls: 12
+  wall_time_seconds: 120
+validation:
+  suite: open-code-review-reader-v1
+  required: [repository-scope, partial-not-pass, failed-not-pass, outdated-detection, sensitive-field-redaction]
+activation:
+  mode: human_approved
+  canary_required: true

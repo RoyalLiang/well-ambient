@@ -1,0 +1,6 @@
+{
+  "run_id": 123,
+  "severities": ["high", "medium"],
+  "current_head_sha": "a91c2e",
+  "limit": 100
+}

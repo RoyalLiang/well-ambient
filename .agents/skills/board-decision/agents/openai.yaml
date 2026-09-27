@@ -1,0 +1,7 @@
+interface:
+  display_name: "Board Decision"
+  short_description: "Prepare and confirm governed Jira changes"
+  default_prompt: "Use $board-decision to prepare this exact Jira change, execute it once with a stable idempotency key, and wait for remote confirmation."
+
+policy:
+  allow_implicit_invocation: true

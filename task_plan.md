@@ -8312,3 +8312,60 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - 生产主机仅有一个 Well Ambient server 进程，容器自 2026-09-25 启动后无重启，无 cron/systemd 重复任务。
 - 生产 PostgreSQL：2026-09-26 09:30:00 发送一次。
 - 本地 SQLite：2026-09-26 16:43:15 发送一次；该时间与本地诊断后端启动完全一致，收件人和 Confluence URL 与生产相同。
+
+## 2026-09-27 对外开放能力与最强大脑实施
+
+### 目标
+
+执行 `docs/open-capabilities-implementation-plan-2026-09-26.md`，在现有模块化单体内建立统一开放能力接口，完成可验证的 P1-P3 核心闭环，并交付基于通用 Agent 架构和领域建模的 Skill 包与 MCP 包。
+
+### 范围与原则
+
+- 后端优先；本任务不新增管理 UI。
+- HTTP、MCP 与内部最强大脑复用同一应用层 Module，不复制 Jira 或评审规则。
+- 默认拒绝：未配置统一策略、Jira 执行绑定或发布范围时，不对外暴露对应能力。
+- 查询事实、模型解释、决策方案、执行操作和远端确认严格分离。
+- 不签发生产 Key、不修改生产 Jira、不部署、不迁移生产数据库、不发送外部消息。
+- P0 的真实 Jira 版本、目标客户端、授权范围和生产数据水位仅能形成显式待验证配置，不能伪造通过。
+
+### 阶段
+
+- [x] A. 盘点现有模块、数据库迁移、路由、Jira/Review/Runtime 接口和可复用测试设施。
+- [x] B. 更新统一领域语言和架构决策，冻结开放能力的 Module/Interface/Adapter 设计。
+- [x] C. 实现 Integration Access：来源、凭证、统一策略、调用审计、限流和统一错误。
+- [x] D. 实现 Jira Query 与 Review Read 的 HTTP 应用接口及确定性契约。
+- [x] E. 实现 Decision Command：prepare/execute/operation、幂等、Outbox、核验状态机。
+- [x] F. 实现 MCP Adapter、stdio/HTTP 包装和能力 manifest。
+- [x] G. 交付 `jira-analysis`、`board-decision`、`code-review-reader` Skill 包。
+- [x] H. 将 Invocation/Operation 事实接入最强大脑只读评估闭环。
+- [x] I. 执行单元、集成、契约、构建和本地运行验证，记录 P0 外部待验证项。
+
+### 风险与决策
+
+- 方案跨越 P1-P5；先完成可运行的 P1-P3，P4/P5 以稳定扩展点和证据投影实现，禁止宣称生产闭环已验证。
+- 当前 skill 路由未暴露全局 `domain-modeling`/`codebase-design`，已直接读取本机对应 `SKILL.md` 并按其规则执行。
+- 不建立透传目录；只有在接口确实隐藏策略、幂等、授权或协议复杂度时才新增 Module。
+- 任何远端超时或缺少确认的写操作保持 `unknown`，不得转成成功或自动盲重试。
+
+### 错误记录
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| `rg` 未安装 | 1 | 使用 `find`、`grep` 和 Go 工具继续，后续命令不重复依赖 `rg`。 |
+| `domain-modeling`/`codebase-design` 未被当前 skill tool 暴露 | 1 | 读取 `~/.codex/skills/.../SKILL.md`，使用项目领域文档和 ADR 作为持久化输出。 |
+| 首次规划文件补丁上下文未命中 | 1 | 重新读取当前文件并使用尾部唯一上下文追加，未覆盖既有内容。 |
+| 官方 MCP Go SDK 下载无法写用户级 module cache | 1 | 改用工作区 `GOMODCACHE`、`GOCACHE` 和 `GOTMPDIR` 重试，不扩大文件权限。 |
+| SQLite `MAX(timestamp)` 无法扫描到 `*time.Time` | 1 | Jira/Review 水位改为按模型时间字段降序读取首行，保持 SQLite/PostgreSQL 一致。 |
+
+### 最终验证
+
+- [x] `go test ./... -count=1`
+- [x] `go vet ./...`
+- [x] `go build ./cmd/server ./cmd/open-access-admin ./cmd/open-mcp-stdio`
+- [x] `go test -race ./internal/openaccess ./internal/jiraquery ./internal/reviewread ./internal/decisioncommands ./internal/openmcp -count=1`
+- [x] `git diff --check`
+- [x] Skill frontmatter、capability manifest、OpenAPI、JSON contract 解析测试
+- [x] MCP 2026-07-28 stateless `tools/list`/`tools/call` 与 HTTP 等价回归
+- [x] Skill/MCP/CLI 原生产物和 SHA-256 checksums
+- [x] 两个独立 Limiter 实例共享数据库窗口/lease，轮换 Key、并发拒绝、过期恢复重复 10 次通过
+- [ ] 真实 PostgreSQL、生产 Jira、两个目标 MCP 客户端与 Docker artifact-only 验收（P0 外部输入，未伪造完成）

@@ -1,0 +1,53 @@
+schema: capability-manifest/v1
+id: well-ambient.jira-analysis
+kind: skill
+version: 1
+owner: well-ambient
+description: Evidence-backed Jira search, aggregation, drill-down, and explanation.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: [jira-analysis, jira-query, delivery-analysis]
+  conditions: []
+provides: [jira-fact-analysis, jira-metric-explanation]
+requires:
+  - id: well-ambient.open-capabilities-mcp
+    kind: mcp
+    version: ">=1"
+permissions: [jira.read]
+resources:
+  - key: workflow
+    load_level: L1
+    content_ref: SKILL.md
+    content_kind: text
+    token_estimate: 600
+  - key: metric-semantics
+    load_level: L1
+    content_ref: references/metrics.md
+    content_kind: text
+    token_estimate: 700
+  - key: examples
+    load_level: L2
+    content_ref: examples
+    content_kind: json
+    token_estimate: 500
+tools:
+  - jira_describe_schema
+  - jira_search_issues
+  - jira_get_issue
+  - jira_aggregate_issues
+budgets:
+  instruction_tokens: 1800
+  evidence_tokens: 8000
+  raw_tokens: 0
+  tool_calls: 20
+  wall_time_seconds: 120
+validation:
+  suite: open-jira-analysis-v1
+  required: [scope-enforcement, full-set-aggregation, history-gap-reporting, snapshot-stability]
+activation:
+  mode: human_approved
+  canary_required: true

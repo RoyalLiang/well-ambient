@@ -1,0 +1,22 @@
+{
+  "name": "well-ambient-open-capabilities-mcp",
+  "version": "1.0.0",
+  "protocol": {
+    "preferred": "2026-07-28",
+    "compatible": ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+  },
+  "remote": {
+    "transport": "streamable-http",
+    "path": "/mcp",
+    "authentication": "Authorization: Bearer <integration credential>"
+  },
+  "stdio": {
+    "command": "open-mcp-stdio",
+    "environment": ["WELL_AMBIENT_BASE_URL", "WELL_AMBIENT_API_KEY"]
+  },
+  "contracts": [
+    "../../contracts/tool-catalog.json",
+    "../../contracts/openapi.yaml",
+    "../../contracts/errors.schema.json"
+  ]
+}

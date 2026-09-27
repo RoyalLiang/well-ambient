@@ -3134,3 +3134,50 @@
 - 生产主机只有一个 Well Ambient server 进程，容器无重启、无主机 cron；生产应用自身没有当天第二次发送证据。
 - 修复边界：PostgreSQL 自动调度保持不变；SQLite 默认不启动自动邮件 worker，只有隔离测试显式设置 `WELL_AMBIENT_ALLOW_SQLITE_EMAIL_SCHEDULER=1` 才允许。
 - 当前 `email_scheduler.go` 仍保留“当天存在任何 claim 就返回”，`sendDailyEmail` 仍有 `INSERT ... ON CONFLICT DO NOTHING` 的第二层并发门禁。
+
+## 2026-09-27 对外开放能力与最强大脑
+
+- 实施方案明确要求模块化单体：HTTP、MCP、Skill 和内部最强大脑共享领域 Module，MCP 仅为 Adapter，Skill 仅为流程包。
+- 首版身份是 Integration Source + Credential；来源用于溯源、配额和运行统计，不代表 Jira 用户，不允许请求头伪造 actor/source 参与授权。
+- 所有有效 Key 首版共享统一业务策略；若要按来源差异授权，必须以后显式修改领域模型。
+- 查询快照必须携带口径、数据截止时间和完整性；历史缺失不能解释为零。
+- DecisionPlan 冻结目标、变更、前置条件、策略版本、过期时间和摘要；Operation 才是持久化执行实例。
+- `succeeded` 仅能来自 Jira 远端确认；本地提交、HTTP 202 或请求已发出均不是成功证据。
+- Code Review 只开放读取，必须表达 run 完成度、代码版本适用性和 coverage gaps。
+- 现有仓库已有 `internal/agentruntime`、`internal/codereview`、`internal/strongestbrain`、`internal/server`，尚无 `internal/openaccess`、`jiraquery`、`decisioncommands` 或 `openmcp` 包。
+- 当前工作区启动时干净；现有 planning 文件很大且承载历史任务，本任务采用追加章节，不覆盖已有内容。
+- P0 中的真实 Jira 版本、两个目标客户端、授权范围、执行绑定和生产数据水位需要外部环境证据；本地实现只能提供默认拒绝配置、检查命令和待验证清单。
+- `CONTEXT.md` 已定义源事实、投影快照、分析运行和证据引用；开放能力新增术语必须与这些概念衔接，不能把 Query Snapshot 或模型解释定义成新的源事实。
+- 仓库当前只有单一根上下文，没有 `CONTEXT-MAP.md`；新增 Integration Source、Credential、Policy、Decision Plan、Operation、Capability Contract 适合并入根 `CONTEXT.md`。
+- 现有系统采用模块化单体和 GORM 启动迁移；开放能力需要复用 `internal/db` 的迁移所有权与 `internal/server` 的装配，不引入独立数据库进程。
+- `internal/agentruntime`、`internal/codereview`、`internal/strongestbrain` 已存在，开放能力实现应优先为这些模块增加明确 Adapter，而不是让 HTTP/MCP 直接跨包读取数据库。
+- 当前 GET 路由有统一 read-contract inventory 测试；新增 `/open/v1` GET 路由必须同步登记有界性、权限和证据语义。
+- `internal/agentruntime.Manifest` 已支持 `KindSkill` 与 `KindMCP`，并包含权限、预算、依赖、load level 和内容摘要；新包应直接产出该 manifest，而不是定义第二套 capability 元数据。
+- `internal/server/jira_report_sync.go` 已把配置权威 Bug 分类、字段 ID 和 Jira 历史完整性写入 `TaskTelemetry`，并把 changelog 持久化为 `JiraReportChange`；Jira Query 可复用这些事实，但必须补充查询快照和统一口径元数据。
+- 现有 Server 在 `server.go` 中集中注册路由并使用 `withAuth`/`withPermission`；开放 API Key 不能套用内部 JWT 身份，需单独的 Integration Access middleware，再调用同一应用层 Module。
+- `internal/server/code_review_handlers.go` 通过 `newCodeReviewService()` 临时组装 `codereview.Service`；开放 Review Read 应在 `internal/codereview` 或新 Module 上增加公开读接口，避免复制 handler DTO 与数据库查询。
+- 数据库使用 GORM `coreSchemaModels()` 集中迁移；新增 Integration/Policy/Plan/Operation/Outbox/Invocation 模型必须进入该清单并提供 schema contract 测试。
+- 现有 `internal/strongestbrain.IntelligenceEngine` 已聚合 AgentRun、CodeReviewRun 和 CapabilityProposal；开放调用事实应通过新的只读投影接入，不让模型或分析引擎直接执行权限/写操作。
+- `Server.Serve` 创建统一 worker context，并启动 Jira、Code Review、Solution 和 Projection workers；Decision Outbox worker 应挂在这里，保证取消和关停语义一致。
+- 现有 Jira 客户端提供 `SearchIssues`、`UpdateAssignee`、`UpdateDueDate` 等能力，但旧 `syncAssigneeToJira`/`syncDueDateToJira` 仅依据写请求返回值记录日志，不执行写后读取确认。
+- Decision Command 需要独立 `JiraExecutor` Adapter：发送前读取当前值，发送后再次读取并比较 desired/confirmed；网络错误后若无法确认，状态必须为 `unknown`。
+- `Server` 已使用依赖字段替换真实 Jira 调用以便测试；新开放 Module 也应接受接口依赖，不在 Module 内创建 `telemetry.JiraClient`。
+- 截至 2026-09-27，MCP 最新稳定规范为 `2026-07-28`；官方 Go SDK `v1.8.0` 支持该版本并向后兼容 `2025-11-25`、`2025-06-18`、`2025-03-26` 和 `2024-11-05`。
+- 远程 MCP 采用官方 SDK 的 stateless Streamable HTTP；这既满足 `2026-07-28` 的无状态要求，也允许旧客户端协商到 `2025-11-25` 握手模型。
+- 本地桥接采用官方 stdio transport；标准输出仅承载换行分隔 JSON-RPC，日志只能写 stderr。
+- Agent Skills 规范要求每个包至少包含带 YAML frontmatter 的 `SKILL.md`；详细技术契约应放在 `references/`，主文保持流程化和渐进加载。
+- `internal/openaccess` 已实现来源、Key 一次性签发/摘要验证、轮换/撤销/过期、统一策略版本、执行绑定、Invocation 和按来源聚合配额；未配置策略时默认拒绝。
+- `internal/jiraquery` 已实现 schema/search/get/aggregate，共用 policy scope、完整集合聚合、带 checksum/scope/watermark cursor、query snapshot metadata 和历史完整性传播。
+- `internal/reviewread` 已实现 repository policy、稳定 cursor、公开 DTO、finding/evidence 筛选与 `matches_current_head/outdated/not_checked`，不返回 raw policy/snapshot/report/error。
+- `internal/decisioncommands` 已实现 prepare/execute/operation、计划单次执行、来源+scope 幂等、Operation/Action/Outbox、租约领取、发送前重验、写后确认和 unknown 禁止盲重试。
+- Jira Port 已增加 context-aware 单 Issue 读取、转派和改期；Operation 的成功只来自写后读取到 desired value。
+- 最终实现已经新增 `internal/openaccess`、`internal/jiraquery`、`internal/reviewread`、`internal/decisioncommands` 与 `internal/openmcp`；此前“尚无这些包”的盘点结论已被实施取代。
+- Jira search 使用数据库持久化的 30 分钟不可变 Query Snapshot；cursor 绑定 policy/scope/snapshot/offset，源投影更新不会改变后续页。
+- Jira aggregate 区分当前指标与历史事件指标；历史使用 UTC 半开区间，支持 day/week bucket、事件次数、去重事项数、reopen、assignee change 和完整历史 status duration。
+- Jira history 只返回 `field_rules.jira_history` 白名单字段；未知 custom field 默认排除。
+- Review 授权使用 GitLab ProjectID，不使用可重名的显示名称；搜索摘要读取 report/snapshot 的 finding count、evidence completeness 和 coverage gaps。
+- Decision worker 的 queued/claimed/dispatching 分离，lease token fencing、实际 binding 冻结、执行 Key 复核、approval tightening、source/policy 收紧、restricted Issue 和多动作 fail-stop 均有回归。
+- 凭证要求正 TTL，支持 active/disabled/revoked、轮换、list/show 安全元数据；secret 仍只在首次签发显示。
+- 部署开关默认关闭；execute 开启后旧 Jira 转派/改期 sender 被硬禁，已受理 Operation worker 继续核验。
+- 外部残余验收不是源码完成声明：PostgreSQL 并发/迁移、真实 Jira 版本与 Issue Security、两个目标 MCP 客户端、Docker artifact-only 流程仍需 P0 环境证据。
+- 交付前自审发现的多副本配额放大风险已修复：`IntegrationQuotaWindow` 与 `IntegrationQuotaLease` 以数据库为共享权威，Source 行锁串行化同来源配额检查，lease heartbeat 和到期清理覆盖长请求与进程崩溃。

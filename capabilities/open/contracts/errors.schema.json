@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "well-ambient-open-error/v1",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "request_id"],
+      "properties": {
+        "code": {
+          "enum": [
+            "unauthenticated",
+            "forbidden",
+            "not_found",
+            "invalid_query",
+            "stale_plan",
+            "idempotency_conflict",
+            "rate_limited",
+            "upstream_unavailable",
+            "outcome_unknown",
+            "internal_error"
+          ]
+        },
+        "message": {"type": "string"},
+        "request_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

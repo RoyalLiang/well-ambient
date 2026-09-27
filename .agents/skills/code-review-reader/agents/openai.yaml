@@ -1,0 +1,7 @@
+interface:
+  display_name: "Code Review Reader"
+  short_description: "Read version-specific review reports and evidence"
+  default_prompt: "Use $code-review-reader to find the report for this exact code version and explain its findings, coverage, freshness, and limits."
+
+policy:
+  allow_implicit_invocation: true

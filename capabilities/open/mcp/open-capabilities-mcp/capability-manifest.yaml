@@ -1,0 +1,51 @@
+schema: capability-manifest/v1
+id: well-ambient.open-capabilities-mcp
+kind: mcp
+version: 1
+owner: well-ambient
+description: MCP adapter for governed Jira analysis, decision operations, and review reading.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: ["*"]
+  conditions: []
+provides: [jira-tools, decision-tools, review-tools]
+requires: []
+permissions: []
+resources:
+  - key: tool-catalog
+    load_level: L0
+    content_ref: ../../contracts/tool-catalog.json
+    content_kind: json
+    token_estimate: 500
+  - key: openapi
+    load_level: L1
+    content_ref: ../../contracts/openapi.yaml
+    content_kind: schema
+    token_estimate: 1800
+tools:
+  - jira_describe_schema
+  - jira_search_issues
+  - jira_get_issue
+  - jira_aggregate_issues
+  - decision_get_context
+  - decision_prepare
+  - decision_execute
+  - decision_get_operation
+  - review_search
+  - review_get
+budgets:
+  instruction_tokens: 800
+  evidence_tokens: 0
+  raw_tokens: 0
+  tool_calls: 40
+  wall_time_seconds: 300
+validation:
+  suite: open-capabilities-mcp-v1
+  required: [ten-tool-catalog, streamable-http, stdio, auth-header, http-mcp-equivalence]
+activation:
+  mode: human_approved
+  canary_required: true

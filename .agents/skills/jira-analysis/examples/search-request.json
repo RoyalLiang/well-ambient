@@ -1,0 +1,8 @@
+{
+  "filters": {
+    "projects": ["WA"],
+    "unassigned": true
+  },
+  "fields": ["key", "summary", "status", "priority", "due_date", "history_complete"],
+  "limit": 50
+}

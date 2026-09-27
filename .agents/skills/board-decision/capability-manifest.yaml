@@ -1,0 +1,53 @@
+schema: capability-manifest/v1
+id: well-ambient.board-decision
+kind: skill
+version: 1
+owner: well-ambient
+description: Governed Jira decision preparation, idempotent execution, and remote confirmation.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: [board-decision, jira-reassign, jira-reschedule]
+  conditions: []
+provides: [decision-plan, confirmed-jira-operation]
+requires:
+  - id: well-ambient.open-capabilities-mcp
+    kind: mcp
+    version: ">=1"
+permissions: [decision.read, decision.prepare, decision.execute]
+resources:
+  - key: workflow
+    load_level: L1
+    content_ref: SKILL.md
+    content_kind: text
+    token_estimate: 650
+  - key: lifecycle
+    load_level: L1
+    content_ref: references/lifecycle.md
+    content_kind: text
+    token_estimate: 500
+  - key: examples
+    load_level: L2
+    content_ref: examples
+    content_kind: json
+    token_estimate: 400
+tools:
+  - decision_get_context
+  - decision_prepare
+  - decision_execute
+  - decision_get_operation
+budgets:
+  instruction_tokens: 1800
+  evidence_tokens: 5000
+  raw_tokens: 0
+  tool_calls: 16
+  wall_time_seconds: 180
+validation:
+  suite: open-board-decision-v1
+  required: [stale-plan, idempotency-conflict, policy-tightening, remote-timeout-unknown, confirmed-success]
+activation:
+  mode: human_approved
+  canary_required: true

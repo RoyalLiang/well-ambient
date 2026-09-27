@@ -31,6 +31,9 @@ services:
     environment:
       WELL_AMBIENT_SETUP_TOKEN: ${WELL_AMBIENT_SETUP_TOKEN:-}
       WELL_AMBIENT_MAINTENANCE_MODE: ${WELL_AMBIENT_MAINTENANCE_MODE:-}
+      WELL_AMBIENT_OPEN_READ_ENABLED: ${WELL_AMBIENT_OPEN_READ_ENABLED:-0}
+      WELL_AMBIENT_OPEN_PREPARE_ENABLED: ${WELL_AMBIENT_OPEN_PREPARE_ENABLED:-0}
+      WELL_AMBIENT_OPEN_EXECUTE_ENABLED: ${WELL_AMBIENT_OPEN_EXECUTE_ENABLED:-0}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       # Mount the directory, not one file, so owner-only atomic config replacement works.

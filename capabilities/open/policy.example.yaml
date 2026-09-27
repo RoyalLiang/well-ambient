@@ -1,0 +1,127 @@
+allowed_projects:
+  - WA
+
+allowed_repositories:
+  - "123"
+
+actions:
+  - jira.read
+  - review.read
+  - decision.read
+  - decision.prepare
+  - decision.execute
+  - decision.reassign
+  - decision.reschedule
+
+field_rules:
+  jira_describe_schema:
+    - key
+    - project
+    - summary
+    - issue_type
+    - status
+    - assignee
+    - priority
+    - bug_category
+    - due_date
+    - created_at
+    - updated_at
+    - history_complete
+    - history
+  jira_search_issues:
+    - key
+    - project
+    - summary
+    - issue_type
+    - status
+    - assignee
+    - priority
+    - bug_category
+    - due_date
+    - created_at
+    - updated_at
+    - history_complete
+  jira_get_issue:
+    - key
+    - project
+    - summary
+    - description
+    - issue_type
+    - status
+    - assignee
+    - reporter
+    - priority
+    - severity
+    - bug_category
+    - due_date
+    - created_at
+    - updated_at
+    - history_complete
+    - parent_key
+    - history
+  jira_history:
+    - status
+    - assignee
+    - priority
+    - duedate
+  jira_aggregate_issues:
+    - key
+    - project
+    - issue_type
+    - status
+    - assignee
+    - priority
+    - bug_category
+    - due_date
+    - created_at
+    - updated_at
+    - history_complete
+    - history
+  review_search:
+    - run_id
+    - repository
+    - kind
+    - ref
+    - base_sha
+    - head_sha
+    - title
+    - run_status
+    - reviewed_at
+    - coverage_gaps
+    - evidence_complete
+    - findings_count
+    - code_freshness
+  review_get:
+    - run_id
+    - repository
+    - kind
+    - ref
+    - base_sha
+    - head_sha
+    - title
+    - run_status
+    - reviewed_at
+    - coverage_gaps
+    - evidence_complete
+    - findings_count
+    - code_freshness
+    - overview
+    - scenario
+    - validation
+    - questions
+    - findings
+    - evidence_refs
+
+data_rules:
+  jira_issue_visibility: verified_cache
+  jira_restricted_issues: deny
+
+approval_rules:
+  reassign: auto
+  reschedule: auto
+
+query_limits:
+  max_page_size: 100
+  max_scan_rows: 10000
+  max_group_by: 2
+  max_time_buckets: 120
