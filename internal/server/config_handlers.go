@@ -74,9 +74,17 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
 		return
 	}
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
+
 	// Database settings are bootstrap-only and never accepted from the browser.
-	// Preserve the file-loaded values across ordinary integration config saves.
+	// Listener settings are also bootstrap-only, and maintenance mode has a
+	// dedicated atomic endpoint so stale full-config saves cannot overwrite it.
 	newCfg.Database = s.config.Database
+	newCfg.Server.Host = s.config.Server.Host
+	newCfg.Server.Port = s.config.Server.Port
+	newCfg.Server.AttachmentDir = s.config.Server.AttachmentDir
+	newCfg.Server.MaintenanceMode = s.config.Server.MaintenanceMode
 	mergeConfiguredSecrets(&newCfg, *s.config)
 	if err := newCfg.AI.NormalizeReasoningEffort(); err != nil {
 		writeConfigSaveError(w, http.StatusBadRequest, err.Error())

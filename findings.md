@@ -1,5 +1,60 @@
 # Findings & Decisions
 
+## 2026-09-27 Final completion findings
+
+- AI governance now has one ownership model: Settings retains only AI engine infrastructure, while prompts/context governance, legacy deep links, narrow handlers, and shared route/shell/tab/read/write permissions live in the governed surface.
+- Deployment and synchronization close fail closed: runtime/state/backup directories use `0700`, configuration/snapshot/evidence files use `0600`, external PostgreSQL requires verified backup evidence, and `sync-production` rechecks target safety immediately before applying an atomic migration.
+- Maintenance mode remains database-owned through bootstrap, ordinary save, and rollback; durable `false` is authoritative, narrow endpoints avoid unrelated-field loss, and shared permissions govern every frontend and backend access path.
+- Setup retry recovery is allowed only with the owner-only completion marker proving the same SQLite source and PostgreSQL target plus a complete schema; any identity mismatch remains blocked.
+- The refreshed bounded-read inventory is `97` GET routes with `20` verified, `49` bounded, and `28` migration-pending across `31` reachable surfaces.
+- Final validation on `2026-09-27` passed `make verify` and frontend contracts `204/204`. The completed authenticated config-authorization run covered `9` isolated states at `1440/1024/760/480`, permission personas, HTTP `409` recovery, and zero document overflow.
+- A later browser-agent attempt was tool-blocked before it could contribute supplementary evidence. This is not a product failure and does not weaken the completed authenticated browser result.
+- Added-line secret review found no findings. A hardcoded AES passphrase remains a pre-existing `HEAD` risk outside the added diff; the value is intentionally omitted and the unchanged issue requires no waiver for this commit.
+
+---
+
+## 2026-09-26 Maintenance / AI governance atomic config completion
+
+- The worktree contains broad unrelated changes. Current task-owned candidates are the new governance/maintenance handlers, their tests, config version/bootstrap logic, route/read contracts, `ai-governance-sections.ts`, `App.svelte`, `FunctionalAdminShell.svelte`, `AIGovernanceCenter.svelte`, `SolutionPromptConfig.svelte`, and existing governance contract tests.
+- `AIGovernanceCenter.svelte` is presently non-compiling: its script has narrow `solutionPublicURL` state, but the template still references removed `canWriteConfig` and `governanceConfig` symbols.
+- The shared section contract already encodes the required matrix: skills/context = `ai_context:read`; prompts = global `super_admin` plus `solution_prompt:manage`; rules = `dashboard:read`; capability mutations = prompts authority; rule writes = `config:write`; public URL read/write add `config:read`/`config:write`.
+- App route access correctly checks the first accessible AI section before the generic admin bypass, and the shell delegates AI children to the shared helper. Remaining frontend gaps are accessible-tab filtering, no-access fallback, skill action visibility, rule form write gating, parent narrow-load error/loading state, and stale public URL recovery.
+- Parent section loads are currently lazy by active section, but prompt/readiness calls lack caught loading/error state and `loadedSections` is marked before success, so failed loads or permission hydration changes can become permanently skipped.
+- Backend public URL routes already use the narrow paths and mutation mutex. PUT currently preserves unrelated fields by restoring the latest runtime snapshot, but focused success/stale/no-loss/auth tests are absent; readiness returns only `ready` and needs a non-secret `status` field.
+- `handleSaveConfig` and generic rollback already preserve current maintenance mode. Bootstrap currently deep-merges database runtime values over file values, so an explicit database `false` should override file `true`; the existing test still expects the old behavior and must be corrected plus supplemented with a focused regression.
+- Existing `ai-governance-capability-contract.test.ts` still asserts the obsolete full `/api/config` round-trip and admin bypass model. It must be updated in place to executable permission personas and the new narrow endpoint/lazy/fallback/stale contracts.
+- Three-way review consensus is preserve-mode product UI: keep filtered in-page tabs only because the shell hides subsection navigation at medium widths; move skills metrics/actions into Skills; use explicit read-only/loading/error/no-access states; preserve dirty public URL input across 409 reload; and make the skills table the single horizontal-scroll boundary.
+- Additional correctness findings accepted into scope: capability list/detail responses now use request revision guards to prevent stale search results or a stale capability detail from targeting the wrong mutation; context manual writes and pack preview honor `ai_context:write` / `ai_context:preview`; profile non-OK responses always settle permission hydration instead of exposing all routes indefinitely.
+- Authenticated browser evidence confirmed exact request isolation: rules only requested `/api/code-reviews/repos`; context only requested context documents/facts plus readiness; skills only requested capabilities. Prompts requested prompt/public-URL APIs and retained a dirty draft after a simulated 409 reload. At 1440/1024/760/480 every tested document matched its viewport width; the 480px skills table scrolled inside its own wrapper after the runtime-discovered intrinsic-width fix.
+- Final static evidence: `AIGovernanceCenter.svelte` contains no `GovernanceConfig`, `loadGovernanceConfig`, `canReadConfig`, or direct full `/api/config` request. Impeccable returned no findings; Finesse returned `P0=0`, with only inherited P2 visual-token advisories outside this governance patch's behavioral scope.
+
+---
+
+## 2026-09-26 PostgreSQL setup config-persistence retry recovery
+
+- Confirmed user-reported ordering: migration occurs inside the PostgreSQL setup backend, while the setup service persists YAML afterward.
+- Required recovery boundary: only an exact same-source/same-target completed migration may bypass the earlier populated-target safety rejection; arbitrary populated targets remain rejected.
+- Current inspection target is `internal/server/setup_server.go` plus existing migration helpers and `setup_server_test.go`; no production database access is permitted.
+- The worktree already has unrelated changes, including edits to all three target files (`setup_server.go`, `setup_server_test.go`, and `internal/db/legacy_migration.go`); all new work must be layered onto those diffs without reverting them.
+- Existing `postgresSetupBackend.Apply` allows a complete schema as an idempotent recovery only when `legacySQLitePath == ""`; with a migrate decision, the service rejects first at `inspection.CanMigrateLegacy == false`, so that branch is unreachable after successful migration plus failed config persistence.
+- Existing migration completion is strong: `MigrateLegacySQLite` runs in one transaction, verifies every copied table count, finalizes read models, and returns only after commit. A recovery proof must be recorded after that success and checked before bypassing the service gate; complete schema alone is insufficient.
+- Prior dirty diffs add capability seed handling, PostgreSQL replication-role handling, and legacy-path status reporting. These are unrelated and must remain intact.
+
+---
+
+## 2026-09-26 AI 治理迁移后配置中心残留菜单修复
+
+- 根因是 `settings-sections.ts` 仍把 `solution_prompts` 和 `ai_context` 作为配置中心 section；`FunctionalAdminShell` 由该注册表自动生成配置子菜单，因此迁移后仍稳定显示。
+- 残留不止菜单：Settings route permissions/fallback、`SettingsPanel` 渲染分支、独立配置预览和旧合同测试都继续声明旧所有权。
+- `AI 引擎配置` 属于模型供应商、端点、凭证、模型和估算折算基础设施，应继续留在配置中心；治理权限本身仍需在安全与授权页分配和审计。
+- 独立治理页当前不具备完整替代能力：其提示词保存使用后端不识别的 `activate_on_save`，缺代码评审验证/激活与 Jira 公开地址；context 仅显示资料库并硬编码 AI ready，缺候选审核、手工事实和上下文包预览。
+- 最小无回退方案是把成熟 `SolutionPromptConfig` 与 `AIConfig view="context"` 复用到 `AIGovernanceCenter`，再移除 Settings 注册与渲染；旧 `?settings=` 链接由 App 翻译到新治理 section。
+- 三方一致反对视觉重构；本轮保留治理页内部 tab，因为中等宽度 shell 会隐藏子导航，直接删除会造成新的可达性缺口。
+- 实现后 Settings route 权限只剩 `config:read`/`users:read`，fallback 只剩 `gitlab`/`users`；`ai_context` 权限目录、策略资源映射和安全管理入口原样保留。
+- `GET /api/config` 返回的 `__configured__` secret marker 可由 POST 合并回真实 secret；因此治理页保存 Jira 公开地址必须提交完整已读取配置，不能构造只含 `server.public_url` 的局部对象。
+- AI 语料导入现在区分三态：`false` 表示已知未就绪并前端阻止，`true` 表示已知就绪，`null` 表示配置不可见/未知并允许提交，由后端返回权威错误。
+- 定向合同、Svelte/TypeScript 0 errors、production build、Impeccable/Finesse、目标 diff check 与登录态多断点浏览器均已由最终父流程完成；最终前端合同总计 `204/204` 通过。
+
 ## 2026-09-25 技能中心筛选样式美化、按钮文字防换行、技能包含层级标识与 SKILL.md 文档化展现
 
 ### 1. 筛选控件原生样式与按钮换行问题分析与解决
@@ -3050,3 +3105,32 @@
 - 弹窗变形根因是 wide Modal 只有 max-height，Markdown 又是 autoHeight。`stableHeight` 仅对 CodeReview opt-in，不改变 Decision/Task 等其他消费者。
 - Failed retry 的后端 route/handler/service/idempotency 原已存在，缺口仅在前端 action model；现成功后直接切换到新 queued run。
 - 同步开关的高风险是 shared Switch 先改内部值、保存失败时父值未变化，子组件可能继续显示错误状态。父组件乐观更新确保失败时 boolean 真正反向变化并强制恢复；认证浏览器模拟 500 已验证 UI/服务器一致。
+
+## 2026-09-26 WellOS 维护模式与动态配置数据库化
+
+- 手动维护模式方案可行：显式开关开启后，WellOS 的 `10002 / 此账号已禁用` 才能转为本地凭据回退；开关关闭时必须继续拒绝，避免真实停用账号绕过中央认证。
+- 当前数据库配置链路已经存在：`BootstrapVersionedConfig` 读取 `runtime_configs`，配置保存写入 `config_versions` 和 `runtime_configs`，`applyConfig` 在进程内热应用。
+- 当前主要缺口不是“没有数据库配置”，而是配置所有权和 schema 演进：
+  - `restoreVersionedConfig` 只在顶层 section 缺失时继承文件值，不能为已有 section 补新增字段。
+  - 旧 runtime JSON 包含 `server.host/port`；这些值会覆盖启动 YAML，但实际监听器不会在线迁移，形成声明状态和运行状态不一致。
+  - 新增 `server.maintenance_mode` 需要字段级深度合并和数据库规范化，不能依赖 YAML 长期保存。
+- 推荐所有权：
+  - 启动配置：`database.*`、`server.host`、`server.port`、`server.attachment_dir`。
+  - 运行时数据库配置：`server.public_url`、`server.maintenance_mode`、SMTP、日报、GitLab、飞书、Jira、AI、绩效、方案目录。
+  - 紧急覆盖：`WELL_AMBIENT_MAINTENANCE_MODE=1` 只允许强制开启，不作为长期配置源。
+- 生产开启维护模式仍要求账号已有本地密码哈希和权限快照；未知用户或从未成功登录过的用户不能在维护窗口首次登录。
+- 环境/CLI 覆盖期间仍允许全局超管预写数据库值，便于从紧急覆盖平滑切换到数据库长期状态；UI 必须同时展示 configured/effective/source。
+- 当前维护 JWT 与普通 JWT 都是两小时有效期；关闭开关不会撤销已签发会话。若业务要求即时失效，需要另行增加会话版本或撤销表。
+- 独立评审发现现有 JWT 签名密钥硬编码在源码中。这不是本轮引入的问题，但会削弱所有权限和维护开关的可信边界，应作为独立高优安全任务迁移到至少 32 字节的部署秘密并安排轮换。
+- 2026-09-26 生产只读核查：`users` 共 514 条，只有 3 个账号同时具备本地密码哈希和权限快照；当前 `runtime_configs` 为 v97，尚无 `server.maintenance_mode` 字段。新版本部署会先规范化该字段，但维护窗口能立即登录的仍只有这 3 个既有账号。
+
+## 2026-09-26 Jira 早报重复发送诊断
+
+- 生产 `daily_jira_email_runs` 以 `date` 为主键且有唯一索引，当前每个日期最多一条记录。
+- 今天的两次发送来自两套独立台账：
+  - 生产 PostgreSQL：2026-09-26 09:30:00，`scheduled/sent`。
+  - 本地 SQLite：2026-09-26 16:43:15，`scheduled/sent`。
+- 本地记录与上一任务启动本地诊断后端的时刻完全一致。该实例从本地复制的 `runtime_configs` 恢复了生产 SMTP、收件人和发送时间，但本地 SQLite 看不到生产日期 claim，于启动 catch-up 时再次发送。
+- 生产主机只有一个 Well Ambient server 进程，容器无重启、无主机 cron；生产应用自身没有当天第二次发送证据。
+- 修复边界：PostgreSQL 自动调度保持不变；SQLite 默认不启动自动邮件 worker，只有隔离测试显式设置 `WELL_AMBIENT_ALLOW_SQLITE_EMAIL_SCHEDULER=1` 才允许。
+- 当前 `email_scheduler.go` 仍保留“当天存在任何 claim 就返回”，`sendDailyEmail` 仍有 `INSERT ... ON CONFLICT DO NOTHING` 的第二层并发门禁。

@@ -1493,6 +1493,188 @@ func TestLoginDoesNotUseDevAuthForNonLoopback(t *testing.T) {
 	}
 }
 
+func TestLoginFallsBackWhenMaintenanceModeEnabledAndWellOSAccountDisabled(t *testing.T) {
+	setupServerTestDB(t)
+	seedLocalUserWithGroup(t, "maint-user@westwell-lab.com", "Maintenance User", "member", "correct-password")
+
+	oldDoer := wellOSLoginDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		respBody := `{"code":10002,"data":{},"msg":"此账号已禁用"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(respBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9104, Host: "127.0.0.1", MaintenanceMode: true}}, "")
+	body := bytes.NewBufferString(`{"username":"maint-user@westwell-lab.com","password":"correct-password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("maintenance login failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+
+	var res map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatalf("Failed to decode maintenance login response: %v", err)
+	}
+	if res["degraded"] != true {
+		t.Fatalf("degraded flag = %v, want true", res["degraded"])
+	}
+	if res["degraded_reason"] != "wellos_maintenance" {
+		t.Fatalf("degraded_reason = %v, want wellos_maintenance", res["degraded_reason"])
+	}
+	token, _ := res["token"].(string)
+	if token == "" {
+		t.Fatalf("maintenance login did not return token: %+v", res)
+	}
+	claims, err := ParseJWT(token)
+	if err != nil {
+		t.Fatalf("maintenance token invalid: %v", err)
+	}
+	if claims.UserID != "maint-user@westwell-lab.com" {
+		t.Fatalf("claims.UserID = %q, want maint-user", claims.UserID)
+	}
+	if claims.WellOSToken != "wellos-maintenance-fallback" {
+		t.Fatalf("claims.WellOSToken = %q, want wellos-maintenance-fallback", claims.WellOSToken)
+	}
+}
+
+func TestLoginRejectsDisabledAccountWhenMaintenanceModeDisabled(t *testing.T) {
+	setupServerTestDB(t)
+	seedLocalUserWithGroup(t, "disabled-user@westwell-lab.com", "Disabled User", "member", "correct-password")
+
+	oldDoer := wellOSLoginDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		respBody := `{"code":10002,"data":{},"msg":"此账号已禁用"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(respBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9105, Host: "127.0.0.1", MaintenanceMode: false}}, "")
+	body := bytes.NewBufferString(`{"username":"disabled-user@westwell-lab.com","password":"correct-password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %v, want %v body %s", rr.Code, http.StatusUnauthorized, rr.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if res["message"] != "此账号已禁用" {
+		t.Fatalf("message = %v, want 此账号已禁用", res["message"])
+	}
+}
+
+func TestLoginMaintenanceModeRejectsWrongPassword(t *testing.T) {
+	setupServerTestDB(t)
+	seedLocalUserWithGroup(t, "maint-user@westwell-lab.com", "Maintenance User", "member", "correct-password")
+
+	oldDoer := wellOSLoginDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		respBody := `{"code":10002,"data":{},"msg":"此账号已禁用"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(respBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9106, Host: "127.0.0.1", MaintenanceMode: true}}, "")
+	body := bytes.NewBufferString(`{"username":"maint-user@westwell-lab.com","password":"wrong-password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password status = %v, want %v body %s", rr.Code, http.StatusUnauthorized, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "本地凭据验证失败") {
+		t.Fatalf("unexpected message: %s", rr.Body.String())
+	}
+}
+
+func TestLoginMaintenanceModeRejectsUnknownUser(t *testing.T) {
+	setupServerTestDB(t)
+
+	oldDoer := wellOSLoginDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		respBody := `{"code":10002,"data":{},"msg":"此账号已禁用"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(respBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9107, Host: "127.0.0.1", MaintenanceMode: true}}, "")
+	body := bytes.NewBufferString(`{"username":"unknown@westwell-lab.com","password":"any-password"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("unknown user status = %v, want %v body %s", rr.Code, http.StatusBadGateway, rr.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if res["code"] != "wellos_maintenance" {
+		t.Fatalf("code = %v, want wellos_maintenance", res["code"])
+	}
+	if !strings.Contains(fmt.Sprint(res["message"]), "暂无本地登录凭证缓存") {
+		t.Fatalf("unexpected message: %v", res["message"])
+	}
+}
+
+func TestLoginMaintenanceModeViaEnvironmentVariable(t *testing.T) {
+	setupServerTestDB(t)
+	t.Setenv("WELL_AMBIENT_MAINTENANCE_MODE", "1")
+	seedLocalUserWithGroup(t, "env-maint@westwell-lab.com", "Env Maintenance User", "member", "env-secret")
+
+	oldDoer := wellOSLoginDoer
+	wellOSLoginDoer = func(client *http.Client, username, password string) (*http.Response, error) {
+		respBody := `{"code":10002,"data":{},"msg":"此账号已禁用"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(respBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
+	t.Cleanup(func() { wellOSLoginDoer = oldDoer })
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{Port: 9108, Host: "127.0.0.1", MaintenanceMode: false}}, "")
+	body := bytes.NewBufferString(`{"username":"env-maint@westwell-lab.com","password":"env-secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/login", body)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("env maintenance login failed: got %v body %s", rr.Code, rr.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if res["degraded_reason"] != "wellos_maintenance" {
+		t.Fatalf("degraded_reason = %v, want wellos_maintenance", res["degraded_reason"])
+	}
+}
+
 func TestCreateDemandUsesAuthenticatedDepartmentFallback(t *testing.T) {
 	setupServerTestDB(t)
 	useTempKanbanFile(t)

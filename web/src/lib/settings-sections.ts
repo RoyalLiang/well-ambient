@@ -7,8 +7,7 @@ export type SettingsSection =
   | 'projects'
   | 'versions'
   | 'ai'
-  | 'solution_prompts'
-  | 'ai_context'
+  | 'wellos_auth'
   | 'users'
   | 'matrix'
   | 'policies'
@@ -89,20 +88,12 @@ export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
     permissions: ['config:read']
   },
   {
-    id: 'solution_prompts',
-    group: 'AI 工作台',
-    label: 'AI 技能治理',
-    summary: '管理在线 AI 技能的规则版本、作用范围与启用记录。',
-    domain: 'AI 技能治理',
-    permissions: ['solution_prompt:manage']
-  },
-  {
-    id: 'ai_context',
-    group: 'AI 工作台',
-    label: '系统设计语料库',
-    summary: '管理需求解构上下文、架构资料与交付语料。',
-    domain: '设计语料',
-    permissions: ['ai_context:read', 'config:read']
+    id: 'wellos_auth',
+    group: '安全与授权',
+    label: '登录维护模式',
+    summary: '控制 WellOS 计划维护期间的本地已知账号降级登录。',
+    domain: '认证连续性',
+    permissions: ['config:read']
   },
   {
     id: 'users',
@@ -142,9 +133,9 @@ export const SETTINGS_SECTION_MAP = Object.fromEntries(
   SETTINGS_SECTION_DEFINITIONS.map((section) => [section.id, section])
 ) as Record<SettingsSection, SettingsSectionDefinition>;
 
-export const SETTINGS_ROUTE_PERMISSIONS = ['config:read', 'solution_prompt:manage', 'ai_context:read', 'users:read'];
+export const SETTINGS_ROUTE_PERMISSIONS = ['config:read', 'users:read'];
 
-export const SETTINGS_FALLBACK_ORDER: SettingsSection[] = ['gitlab', 'solution_prompts', 'ai_context', 'users'];
+export const SETTINGS_FALLBACK_ORDER: SettingsSection[] = ['gitlab', 'users'];
 
 export function isSettingsSection(value: unknown): value is SettingsSection {
   return typeof value === 'string' && value in SETTINGS_SECTION_MAP;

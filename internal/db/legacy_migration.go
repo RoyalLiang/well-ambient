@@ -27,11 +27,19 @@ var legacyMigrationSeedTables = map[string]struct{}{
 	"permissions":               {},
 	"solution_prompt_templates": {},
 	"user_groups":               {},
+	"capabilities":              {},
+	"capability_versions":       {},
+	"capability_resources":      {},
+	"capability_dependencies":   {},
 }
 
 var legacyMigrationSeedDeleteOrder = []string{
 	"runtime_configs",
 	"config_versions",
+	"capability_resources",
+	"capability_dependencies",
+	"capability_versions",
+	"capabilities",
 	"group_permissions",
 	"user_groups",
 	"permissions",
@@ -186,6 +194,12 @@ func MigrateLegacySQLite(
 	update(LegacyMigrationProgress{Stage: "preparing_schema", TablesTotal: len(tables)})
 
 	err = target.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SET session_replication_role = 'replica'").Error; err != nil {
+				return fmt.Errorf("set replica mode: %w", err)
+			}
+			defer tx.Exec("SET session_replication_role = 'origin'")
+		}
 		if err := MigrateSchema(tx); err != nil {
 			return fmt.Errorf("create PostgreSQL schema: %w", err)
 		}
@@ -213,6 +227,11 @@ func MigrateLegacySQLite(
 			})
 		}
 
+		if tx.Dialector.Name() == "postgres" {
+			if err := tx.Exec("SET session_replication_role = 'origin'").Error; err != nil {
+				return fmt.Errorf("restore origin mode: %w", err)
+			}
+		}
 		update(LegacyMigrationProgress{Stage: "verifying_counts", TablesCompleted: len(tables), TablesTotal: len(tables), RowsCopied: copiedRows})
 		for _, table := range tables {
 			var targetCount int64

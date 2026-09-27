@@ -24,11 +24,15 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 	for _, match := range routePattern.FindAllStringSubmatch(string(source), -1) {
 		registered[match[1]] = struct{}{}
 	}
-	if len(registered) < 40 {
-		t.Fatalf("route discovery found only %d GET API routes", len(registered))
+	const expectedGETAPIRoutes = 97
+	if len(registered) != expectedGETAPIRoutes {
+		t.Fatalf("route discovery found %d GET API routes, want %d", len(registered), expectedGETAPIRoutes)
 	}
 
 	contracts := allPageReadContracts()
+	if len(contracts) != expectedGETAPIRoutes {
+		t.Fatalf("read contract inventory has %d routes, want %d", len(contracts), expectedGETAPIRoutes)
+	}
 	missing := make([]string, 0)
 	for route := range registered {
 		contract, ok := contracts[route]
@@ -52,42 +56,108 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 }
 
 func TestAllReachablePageStatesAreCoveredByReadContracts(t *testing.T) {
-	expectedSurfaces := []string{
-		"decision.agenda",
-		"decision.daily_jira",
-		"schedule.schedule",
-		"schedule.releases",
-		"schedule.board",
-		"schedule.projects",
-		"solutions.catalog",
-		"evidence.health",
-		"tasks.status",
-		"tasks.execution",
-		"kpi.overview",
-		"kpi.calculation",
-		"settings.gitlab",
-		"settings.feishu",
-		"settings.jira",
-		"settings.performance",
-		"settings.projects",
-		"settings.ai",
-		"settings.solution_prompts",
-		"settings.ai_context",
-		"settings.users",
-		"settings.matrix",
-		"settings.policies",
-		"settings.audit",
-		"shell",
+	expectedSurfaces := map[string]struct{}{
+		"shell":                 {},
+		"decision.agenda":       {},
+		"decision.daily_jira":   {},
+		"schedule.schedule":     {},
+		"schedule.releases":     {},
+		"schedule.board":        {},
+		"schedule.projects":     {},
+		"solutions.catalog":     {},
+		"evidence.health":       {},
+		"tasks.status":          {},
+		"tasks.execution":       {},
+		"tasks.review":          {},
+		"kpi.overview":          {},
+		"kpi.calculation":       {},
+		"ai_governance.skills":  {},
+		"ai_governance.prompts": {},
+		"ai_governance.rules":   {},
+		"ai_governance.context": {},
+		"settings.gitlab":       {},
+		"settings.email":        {},
+		"settings.feishu":       {},
+		"settings.jira":         {},
+		"settings.performance":  {},
+		"settings.projects":     {},
+		"settings.versions":     {},
+		"settings.ai":           {},
+		"settings.wellos":       {},
+		"settings.users":        {},
+		"settings.matrix":       {},
+		"settings.policies":     {},
+		"settings.audit":        {},
 	}
-	covered := map[string]bool{}
+	covered := map[string]struct{}{}
 	for _, contract := range allPageReadContracts() {
 		for _, surface := range contract.Surfaces {
-			covered[surface] = true
+			covered[surface] = struct{}{}
 		}
 	}
-	for _, surface := range expectedSurfaces {
-		if !covered[surface] {
-			t.Errorf("page surface has no read contract coverage: %s", surface)
+	if len(covered) != len(expectedSurfaces) {
+		t.Errorf("reachable surface count = %d, want %d", len(covered), len(expectedSurfaces))
+	}
+	missing := make([]string, 0)
+	for surface := range expectedSurfaces {
+		if _, ok := covered[surface]; !ok {
+			missing = append(missing, surface)
+		}
+	}
+	unexpected := make([]string, 0)
+	for surface := range covered {
+		if _, ok := expectedSurfaces[surface]; !ok {
+			unexpected = append(unexpected, surface)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+	if len(missing) > 0 || len(unexpected) > 0 {
+		t.Fatalf("reachable surface inventory mismatch; missing=%v unexpected=%v", missing, unexpected)
+	}
+}
+
+func TestReadContractRouteOwnershipMatchesCurrentConsumers(t *testing.T) {
+	expected := map[string][]string{
+		"/api/agent-runtime/capabilities":       {"ai_governance.skills"},
+		"/api/agent-runtime/capabilities/{id}":  {"ai_governance.skills"},
+		"/api/agent-runtime/runs":               {"ai_governance.skills", "evidence.health"},
+		"/api/agent-runtime/runs/{id}/lockfile": {"ai_governance.skills", "evidence.health"},
+		"/api/agent-runtime/runs/{id}/trace":    {"ai_governance.skills", "evidence.health"},
+		"/api/agent-runtime/replays/{id}":       {"ai_governance.skills", "evidence.health"},
+		"/api/code-reviews/repos":               {"tasks.review", "ai_governance.rules"},
+		"/api/solution-prompts":                 {"ai_governance.prompts"},
+		"/api/solution-prompts/public-url":      {"ai_governance.prompts"},
+		"/api/ai/context-readiness":             {"ai_governance.context"},
+		"/api/ai/output-trace":                  {"ai_governance.context"},
+		"/api/ai/requirement-clarification":     {"ai_governance.context"},
+		"/api/ai/traces":                        {"ai_governance.context"},
+		"/api/requirements/clarification":       {"ai_governance.context"},
+		"/api/context/documents":                {"ai_governance.context"},
+		"/api/context/documents/{id}":           {"ai_governance.context"},
+		"/api/context/facts":                    {"ai_governance.context"},
+		"/api/corpus-candidates":                {"ai_governance.context"},
+		"/api/corpus-candidates/{id}/impact":    {"ai_governance.context"},
+		"/api/context/pack/replay":              {"ai_governance.context", "evidence.health"},
+		"/api/context/packs/{id}/replay":        {"ai_governance.context", "evidence.health"},
+		"/api/strongest-brain/ai-traces":        {"evidence.health", "ai_governance.context"},
+		"/api/config":                           {"shell", "settings.gitlab", "settings.email", "settings.feishu", "settings.jira", "settings.performance", "settings.projects", "settings.ai"},
+		"/api/config/wellos-maintenance":        {"settings.wellos"},
+		"/api/config/versions":                  {"settings.gitlab", "settings.email", "settings.feishu", "settings.jira", "settings.performance", "settings.projects", "settings.ai", "settings.wellos", "settings.versions", "settings.audit"},
+	}
+	contracts := allPageReadContracts()
+	for route, want := range expected {
+		contract, ok := contracts[route]
+		if !ok {
+			t.Errorf("missing read contract for ownership assertion: %s", route)
+			continue
+		}
+		got := append([]string(nil), contract.Surfaces...)
+		want = append([]string(nil), want...)
+		sort.Strings(got)
+		sort.Strings(want)
+		if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("%s surfaces = %v, want %v", route, contract.Surfaces, expected[route])
 		}
 	}
 }
@@ -128,19 +198,23 @@ func TestKnownHighCardinalityRoutesCannotUseSingletonContracts(t *testing.T) {
 	}
 }
 
-func TestReadContractMaturityCannotRegress(t *testing.T) {
+func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 	counts := map[readmodel.Maturity]int{}
 	for _, contract := range allPageReadContracts() {
 		counts[contract.Maturity]++
 	}
-	if counts[readmodel.MaturityVerified] < 17 {
-		t.Fatalf("verified read contracts regressed to %d, want at least 17", counts[readmodel.MaturityVerified])
+	expected := map[readmodel.Maturity]int{
+		readmodel.MaturityVerified: 20,
+		readmodel.MaturityBounded:  49,
+		readmodel.MaturityPending:  28,
 	}
-	if counts[readmodel.MaturityVerified]+counts[readmodel.MaturityBounded] < 49 {
-		t.Fatalf("bounded-or-verified read contracts regressed to %d, want at least 49", counts[readmodel.MaturityVerified]+counts[readmodel.MaturityBounded])
+	for maturity, want := range expected {
+		if got := counts[maturity]; got != want {
+			t.Errorf("%s read contracts = %d, want %d", maturity, got, want)
+		}
 	}
-	if counts[readmodel.MaturityPending] > 28 {
-		t.Fatalf("migration-pending read contracts increased to %d, want at most 28", counts[readmodel.MaturityPending])
+	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 97 {
+		t.Fatalf("maturity inventory totals %d routes, want 97", total)
 	}
 }
 

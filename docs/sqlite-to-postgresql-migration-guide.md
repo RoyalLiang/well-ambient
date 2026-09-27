@@ -56,24 +56,47 @@ find "$attachment_dir" -type f -print0 | sort -z | xargs -0 sha256sum > "$migrat
 
 SQLite CLI 的 `.backup` 使用在线备份接口生成一致快照；也可以使用 `VACUUM INTO`，但目标文件必须不存在或为空。参见 [SQLite CLI](https://www.sqlite.org/cli.html)、[Backup API](https://www.sqlite.org/backup.html) 和 [`VACUUM INTO`](https://www.sqlite.org/lang_vacuum.html#vacuuminto)。
 
-复制到部署目录并设为只读：
+将运维人员准备好的、已经停写或冻结并以只读方式保存的一致性快照交接到部署目录（或使用 `make deploy` 导入）：
+
+方式 A（推荐，由部署脚本校验并导入）：
 
 ```bash
-install -d -m 0700 deploy/runtime/data/legacy
-install -m 0400 "$migration_dir/source.snapshot.db" \
+make deploy LEGACY_SQLITE="$migration_dir/source.snapshot.db"
+# 亦可通过 deploy 脚本参数执行：
+# ./deploy/deploy.sh --legacy-sqlite "$migration_dir/source.snapshot.db"
+```
+
+显式传给 `LEGACY_SQLITE` 或 `--legacy-sqlite` 的路径必须是运维人员预先生成的停写/冻结、只读一致性快照，不能是旧服务仍可能写入的数据库文件。脚本校验源快照后，通过权限为 `0600` 的临时文件原子安装规范快照，不修改源文件。
+
+未显式指定路径时，脚本会从 `deploy/runtime/data/legacy/`，以及项目根目录的 `well-ambient.db` 和 `data.db` 中，以 NUL 分隔采集并确定性排序候选文件。结果处理如下：
+
+- 没有有效候选时，不执行 SQLite 迁移；
+- 恰好一个有效候选时，使用 `sqlite3 .backup` 生成规范快照；
+- 多于一个有效候选时，部署失败，并要求通过 `LEGACY_SQLITE` 或 `--legacy-sqlite` 明确选择。
+
+缺少 `sqlite3` 或 `.backup` 失败时，部署会关闭式失败；脚本绝不直接复制可能仍处于 WAL 写入状态的数据库。若已存在的规范快照校验失败，脚本会将其保留并隔离为带时间戳且不覆盖既有文件的证据名称，而不是删除。
+
+方式 B（手动放置已经验收的一致性快照）：
+
+```bash
+install -d -m 0700 \
+  deploy/runtime \
+  deploy/runtime/data \
+  deploy/runtime/data/attachments \
+  deploy/runtime/data/legacy
+install -m 0600 "$migration_dir/source.snapshot.db" \
   deploy/runtime/data/legacy/well-ambient.db
+if [ -e deploy/runtime/config.yaml ]; then
+  chmod 0600 deploy/runtime/config.yaml
+fi
+make deploy
 ```
 
-`deploy/.env.production` 中的 `APP_UID`、`APP_GID` 必须能读取该文件。例如二者为 `1000` 时：
+`deploy/runtime`、`deploy/runtime/data`、`deploy/runtime/data/attachments` 和 `deploy/runtime/data/legacy` 必须为 `0700`；规范快照和已存在或新建的 `deploy/runtime/config.yaml` 必须为 `0600`。`deploy/.env.production` 中的 `APP_UID`、`APP_GID` 必须精确等于部署用户的数字 UID、GID，不能依赖另一个身份读取全局可读文件。
 
-```bash
-sudo chown 1000:1000 deploy/runtime/data/legacy/well-ambient.db
-sudo chmod 0400 deploy/runtime/data/legacy/well-ambient.db
-```
+`make deploy` 会先校验 SQLite 文件头，并在 setup 模式强制重建应用容器，使进程重新加载 bind mount 中的运行配置；启动后再读取 `/api/setup/status`。只有容器实际返回 `legacy_sqlite.available=true` 才会报告迁移引导已就绪；路径、所有权、权限或文件内容有问题时，部署会直接打印包含具体 failure reason 的诊断并失败。
 
-`make deploy` 会先校验 SQLite 文件头，并在 setup 模式强制重建应用容器，使进程重新加载 bind mount 中的运行配置；启动后再读取 `/api/setup/status`。只有容器实际返回 `legacy_sqlite.available=true` 才会报告迁移引导已就绪；路径、权限或文件内容有问题时部署会直接打印诊断并失败。
-
-容器运行用户必须能读取该文件。不要把快照提交 Git，也不要挂载旧系统仍在使用的原文件。
+不要把快照提交 Git，也不要挂载或导入旧系统仍在使用的原文件。
 
 ## 2. 打开首次安装页并测试连接
 

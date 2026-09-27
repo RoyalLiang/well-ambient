@@ -2,25 +2,19 @@
   import SettingsPanel from '../SettingsPanel.svelte';
   import ToastHost from '../shared/ToastHost.svelte';
 
-  type PreviewSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai' | 'ai_context';
+  type PreviewSection = 'gitlab' | 'feishu' | 'jira' | 'projects' | 'ai';
 
   const pages: Array<{ id: PreviewSection; label: string }> = [
     { id: 'gitlab', label: 'GitLab 仓库' },
     { id: 'feishu', label: '飞书消息同步' },
     { id: 'jira', label: 'Jira 服务关联' },
     { id: 'projects', label: '项目优先级' },
-    { id: 'ai', label: 'AI 引擎配置' },
-    { id: 'ai_context', label: '系统设计语料库' }
+    { id: 'ai', label: 'AI 引擎配置' }
   ];
 
   const previewPermissions = [
     'config:read',
     'config:write',
-    'ai_context:read',
-    'ai_context:write',
-    'ai_context:preview',
-    'corpus_candidate:read',
-    'corpus_candidate:review',
     'kpi:read',
     'users:read',
     'users:write',

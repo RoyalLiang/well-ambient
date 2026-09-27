@@ -69,12 +69,15 @@ type LegacySQLiteDecisionRequest struct {
 }
 
 type LegacySQLiteStatus struct {
-	Available        bool   `json:"available"`
-	SizeBytes        int64  `json:"size_bytes,omitempty"`
-	TableCount       int    `json:"table_count,omitempty"`
-	PromptRequired   bool   `json:"prompt_required"`
-	DecisionRecorded bool   `json:"decision_recorded"`
-	Decision         string `json:"decision,omitempty"`
+	Available         bool   `json:"available"`
+	SizeBytes         int64  `json:"size_bytes,omitempty"`
+	TableCount        int    `json:"table_count,omitempty"`
+	PromptRequired    bool   `json:"prompt_required"`
+	DecisionRecorded  bool   `json:"decision_recorded"`
+	Decision          string `json:"decision,omitempty"`
+	PathConfigured    bool   `json:"path_configured,omitempty"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	fingerprint       string
 }
 
 type DatabaseSetupOperation struct {
@@ -105,7 +108,8 @@ func (e *setupPublicError) Error() string { return e.Code }
 
 type databaseSetupBackend interface {
 	Inspect(context.Context, setupDatabaseConnection) (DatabaseSetupResult, error)
-	Apply(context.Context, setupDatabaseConnection, string, string, func(db.LegacyMigrationProgress)) (DatabaseSetupResult, error)
+	VerifyLegacyMigration(context.Context, setupDatabaseConnection, string) (bool, error)
+	Apply(context.Context, setupDatabaseConnection, string, string, string, func(db.LegacyMigrationProgress)) (DatabaseSetupResult, error)
 }
 
 type setupDatabaseConnection struct {
@@ -116,6 +120,106 @@ type setupDatabaseConnection struct {
 }
 
 type postgresSetupBackend struct{}
+
+const legacyMigrationCompletionVersion = 1
+
+type legacyMigrationCompletion struct {
+	ID                uint   `gorm:"primaryKey;autoIncrement:false"`
+	Version           int    `gorm:"not null"`
+	SourceFingerprint string `gorm:"size:64;not null"`
+	TargetFingerprint string `gorm:"size:64;not null"`
+}
+
+func (legacyMigrationCompletion) TableName() string {
+	return "well_ambient_legacy_migration_completions"
+}
+
+func validLegacyMigrationFingerprint(fingerprint string) bool {
+	decoded, err := hex.DecodeString(fingerprint)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func recordLegacyMigrationCompletion(target *gorm.DB, sourceFingerprint, targetFingerprint string) error {
+	if target == nil {
+		return gorm.ErrInvalidDB
+	}
+	if !validLegacyMigrationFingerprint(sourceFingerprint) || !validLegacyMigrationFingerprint(targetFingerprint) {
+		return errors.New("legacy migration completion fingerprint is invalid")
+	}
+	if err := target.AutoMigrate(&legacyMigrationCompletion{}); err != nil {
+		return fmt.Errorf("create legacy migration completion marker: %w", err)
+	}
+	marker := legacyMigrationCompletion{
+		ID: 1, Version: legacyMigrationCompletionVersion,
+		SourceFingerprint: sourceFingerprint, TargetFingerprint: targetFingerprint,
+	}
+	if err := target.Create(&marker).Error; err != nil {
+		return fmt.Errorf("record legacy migration completion marker: %w", err)
+	}
+	return nil
+}
+
+func legacyMigrationCompletionMatches(
+	ctx context.Context,
+	target *gorm.DB,
+	sourceFingerprint string,
+	targetFingerprint string,
+) (bool, error) {
+	if target == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	if !validLegacyMigrationFingerprint(sourceFingerprint) ||
+		!validLegacyMigrationFingerprint(targetFingerprint) ||
+		!target.Migrator().HasTable(&legacyMigrationCompletion{}) {
+		return false, nil
+	}
+	var marker legacyMigrationCompletion
+	if err := target.WithContext(ctx).First(&marker, 1).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read legacy migration completion marker: %w", err)
+	}
+	if marker.Version != legacyMigrationCompletionVersion ||
+		!validLegacyMigrationFingerprint(marker.SourceFingerprint) ||
+		!validLegacyMigrationFingerprint(marker.TargetFingerprint) {
+		return false, nil
+	}
+	sourceMatches := subtle.ConstantTimeCompare([]byte(marker.SourceFingerprint), []byte(sourceFingerprint)) == 1
+	targetMatches := subtle.ConstantTimeCompare([]byte(marker.TargetFingerprint), []byte(targetFingerprint)) == 1
+	return sourceMatches && targetMatches, nil
+}
+
+func fingerprintPostgresTarget(ctx context.Context, target *gorm.DB) (string, error) {
+	if target == nil {
+		return "", gorm.ErrInvalidDB
+	}
+	type targetIdentity struct {
+		DatabaseName  string `gorm:"column:database_name"`
+		DatabaseOID   string `gorm:"column:database_oid"`
+		SchemaName    string `gorm:"column:schema_name"`
+		ServerAddress string `gorm:"column:server_address"`
+		ServerPort    string `gorm:"column:server_port"`
+	}
+	var identity targetIdentity
+	if err := target.WithContext(ctx).Raw(`SELECT
+		current_database() AS database_name,
+		(SELECT oid::text FROM pg_database WHERE datname = current_database()) AS database_oid,
+		current_schema() AS schema_name,
+		COALESCE(inet_server_addr()::text, 'local') AS server_address,
+		COALESCE(inet_server_port()::text, 'local') AS server_port`).Scan(&identity).Error; err != nil {
+		return "", fmt.Errorf("inspect PostgreSQL target identity: %w", err)
+	}
+	canonical := strings.Join([]string{
+		identity.ServerAddress,
+		identity.ServerPort,
+		identity.DatabaseOID,
+		identity.DatabaseName,
+		identity.SchemaName,
+	}, "\n")
+	fingerprint := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(fingerprint[:]), nil
+}
 
 func (postgresSetupBackend) Inspect(ctx context.Context, connection setupDatabaseConnection) (DatabaseSetupResult, error) {
 	maintenance, err := db.Open(connection.Maintenance)
@@ -171,11 +275,39 @@ func (postgresSetupBackend) Inspect(ctx context.Context, connection setupDatabas
 	return result, nil
 }
 
+func (postgresSetupBackend) VerifyLegacyMigration(
+	ctx context.Context,
+	connection setupDatabaseConnection,
+	sourceFingerprint string,
+) (bool, error) {
+	if !validLegacyMigrationFingerprint(sourceFingerprint) {
+		return false, nil
+	}
+	target, err := db.Open(connection.Target)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = db.CloseConnection(target) }()
+	inspection, err := inspectPostgresDatabase(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	if inspection.SchemaState != "well_ambient" {
+		return false, nil
+	}
+	targetFingerprint, err := fingerprintPostgresTarget(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	return legacyMigrationCompletionMatches(ctx, target, sourceFingerprint, targetFingerprint)
+}
+
 func (backend postgresSetupBackend) Apply(
 	ctx context.Context,
 	connection setupDatabaseConnection,
 	expectedOperation string,
 	legacySQLitePath string,
+	legacySourceFingerprint string,
 	progress func(db.LegacyMigrationProgress),
 ) (DatabaseSetupResult, error) {
 	inspection, err := backend.Inspect(ctx, connection)
@@ -227,7 +359,16 @@ func (backend postgresSetupBackend) Apply(
 	}
 
 	if legacySQLitePath != "" {
-		report, err := db.MigrateLegacySQLite(ctx, legacySQLitePath, target, MigrateReadModels, progress)
+		targetFingerprint, err := fingerprintPostgresTarget(ctx, target)
+		if err != nil {
+			return DatabaseSetupResult{}, err
+		}
+		report, err := db.MigrateLegacySQLite(ctx, legacySQLitePath, target, func(tx *gorm.DB) error {
+			if err := MigrateReadModels(tx); err != nil {
+				return err
+			}
+			return recordLegacyMigrationCompletion(tx, legacySourceFingerprint, targetFingerprint)
+		}, progress)
 		if err != nil {
 			return DatabaseSetupResult{}, wrapLegacyMigrationFailure(err)
 		}
@@ -441,20 +582,29 @@ func (s *databaseSetupService) Apply(ctx context.Context, request DatabaseSetupR
 		return DatabaseSetupResult{}, publicSetupBackendError(errSetupDatabaseNotMigrated)
 	}
 	legacyPath := ""
+	legacyFingerprint := ""
+	legacyMigrationCompleted := false
 	legacyStatus := inspectLegacySQLiteStatus(databaseConfig)
 	switch strings.ToLower(strings.TrimSpace(databaseConfig.LegacyMigrationDecision)) {
 	case "migrate":
-		if !inspection.CanMigrateLegacy {
-			return DatabaseSetupResult{}, &setupPublicError{
-				Code: "legacy_target_not_empty", Message: "目标 PostgreSQL 已包含业务数据，已阻止 SQLite 迁移以避免覆盖。请改用新的空数据库。", Status: http.StatusConflict,
-			}
-		}
 		if !legacyStatus.Available {
 			return DatabaseSetupResult{}, &setupPublicError{
 				Code: "legacy_sqlite_unavailable", Message: "已记录迁移本地数据，但服务器不再能读取并校验 SQLite 快照。请恢复原快照后重试。", Status: http.StatusConflict,
 			}
 		}
 		legacyPath = strings.TrimSpace(databaseConfig.LegacySQLitePath)
+		legacyFingerprint = legacyStatus.fingerprint
+		if !inspection.CanMigrateLegacy {
+			legacyMigrationCompleted, err = s.backend.VerifyLegacyMigration(ctx, connection, legacyFingerprint)
+			if err != nil {
+				return DatabaseSetupResult{}, publicSetupBackendError(err)
+			}
+			if !legacyMigrationCompleted {
+				return DatabaseSetupResult{}, &setupPublicError{
+					Code: "legacy_target_not_empty", Message: "目标 PostgreSQL 已包含业务数据，已阻止 SQLite 迁移以避免覆盖。请改用新的空数据库。", Status: http.StatusConflict,
+				}
+			}
+		}
 	case "skip":
 	default:
 		if legacyStatus.Available && inspection.CanMigrateLegacy {
@@ -464,11 +614,14 @@ func (s *databaseSetupService) Apply(ctx context.Context, request DatabaseSetupR
 		}
 	}
 
-	result, err := s.backend.Apply(ctx, connection, mode, legacyPath, s.updateMigrationProgress)
-	if err != nil {
-		// Keep the internal cause until StartApply records a safe SQLSTATE/stage
-		// diagnostic. The HTTP boundary still receives only setupPublicError.
-		return DatabaseSetupResult{}, err
+	result := inspection
+	if !legacyMigrationCompleted {
+		result, err = s.backend.Apply(ctx, connection, mode, legacyPath, legacyFingerprint, s.updateMigrationProgress)
+		if err != nil {
+			// Keep the internal cause until StartApply records a safe SQLSTATE/stage
+			// diagnostic. The HTTP boundary still receives only setupPublicError.
+			return DatabaseSetupResult{}, err
+		}
 	}
 	if result.SchemaState != "well_ambient" {
 		return DatabaseSetupResult{}, &setupPublicError{
@@ -642,14 +795,45 @@ func inspectLegacySQLiteStatus(databaseConfig config.DatabaseConfig) LegacySQLit
 		DecisionRecorded: decision == "migrate" || decision == "skip",
 		Decision:         decision,
 	}
-	snapshot, err := db.InspectLegacySQLite(databaseConfig.LegacySQLitePath)
-	if err == nil {
-		status.Available = true
-		status.SizeBytes = snapshot.SizeBytes
-		status.TableCount = snapshot.TableCount
+	cleanPath := strings.TrimSpace(databaseConfig.LegacySQLitePath)
+	if cleanPath != "" {
+		status.PathConfigured = true
+		snapshot, err := db.InspectLegacySQLite(cleanPath)
+		if err == nil {
+			status.fingerprint, err = fingerprintLegacySQLite(cleanPath)
+		}
+		if err == nil {
+			status.Available = true
+			status.SizeBytes = snapshot.SizeBytes
+			status.TableCount = snapshot.TableCount
+		} else {
+			if errors.Is(err, os.ErrNotExist) {
+				status.UnavailableReason = "file_not_found"
+			} else if errors.Is(err, os.ErrPermission) {
+				status.UnavailableReason = "permission_denied"
+			} else if strings.Contains(err.Error(), "regular file") {
+				status.UnavailableReason = "not_regular_file"
+			} else {
+				status.UnavailableReason = "invalid_or_corrupted"
+			}
+			log.Printf("Legacy SQLite inspection: snapshot is unavailable: reason=%s err=%v", status.UnavailableReason, err)
+		}
 	}
 	status.PromptRequired = status.Available && !status.DecisionRecorded
 	return status
+}
+
+func fingerprintLegacySQLite(path string) (string, error) {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", fmt.Errorf("fingerprint legacy SQLite snapshot: %w", err)
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (s *databaseSetupService) RecordLegacyDecision(decision string) (LegacySQLiteStatus, error) {

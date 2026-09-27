@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,20 +18,28 @@ import (
 
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
+
+	gormsqlite "gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 const testSetupToken = "0123456789abcdef0123456789abcdef"
 
 type fakeSetupBackend struct {
-	inspectResult  DatabaseSetupResult
-	inspectError   error
-	applyResult    DatabaseSetupResult
-	applyError     error
-	inspectCalls   int
-	applyCalls     int
-	lastConnection setupDatabaseConnection
-	lastMode       string
-	lastLegacyPath string
+	inspectResult              DatabaseSetupResult
+	inspectError               error
+	applyResult                DatabaseSetupResult
+	applyError                 error
+	verifyError                error
+	inspectCalls               int
+	verifyCalls                int
+	applyCalls                 int
+	lastConnection             setupDatabaseConnection
+	lastMode                   string
+	lastLegacyPath             string
+	lastLegacyFingerprint      string
+	completedTargetDSN         string
+	completedSourceFingerprint string
 }
 
 type setupSQLStateError struct {
@@ -46,19 +55,40 @@ func (f *fakeSetupBackend) Inspect(_ context.Context, connection setupDatabaseCo
 	return f.inspectResult, f.inspectError
 }
 
+func (f *fakeSetupBackend) VerifyLegacyMigration(
+	_ context.Context,
+	connection setupDatabaseConnection,
+	sourceFingerprint string,
+) (bool, error) {
+	f.verifyCalls++
+	if f.verifyError != nil {
+		return false, f.verifyError
+	}
+	return f.completedTargetDSN == connection.Target.DSN &&
+		f.completedSourceFingerprint == sourceFingerprint, nil
+}
+
 func (f *fakeSetupBackend) Apply(
 	_ context.Context,
 	connection setupDatabaseConnection,
 	mode string,
 	legacyPath string,
+	legacyFingerprint string,
 	progress func(db.LegacyMigrationProgress),
 ) (DatabaseSetupResult, error) {
 	f.applyCalls++
 	f.lastConnection = connection
 	f.lastMode = mode
 	f.lastLegacyPath = legacyPath
+	f.lastLegacyFingerprint = legacyFingerprint
 	if progress != nil {
 		progress(db.LegacyMigrationProgress{Stage: "copying_data", Table: "task_telemetries", TablesCompleted: 1, TablesTotal: 2, RowsCopied: 25})
+	}
+	if f.applyError == nil && legacyPath != "" {
+		f.completedTargetDSN = connection.Target.DSN
+		f.completedSourceFingerprint = legacyFingerprint
+		f.inspectResult = f.applyResult
+		f.inspectResult.CanMigrateLegacy = false
 	}
 	return f.applyResult, f.applyError
 }
@@ -215,6 +245,154 @@ func TestSetupApplyPersistsPostgresAndClearsLegacySetupState(t *testing.T) {
 	}
 	if server.config.Database.Driver != "postgres" {
 		t.Fatalf("runtime config driver = %q", server.config.Database.Driver)
+	}
+}
+
+func TestSetupApplyRecoversCompletedLegacyMigrationAfterConfigPersistenceFailure(t *testing.T) {
+	legacyPath := createLegacySQLiteFixture(t)
+	configured := configuredDatabaseResult()
+	configured.CanMigrateLegacy = false
+	backend := &fakeSetupBackend{inspectResult: missingDatabaseResult(), applyResult: configured}
+	server := newTestSetupServer(t, backend)
+	server.config.Database.LegacySQLitePath = legacyPath
+	server.config.Database.LegacyMigrationDecision = "migrate"
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	server.service.configPath = configPath
+	persistCalls := 0
+	server.service.persist = func(path string, cfg *config.Config) error {
+		persistCalls++
+		if persistCalls == 1 {
+			return errors.New("injected config persistence failure")
+		}
+		return config.SaveConfig(path, cfg)
+	}
+	request := DatabaseSetupRequest{
+		Host: "postgres", Port: 5432, Database: "well_ambient", MaintenanceDatabase: "postgres",
+		Username: "ambient", Password: "secret", SSLMode: "disable", Mode: "create_database",
+	}
+
+	_, err := server.service.Apply(context.Background(), request)
+	var publicErr *setupPublicError
+	if !errors.As(err, &publicErr) || publicErr.Code != "config_not_writable" {
+		t.Fatalf("first Apply() error = %v, want config_not_writable", err)
+	}
+	if backend.applyCalls != 1 || backend.verifyCalls != 0 || server.config.Database.Driver != "setup" {
+		t.Fatalf("first Apply() apply=%d verify=%d driver=%q", backend.applyCalls, backend.verifyCalls, server.config.Database.Driver)
+	}
+
+	result, err := server.service.Apply(context.Background(), request)
+	if err != nil {
+		t.Fatalf("retry Apply() error = %v", err)
+	}
+	if result.SchemaState != "well_ambient" || backend.applyCalls != 1 || backend.verifyCalls != 1 || persistCalls != 2 {
+		t.Fatalf("retry result=%#v apply=%d verify=%d persist=%d", result, backend.applyCalls, backend.verifyCalls, persistCalls)
+	}
+	if server.config.Database.Driver != "postgres" {
+		t.Fatalf("runtime config driver = %q", server.config.Database.Driver)
+	}
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("persisted config mode = %04o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestSetupApplyCompletedLegacyMigrationRecoveryFailsClosed(t *testing.T) {
+	newFailedAttempt := func(t *testing.T) (*SetupServer, *fakeSetupBackend, DatabaseSetupRequest, *int) {
+		t.Helper()
+		legacyPath := createLegacySQLiteFixture(t)
+		configured := configuredDatabaseResult()
+		configured.CanMigrateLegacy = false
+		backend := &fakeSetupBackend{inspectResult: missingDatabaseResult(), applyResult: configured}
+		server := newTestSetupServer(t, backend)
+		server.config.Database.LegacySQLitePath = legacyPath
+		server.config.Database.LegacyMigrationDecision = "migrate"
+		persistCalls := 0
+		server.service.persist = func(string, *config.Config) error {
+			persistCalls++
+			return errors.New("injected config persistence failure")
+		}
+		request := DatabaseSetupRequest{
+			Host: "postgres", Port: 5432, Database: "well_ambient", MaintenanceDatabase: "postgres",
+			Username: "ambient", Password: "secret", SSLMode: "disable", Mode: "create_database",
+		}
+		if _, err := server.service.Apply(context.Background(), request); err == nil {
+			t.Fatal("first Apply() unexpectedly succeeded")
+		}
+		return server, backend, request, &persistCalls
+	}
+
+	t.Run("different source", func(t *testing.T) {
+		server, backend, request, persistCalls := newFailedAttempt(t)
+		differentPath := createLegacySQLiteFixture(t)
+		conn, err := sql.Open("sqlite3", differentPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Exec(`INSERT INTO task_telemetries (task_id, title) VALUES ('different', 'different')`); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if err := conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+		server.config.Database.LegacySQLitePath = differentPath
+
+		_, err = server.service.Apply(context.Background(), request)
+		var publicErr *setupPublicError
+		if !errors.As(err, &publicErr) || publicErr.Code != "legacy_target_not_empty" {
+			t.Fatalf("Apply() error = %v, want legacy_target_not_empty", err)
+		}
+		if backend.applyCalls != 1 || backend.verifyCalls != 1 || *persistCalls != 1 {
+			t.Fatalf("apply=%d verify=%d persist=%d", backend.applyCalls, backend.verifyCalls, *persistCalls)
+		}
+	})
+
+	t.Run("different target", func(t *testing.T) {
+		server, backend, request, persistCalls := newFailedAttempt(t)
+		request.Database = "other_well_ambient"
+
+		_, err := server.service.Apply(context.Background(), request)
+		var publicErr *setupPublicError
+		if !errors.As(err, &publicErr) || publicErr.Code != "legacy_target_not_empty" {
+			t.Fatalf("Apply() error = %v, want legacy_target_not_empty", err)
+		}
+		if backend.applyCalls != 1 || backend.verifyCalls != 1 || *persistCalls != 1 {
+			t.Fatalf("apply=%d verify=%d persist=%d", backend.applyCalls, backend.verifyCalls, *persistCalls)
+		}
+	})
+}
+
+func TestLegacyMigrationCompletionMarkerMatchesOnlySameSource(t *testing.T) {
+	target, err := gorm.Open(gormsqlite.Open(filepath.Join(t.TempDir(), "target.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := createLegacySQLiteFixture(t)
+	fingerprint, err := fingerprintLegacySQLite(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetFingerprint := strings.Repeat("1", 64)
+	if err := target.Transaction(func(tx *gorm.DB) error {
+		return recordLegacyMigrationCompletion(tx, fingerprint, targetFingerprint)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := legacyMigrationCompletionMatches(context.Background(), target, fingerprint, targetFingerprint)
+	if err != nil || !matched {
+		t.Fatalf("same source and target match = %v, err = %v", matched, err)
+	}
+	different := strings.Repeat("0", 64)
+	matched, err = legacyMigrationCompletionMatches(context.Background(), target, different, targetFingerprint)
+	if err != nil || matched {
+		t.Fatalf("different source match = %v, err = %v", matched, err)
+	}
+	matched, err = legacyMigrationCompletionMatches(context.Background(), target, fingerprint, different)
+	if err != nil || matched {
+		t.Fatalf("different target match = %v, err = %v", matched, err)
 	}
 }
 
@@ -440,4 +618,33 @@ func createLegacySQLiteFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestInspectLegacySQLiteStatusReportsPathAndFailureReason(t *testing.T) {
+	// 1. Unconfigured path
+	statusUnconfigured := inspectLegacySQLiteStatus(config.DatabaseConfig{})
+	if statusUnconfigured.PathConfigured || statusUnconfigured.Available || statusUnconfigured.UnavailableReason != "" {
+		t.Fatalf("unexpected unconfigured status: %+v", statusUnconfigured)
+	}
+
+	// 2. Valid snapshot
+	validPath := createLegacySQLiteFixture(t)
+	statusValid := inspectLegacySQLiteStatus(config.DatabaseConfig{LegacySQLitePath: validPath})
+	if !statusValid.PathConfigured || !statusValid.Available || statusValid.UnavailableReason != "" {
+		t.Fatalf("unexpected valid status: %+v", statusValid)
+	}
+
+	// 3. Missing file
+	missingPath := filepath.Join(t.TempDir(), "nonexistent.db")
+	statusMissing := inspectLegacySQLiteStatus(config.DatabaseConfig{LegacySQLitePath: missingPath})
+	if !statusMissing.PathConfigured || statusMissing.Available || statusMissing.UnavailableReason != "file_not_found" {
+		t.Fatalf("unexpected missing file status: %+v", statusMissing)
+	}
+
+	// 4. Directory instead of regular file
+	dirPath := t.TempDir()
+	statusDir := inspectLegacySQLiteStatus(config.DatabaseConfig{LegacySQLitePath: dirPath})
+	if !statusDir.PathConfigured || statusDir.Available || statusDir.UnavailableReason != "not_regular_file" {
+		t.Fatalf("unexpected directory status: %+v", statusDir)
+	}
 }

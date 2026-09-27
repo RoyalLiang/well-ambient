@@ -4,7 +4,7 @@
 
 当前交付面面向 Linux 主机，使用 Docker Engine 与 Docker Compose。Compose 只运行 `migrate`、`server` 和 `web`，不创建、启动、停止或备份 PostgreSQL。生产 PostgreSQL 由服务器现有实例、其他容器栈或托管服务提供；SQLite 只保留给本地开发、测试和首次历史数据迁移。
 
-首次安装页可以迁移一个由服务器固定路径指定的只读 SQLite 快照。该能力不搬附件，也没有在本开发机完成真实 PostgreSQL 验证；需要保留旧数据时，先完整执行 [SQLite → PostgreSQL 上线迁移指南](./sqlite-to-postgresql-migration-guide.md)，并在 Linux staging 用生产快照演练。
+首次安装页可以迁移一个由服务器固定路径指定的只读 SQLite 快照。该能力不搬附件，也没有在本开发机完成真实 PostgreSQL 验证；需要保留旧数据时，先完整执行 [SQLite → PostgreSQL 上线迁移指南](./sqlite-to-postgresql-migration-guide.md)，并在 Linux staging 用生产快照演练。若迁移指南中的旧复制或权限示例与本页冲突，以本页的 owner-only 权限、隔离和原子导入门禁为准。
 
 ## 首次准备
 
@@ -78,9 +78,15 @@ cd /opt/well-ambient
 
 ```bash
 cp deploy/.env.production.example deploy/.env.production
-mkdir -p deploy/runtime/data/legacy
+install -d -m 0700 \
+  deploy/runtime \
+  deploy/runtime/data \
+  deploy/runtime/data/attachments \
+  deploy/runtime/data/legacy \
+  deploy/.state \
+  deploy/backups
 cp deploy/config.production.example.yaml deploy/runtime/config.yaml
-chmod 600 deploy/.env.production deploy/runtime/config.yaml
+chmod 0600 deploy/.env.production deploy/runtime/config.yaml
 ```
 
 编辑 `deploy/.env.production`：
@@ -88,12 +94,72 @@ chmod 600 deploy/.env.production deploy/runtime/config.yaml
 - `WELL_AMBIENT_SERVER_IMAGE` 和 `WELL_AMBIENT_WEB_IMAGE` 指向服务器能取得的镜像仓库；离线导入时填写 `well-ambient-server` 和 `well-ambient-web`；
 - 不再填写 `WELL_AMBIENT_VERSION`；版本、UTC 构建日期和批次说明由 Git 自动生成并随部署包写入 `deploy/generated/`；
 - `WELL_AMBIENT_SETUP_TOKEN` 可留空，让程序在首次安装模式生成一次性令牌；也可填写与数据库密码不同且至少 32 个字符的高熵随机值。显式令牌不会被程序回显或写入临时文件；
-- `APP_UID`、`APP_GID` 应与服务器上 `deploy/runtime` 的所有者一致；
+- `APP_UID`、`APP_GID` 必须等于服务器部署用户的数字 UID/GID。运行目录使用 `0700`、文件使用 `0600`，仅设置为“可读”但身份不同会让容器或后续部署失去访问权限；
 - `HTTP_BIND` 默认是 `127.0.0.1`，供同机 TLS 反向代理使用；只有防火墙和 TLS 边界明确时才改为外部地址；
 - `HTTP_PORT` 是 Linux 主机暴露端口；
 - 不把这个文件提交到 Git。
 
-首次部署保持 `deploy/runtime/config.yaml` 中的 `database.driver: setup`。若需要迁移历史数据，把停写后的 SQLite 快照安装为 `deploy/runtime/data/legacy/well-ambient.db`，不要复制仍在写入的工作文件。数据库连接由浏览器安装页写入 bootstrap 配置；它不进入运行时配置 API、配置版本档案或镜像。GitLab、Jira、飞书和 AI 仍在登录后的配置中心按需开启。
+首次部署保持 `deploy/runtime/config.yaml` 中的 `database.driver: setup`。若需要迁移历史数据，把停写后的 SQLite 快照安装为 `deploy/runtime/data/legacy/well-ambient.db`，不要复制仍在写入的工作文件。数据库连接由浏览器安装页写入 bootstrap 配置；它不进入运行时配置 API、配置版本档案或镜像。
+
+### 保持运行目录和文件仅所有者可访问
+
+`deploy/deploy.sh` 和 `deploy/prepare-runtime-config.sh` 会把 `deploy/runtime/`、`data/`、`attachments/`、`legacy/`、`deploy/.state/` 和 `deploy/backups/` 设为 `0700`。运行配置、SQLite 迁移快照、隔离文件、发布状态、备份引用证据和同目录临时文件均为 `0600`。
+
+浏览器安装页保存数据库连接时，`internal/config.SaveConfig` 会在 `deploy/runtime/` 中创建隐藏的 `0600` 临时文件，完整写入并同步后再原子重命名为 `config.yaml`。部署辅助脚本使用相同的同目录临时文件和原子重命名规则；旧配置和规范迁移快照只有在临时文件完整且校验通过后才会被替换。
+
+`APP_UID`、`APP_GID` 与部署用户不一致时，`0700`/`0600` 会按预期拒绝另一个身份。先修复所有者和权限，再重试：
+
+```bash
+sudo chown -R deploy:deploy deploy/runtime deploy/.state deploy/backups
+sudo chmod 0700 \
+  deploy/runtime \
+  deploy/runtime/data \
+  deploy/runtime/data/attachments \
+  deploy/runtime/data/legacy \
+  deploy/.state \
+  deploy/backups
+sudo chmod 0600 deploy/.env.production
+sudo find deploy/runtime deploy/runtime/data/legacy deploy/.state deploy/backups \
+  -maxdepth 1 -type f -exec chmod 0600 {} +
+```
+
+把 `deploy:deploy` 换成实际部署用户，并把该用户的数字 UID/GID 写入 `APP_UID`、`APP_GID`。
+
+### 只从一致性 SQLite 快照迁移
+
+显式来源表示运维人员已经停写旧系统并准备好冻结、只读的一致性快照。以下两种写法等价：
+
+```bash
+./deploy/deploy.sh --legacy-sqlite /srv/migration/source.snapshot.db
+WELL_AMBIENT_LEGACY_SQLITE=/srv/migration/source.snapshot.db ./deploy/deploy.sh
+```
+
+脚本不会修改显式来源。它先验证来源，把内容写入 `legacy/` 下的 `0600` 临时文件，再次验证后原子安装为 `well-ambient.db`。因此复制或验证失败不会提前覆盖已有规范快照。
+
+未显式指定来源时，脚本会合并并按字节顺序排序以下候选，整个发现过程使用 NUL 分隔路径：
+
+- `deploy/runtime/data/legacy/` 中除规范 `well-ambient.db` 外的普通文件；
+- 项目根目录的 `well-ambient.db`；
+- 项目根目录的 `data.db`。
+
+脚本会为每个候选打印“有效”或“无效”诊断，不询问也不默认选择第一个：
+
+- 0 个有效候选：不安装迁移快照，继续全新 PostgreSQL 安装；
+- 1 个有效候选：必须使用 `sqlite3 .backup` 写入 `0600` 临时文件，成功校验后再原子安装；
+- 多于 1 个有效候选：以状态 2 退出，要求使用 `--legacy-sqlite` 或 `WELL_AMBIENT_LEGACY_SQLITE` 明确选择冻结快照。
+
+自动候选可能仍在写入，因此脚本绝不直接复制。主机缺少 `sqlite3` 或 `.backup` 失败时，部署会失败关闭并保留已有规范快照；先在旧系统停写后制作冻结快照，再走显式导入。
+
+如果规范路径 `deploy/runtime/data/legacy/well-ambient.db` 已存在但校验失败，脚本先把它设为 `0600`，再使用无覆盖移动保留到同一目录。名称为 `well-ambient.db.invalid-YYYYMMDDTHHMMSSZ`；同一 UTC 秒发生冲突时依次追加 `.1`、`.2`。无效文件不会被删除，后续候选扫描仍会打印它的无效诊断。
+
+静态 YAML 只保留数据库连接、HTTP 监听地址和附件目录。GitLab、Jira、飞书、AI、邮件、绩效、方案目录、公开地址和 WellOS 登录维护模式均在登录后的配置中心维护，并写入 PostgreSQL 的 `runtime_configs`；每次变更同时写入 `config_versions` 作为差异、操作者和回滚审计。升级旧环境时，服务启动会自动完成以下兼容迁移：
+
+- 从已有运行时快照恢复动态配置；
+- 对已有 section 做字段级深度合并，为新版本字段补默认值；
+- 从运行时 JSON 中移除历史遗留的 `server.host`、`server.port` 和 `server.attachment_dir`；
+- 保留 YAML/启动参数中的监听地址和附件目录，不让数据库声明与真实进程监听状态漂移。
+
+确认 `runtime_configs` 已存在且配置中心可以正常读回后，可从旧 `deploy/runtime/config.yaml` 删除 GitLab、Jira、飞书、AI、SMTP 等动态 section。不要删除 `database`、`server.host`、`server.port` 或 `server.attachment_dir`。
 
 ## 把镜像交付到服务器
 
@@ -167,9 +233,10 @@ docker compose --env-file deploy/.env.production logs --tail 100 server
 脚本依次执行：
 
 1. 读取并显示自动生成的版本、UTC 构建日期和批次说明，再校验工具、镜像地址、安装令牌和端口；
-2. 验证 Compose 渲染结果；
-3. 启动只提供健康检查和 `/api/setup/*` 的受限 server，以及同源 Web；
-4. `/ready` 返回 `SETUP` 后记录版本并退出，等待管理员完成页面配置。
+2. 修正 owner-only 权限，验证或隔离规范 SQLite 文件，并按 0/1/多候选规则处理自动发现；
+3. 使用同目录 `0600` 临时文件准备运行配置，再验证 Compose 渲染结果；
+4. 启动只提供健康检查和 `/api/setup/*` 的受限 server，以及同源 Web；
+5. `/ready` 返回 `SETUP` 后以 `0600` 记录发布状态并退出，等待管理员完成页面配置。
 
 通过 HTTPS 管理入口或 SSH 隧道打开页面。普通登录页不会先闪现，页面会先检查数据库状态。第一步填写 PostgreSQL 主机、端口、目标库、维护库（通常为 `postgres`）、用户、密码、SSL 和 `WELL_AMBIENT_SETUP_TOKEN`：
 
@@ -191,6 +258,26 @@ WELL_AMBIENT_EXTERNAL_BACKUP_REFERENCE=provider-snapshot-20260826-001 \
 ```
 
 脚本只记录外部备份引用，然后执行一次 `--migrate-only` 和 server/web 切换，不会伪装成自己已经备份 PostgreSQL。
+
+## WellOS 维护窗口
+
+WellOS 计划维护时可能保持 HTTP 可达，但登录统一返回 `10002 / 此账号已禁用`。Well Ambient 不会自动把该业务码视为维护，避免真实停用账号绕过中央认证；必须由运维人员显式开启登录维护模式。
+
+推荐的生产切换顺序：
+
+1. 在 `deploy/.env.production` 临时设置 `WELL_AMBIENT_MAINTENANCE_MODE=1`。
+2. 重建 server 容器，使进程级覆盖生效：
+
+   ```bash
+   docker compose --env-file deploy/.env.production up -d --force-recreate server
+   ```
+
+3. 使用曾经成功登录过、已有本地密码哈希和权限快照的全局超级管理员登录。
+4. 进入“管理台配置 → 安全与授权 → 登录维护模式”，把数据库配置设为“开启”。页面会继续显示当前由环境变量强制开启，但数据库值已经写入 `runtime_configs/config_versions`。
+5. 清空 `WELL_AMBIENT_MAINTENANCE_MODE`，再次重建 server。此后维护模式由数据库配置保持开启，无需继续依赖静态文件。
+6. WellOS 恢复后，在同一页面关闭维护模式；该变更热应用，不需要重启服务。
+
+维护模式只允许本地已知账号使用缓存密码和权限快照登录。未知账号、密码错误、无本地密码哈希或无权限快照的账号仍会被拒绝。关闭开关只阻止后续维护会话签发；已签发的降级 JWT 最多继续有效两小时。`--maintenance-mode` 与环境变量一样是紧急强制开启覆盖，不应长期保留。
 
 部署状态、当前/上一版发布元数据、运行配置和备份分别位于 `deploy/.state/`、`deploy/runtime/`、`deploy/backups/`，都已加入 `.gitignore`。应用回滚时，版本、release env 和批次说明会一起切换。容器日志默认轮转为单文件 20MiB、最多五份，避免长期运行耗尽系统盘。
 
@@ -225,7 +312,7 @@ docker compose --env-file deploy/.env.production logs --tail=200 migrate server 
 ## 密钥处置
 
 - `config.example.yaml` 和生产示例只能出现不可用占位符；
-- 运行配置和环境文件权限保持 `0600`，备份目录由脚本使用私有 umask 创建；
+- 运行配置、环境文件、迁移快照、发布状态和备份引用证据保持 `0600`；对应目录保持 `0700`，脚本同时使用私有 umask；
 - 数据库密码和 setup token 只存在服务器 bootstrap 文件/请求内存，不进入浏览器缓存；首次安装成功后应轮换 setup token，但当前 Compose 仍要求保留一个有效的高熵值用于容器配置解析；
 - 配置 API 只返回 `__configured__` 标记，配置版本只保存标记/摘要哈希；显式迁移会清洗旧版本中的明文秘密；
 - 从仓库示例中移除值不等于撤销已经泄露的凭据。所有曾出现过的真实 token/secret 必须在 GitLab、Jira、飞书和模型供应商侧轮换；是否重写 Git 历史应另行批准并协调所有克隆。

@@ -28,7 +28,12 @@ func main() {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	skipMigrate := flag.Bool("skip-migrate", false, "start without applying database migrations")
 	healthcheckURL := flag.String("healthcheck-url", "", "probe an HTTP readiness URL and exit")
+	maintenanceMode := flag.Bool("maintenance-mode", false, "force enable maintenance mode fallback for WellOS")
 	flag.Parse()
+	if *maintenanceMode {
+		_ = os.Setenv("WELL_AMBIENT_MAINTENANCE_MODE", "1")
+		_ = os.Setenv("WELL_AMBIENT_MAINTENANCE_MODE_SOURCE", "cli")
+	}
 	if endpoint := strings.TrimSpace(*healthcheckURL); endpoint != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 		defer cancel()

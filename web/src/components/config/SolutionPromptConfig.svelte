@@ -4,7 +4,11 @@
   import { showToast } from '../../lib/toast';
 
   export let publicURL = '';
-  export let onSavePublicURL: (value: string) => Promise<void> = async () => {};
+  export let publicURLVersion = 0;
+  export let publicURLLoading = false;
+  export let canReadPublicURL = true;
+  export let canWritePublicURL = false;
+  export let onSavePublicURL: (value: string, expectedVersion: number) => Promise<void> = async () => {};
 
   type PromptVersion = {
     purpose: PromptPurpose;
@@ -48,6 +52,7 @@
   let drafts: Partial<Record<PromptPurpose, PromptDraft>> = {};
   let publicURLDraft = '';
   let publicURLSource = '';
+  let publicURLSaveError = '';
 
   $: purposePrompts = prompts.filter((prompt) => prompt.purpose === purpose);
   $: activePurposePrompts = purposePrompts.filter((prompt) => prompt.status === 'active');
@@ -179,15 +184,22 @@
   }
 
   async function savePublicURL() {
-    action = 'public-url'; error = ''; notice = '';
+    if (!canWritePublicURL || publicURLLoading) return;
+    action = 'public-url'; error = ''; notice = ''; publicURLSaveError = '';
     try {
-      const url = new URL(publicURLDraft.trim());
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('只允许 HTTP 或 HTTPS 地址');
-      await onSavePublicURL(url.toString().replace(/\/$/, ''));
-      publicURLDraft = url.toString().replace(/\/$/, '');
+      if (publicURLVersion <= 0) throw new Error('公开地址版本尚未加载完成，请稍后重试');
+      const candidate = publicURLDraft.trim();
+      if (!/^https?:\/\//i.test(candidate)) throw new Error('只允许 HTTP 或 HTTPS 地址');
+      const parsedURL = document.createElement('a');
+      parsedURL.href = candidate;
+      if (!parsedURL.host || !['http:', 'https:'].includes(parsedURL.protocol)) throw new Error('只允许 HTTP 或 HTTPS 地址');
+      const normalized = parsedURL.href.replace(/\/$/, '');
+      await onSavePublicURL(normalized, publicURLVersion);
+      publicURLDraft = normalized;
       showToast('方案公开地址已保存，后续发布会把绝对链接写回 Jira。', { title: '保存成功' });
     } catch (requestError: any) {
-      showToast(requestError.message || '保存公开地址失败', { type: 'error', title: '保存失败' });
+      publicURLSaveError = requestError.message || '保存公开地址失败';
+      showToast(publicURLSaveError, { type: 'error', title: '保存失败' });
     }
     finally { action = ''; }
   }
@@ -215,9 +227,29 @@
   </section>
 
   {#if !isCodeReview}
-    <section class="prompt-section" aria-labelledby="solution-public-url-title">
+    <section class="prompt-section" aria-labelledby="solution-public-url-title" aria-busy={publicURLLoading}>
       <div class="section-head"><div><span>方案发布</span><h3 id="solution-public-url-title">Jira 方案链接地址</h3><p>用于发布后写回 Jira 的稳定绝对链接；反向代理部署时应填写用户真实访问地址。</p></div></div>
-      <div class="inline-form"><label for="solution-public-url">公开地址</label><input id="solution-public-url" bind:value={publicURLDraft} placeholder="https://ambient.example.com" /><button disabled={!!action || !publicURLDraft.trim()} on:click={savePublicURL}>{action === 'public-url' ? '保存中…' : '保存地址'}</button></div>
+      {#if !canReadPublicURL}
+        <div class="prompt-empty" role="status">当前账号缺少 config:read 权限，公开地址不会被读取或展示。</div>
+      {:else}
+        {#if publicURLSaveError}<div class="prompt-message error" role="alert">{publicURLSaveError}</div>{/if}
+        <div class="inline-form">
+          <label for="solution-public-url">公开地址</label>
+          <input
+            id="solution-public-url"
+            bind:value={publicURLDraft}
+            placeholder={publicURLLoading ? '正在读取当前地址…' : 'https://ambient.example.com'}
+            readonly={!canWritePublicURL}
+            disabled={publicURLLoading}
+          />
+          {#if canWritePublicURL}
+            <button disabled={!!action || publicURLLoading || publicURLVersion <= 0 || !publicURLDraft.trim()} on:click={savePublicURL}>{action === 'public-url' ? '保存中…' : '保存地址'}</button>
+          {:else}
+            <span class="public-url-readonly" role="status">只读 · 配置版本 v{publicURLVersion || 0}</span>
+          {/if}
+        </div>
+        {#if publicURLLoading}<div class="prompt-empty" role="status" aria-live="polite">正在读取公开地址与配置版本…</div>{/if}
+      {/if}
     </section>
   {/if}
 
@@ -275,6 +307,7 @@
   .prompt-metrics span { color:var(--wa-text-muted,#667789); font-size:11px; } .prompt-metrics strong { color:var(--wa-text-strong,#0d1722); font-size:20px; }
   .prompt-section { display:grid; gap:14px; }
   .inline-form { display:grid; grid-template-columns:100px minmax(0,1fr) auto; gap:10px; align-items:center; }
+  .public-url-readonly { color:var(--wa-text-muted,#667789); font-size:12px; font-weight:700; white-space:nowrap; }
   .inline-form label,.prompt-form-grid label,.test-grid label { display:grid; gap:6px; color:var(--wa-text-muted,#667789); font-size:12px; font-weight:700; }
   .prompt-select-field { min-width:0; }
   input,textarea { width:100%; box-sizing:border-box; border:1px solid var(--wa-border-strong,rgba(91,119,137,.28)); border-radius:8px; background:var(--wa-surface-flat,#fbfdfe); color:var(--wa-text-main,#293847); font:500 13px/1.55 var(--wa-font-sans,system-ui); }

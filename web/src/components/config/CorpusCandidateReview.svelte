@@ -114,9 +114,9 @@
   let metadataOpen = false;
   let sourceEvidenceOpen = false;
 
-  $: canRead = currentUserPermissions.includes('corpus_candidate:read');
-  $: canReview = currentUserPermissions.includes('corpus_candidate:review');
-  $: canPreviewImpact = currentUserPermissions.includes('ai_context:preview');
+  $: canRead = currentUserPermissions.includes('corpus_candidate:read') || currentUserPermissions.includes('*');
+  $: canReview = currentUserPermissions.includes('corpus_candidate:review') || currentUserPermissions.includes('*');
+  $: canPreviewImpact = currentUserPermissions.includes('ai_context:preview') || currentUserPermissions.includes('*');
   $: pendingCount = candidates.filter(candidate => candidate.status === 'pending').length;
   $: impactCount = candidates.filter(candidate => candidate.status === 'impact_review').length;
   $: candidateGroups = groupCandidates(candidates);

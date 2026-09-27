@@ -87,7 +87,7 @@ test('configuration versions are managed on one route instead of per-form sideba
   assert.match(settingsPanel, /aria-label="全部配置版本"/);
   assert.match(settingsPanel, /class="version-layout"/);
   assert.doesNotMatch(settingsPanel, /<aside class="settings-audit-pane"/);
-  assert.match(settingsPanel, /class:with-context=\{isIntegrationSection\}/);
+  assert.match(settingsPanel, /class:with-context=\{isIntegrationSection && activeSection !== 'email'\}/);
   assert.match(settingsPanel, /<aside class="settings-context-pane" aria-label="配置上下文检查器">/);
   assert.match(settingsPanel, /class:compact-config=\{isIntegrationSection\}/);
 
@@ -96,5 +96,5 @@ test('configuration versions are managed on one route instead of per-form sideba
   assert.doesNotMatch(contextPane, /version-layout|configVersions|rollbackConfigVersion|配置版本审计/);
   assert.match(contextPane, /settingsInspector/);
   assert.doesNotMatch(settingsPanel, /return \['\/api\/config', '\/api\/config\/versions'\]/);
-  assert.match(settingsPanel, /if \(\['gitlab', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'\]\.includes\(section\)\) \{\s*return \['\/api\/config'\];/);
+  assert.match(settingsPanel, /if \(\['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai'\]\.includes\(section\)\) \{\s*return \['\/api\/config'\];/);
 });

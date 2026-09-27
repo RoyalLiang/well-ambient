@@ -12,7 +12,7 @@
   import PerformanceConfig from './config/PerformanceConfig.svelte';
   import ProjectConfig from './config/ProjectConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
-  import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
+  import WellOSMaintenanceConfig from './config/WellOSMaintenanceConfig.svelte';
   import { showToast } from '../lib/toast';
   import { responseErrorMessage } from '../lib/http-error';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
@@ -32,6 +32,7 @@
   } from '../lib/admin-console/contract';
 
   export let currentUserEmail = '';
+  export let currentUserRole = 'member';
   export let currentUserPermissions: string[] = [];
   export let activeSettingsSection = 'gitlab';
   export let onSectionChange: (section: string) => void = () => {};
@@ -90,7 +91,7 @@
   interface GlobalConfig {
     smtp: SMTPConfig;
     daily_jira_email: DailyJiraEmailConfig;
-    server: { host: string; port: number; public_url?: string; attachment_dir?: string };
+    server: { host: string; port: number; public_url?: string; attachment_dir?: string; maintenance_mode?: boolean };
     gitlab: {
       enabled?: boolean;
       base_url: string;
@@ -182,7 +183,7 @@
   let globalConfig: GlobalConfig = {
     smtp: defaultSMTP(),
     daily_jira_email: defaultDailyEmail(),
-    server: { host: '', port: 0, public_url: '', attachment_dir: '' },
+    server: { host: '', port: 0, public_url: '', attachment_dir: '', maintenance_mode: false },
     gitlab: { base_url: '', secret_token: '', repos: [] },
     feishu: {
       app_id: '',
@@ -593,7 +594,14 @@
   function configVersionTouchesSection(version: ConfigVersion, section: string) {
     const sections = version.changed_sections || [];
     if (section === 'email') return sections.includes('smtp') || sections.includes('daily_jira_email');
+    if (section === 'wellos_auth') return sections.includes('server');
     return sections.includes(section === 'performance' ? 'performance_brain' : section);
+  }
+
+  async function handleMaintenanceUpdated() {
+    await fetchConfig();
+    await fetchConfigVersions(true);
+    window.dispatchEvent(new CustomEvent('config-updated', { detail: globalConfig }));
   }
 
   function formatDateTime(value: string) {
@@ -697,20 +705,6 @@
     }
   }
 
-  async function saveSolutionPublicURL(value: string) {
-    const newConfig = {
-      ...globalConfig,
-      server: { ...globalConfig.server, public_url: value }
-    };
-    const res = await fetch('/api/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newConfig)
-    });
-    if (!res.ok) throw new Error((await res.text()) || '保存方案公开地址失败');
-    globalConfig = newConfig;
-    await fetchConfigVersions(true);
-    window.dispatchEvent(new CustomEvent('config-updated', { detail: newConfig }));
-  }
-
   function handleConfigClose() {
     saveError = '';
     saveSuccess = false;
@@ -724,8 +718,7 @@
     if (section === 'performance') return performanceStatus;
     if (section === 'ai') return aiStatus;
     if (section === 'versions') return currentUserPermissions.includes('config:read') ? 'online' : 'warning';
-    if (section === 'solution_prompts') return currentUserPermissions.includes('solution_prompt:manage') ? 'online' : 'warning';
-    if (section === 'ai_context') return currentUserPermissions.includes('ai_context:read') ? 'online' : 'warning';
+    if (section === 'wellos_auth') return currentUserPermissions.includes('config:read') ? 'online' : 'warning';
     if (['users', 'matrix', 'policies', 'audit'].includes(section)) return currentUserPermissions.includes('users:read') ? 'online' : 'warning';
     return serverStatus;
   }
@@ -749,8 +742,7 @@
     if (section === 'projects') return `${globalConfig.jira?.sync_projects?.length || 0} 个映射`;
     if (section === 'ai') return globalConfig.ai?.model || '模型待配置';
     if (section === 'versions') return `${configVersions.length} 个版本`;
-    if (section === 'solution_prompts') return globalConfig.server?.public_url ? '链接地址已配置' : '链接地址待配置';
-    if (section === 'ai_context') return globalConfig.ai?.project_architecture ? '语料已就绪' : '语料待配置';
+    if (section === 'wellos_auth') return globalConfig.server?.maintenance_mode ? '数据库配置已开启' : '数据库配置已关闭';
     if (section === 'users') return `${users.length} 位成员`;
     if (section === 'matrix') return `${permissionMeta.length} 个权限`;
     if (section === 'policies') return `${authorizationPolicies.length} 条策略`;
@@ -764,9 +756,8 @@
   }
 
   function requiredPermissionLabel(section: SettingsSection) {
+    if (section === 'wellos_auth') return '全局超管';
     if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai', 'versions'].includes(section)) return '配置只读';
-    if (section === 'solution_prompts') return '全局超管';
-    if (section === 'ai_context') return '语料只读';
     return '成员只读';
   }
 
@@ -774,6 +765,7 @@
     if (section === 'smtp') return '邮件服务';
     if (section === 'daily_jira_email') return 'Jira 邮件早报';
     if (section === 'performance_brain') return '绩效计算';
+    if (section === 'server') return '服务运行配置';
     return SETTINGS_NAV_ITEMS.find(item => item.id === section)?.label || section;
   }
 
@@ -783,10 +775,10 @@
 
   function sectionApiLinks(section: SettingsSection) {
     if (section === 'versions') return ['/api/config/versions', '/api/config/versions/{id}/rollback'];
-    if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai', 'ai_context'].includes(section)) {
+    if (section === 'wellos_auth') return ['/api/config/wellos-maintenance', '/api/config/versions'];
+    if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai'].includes(section)) {
       return ['/api/config'];
     }
-    if (section === 'solution_prompts') return ['/api/solution-prompts', '/api/config'];
     if (section === 'users') return ['/api/users', '/api/groups'];
     if (section === 'matrix') return ['/api/groups', '/api/permissions'];
     if (section === 'policies') return ['/api/authz/policies', '/api/authz/explain', '/api/authz/audit-logs'];
@@ -1436,7 +1428,7 @@
           class:with-context={isIntegrationSection && activeSection !== 'email'}
           class:compact-config={isIntegrationSection}
         >
-          <div class="settings-primary-pane" class:integration-surface={isIntegrationSection || activeSection === 'ai_context'}>
+          <div class="settings-primary-pane" class:integration-surface={isIntegrationSection}>
     {#if activeSection === 'gitlab'}
             <GitLabConfig config={globalConfig.gitlab} lastUpdated={lastUpdatedBySection.gitlab} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={saveSuccess && saveSuccessKey === 'gitlab'} />
     {:else if activeSection === 'email'}
@@ -1539,10 +1531,11 @@
                 </div>
               {/if}
             </section>
-    {:else if activeSection === 'solution_prompts'}
-            <SolutionPromptConfig publicURL={globalConfig.server?.public_url || ''} onSavePublicURL={saveSolutionPublicURL} />
-    {:else if activeSection === 'ai_context'}
-            <AIConfig view="context" config={globalConfig.ai} lastUpdated={lastUpdatedBySection.ai} on:save={handleSaveConfig} on:close={handleConfigClose} {saveError} {saving} saveSuccess={false} {currentUserPermissions} />
+    {:else if activeSection === 'wellos_auth'}
+            <WellOSMaintenanceConfig
+              canWrite={currentUserRole === 'super_admin' && currentUserPermissions.includes('config:write')}
+              on:updated={handleMaintenanceUpdated}
+            />
     {:else if activeSection === 'users'}
             <div class="section-card">
         <div class="card-header">

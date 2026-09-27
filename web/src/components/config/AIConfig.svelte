@@ -46,6 +46,7 @@
   export let lastUpdated = '';
   export let view: 'engine' | 'context' | 'all' = 'all';
   export let currentUserPermissions: string[] = [];
+  export let contextAIReady: boolean | null | undefined = undefined;
 
   type ContextFactID = number | string;
 
@@ -189,7 +190,16 @@
 
   $: showEnginePanel = view !== 'context';
   $: showContextPanel = view !== 'engine';
-  $: canReadCorpusCandidates = currentUserPermissions.includes('corpus_candidate:read');
+  function hasGovernancePermission(permission: string) {
+    return currentUserPermissions.includes(permission) || currentUserPermissions.includes('*');
+  }
+
+  $: resolvedContextAIReady = contextAIReady === undefined
+    ? enabled && !!baseURL.trim() && !!apiToken.trim()
+    : contextAIReady;
+  $: canReadCorpusCandidates = hasGovernancePermission('corpus_candidate:read');
+  $: canWriteContext = hasGovernancePermission('ai_context:write');
+  $: canPreviewContext = hasGovernancePermission('ai_context:preview');
   $: isConfigured = enabled || !!(baseURL || apiToken || modelName);
   $: activeContextFactCount = contextFacts.filter(fact => fact.status === 'active').length;
   $: totalContextFactTokens = contextFacts.reduce((sum, fact) => sum + (Number(fact.token_count) || 0), 0);
@@ -266,7 +276,9 @@
   }
 
   onMount(() => {
-    fetchContextFacts();
+    if (showContextPanel) {
+      void fetchContextFacts();
+    }
     return () => contextFactResource.dispose();
   });
 
@@ -552,6 +564,10 @@
 
   async function saveContextFact() {
     contextFactSaveError = '';
+    if (!canWriteContext) {
+      contextFactSaveError = '缺少 ai_context:write 权限，当前资料为只读状态';
+      return;
+    }
     if (!contextFactForm.summary.trim() || !contextFactForm.content.trim()) {
       contextFactSaveError = '请填写事实摘要和事实内容';
       return;
@@ -633,6 +649,10 @@
   async function previewContextPack() {
     contextPreviewError = '';
     contextPackPreview = null;
+    if (!canPreviewContext) {
+      contextPreviewError = '缺少 ai_context:preview 权限，当前无法预览上下文包';
+      return;
+    }
     if (!previewDemand.trim()) {
       contextPreviewError = '请输入一段需求文本后再预览上下文包';
       return;
@@ -976,6 +996,10 @@
         </div>
       </header>
 
+      {#if !canWriteContext}
+        <Alert type="info" title="上下文资料为只读" message="创建、更新和导入资料需要 ai_context:write 权限。" />
+      {/if}
+
       <div class="scw-task-tabs" role="tablist" aria-label="系统设计语料任务">
         <button
           id="context-tab-library"
@@ -1024,7 +1048,7 @@
       >
       <CorpusSourceLibrary
         {currentUserPermissions}
-        aiReady={enabled && !!baseURL && !!apiToken}
+        aiReady={resolvedContextAIReady}
         on:openreview={() => setContextWorkspaceTab('candidates')}
       />
 
@@ -1095,7 +1119,7 @@
         <div class="scw-editor-column">
           <div class="scw-list-toolbar">
             <span class="scw-list-title">{editingContextFactId ? '更新资料' : '创建资料'}</span>
-            <button type="button" on:click={beginCreateContextFact}>新建</button>
+            {#if canWriteContext}<button type="button" on:click={beginCreateContextFact}>新建</button>{/if}
           </div>
 
           {#if contextFactSaveError}
@@ -1109,6 +1133,7 @@
                   <button
                     type="button"
                     class:active={contextFactForm.type === option.value}
+                    disabled={!canWriteContext}
                     on:click={() => setContextFactField('type', option.value)}
                   >
                     {option.label}
@@ -1124,6 +1149,7 @@
                   <button
                     type="button"
                     class:active={contextFactForm.status === option.value}
+                    disabled={!canWriteContext}
                     on:click={() => setContextFactField('status', option.value)}
                   >
                     {option.label}
@@ -1139,6 +1165,7 @@
                   <button
                     type="button"
                     class:active={contextFactForm.scope === option.value}
+                    disabled={!canWriteContext}
                     on:click={() => setContextFactField('scope', option.value)}
                   >
                     {option.label}
@@ -1154,7 +1181,7 @@
                 class="scw-native-input"
                 placeholder={contextFactForm.scope === 'global' ? '全局事实可留空' : 'repo/module/demand type'}
                 bind:value={contextFactForm.scope_id}
-                disabled={contextFactForm.scope === 'global'}
+                disabled={!canWriteContext || contextFactForm.scope === 'global'}
               />
             </div>
 
@@ -1165,6 +1192,7 @@
                   <button
                     type="button"
                     class:active={contextFactForm.source === option.value}
+                    disabled={!canWriteContext}
                     on:click={() => setContextFactField('source', option.value)}
                   >
                     {option.label}
@@ -1175,12 +1203,12 @@
 
             <div class="scw-native-field">
               <label class="scw-native-label" for="context-fact-owner">维护人</label>
-              <input id="context-fact-owner" class="scw-native-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} />
+              <input id="context-fact-owner" class="scw-native-input" placeholder="admin / team / system" bind:value={contextFactForm.owner} readonly={!canWriteContext} />
             </div>
 
             <div class="scw-native-field wide">
               <label class="scw-native-label" for="context-fact-summary">资料摘要</label>
-              <input id="context-fact-summary" class="scw-native-input" placeholder="一句话说明这份设计资料覆盖的系统范围" bind:value={contextFactForm.summary} />
+              <input id="context-fact-summary" class="scw-native-input" placeholder="一句话说明这份设计资料覆盖的系统范围" bind:value={contextFactForm.summary} readonly={!canWriteContext} />
             </div>
 
             <div class="scw-native-field wide">
@@ -1192,6 +1220,7 @@
                 description="高级直录入口，保存后按所选状态进入上下文事实库"
                 placeholder="写入架构设计、功能边界、关键流程、依赖约束或估算规则…"
                 minHeight={420}
+                readonly={!canWriteContext}
                 on:change={(event) => setContextFactField('content', event.detail)}
               />
             </div>
@@ -1199,21 +1228,23 @@
             <div class="scw-score-grid wide">
               <label>
                 <span>新鲜度 <b class="font-mono">{formatScore(contextFactForm.freshness)}</b></span>
-                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.freshness} />
+                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.freshness} disabled={!canWriteContext} />
               </label>
               <label>
                 <span>置信度 <b class="font-mono">{formatScore(contextFactForm.confidence)}</b></span>
-                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.confidence} />
+                <input type="range" min="0" max="1" step="0.05" bind:value={contextFactForm.confidence} disabled={!canWriteContext} />
               </label>
             </div>
           </div>
 
-          <div class="scw-actions">
-            <Button variant="ghost" on:click={beginCreateContextFact}>清空</Button>
-            <Button variant="primary" loading={contextFactSaving} on:click={saveContextFact}>
-              {editingContextFactId ? '更新资料' : '创建资料'}
-            </Button>
-          </div>
+          {#if canWriteContext}
+            <div class="scw-actions">
+              <Button variant="ghost" on:click={beginCreateContextFact}>清空</Button>
+              <Button variant="primary" loading={contextFactSaving} on:click={saveContextFact}>
+                {editingContextFactId ? '更新资料' : '创建资料'}
+              </Button>
+            </div>
+          {/if}
         </div>
       </div>
         </div>
@@ -1243,14 +1274,19 @@
             <h4>上下文包预览</h4>
             <p>输入一段需求文本，预览后端会选择哪些系统设计资料进入 AI 解构上下文。</p>
           </div>
-          <Button variant="secondary" loading={contextPreviewLoading} on:click={previewContextPack}>预览上下文包</Button>
+          <Button variant="secondary" loading={contextPreviewLoading} disabled={!canPreviewContext} on:click={previewContextPack}>预览上下文包</Button>
         </div>
+
+        {#if !canPreviewContext}
+          <Alert type="info" title="上下文预览不可用" message="预览上下文包需要 ai_context:preview 权限。" />
+        {/if}
 
         <textarea
           class="scw-native-textarea"
           rows="3"
           placeholder="例如：为需求解构新增权限解释和上下文包归档能力，需要兼容现有粗粒度 RBAC。"
           bind:value={previewDemand}
+          disabled={!canPreviewContext}
         ></textarea>
 
         {#if contextPreviewError}

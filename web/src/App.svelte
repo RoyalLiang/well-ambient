@@ -22,13 +22,20 @@
     isSettingsSection,
     type SettingsSection
   } from './lib/settings-sections';
+  import {
+    AI_GOVERNANCE_SECTION_MAP,
+    canAccessAIGovernanceSection as hasAIGovernanceSectionAccess,
+    firstAccessibleAIGovernanceSection as selectFirstAccessibleAIGovernanceSection,
+    isAIGovernanceSection,
+    resolveAIGovernanceSection as selectAIGovernanceSection,
+    type AIGovernanceSection
+  } from './lib/ai-governance-sections';
 
   type AppTab = 'decision' | 'schedule' | 'solutions' | 'evidence' | 'tasks' | 'kpi' | 'ai_governance' | 'settings' | 'no_permission';
   type DecisionView = 'agenda' | 'daily_jira';
   type DemandView = 'board' | 'schedule' | 'releases' | 'projects';
   type TaskView = 'status' | 'execution' | 'review';
 	type KPIView = 'overview' | 'calculation';
-  type AIGovernanceSection = 'skills' | 'prompts' | 'rules' | 'context';
   type WorkspaceTone = 'cyan' | 'green' | 'amber' | 'rose' | 'violet' | 'slate';
   type SignalTone = 'neutral' | 'good' | 'warn' | 'danger' | 'info';
   type SetupGateState = 'checking' | 'required' | 'configured' | 'unavailable';
@@ -73,7 +80,7 @@
     evidence: ['dashboard:read'],
     tasks: ['dashboard:read'],
     kpi: ['kpi:read'],
-    ai_governance: ['ai_governance:read', 'ai_context:read', 'solution_prompt:manage', 'config:read', 'dashboard:read', 'decision:read'],
+    ai_governance: [],
     settings: SETTINGS_ROUTE_PERMISSIONS
   };
 
@@ -218,7 +225,7 @@
   } catch (e) {
     currentUserPermissions = [];
   }
-  let permissionsHydrated = !jwtToken || currentUserPermissions.length > 0;
+  let permissionsHydrated = !jwtToken;
   let showUserDropdown = false;
 
   function normalizeDepartment(department: unknown): string {
@@ -253,8 +260,17 @@
     return '成员';
   }
 
+  function canAccessAIGovernanceSectionForCurrentUser(section: AIGovernanceSection): boolean {
+    return hasAIGovernanceSectionAccess(section, currentUserPermissions, currentUserRole);
+  }
+
+  function firstAccessibleAIGovernanceSection(): AIGovernanceSection | null {
+    return selectFirstAccessibleAIGovernanceSection(currentUserPermissions, currentUserRole);
+  }
+
   function canAccessTab(tab: AppTab): boolean {
     if (tab === 'no_permission') return false;
+    if (tab === 'ai_governance') return firstAccessibleAIGovernanceSection() !== null;
     if (currentUserRole === 'super_admin' || currentUserRole === 'admin') return true;
     return tabPermissions[tab].some((permission) => hasPermission(permission));
   }
@@ -307,6 +323,14 @@
   $: if (jwtToken && permissionsHydrated && activeTab === 'settings' && !canAccessSettingsSection(activeSettingsSection)) {
     activeSettingsSection = firstAccessibleSettingsSection();
   }
+  $: if (jwtToken && permissionsHydrated && activeTab === 'ai_governance' && !canAccessAIGovernanceSectionForCurrentUser(activeAIGovernanceSection)) {
+    const fallbackSection = firstAccessibleAIGovernanceSection();
+    if (fallbackSection) {
+      activeAIGovernanceSection = fallbackSection;
+    } else {
+      autoRedirectTab();
+    }
+  }
 	$: if (currentUserRole !== 'super_admin' && activeKPIView === 'calculation') {
 		activeKPIView = 'overview';
 	}
@@ -339,7 +363,9 @@
         ? ['管理台', '任务跟踪', activeTaskView === 'status' ? '任务表' : activeTaskView === 'review' ? '代码评审' : '执行追踪']
 				: activeTab === 'kpi'
 					? ['管理台', '度量洞察', activeKPIView === 'calculation' ? '计算说明' : '度量概览']
-        : ['管理台', activeWorkspace.title];
+          : activeTab === 'ai_governance'
+            ? ['管理台', 'AI 治理', AI_GOVERNANCE_SECTION_MAP[activeAIGovernanceSection].label]
+            : ['管理台', activeWorkspace.title];
   $: workspaceContextMeta = `未读遥测 ${activeAlerts.length}`;
 
   // Redirect to first available tab based on permissions
@@ -374,15 +400,26 @@
     }
     const aiGovParam = params.get('tab') === 'ai_governance' ? params.get('section') || params.get('ai_governance') : params.get('ai_governance');
     if (params.get('tab') === 'ai_governance' || aiGovParam) {
-      if (canAccessTab('ai_governance')) {
+      const section = selectAIGovernanceSection(aiGovParam, currentUserPermissions, currentUserRole);
+      if (section) {
         activeTab = 'ai_governance';
-        if (aiGovParam === 'prompts' || aiGovParam === 'rules' || aiGovParam === 'context' || aiGovParam === 'skills') {
-          activeAIGovernanceSection = aiGovParam;
-        }
+        activeAIGovernanceSection = section;
       }
     }
     const settingsSection = params.get('settings');
-    if (settingsSection && isSettingsSection(settingsSection) && canAccessSettingsSection(settingsSection)) {
+    if (settingsSection === 'solution_prompts') {
+      const section = selectAIGovernanceSection('prompts', currentUserPermissions, currentUserRole);
+      if (section) {
+        activeTab = 'ai_governance';
+        activeAIGovernanceSection = section;
+      }
+    } else if (settingsSection === 'ai_context') {
+      const section = selectAIGovernanceSection('context', currentUserPermissions, currentUserRole);
+      if (section) {
+        activeTab = 'ai_governance';
+        activeAIGovernanceSection = section;
+      }
+    } else if (settingsSection && isSettingsSection(settingsSection) && canAccessSettingsSection(settingsSection)) {
       activeTab = 'settings';
       activeSettingsSection = settingsSection;
     }
@@ -715,7 +752,10 @@
   }
 
   function handleAIGovernanceNavigate(section: string) {
-    activeAIGovernanceSection = (section === 'prompts' || section === 'rules' || section === 'context') ? section : 'skills';
+    if (!isAIGovernanceSection(section)) return;
+    const accessibleSection = selectAIGovernanceSection(section, currentUserPermissions, currentUserRole);
+    if (!accessibleSection) return;
+    activeAIGovernanceSection = accessibleSection;
     activeTab = 'ai_governance';
   }
 
@@ -753,7 +793,9 @@
     if (!jwtToken) return;
     try {
       const res = await fetch('/api/me');
-      if (!res.ok) return;
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       const data = await res.json();
       const user = data.user || {};
 
@@ -765,7 +807,6 @@
       if (Array.isArray(user.permissions)) {
         currentUserPermissions = user.permissions;
       }
-      permissionsHydrated = true;
 
       localStorage.setItem('current_user_name', currentUserName);
       localStorage.setItem('current_user_email', currentUserEmail);
@@ -773,11 +814,12 @@
       localStorage.setItem('current_user_role', currentUserRole);
       localStorage.setItem('current_user_department', currentUserDepartment);
       localStorage.setItem('current_user_permissions', JSON.stringify(currentUserPermissions));
-      autoRedirectTab();
     } catch (e) {
       console.error('Failed to refresh current user profile:', e);
+    } finally {
       permissionsHydrated = true;
       autoRedirectTab();
+      applyLocationIntent();
     }
   }
 
@@ -798,6 +840,7 @@
     };
 
     eventSource.addEventListener('config-updated', async (event) => {
+      if (!hasPermission('config:read')) return;
       try {
         const config = await loadConfig();
         if (config) {
@@ -847,7 +890,7 @@
     if (jwtToken) {
       applyAuthClaims(jwtToken);
       void refreshCurrentUserProfile();
-      void loadConfig();
+      if (hasPermission('config:read')) void loadConfig();
       connectSSE();
       autoRedirectTab();
       applyLocationIntent();
@@ -1000,6 +1043,16 @@
       </form>
     </div>
   </div>
+{:else if !permissionsHydrated}
+  <main class="startup-gate" aria-live="polite" aria-busy="true">
+    <div class="startup-gate-panel">
+      <span class="startup-gate-mark" aria-hidden="true">WA</span>
+      <div>
+        <strong>正在加载访问权限</strong>
+        <p>确认可访问的工作区与治理范围后继续。</p>
+      </div>
+    </div>
+  </main>
 {:else if activeTab !== 'no_permission'}
   <FunctionalAdminShell
     activeRoute={activeTab}
@@ -1086,6 +1139,7 @@
       {:else if activeTab === 'ai_governance'}
         <AIGovernanceCenter
           {currentUserPermissions}
+          {currentUserRole}
           activeSection={activeAIGovernanceSection}
           onSectionChange={handleAIGovernanceNavigate}
         />
@@ -1093,6 +1147,7 @@
         {#key activeSettingsSection}
           <SettingsPanel
             currentUserEmail={currentUserEmail}
+            currentUserRole={currentUserRole}
             currentUserPermissions={currentUserPermissions}
             activeSettingsSection={activeSettingsSection}
             onSectionChange={handleSettingsSectionChange}

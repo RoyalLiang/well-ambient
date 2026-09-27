@@ -96,15 +96,21 @@ func (s *Server) handleRollbackConfigVersion(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Config version not found", http.StatusNotFound)
 		return
 	}
+	s.configMutationMu.Lock()
+	defer s.configMutationMu.Unlock()
 
-	var restored config.Config
-	if err := json.Unmarshal([]byte(target.ConfigJSON), &restored); err != nil {
+	restored, err := restoreVersionedConfig(*s.config, target.ConfigJSON)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("Stored config snapshot is invalid: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	previous := *s.config
 	restored.Database = previous.Database
+	restored.Server.Host = previous.Server.Host
+	restored.Server.Port = previous.Server.Port
+	restored.Server.AttachmentDir = previous.Server.AttachmentDir
+	restored.Server.MaintenanceMode = previous.Server.MaintenanceMode
 	mergeConfiguredSecrets(&restored, previous)
 	if err := config.ValidateMailSettings(restored); err != nil {
 		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
@@ -140,11 +146,20 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	err := db.DB.First(&current, runtimeConfigSingletonID).Error
 	if err == nil {
 		databaseConfig := cfg.Database
+		serverHost := cfg.Server.Host
+		serverPort := cfg.Server.Port
+		attachmentDir := cfg.Server.AttachmentDir
 		restored, restoreErr := restoreVersionedConfig(*cfg, current.ConfigJSON)
 		if restoreErr != nil {
 			return fmt.Errorf("current database config is invalid: %w", restoreErr)
 		}
 		restored.Database = databaseConfig
+		restored.Server.Host = serverHost
+		restored.Server.Port = serverPort
+		restored.Server.AttachmentDir = attachmentDir
+		if err := synchronizeRuntimeConfig(db.DB, restored, current.Version, current.ConfigJSON); err != nil {
+			return fmt.Errorf("failed to normalize current database config: %w", err)
+		}
 		*cfg = restored
 		log.Printf("Loaded current configuration from database version %d", current.Version)
 		return nil
@@ -157,11 +172,17 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	err = db.DB.Order("version desc").First(&latest).Error
 	if err == nil {
 		databaseConfig := cfg.Database
+		serverHost := cfg.Server.Host
+		serverPort := cfg.Server.Port
+		attachmentDir := cfg.Server.AttachmentDir
 		restored, unmarshalErr := restoreVersionedConfig(*cfg, latest.ConfigJSON)
 		if unmarshalErr != nil {
 			return fmt.Errorf("latest database config snapshot is invalid: %w", unmarshalErr)
 		}
 		restored.Database = databaseConfig
+		restored.Server.Host = serverHost
+		restored.Server.Port = serverPort
+		restored.Server.AttachmentDir = attachmentDir
 		mergeConfiguredSecrets(&restored, *cfg)
 		if err := db.DB.Transaction(func(tx *gorm.DB) error {
 			return persistRuntimeConfig(tx, restored, latest.Version)
@@ -178,11 +199,11 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 
 	archivedConfig := *cfg
 	redactConfiguredSecrets(&archivedConfig)
-	nextJSON, err := json.Marshal(archivedConfig)
+	nextJSON, err := json.Marshal(runtimeConfigMap(archivedConfig))
 	if err != nil {
 		return err
 	}
-	redactedJSON, err := json.Marshal(redactConfigForArchive(*cfg))
+	redactedJSON, err := json.Marshal(redactRuntimeConfigForArchive(*cfg))
 	if err != nil {
 		return err
 	}
@@ -212,35 +233,20 @@ func BootstrapVersionedConfig(cfg *config.Config) error {
 	return nil
 }
 
-// restoreVersionedConfig keeps archived sections authoritative while allowing
-// configuration sections introduced after that archive was written to inherit
-// their values from the current file. Without this schema-evolution merge, an
-// old snapshot silently resets every newly added top-level section to Go zero
-// values during startup.
+// restoreVersionedConfig overlays database-owned runtime fields on the current
+// startup configuration. Nested fields introduced by newer releases inherit
+// current defaults, while bootstrap-only listener settings remain file-owned.
 func restoreVersionedConfig(fileConfig config.Config, archivedJSON string) (config.Config, error) {
-	var archivedSections map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(archivedJSON), &archivedSections); err != nil {
+	var archived map[string]interface{}
+	if err := json.Unmarshal([]byte(archivedJSON), &archived); err != nil {
 		return config.Config{}, err
 	}
-	if archivedSections == nil {
-		archivedSections = make(map[string]json.RawMessage)
+	if archived == nil {
+		archived = make(map[string]interface{})
 	}
+	removeBootstrapConfigFields(archived)
 
-	fileJSON, err := json.Marshal(fileConfig)
-	if err != nil {
-		return config.Config{}, err
-	}
-	var fileSections map[string]json.RawMessage
-	if err := json.Unmarshal(fileJSON, &fileSections); err != nil {
-		return config.Config{}, err
-	}
-	for section, value := range fileSections {
-		if _, exists := archivedSections[section]; !exists {
-			archivedSections[section] = value
-		}
-	}
-
-	mergedJSON, err := json.Marshal(archivedSections)
+	mergedJSON, err := json.Marshal(deepMergeConfigMaps(configToMap(fileConfig), archived))
 	if err != nil {
 		return config.Config{}, err
 	}
@@ -248,10 +254,18 @@ func restoreVersionedConfig(fileConfig config.Config, archivedJSON string) (conf
 	if err := json.Unmarshal(mergedJSON, &restored); err != nil {
 		return config.Config{}, err
 	}
+	restored.Database = fileConfig.Database
+	restored.Server.Host = fileConfig.Server.Host
+	restored.Server.Port = fileConfig.Server.Port
+	restored.Server.AttachmentDir = fileConfig.Server.AttachmentDir
 	return restored, nil
 }
 
 func (s *Server) applyConfig(next config.Config) error {
+	next.Database = s.config.Database
+	next.Server.Host = s.config.Server.Host
+	next.Server.Port = s.config.Server.Port
+	next.Server.AttachmentDir = s.config.Server.AttachmentDir
 	*s.config = next
 	s.setEmailConfig(next)
 	if s.performance != nil {
@@ -262,9 +276,7 @@ func (s *Server) applyConfig(next config.Config) error {
 }
 
 func persistRuntimeConfig(tx *gorm.DB, next config.Config, version int) error {
-	raw := configToMap(next)
-	delete(raw, "database")
-	encoded, err := json.Marshal(raw)
+	encoded, err := encodeRuntimeConfig(next)
 	if err != nil {
 		return err
 	}
@@ -281,6 +293,64 @@ func persistRuntimeConfig(tx *gorm.DB, next config.Config, version int) error {
 	}).Create(&current).Error
 }
 
+func synchronizeRuntimeConfig(tx *gorm.DB, next config.Config, version int, existing string) error {
+	encoded, err := encodeRuntimeConfig(next)
+	if err != nil {
+		return err
+	}
+	if string(encoded) == existing {
+		return nil
+	}
+	return tx.Model(&db.RuntimeConfig{}).
+		Where("id = ?", runtimeConfigSingletonID).
+		Updates(map[string]interface{}{
+			"version":     version,
+			"config_json": string(encoded),
+			"updated_at":  time.Now(),
+		}).Error
+}
+
+func encodeRuntimeConfig(next config.Config) ([]byte, error) {
+	return json.Marshal(runtimeConfigMap(next))
+}
+
+func runtimeConfigMap(next config.Config) map[string]interface{} {
+	raw := configToMap(next)
+	removeBootstrapConfigFields(raw)
+	return raw
+}
+
+func removeBootstrapConfigFields(raw map[string]interface{}) {
+	delete(raw, "database")
+	serverRaw, ok := raw["server"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	delete(serverRaw, "host")
+	delete(serverRaw, "port")
+	delete(serverRaw, "attachment_dir")
+	if len(serverRaw) == 0 {
+		delete(raw, "server")
+	}
+}
+
+func deepMergeConfigMaps(base, overlay map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{}, len(base)+len(overlay))
+	for key, value := range base {
+		merged[key] = value
+	}
+	for key, value := range overlay {
+		overlayMap, overlayIsMap := value.(map[string]interface{})
+		baseMap, baseIsMap := merged[key].(map[string]interface{})
+		if overlayIsMap && baseIsMap {
+			merged[key] = deepMergeConfigMaps(baseMap, overlayMap)
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
+}
+
 func (s *Server) recordConfigVersion(previous config.Config, next config.Config, r *http.Request, source string, rollbackFromID uint) (db.ConfigVersion, error) {
 	if db.DB == nil {
 		return db.ConfigVersion{}, fmt.Errorf("database not initialized")
@@ -288,16 +358,16 @@ func (s *Server) recordConfigVersion(previous config.Config, next config.Config,
 
 	archivedConfig := next
 	redactConfiguredSecrets(&archivedConfig)
-	nextJSON, err := json.Marshal(archivedConfig)
+	nextJSON, err := json.Marshal(runtimeConfigMap(archivedConfig))
 	if err != nil {
 		return db.ConfigVersion{}, err
 	}
-	redacted := redactConfigForArchive(next)
+	redacted := redactRuntimeConfigForArchive(next)
 	redactedJSON, err := json.Marshal(redacted)
 	if err != nil {
 		return db.ConfigVersion{}, err
 	}
-	diffEntries := diffConfigMaps(configToMap(redactConfigForArchive(previous)), configToMap(redacted))
+	diffEntries := diffConfigMaps(redactRuntimeConfigForArchive(previous), redacted)
 	diffJSON, err := json.Marshal(diffEntries)
 	if err != nil {
 		return db.ConfigVersion{}, err
@@ -418,6 +488,10 @@ func markSensitiveConfigSlice(input []interface{}) []interface{} {
 func redactConfigForArchive(cfg config.Config) map[string]interface{} {
 	raw := configToMap(cfg)
 	return redactMap(raw, "")
+}
+
+func redactRuntimeConfigForArchive(cfg config.Config) map[string]interface{} {
+	return redactMap(runtimeConfigMap(cfg), "")
 }
 
 func configToMap(value interface{}) map[string]interface{} {

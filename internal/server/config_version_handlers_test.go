@@ -43,7 +43,7 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 
 	fileConfig := config.Config{
 		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
-		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080, MaintenanceMode: true},
 		PerformanceBrain: config.PerformanceBrainConfig{
 			Enabled: true, IntervalMinutes: 37, RetentionDays: 91,
 		},
@@ -52,8 +52,11 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 		t.Fatalf("bootstrap config: %v", err)
 	}
 
-	if fileConfig.Server.Port != 9100 || fileConfig.Jira.BaseURL != "https://jira.example.com" {
-		t.Fatalf("stored configuration did not remain authoritative: %#v", fileConfig)
+	if fileConfig.Server.Host != "0.0.0.0" || fileConfig.Server.Port != 8080 {
+		t.Fatalf("bootstrap listener configuration was overwritten: %#v", fileConfig.Server)
+	}
+	if !fileConfig.Server.MaintenanceMode || fileConfig.Jira.BaseURL != "https://jira.example.com" {
+		t.Fatalf("runtime configuration was not deeply merged: %#v", fileConfig)
 	}
 	if !fileConfig.PerformanceBrain.Enabled || fileConfig.PerformanceBrain.IntervalMinutes != 37 || fileConfig.PerformanceBrain.RetentionDays != 91 {
 		t.Fatalf("new file-only performance section was discarded: %#v", fileConfig.PerformanceBrain)
@@ -65,9 +68,13 @@ func TestBootstrapVersionedConfigInheritsNewTopLevelSectionFromFile(t *testing.T
 	if err := gormDB.First(&synchronized, runtimeConfigSingletonID).Error; err != nil {
 		t.Fatalf("legacy archive was not synchronized into current config: %v", err)
 	}
-	if synchronized.Version != 1 || strings.Contains(synchronized.ConfigJSON, `"database"`) {
+	serverRuntime := runtimeServerConfig(t, synchronized.ConfigJSON)
+	if synchronized.Version != 1 ||
+		strings.Contains(synchronized.ConfigJSON, `"database"`) ||
+		serverRuntime["maintenance_mode"] != true {
 		t.Fatalf("unexpected synchronized runtime config: %#v", synchronized)
 	}
+	assertNoBootstrapServerFields(t, serverRuntime)
 }
 
 func TestBootstrapVersionedConfigLoadsCurrentDatabaseConfig(t *testing.T) {
@@ -98,18 +105,74 @@ func TestBootstrapVersionedConfigLoadsCurrentDatabaseConfig(t *testing.T) {
 
 	fileConfig := config.Config{
 		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
-		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080, MaintenanceMode: true},
 		Jira:     config.JiraConfig{APIToken: "stale-file-secret"},
 	}
 	if err := BootstrapVersionedConfig(&fileConfig); err != nil {
 		t.Fatalf("bootstrap config: %v", err)
 	}
 
-	if fileConfig.Server.Port != 9200 || fileConfig.Jira.BaseURL != stored.Jira.BaseURL || fileConfig.Jira.APIToken != "database-secret" {
+	if fileConfig.Server.Host != "0.0.0.0" || fileConfig.Server.Port != 8080 {
+		t.Fatalf("runtime database config replaced listener bootstrap fields: %#v", fileConfig.Server)
+	}
+	if fileConfig.Server.MaintenanceMode || fileConfig.Jira.BaseURL != stored.Jira.BaseURL || fileConfig.Jira.APIToken != "database-secret" {
 		t.Fatalf("runtime database config was not authoritative: %#v", fileConfig)
 	}
 	if fileConfig.Database.Driver != "postgres" || fileConfig.Database.DSNEnv != "WELL_AMBIENT_DATABASE_DSN" {
 		t.Fatalf("bootstrap database config was not retained: %#v", fileConfig.Database)
+	}
+	var normalized db.RuntimeConfig
+	if err := gormDB.First(&normalized, runtimeConfigSingletonID).Error; err != nil {
+		t.Fatalf("load normalized runtime config: %v", err)
+	}
+	normalizedServer := runtimeServerConfig(t, normalized.ConfigJSON)
+	if normalizedServer["maintenance_mode"] != false {
+		t.Fatalf("runtime config was not normalized: %s", normalized.ConfigJSON)
+	}
+	assertNoBootstrapServerFields(t, normalizedServer)
+}
+
+func TestBootstrapVersionedConfigDatabaseFalseOverridesFileMaintenanceTrue(t *testing.T) {
+	gormDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	if err := gormDB.AutoMigrate(&db.ConfigVersion{}, &db.RuntimeConfig{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	previousDB := db.DB
+	db.DB = gormDB
+	defer func() { db.DB = previousDB }()
+
+	if err := gormDB.Create(&db.RuntimeConfig{
+		ID:         runtimeConfigSingletonID,
+		Version:    4,
+		ConfigJSON: `{"server":{"maintenance_mode":false}}`,
+	}).Error; err != nil {
+		t.Fatalf("seed runtime config: %v", err)
+	}
+
+	fileConfig := config.Config{
+		Database: config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"},
+		Server: config.ServerConfig{
+			Host:            "0.0.0.0",
+			Port:            8080,
+			MaintenanceMode: true,
+		},
+	}
+	if err := BootstrapVersionedConfig(&fileConfig); err != nil {
+		t.Fatalf("bootstrap config: %v", err)
+	}
+	if fileConfig.Server.MaintenanceMode {
+		t.Fatal("database maintenance_mode=false did not override file maintenance_mode=true")
+	}
+
+	var normalized db.RuntimeConfig
+	if err := gormDB.First(&normalized, runtimeConfigSingletonID).Error; err != nil {
+		t.Fatalf("read normalized runtime config: %v", err)
+	}
+	if runtimeServerConfig(t, normalized.ConfigJSON)["maintenance_mode"] != false {
+		t.Fatalf("normalized runtime config lost explicit false: %s", normalized.ConfigJSON)
 	}
 }
 
@@ -238,6 +301,7 @@ func TestHandleSaveConfigPersistsDatabaseWithoutRewritingBootstrapFile(t *testin
 	}
 	current := &config.Config{
 		Database: config.DatabaseConfig{Driver: "postgres", DSNEnv: "WELL_AMBIENT_DATABASE_DSN"},
+		Server:   config.ServerConfig{Host: "0.0.0.0", Port: 8080, MaintenanceMode: true},
 	}
 	s := &Server{config: current, configPath: bootstrapPath}
 	body, err := json.Marshal(config.Config{Server: config.ServerConfig{Host: "127.0.0.1", Port: 8123}})
@@ -263,11 +327,13 @@ func TestHandleSaveConfigPersistsDatabaseWithoutRewritingBootstrapFile(t *testin
 	if err := gormDB.First(&runtime, runtimeConfigSingletonID).Error; err != nil {
 		t.Fatalf("load runtime config: %v", err)
 	}
-	if runtime.Version != 1 || !strings.Contains(runtime.ConfigJSON, `"port":8123`) {
+	runtimeServer := runtimeServerConfig(t, runtime.ConfigJSON)
+	if runtime.Version != 1 || runtimeServer["maintenance_mode"] != true {
 		t.Fatalf("settings were not persisted as current database config: %#v", runtime)
 	}
-	if current.Server.Port != 8123 {
-		t.Fatalf("persisted settings were not applied in memory: %#v", current.Server)
+	assertNoBootstrapServerFields(t, runtimeServer)
+	if current.Server.Host != "0.0.0.0" || current.Server.Port != 8080 || !current.Server.MaintenanceMode {
+		t.Fatalf("bootstrap or dedicated maintenance settings were overwritten: %#v", current.Server)
 	}
 }
 
@@ -294,6 +360,28 @@ func TestRecordConfigVersionRollsBackArchiveWhenCurrentConfigCannotPersist(t *te
 	}
 	if count != 0 {
 		t.Fatalf("version archive escaped the failed transaction: %d", count)
+	}
+}
+
+func runtimeServerConfig(t *testing.T, raw string) map[string]interface{} {
+	t.Helper()
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("decode runtime config: %v", err)
+	}
+	server, _ := payload["server"].(map[string]interface{})
+	if server == nil {
+		t.Fatalf("runtime config has no server section: %s", raw)
+	}
+	return server
+}
+
+func assertNoBootstrapServerFields(t *testing.T, server map[string]interface{}) {
+	t.Helper()
+	for _, key := range []string{"host", "port", "attachment_dir"} {
+		if _, exists := server[key]; exists {
+			t.Fatalf("bootstrap server field %q leaked into runtime config: %#v", key, server)
+		}
 	}
 }
 

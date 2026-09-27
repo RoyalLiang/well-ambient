@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { SETTINGS_SECTION_DEFINITIONS } from '../../lib/settings-sections';
+  import {
+    AI_GOVERNANCE_SECTION_DEFINITIONS,
+    canAccessAIGovernanceSection,
+    isAIGovernanceSection
+  } from '../../lib/ai-governance-sections';
   import ProjectPreferences from '../ProjectPreferences.svelte';
   import ToastHost from '../shared/ToastHost.svelte';
 
@@ -73,12 +78,14 @@
 		{ section: 'calculation', group: '度量洞察', label: '计算说明', subtitle: '口径与审计', permissions: ['kpi:read'], roles: ['super_admin'] }
 	];
 
-  const aiGovernanceSubnav: NavSubItem[] = [
-    { section: 'skills', group: 'AI 治理', label: '技能治理中心', subtitle: '微内核能力与生命周期', permissions: ['ai_context:read', 'solution_prompt:manage', 'config:read'] },
-    { section: 'prompts', group: 'AI 治理', label: '提示词管理', subtitle: '多轮场景与版本管理', permissions: ['solution_prompt:manage', 'ai_context:read', 'config:read'] },
-    { section: 'rules', group: 'AI 治理', label: '规则与标准', subtitle: '工程策略与合规审查', permissions: ['ai_context:read', 'config:read'] },
-    { section: 'context', group: 'AI 治理', label: '上下文语料库', subtitle: '设计语料库与解构上下文', permissions: ['ai_context:read', 'config:read'] }
-  ];
+  const aiGovernanceSubnav: NavSubItem[] = AI_GOVERNANCE_SECTION_DEFINITIONS.map((section) => ({
+    section: section.id,
+    group: 'AI 治理',
+    label: section.label,
+    subtitle: section.subtitle,
+    permissions: section.permissions,
+    roles: section.roles
+  }));
 
   const settingsSubnav: NavSubItem[] = SETTINGS_SECTION_DEFINITIONS.map((section) => ({
     section: section.id,
@@ -149,7 +156,7 @@
 
   $: visibleNav = navItems.filter((item) => availableRoutes.includes(item.route));
   $: activeItem = navItems.find((item) => item.route === activeRoute) || visibleNav[0] || navItems[0];
-  $: workspaceKey = `${activeRoute}:${activeRoute === 'decision' ? activeDecisionView : activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'tasks' ? activeTaskView : activeRoute === 'kpi' ? activeKPIView : activeRoute === 'settings' ? activeSettingsSection : ''}`;
+  $: workspaceKey = `${activeRoute}:${activeRoute === 'decision' ? activeDecisionView : activeRoute === 'schedule' ? activeScheduleView : activeRoute === 'tasks' ? activeTaskView : activeRoute === 'kpi' ? activeKPIView : activeRoute === 'settings' ? activeSettingsSection : activeRoute === 'ai_governance' ? activeAIGovernanceSection : ''}`;
   $: displayName = currentUserName || currentUserEmail || 'well user';
   $: avatarMark = displayName.slice(0, 1).toUpperCase();
   $: roleLabel = currentUserRole === 'super_admin'
@@ -207,6 +214,9 @@
   }
 
   function canAccessSubItem(item: NavSubItem) {
+    if (item.group === 'AI 治理' && isAIGovernanceSection(item.section)) {
+      return canAccessAIGovernanceSection(item.section, currentUserPermissions, currentUserRole);
+    }
     if (currentUserRole === 'super_admin' || currentUserRole === 'admin') {
       return !item.roles || item.roles.includes(currentUserRole);
     }

@@ -7,6 +7,7 @@
   export let id = '';
   export let saving = false;
   export let expandedHitArea = false;
+  export let optimistic = true;
 
   const dispatch = createEventDispatcher();
   const generatedId = `switch-${Math.random().toString(36).slice(2)}`;
@@ -14,8 +15,9 @@
 
   function toggle() {
     if (!disabled) {
-      checked = !checked;
-      dispatch('change', checked);
+      const next = !checked;
+      if (optimistic) checked = next;
+      dispatch('change', next);
     }
   }
 

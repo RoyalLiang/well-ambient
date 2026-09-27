@@ -8,11 +8,13 @@ function source(relativePath: string) {
 
 const promptConfig = source('src/components/config/SolutionPromptConfig.svelte');
 const settings = source('src/lib/settings-sections.ts');
+const aiGovernance = source('src/components/AIGovernanceCenter.svelte');
 const reviewCenter = source('src/components/CodeReviewCenter.svelte');
 
-test('settings exposes code review through the existing online skill governance surface', () => {
-  assert.match(settings, /id: 'solution_prompts'[\s\S]*?label: 'AI 技能治理'/);
-  assert.match(settings, /管理在线 AI 技能的规则版本、作用范围与启用记录/);
+test('dedicated AI governance owns the online code review skill surface', () => {
+  assert.doesNotMatch(settings, /id: 'solution_prompts'/);
+  assert.match(aiGovernance, /import SolutionPromptConfig from '.\/config\/SolutionPromptConfig\.svelte'/);
+  assert.match(aiGovernance, /<SolutionPromptConfig/);
   assert.match(promptConfig, /type PromptPurpose = [^;]*'code_review'/);
   assert.match(promptConfig, /value: 'code_review', label: '代码评审'/);
   assert.match(promptConfig, /<Select label="在线技能"/);

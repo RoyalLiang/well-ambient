@@ -1,22 +1,52 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
-  import CorpusSourceLibrary from './config/CorpusSourceLibrary.svelte';
-  import CorpusCandidateReview from './config/CorpusCandidateReview.svelte';
+  import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
+  import AIConfig from './config/AIConfig.svelte';
+  import {
+    AI_GOVERNANCE_SECTION_DEFINITIONS,
+    canAccessAIGovernanceSection,
+    canManageAIGovernanceSkills,
+    canReadSolutionPublicURL,
+    canWriteAIGovernanceRules,
+    canWriteSolutionPublicURL,
+    firstAccessibleAIGovernanceSection,
+    type AIGovernanceSection
+  } from '../lib/ai-governance-sections';
 
   export let currentUserPermissions: string[] = [];
-  export let activeSection = 'skills'; // 'skills' | 'prompts' | 'rules' | 'context'
+  export let currentUserRole = 'member';
+  export let activeSection: AIGovernanceSection = 'skills';
   export let onSectionChange: (section: string) => void = () => {};
 
-  function switchSection(sec: string) {
+  let mounted = false;
+  let loadedSections = new Set<AIGovernanceSection>();
+  let loadingSections = new Set<AIGovernanceSection>();
+  let lastAuthorizationSignature = '';
+  $: accessibleSections = AI_GOVERNANCE_SECTION_DEFINITIONS.filter((section) =>
+    canAccessAIGovernanceSection(section.id, currentUserPermissions, currentUserRole)
+  );
+  $: canManageSkills = canManageAIGovernanceSkills(currentUserPermissions, currentUserRole);
+  $: canWriteRules = canWriteAIGovernanceRules(currentUserPermissions);
+  $: canReadPublicURL = canReadSolutionPublicURL(currentUserPermissions, currentUserRole);
+  $: canWritePublicURL = canWriteSolutionPublicURL(currentUserPermissions, currentUserRole);
+  $: authorizationSignature = `${currentUserRole}:${[...currentUserPermissions].sort().join(',')}`;
+  $: if (authorizationSignature !== lastAuthorizationSignature) {
+    lastAuthorizationSignature = authorizationSignature;
+    loadedSections = new Set();
+    loadingSections = new Set();
+    if (!canReadPublicURL) {
+      solutionPublicURL = '';
+      solutionPublicURLVersion = 0;
+    }
+  }
+
+  function switchSection(sec: AIGovernanceSection) {
+    if (!canAccessAIGovernanceSection(sec, currentUserPermissions, currentUserRole)) return;
     activeSection = sec;
     onSectionChange(sec);
   }
-
-  $: canManagePrompts = currentUserPermissions.includes('solution_prompt:manage');
-  $: canReadContext = currentUserPermissions.includes('ai_context:read');
-  $: canWriteContext = currentUserPermissions.includes('ai_context:write');
 
   // Capability types
   interface CapabilityVersionResource {
@@ -109,6 +139,7 @@
   let loadingCapabilities = false;
   let capabilityError = '';
   let capabilityNotice = '';
+  let capabilityRequestID = 0;
 
   // Filter
   let searchKeyword = '';
@@ -128,6 +159,7 @@
   let capabilityDetail: CapabilityDetailData | null = null;
   let loadingDetail = false;
   let detailDrawerOpen = false;
+  let detailRequestID = 0;
   let activeVersionTab = 0;
   let drawerActiveView: 'skill_doc' | 'slices' = 'skill_doc';
   let copiedSkillDoc = false;
@@ -182,33 +214,29 @@
   let togglingStatusKey = '';
   let reinstallingKey = '';
 
-  // --- Prompts Section State ---
-  type PromptPurpose = 'solution_polish' | 'solution_compare_requirement' | 'solution_compare_compatibility' | 'code_review';
-  type PromptVersion = {
-    purpose: PromptPurpose;
-    id: number; scope_type: 'global' | 'project'; scope_id: string; version: number;
-    status: 'draft' | 'active' | 'retired'; name: string; system_prompt: string;
-    content_hash: string; validation_status: 'untested' | 'passed' | 'failed';
-    validation_summary?: string; validated_by?: string; validated_at?: string;
-    created_by: string; activated_by: string; created_at: string; activated_at?: string;
+  // --- Prompts and scoped configuration state ---
+  const governanceAIConfig = {
+    enabled: false,
+    provider: 'openai',
+    base_url: '',
+    endpoint_type: 'responses',
+    api_token: '',
+    model: '',
+    project_architecture: '',
+    delivery_workflow: '',
+    implemented_features: '',
+    estimation_guidelines: '',
+    default_work_hours_per_day: 8
   };
-  const purposeOptions = [
-    { value: 'solution_polish', label: '方案润色', meta: '需求方案生成与整理' },
-    { value: 'solution_compare_requirement', label: '需求等价性对比', meta: '两轮对比的第一轮' },
-    { value: 'solution_compare_compatibility', label: '方案兼容性对比', meta: '两轮对比的第二轮' },
-    { value: 'code_review', label: '代码评审', meta: '证据驱动的代码审查' }
-  ];
-  let prompts: PromptVersion[] = [];
-  let loadingPrompts = false;
-  let selectedPurpose: PromptPurpose = 'solution_polish';
-  let promptScopeType: 'global' | 'project' = 'global';
-  let promptScopeID = '';
-  let promptDraftName = '';
-  let promptDraftSystem = '';
-  let promptActivateOnSave = true;
-  let promptNotice = '';
-  let promptError = '';
-  let savingPrompt = false;
+
+  let solutionPublicURL = '';
+  let solutionPublicURLVersion = 0;
+  let solutionPublicURLLoading = false;
+  let solutionPublicURLError = '';
+  let contextAIReady: boolean | null = null;
+  let contextAIStatus = 'unknown';
+  let contextReadinessLoading = false;
+  let contextReadinessError = '';
 
   // --- Rules Section State ---
   interface RepoPolicyItem {
@@ -269,6 +297,18 @@ activation:
   mode: human_approved
 `;
 
+  class GovernanceRequestError extends Error {
+    status: number;
+    code: string;
+
+    constructor(status: number, code: string, message: string) {
+      super(message);
+      this.name = 'GovernanceRequestError';
+      this.status = status;
+      this.code = code;
+    }
+  }
+
   // API helper
   async function api<T = any>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(path, init);
@@ -280,13 +320,18 @@ activation:
       data = { message: text };
     }
     if (!res.ok) {
-      throw new Error(data.message || data.error || text || `HTTP ${res.status}`);
+      throw new GovernanceRequestError(
+        res.status,
+        typeof data.error === 'string' ? data.error : '',
+        data.message || data.error || text || `HTTP ${res.status}`
+      );
     }
     return data;
   }
 
   // --- Capability Functions ---
-  async function loadCapabilities() {
+  async function loadCapabilities(): Promise<boolean> {
+    const requestID = ++capabilityRequestID;
     loadingCapabilities = true;
     capabilityError = '';
     try {
@@ -297,17 +342,25 @@ activation:
 
       const qs = params.toString() ? `?${params.toString()}` : '';
       const resp = await api(`/api/agent-runtime/capabilities${qs}`);
+      if (requestID !== capabilityRequestID) return false;
       capabilities = resp.capabilities || [];
       totalDiskSizeBytes = resp.total_disk_size_bytes || 0;
       totalDiskSizeFormatted = resp.total_disk_size_formatted || '0 B';
+      return true;
     } catch (err: any) {
-      capabilityError = err.message || '加载技能列表失败';
+      if (requestID === capabilityRequestID) {
+        capabilityError = err.message || '加载技能列表失败';
+      }
+      return false;
     } finally {
-      loadingCapabilities = false;
+      if (requestID === capabilityRequestID) {
+        loadingCapabilities = false;
+      }
     }
   }
 
   async function openDetail(cap: CapabilityItem) {
+    const requestID = ++detailRequestID;
     selectedCapability = cap;
     detailDrawerOpen = true;
     loadingDetail = true;
@@ -317,15 +370,41 @@ activation:
     copiedSkillDoc = false;
     try {
       const detail = await api<CapabilityDetailData>(`/api/agent-runtime/capabilities/${cap.capability_key}`);
+      if (
+        requestID !== detailRequestID ||
+        !detailDrawerOpen ||
+        selectedCapability?.capability_key !== cap.capability_key
+      ) return;
       capabilityDetail = detail;
     } catch (err: any) {
-      capabilityError = err.message || '加载技能详情失败';
+      if (requestID === detailRequestID) {
+        capabilityError = err.message || '加载技能详情失败';
+      }
     } finally {
-      loadingDetail = false;
+      if (requestID === detailRequestID) {
+        loadingDetail = false;
+      }
     }
   }
 
+  function closeDetailDrawer() {
+    detailRequestID += 1;
+    detailDrawerOpen = false;
+    loadingDetail = false;
+    capabilityDetail = null;
+  }
+
+  function requireSkillMutationAccess() {
+    if (!canManageSkills) throw new Error('需要全局超级管理员和 solution_prompt:manage 权限');
+  }
+
   async function toggleCapabilityStatus(cap: CapabilityItem) {
+    try {
+      requireSkillMutationAccess();
+    } catch (err: any) {
+      capabilityError = err.message;
+      return;
+    }
     const nextStatus = cap.status === 'active' ? 'disabled' : 'active';
     togglingStatusKey = cap.capability_key;
     capabilityNotice = '';
@@ -350,6 +429,7 @@ activation:
   }
 
   function openDeleteConfirm(cap: CapabilityItem) {
+    if (!canManageSkills) return;
     deleteTarget = cap;
     deleteError = '';
     // 如果存在历史运行绑定，默认推荐冷归档；否则默认彻底清除
@@ -358,7 +438,7 @@ activation:
   }
 
   async function confirmUninstall() {
-    if (!deleteTarget) return;
+    if (!canManageSkills || !deleteTarget) return;
     deleting = true;
     deleteError = '';
     try {
@@ -372,7 +452,7 @@ activation:
         capabilityNotice = `技能 ${deleteTarget.capability_key} 已成功卸载并清理物理磁盘占用，已保留安装记录供回溯与恢复。`;
       }
       if (detailDrawerOpen && selectedCapability?.capability_key === deleteTarget.capability_key) {
-        detailDrawerOpen = false;
+        closeDetailDrawer();
       }
       await loadCapabilities();
     } catch (err: any) {
@@ -383,6 +463,7 @@ activation:
   }
 
   async function handleReinstall(cap: CapabilityItem) {
+    if (!canManageSkills) return;
     reinstallingKey = cap.capability_key;
     capabilityError = '';
     capabilityNotice = '';
@@ -403,6 +484,7 @@ activation:
   }
 
   function openImportModal() {
+    if (!canManageSkills) return;
     importManifestText = sampleManifest;
     remoteInstallURL = '';
     remoteAutoActivate = true;
@@ -412,6 +494,7 @@ activation:
   }
 
   async function submitImport() {
+    if (!canManageSkills) return;
     importing = true;
     importError = '';
     try {
@@ -442,6 +525,7 @@ activation:
   }
 
   function openUpgradeModal(cap: CapabilityItem) {
+    if (!canManageSkills) return;
     upgradeTarget = cap;
     upgradeManifestText = '';
     upgradeRemoteURL = '';
@@ -451,7 +535,7 @@ activation:
   }
 
   async function submitUpgrade() {
-    if (!upgradeTarget) return;
+    if (!canManageSkills || !upgradeTarget) return;
     upgrading = true;
     upgradeError = '';
     try {
@@ -485,6 +569,7 @@ activation:
   }
 
   async function activateSpecificVersion(capKey: string, version: number, scopeType: string) {
+    if (!canManageSkills) return;
     capabilityError = '';
     try {
       await api(`/api/agent-runtime/capabilities/${capKey}/activate`, {
@@ -502,62 +587,70 @@ activation:
     }
   }
 
-  // --- Prompts Functions ---
-  async function loadPrompts() {
-    loadingPrompts = true;
-    promptError = '';
+  // --- Prompts and scoped configuration functions ---
+  async function loadSolutionPublicURL(): Promise<boolean> {
+    if (!canReadPublicURL) return true;
+    solutionPublicURLLoading = true;
+    solutionPublicURLError = '';
     try {
-      const resp = await api('/api/solution-prompts');
-      prompts = resp.items || [];
-      initPromptEditor();
+      const response = await api<{ public_url: string; version: number }>('/api/solution-prompts/public-url');
+      solutionPublicURL = response.public_url || '';
+      solutionPublicURLVersion = response.version;
+      return true;
     } catch (err: any) {
-      promptError = err.message || '加载提示词失败';
+      solutionPublicURLError = err.message || '方案公开地址加载失败';
+      return false;
     } finally {
-      loadingPrompts = false;
+      solutionPublicURLLoading = false;
     }
   }
 
-  function initPromptEditor() {
-    const active = prompts.find(p => p.purpose === selectedPurpose && p.scope_type === 'global' && p.status === 'active');
-    if (active) {
-      promptDraftName = active.name;
-      promptDraftSystem = active.system_prompt;
-      promptScopeType = active.scope_type;
-      promptScopeID = active.scope_id || '';
-    } else {
-      promptDraftName = `${selectedPurpose} 系统指令`;
-      promptDraftSystem = '';
+  async function saveSolutionPublicURL(value: string, expectedVersion: number) {
+    if (!canWritePublicURL) {
+      throw new Error('需要 config:read 与 config:write 权限才能保存方案公开地址');
     }
-  }
-
-  async function savePromptVersion() {
-    savingPrompt = true;
-    promptError = '';
-    promptNotice = '';
     try {
-      await api('/api/solution-prompts', {
-        method: 'POST',
+      const response = await api<{ public_url: string; version: number }>('/api/solution-prompts/public-url', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          purpose: selectedPurpose,
-          scope_type: promptScopeType,
-          scope_id: promptScopeID,
-          name: promptDraftName,
-          system_prompt: promptDraftSystem,
-          activate_on_save: promptActivateOnSave
-        })
+        body: JSON.stringify({ public_url: value, expected_version: expectedVersion })
       });
-      promptNotice = '提示词新版本已成功创建并保存！';
-      await loadPrompts();
+      solutionPublicURL = response.public_url || '';
+      solutionPublicURLVersion = response.version;
+      solutionPublicURLError = '';
     } catch (err: any) {
-      promptError = err.message || '保存提示词失败';
+      if (err instanceof GovernanceRequestError && err.status === 409) {
+        const reloaded = await loadSolutionPublicURL();
+        throw new Error(
+          reloaded
+            ? '配置版本已更新，已重新读取当前公开地址。你的输入仍保留，请确认后再次保存。'
+            : '配置版本已更新，但重新读取当前公开地址失败。请稍后重试。'
+        );
+      }
+      throw err;
+    }
+  }
+
+  async function loadContextReadiness(): Promise<boolean> {
+    contextReadinessLoading = true;
+    contextReadinessError = '';
+    try {
+      const response = await api<{ ready: boolean; status: string }>('/api/ai/context-readiness');
+      contextAIReady = response.ready;
+      contextAIStatus = response.status || (response.ready ? 'ready' : 'unknown');
+      return true;
+    } catch (err: any) {
+      contextAIReady = null;
+      contextAIStatus = 'unknown';
+      contextReadinessError = err.message || 'AI 就绪状态加载失败';
+      return false;
     } finally {
-      savingPrompt = false;
+      contextReadinessLoading = false;
     }
   }
 
   // --- Rules Functions ---
-  async function loadRepoPolicies() {
+  async function loadRepoPolicies(): Promise<boolean> {
     loadingPolicies = true;
     policyError = '';
     try {
@@ -567,8 +660,10 @@ activation:
         selectedPolicyRepo = repoPolicies[0].project_id;
         editingPolicy = { ...repoPolicies[0] };
       }
+      return true;
     } catch (err: any) {
       policyError = err.message || '加载评审工程规则失败';
+      return false;
     } finally {
       loadingPolicies = false;
     }
@@ -580,7 +675,7 @@ activation:
   }
 
   async function saveRepoPolicy() {
-    if (!editingPolicy) return;
+    if (!canWriteRules || !editingPolicy) return;
     savingPolicy = true;
     policyNotice = '';
     policyError = '';
@@ -620,10 +715,63 @@ activation:
     }
   }
 
+  async function loadAuthorizedSection(section: AIGovernanceSection) {
+    if (
+      !canAccessAIGovernanceSection(section, currentUserPermissions, currentUserRole) ||
+      loadedSections.has(section) ||
+      loadingSections.has(section)
+    ) return;
+
+    loadingSections = new Set([...loadingSections, section]);
+    let loaded = false;
+    try {
+      if (section === 'skills') loaded = await loadCapabilities();
+      if (section === 'prompts') loaded = await loadSolutionPublicURL();
+      if (section === 'rules') loaded = await loadRepoPolicies();
+      if (section === 'context') loaded = await loadContextReadiness();
+      if (loaded) loadedSections = new Set([...loadedSections, section]);
+    } finally {
+      loadingSections = new Set([...loadingSections].filter((item) => item !== section));
+    }
+  }
+
+  function retrySection(section: AIGovernanceSection) {
+    loadedSections = new Set([...loadedSections].filter((item) => item !== section));
+    void loadAuthorizedSection(section);
+  }
+
+  function handleSectionTabKeydown(event: KeyboardEvent, index: number) {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const lastIndex = accessibleSections.length - 1;
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? lastIndex
+        : event.key === 'ArrowRight'
+          ? (index + 1) % accessibleSections.length
+          : (index - 1 + accessibleSections.length) % accessibleSections.length;
+    const nextSection = accessibleSections[nextIndex];
+    if (!nextSection) return;
+    switchSection(nextSection.id);
+    const buttons = Array.from(
+      (event.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') || []
+    );
+    buttons[nextIndex]?.focus();
+  }
+
+  $: resolvedActiveSection = canAccessAIGovernanceSection(activeSection, currentUserPermissions, currentUserRole)
+    ? activeSection
+    : firstAccessibleAIGovernanceSection(currentUserPermissions, currentUserRole);
+  $: if (mounted && resolvedActiveSection && resolvedActiveSection !== activeSection) {
+    onSectionChange(resolvedActiveSection);
+  }
+  $: if (mounted && resolvedActiveSection && authorizationSignature) {
+    void loadAuthorizedSection(resolvedActiveSection);
+  }
+
   onMount(() => {
-    void loadCapabilities();
-    void loadPrompts();
-    void loadRepoPolicies();
+    mounted = true;
   });
 </script>
 
@@ -637,23 +785,28 @@ activation:
         <p class="gov-subtitle">基于通用微内核规约，统一治理 Agent 技能生命周期、场景提示词工程、合规审查规则与领域设计语料。</p>
       </div>
 
-      <div class="gov-header-actions">
-        <button type="button" class="btn btn-secondary" on:click={openImportModal}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-          </svg>
-          导入 / 远程安装技能
-        </button>
-        <button type="button" class="btn btn-ghost" on:click={loadCapabilities} title="刷新技能与磁盘占用">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={loadingCapabilities}>
-            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-        </button>
-      </div>
+      {#if resolvedActiveSection === 'skills'}
+        <div class="gov-header-actions">
+          {#if canManageSkills}
+            <button type="button" class="btn btn-secondary" on:click={openImportModal}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              导入 / 远程安装技能
+            </button>
+          {/if}
+          <button type="button" class="btn btn-ghost icon-action" on:click={loadCapabilities} aria-label="刷新技能与磁盘占用" title="刷新技能与磁盘占用">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={loadingCapabilities} aria-hidden="true">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+      {/if}
     </div>
 
+    {#if resolvedActiveSection === 'skills'}
     <!-- Metrics Strip (Finesse UI Product Register) -->
-    <div class="gov-metrics-strip" aria-label="AI 治理关键指标">
+    <div class="gov-metrics-strip" aria-label="技能治理关键指标">
       <div class="gov-metric-item">
         <span class="gov-metric-label">已安装技能 (Active / Total)</span>
         <div class="gov-metric-val">
@@ -692,74 +845,69 @@ activation:
         </div>
       </div>
     </div>
+    {/if}
 
-    <!-- Tab Navigation -->
-    <nav class="gov-nav-tabs" role="tablist">
-      <button
-        role="tab"
-        aria-selected={activeSection === 'skills'}
-        class="gov-tab"
-        class:active={activeSection === 'skills'}
-        on:click={() => switchSection('skills')}
-      >
-        <span class="tab-icon">⚡</span>
-        技能治理中心
-        <span class="tab-count">{capabilities.length}</span>
-      </button>
-
-      <button
-        role="tab"
-        aria-selected={activeSection === 'prompts'}
-        class="gov-tab"
-        class:active={activeSection === 'prompts'}
-        on:click={() => switchSection('prompts')}
-      >
-        <span class="tab-icon">📝</span>
-        提示词管理
-        <span class="tab-count">{prompts.length}</span>
-      </button>
-
-      <button
-        role="tab"
-        aria-selected={activeSection === 'rules'}
-        class="gov-tab"
-        class:active={activeSection === 'rules'}
-        on:click={() => switchSection('rules')}
-      >
-        <span class="tab-icon">⚖️</span>
-        规则与工程标准
-      </button>
-
-      <button
-        role="tab"
-        aria-selected={activeSection === 'context'}
-        class="gov-tab"
-        class:active={activeSection === 'context'}
-        on:click={() => switchSection('context')}
-      >
-        <span class="tab-icon">📚</span>
-        上下文与语料库
-      </button>
-    </nav>
+    {#if accessibleSections.length > 0}
+      <nav class="gov-nav-tabs" role="tablist" aria-label="AI 治理分区">
+        {#each accessibleSections as section, index}
+          <button
+            id={`ai-governance-tab-${section.id}`}
+            type="button"
+            role="tab"
+            aria-selected={resolvedActiveSection === section.id}
+            aria-controls={`ai-governance-panel-${section.id}`}
+            tabindex={resolvedActiveSection === section.id ? 0 : -1}
+            class="gov-tab"
+            class:active={resolvedActiveSection === section.id}
+            on:click={() => switchSection(section.id)}
+            on:keydown={(event) => handleSectionTabKeydown(event, index)}
+          >
+            <span class="tab-icon" aria-hidden="true">{section.id === 'skills' ? '⚡' : section.id === 'prompts' ? '📝' : section.id === 'rules' ? '⚖️' : '📚'}</span>
+            {section.label}
+            {#if section.id === 'skills'}<span class="tab-count">{capabilities.length}</span>{/if}
+          </button>
+        {/each}
+      </nav>
+    {/if}
   </header>
 
+  {#if accessibleSections.length === 0}
+    <section class="gov-empty-state gov-no-access" role="status" aria-labelledby="ai-governance-no-access-title">
+      <div class="empty-icon" aria-hidden="true">🔒</div>
+      <h2 id="ai-governance-no-access-title">暂无可访问的 AI 治理分区</h2>
+      <p>当前账号没有技能、提示词、规则或上下文分区的读取权限。请联系安全管理员分配对应权限。</p>
+    </section>
+  {/if}
+
   <!-- Global Alerts -->
-  {#if capabilityNotice}
+  {#if resolvedActiveSection === 'skills' && capabilityNotice}
     <div class="gov-notice" role="status">
       <span>{capabilityNotice}</span>
-      <button type="button" class="close-btn" on:click={() => capabilityNotice = ''}>×</button>
+      <button type="button" class="close-btn" aria-label="关闭技能操作提示" on:click={() => capabilityNotice = ''}>×</button>
     </div>
   {/if}
-  {#if capabilityError}
+  {#if resolvedActiveSection === 'skills' && capabilityError}
     <div class="gov-notice error" role="alert">
       <span>{capabilityError}</span>
-      <button type="button" class="close-btn" on:click={() => capabilityError = ''}>×</button>
+      <div class="notice-actions">
+        <button type="button" class="btn btn-sm btn-ghost" on:click={() => retrySection('skills')}>重试</button>
+        <button type="button" class="close-btn" aria-label="关闭技能错误提示" on:click={() => capabilityError = ''}>×</button>
+      </div>
     </div>
   {/if}
 
   <!-- TAB 1: 技能治理中心 (Skills) -->
-  {#if activeSection === 'skills'}
-    <section class="gov-pane" aria-label="技能治理列表">
+  {#if resolvedActiveSection === 'skills'}
+    <section
+      id="ai-governance-panel-skills"
+      class="gov-pane"
+      role="tabpanel"
+      aria-labelledby="ai-governance-tab-skills"
+      aria-busy={loadingCapabilities}
+    >
+      {#if !canManageSkills}
+        <div class="gov-notice" role="status">技能清单为只读。启用、升级、导入和卸载需要全局超级管理员与 solution_prompt:manage 权限。</div>
+      {/if}
       <!-- Filter Bar -->
       <div class="gov-filter-bar">
         <div class="search-box">
@@ -812,17 +960,17 @@ activation:
       </div>
 
       <!-- Skills Table / Card List -->
-      {#if loadingCapabilities}
-        <div class="gov-loading-state">
-          <div class="spinner"></div>
+      {#if loadingCapabilities && capabilities.length === 0}
+        <div class="gov-loading-state" role="status" aria-live="polite">
+          <div class="spinner" aria-hidden="true"></div>
           <span>正在检索微内核能力注册表与磁盘统计...</span>
         </div>
       {:else if displayCapabilities.length === 0}
         <div class="gov-empty-state">
           <div class="empty-icon">📦</div>
           <h3>未检索到匹配的微内核技能</h3>
-          <p>当前过滤条件下没有已注册能力，您可以点击“导入 / 远程安装技能”快速部署通用标准 Capability。</p>
-          <button type="button" class="btn btn-primary" on:click={openImportModal}>立即导入技能</button>
+          <p>{canManageSkills ? '当前过滤条件下没有已注册能力，可以导入符合规范的 Capability。' : '当前过滤条件下没有已注册能力。'}</p>
+          {#if canManageSkills}<button type="button" class="btn btn-primary" on:click={openImportModal}>立即导入技能</button>{/if}
         </div>
       {:else}
         <div class="gov-table-container">
@@ -894,9 +1042,9 @@ activation:
                           aria-checked={cap.status === 'active'}
                           class="gov-switch"
                           class:checked={cap.status === 'active'}
-                          disabled={togglingStatusKey === cap.capability_key}
+                          disabled={!canManageSkills || togglingStatusKey === cap.capability_key}
                           on:click={() => toggleCapabilityStatus(cap)}
-                          title={cap.status === 'active' ? '点击禁用该技能' : '点击启用该技能'}
+                          title={!canManageSkills ? '需要全局超级管理员与 solution_prompt:manage 权限' : cap.status === 'active' ? '点击禁用该技能' : '点击启用该技能'}
                         >
                           <span class="gov-switch-handle"></span>
                         </button>
@@ -941,22 +1089,24 @@ activation:
                         查看详情 / SKILL.md
                       </button>
 
-                      {#if cap.status === 'uninstalled' || cap.status === 'archived'}
-                        <button
-                          type="button"
-                          class="btn btn-sm btn-primary"
-                          disabled={reinstallingKey === cap.capability_key}
-                          on:click={() => handleReinstall(cap)}
-                        >
-                          {reinstallingKey === cap.capability_key ? '恢复中…' : '重新安装'}
-                        </button>
-                      {:else}
-                        <button type="button" class="btn btn-sm btn-ghost" on:click={() => openUpgradeModal(cap)}>
-                          升级
-                        </button>
-                        <button type="button" class="btn btn-sm btn-danger-ghost" on:click={() => openDeleteConfirm(cap)}>
-                          卸载清理
-                        </button>
+                      {#if canManageSkills}
+                        {#if cap.status === 'uninstalled' || cap.status === 'archived'}
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-primary"
+                            disabled={reinstallingKey === cap.capability_key}
+                            on:click={() => handleReinstall(cap)}
+                          >
+                            {reinstallingKey === cap.capability_key ? '恢复中…' : '重新安装'}
+                          </button>
+                        {:else}
+                          <button type="button" class="btn btn-sm btn-ghost" on:click={() => openUpgradeModal(cap)}>
+                            升级
+                          </button>
+                          <button type="button" class="btn btn-sm btn-danger-ghost" on:click={() => openDeleteConfirm(cap)}>
+                            卸载清理
+                          </button>
+                        {/if}
                       {/if}
                     </div>
                   </td>
@@ -970,125 +1120,55 @@ activation:
   {/if}
 
   <!-- TAB 2: 提示词管理 (Prompts) -->
-  {#if activeSection === 'prompts'}
-    <section class="gov-pane" aria-label="提示词治理">
-      <div class="prompt-split-workbench">
-        <!-- Sidebar Purpose Selector -->
-        <aside class="prompt-purpose-nav">
-          <h3>场景提示词分类</h3>
-          <div class="purpose-nav-list">
-            {#each purposeOptions as opt}
-              <button
-                type="button"
-                class="purpose-nav-item"
-                class:active={selectedPurpose === opt.value}
-                on:click={() => { selectedPurpose = opt.value as PromptPurpose; initPromptEditor(); }}
-              >
-                <div class="item-title">{opt.label}</div>
-                <div class="item-meta">{opt.meta}</div>
-              </button>
-            {/each}
-          </div>
-        </aside>
-
-        <!-- Main Prompt Editor & Version List -->
-        <div class="prompt-editor-area">
-          <div class="pane-header">
-            <div>
-              <h2>{purposeOptions.find(o => o.value === selectedPurpose)?.label} 指令治理</h2>
-              <p class="subtitle">管理系统初审、复核与比对阶段的核心 LLM System Prompt 版本。</p>
-            </div>
-          </div>
-
-          {#if promptNotice}
-            <div class="gov-notice">{promptNotice}</div>
-          {/if}
-          {#if promptError}
-            <div class="gov-notice error">{promptError}</div>
-          {/if}
-
-          <!-- Editor Form -->
-          <div class="prompt-form">
-            <div class="form-row">
-              <label>
-                版本名称:
-                <input type="text" bind:value={promptDraftName} placeholder="例如：v2.1 强化边界证据校验" />
-              </label>
-
-              <label>
-                作用范围:
-                <select bind:value={promptScopeType}>
-                  <option value="global">全局默认 (Global)</option>
-                  <option value="project">项目覆盖 (Project)</option>
-                </select>
-              </label>
-
-              {#if promptScopeType === 'project'}
-                <label>
-                  项目标识:
-                  <input type="text" bind:value={promptScopeID} placeholder="输入 ProjectID" />
-                </label>
-              {/if}
-            </div>
-
-            <div class="form-group">
-              <label for="sys-prompt-editor">系统指令模板 (System Prompt):</label>
-              <textarea
-                id="sys-prompt-editor"
-                rows="14"
-                bind:value={promptDraftSystem}
-                placeholder="在此输入或调整 System Prompt 提示词..."
-              ></textarea>
-            </div>
-
-            <div class="form-actions-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={promptActivateOnSave} />
-                保存后立即激活此版本为线上生效版本
-              </label>
-
-              <button
-                type="button"
-                class="btn btn-primary"
-                disabled={savingPrompt || !promptDraftSystem.trim()}
-                on:click={savePromptVersion}
-              >
-                {savingPrompt ? '保存中…' : '发布新版本'}
-              </button>
-            </div>
-          </div>
-
-          <!-- History Versions -->
-          <div class="prompt-history-block">
-            <h3>历史版本归档 ({prompts.filter(p => p.purpose === selectedPurpose).length})</h3>
-            <div class="history-list">
-              {#each prompts.filter(p => p.purpose === selectedPurpose) as ver}
-                <div class="history-card" class:active-ver={ver.status === 'active'}>
-                  <div class="history-card-header">
-                    <span class="ver-badge">v{ver.version}</span>
-                    <strong>{ver.name}</strong>
-                    <span class="status-tag {ver.status}">{ver.status === 'active' ? '当前生效' : '历史版本'}</span>
-                    <span class="hash-tag font-mono">{ver.content_hash.slice(0, 8)}</span>
-                  </div>
-                  <pre class="history-preview">{ver.system_prompt.slice(0, 180)}...</pre>
-                </div>
-              {/each}
-            </div>
-          </div>
+  {#if resolvedActiveSection === 'prompts'}
+    <section
+      id="ai-governance-panel-prompts"
+      class="gov-pane"
+      role="tabpanel"
+      aria-labelledby="ai-governance-tab-prompts"
+      aria-busy={solutionPublicURLLoading}
+    >
+      {#if solutionPublicURLError}
+        <div class="gov-notice error" role="alert">
+          <span>{solutionPublicURLError}</span>
+          <button type="button" class="btn btn-sm btn-ghost" on:click={() => retrySection('prompts')}>重试公开地址</button>
         </div>
-      </div>
+      {/if}
+      <SolutionPromptConfig
+        publicURL={solutionPublicURL}
+        publicURLVersion={solutionPublicURLVersion}
+        publicURLLoading={solutionPublicURLLoading}
+        {canReadPublicURL}
+        {canWritePublicURL}
+        onSavePublicURL={saveSolutionPublicURL}
+      />
     </section>
   {/if}
 
   <!-- TAB 3: 规则与工程标准 (Rules) -->
-  {#if activeSection === 'rules'}
-    <section class="gov-pane" aria-label="工程审查规则治理">
+  {#if resolvedActiveSection === 'rules'}
+    <section
+      id="ai-governance-panel-rules"
+      class="gov-pane"
+      role="tabpanel"
+      aria-labelledby="ai-governance-tab-rules"
+      aria-busy={loadingPolicies}
+    >
+      {#if !canWriteRules}
+        <div class="gov-notice" role="status">工程规则为只读。修改并保存规则需要 config:write 权限。</div>
+      {/if}
+      {#if policyError}
+        <div class="gov-notice error" role="alert">
+          <span>{policyError}</span>
+          <button type="button" class="btn btn-sm btn-ghost" on:click={() => retrySection('rules')}>重试</button>
+        </div>
+      {/if}
       <div class="rules-workbench">
         <!-- Repos List -->
         <aside class="rules-repo-list">
           <h3>项目仓库 ({repoPolicies.length})</h3>
-          {#if loadingPolicies}
-            <p>加载中...</p>
+          {#if loadingPolicies && repoPolicies.length === 0}
+            <p role="status" aria-live="polite">正在加载项目仓库...</p>
           {:else}
             {#each repoPolicies as r}
               <button
@@ -1115,15 +1195,11 @@ activation:
             {#if policyNotice}
               <div class="gov-notice">{policyNotice}</div>
             {/if}
-            {#if policyError}
-              <div class="gov-notice error">{policyError}</div>
-            {/if}
-
             <div class="policy-form">
               <div class="form-row">
                 <label>
                   领域分类:
-                  <select bind:value={editingPolicy.domain}>
+                  <select bind:value={editingPolicy.domain} disabled={!canWriteRules || savingPolicy}>
                     <option value="general">通用工程 (General)</option>
                     <option value="fms">FMS 车辆/调度业务 (FMS)</option>
                   </select>
@@ -1131,7 +1207,7 @@ activation:
 
                 <label>
                   场景分类:
-                  <select bind:value={editingPolicy.scenario}>
+                  <select bind:value={editingPolicy.scenario} disabled={!canWriteRules || savingPolicy}>
                     <option value="general">通用场景</option>
                     <option value="dispatch">调度协同场景</option>
                     <option value="vehicle">车辆状态流转</option>
@@ -1141,17 +1217,17 @@ activation:
 
                 <label>
                   知识库检索作用域:
-                  <input type="text" bind:value={editingPolicy.knowledge_scope} placeholder="例如：fms:dispatch" />
+                  <input type="text" bind:value={editingPolicy.knowledge_scope} placeholder="例如：fms:dispatch" readonly={!canWriteRules} disabled={savingPolicy} />
                 </label>
               </div>
 
               <div class="form-row">
                 <label class="checkbox-label">
-                  <input type="checkbox" bind:checked={editingPolicy.sync_mrs} />
+                  <input type="checkbox" bind:checked={editingPolicy.sync_mrs} disabled={!canWriteRules || savingPolicy} />
                   自动为 Merge Request 发布审查评论
                 </label>
                 <label class="checkbox-label">
-                  <input type="checkbox" bind:checked={editingPolicy.sync_commits} />
+                  <input type="checkbox" bind:checked={editingPolicy.sync_commits} disabled={!canWriteRules || savingPolicy} />
                   自动为独立 Commit 发布审查评论
                 </label>
               </div>
@@ -1163,6 +1239,8 @@ activation:
                   rows="8"
                   bind:value={editingPolicy.rules}
                   placeholder="- 必须校验车辆反馈完整证据&#10;- 禁止使用空字符串替代完成状态"
+                  readonly={!canWriteRules}
+                  disabled={savingPolicy}
                 ></textarea>
               </div>
 
@@ -1170,7 +1248,7 @@ activation:
                 <button
                   type="button"
                   class="btn btn-primary"
-                  disabled={savingPolicy}
+                  disabled={!canWriteRules || savingPolicy}
                   on:click={saveRepoPolicy}
                 >
                   {savingPolicy ? '保存中…' : '保存规则策略'}
@@ -1186,9 +1264,30 @@ activation:
   {/if}
 
   <!-- TAB 4: 上下文与语料库 (Context) -->
-  {#if activeSection === 'context'}
-    <section class="gov-pane" aria-label="设计语料库治理">
-      <CorpusSourceLibrary {currentUserPermissions} aiReady={true} />
+  {#if resolvedActiveSection === 'context'}
+    <section
+      id="ai-governance-panel-context"
+      class="gov-pane"
+      role="tabpanel"
+      aria-labelledby="ai-governance-tab-context"
+      aria-busy={contextReadinessLoading}
+    >
+      {#if contextReadinessLoading}
+        <div class="gov-notice" role="status" aria-live="polite">正在读取 AI 上下文就绪状态...</div>
+      {:else if contextReadinessError}
+        <div class="gov-notice error" role="alert">
+          <span>{contextReadinessError}</span>
+          <button type="button" class="btn btn-sm btn-ghost" on:click={() => retrySection('context')}>重试</button>
+        </div>
+      {:else if contextAIReady === false}
+        <div class="gov-notice" role="status">AI 引擎当前{contextAIStatus === 'disabled' ? '未启用' : '配置不完整'}；资料仍可浏览，导入时由后端继续执行权威校验。</div>
+      {/if}
+      <AIConfig
+        view="context"
+        config={governanceAIConfig}
+        {currentUserPermissions}
+        {contextAIReady}
+      />
     </section>
   {/if}
 </div>
@@ -1197,14 +1296,14 @@ activation:
 
 <!-- 1. Capability Detail Drawer -->
 {#if detailDrawerOpen}
-  <div class="drawer-backdrop" role="presentation" on:click={() => detailDrawerOpen = false}></div>
+  <div class="drawer-backdrop" role="presentation" on:click={closeDetailDrawer}></div>
   <aside class="gov-drawer" role="dialog" aria-modal="true" aria-label="技能详细规约">
     <div class="drawer-header">
       <div>
         <span class="drawer-kicker">{selectedCapability?.kind?.toUpperCase()} 规约详情</span>
         <h2>{selectedCapability?.capability_key}</h2>
       </div>
-      <button type="button" class="close-btn" on:click={() => detailDrawerOpen = false}>×</button>
+      <button type="button" class="close-btn" aria-label="关闭技能详情" on:click={closeDetailDrawer}>×</button>
     </div>
 
     <div class="drawer-body">
@@ -1334,7 +1433,7 @@ activation:
                     <span class="ver-digest font-mono">Digest: {curVer.content_digest?.slice(0, 16)}...</span>
                   </div>
 
-                  {#if curVer.status !== 'active'}
+                  {#if curVer.status !== 'active' && canManageSkills}
                     <button
                       type="button"
                       class="btn btn-sm btn-secondary"
@@ -1345,7 +1444,7 @@ activation:
                     >
                       激活此版本为线上生效
                     </button>
-                  {:else}
+                  {:else if curVer.status === 'active'}
                     <span class="status-tag active">当前生效中</span>
                   {/if}
                 </div>
@@ -1400,12 +1499,12 @@ activation:
 {/if}
 
 <!-- 2. Import / Remote Install Modal -->
-{#if importModalOpen}
+{#if canManageSkills && importModalOpen}
   <div class="modal-backdrop" role="presentation" on:click={() => importModalOpen = false}></div>
   <div class="gov-modal" role="dialog" aria-modal="true" aria-label="安装或导入能力">
     <div class="modal-header">
       <h2>新增 / 导入 Agent 微内核技能</h2>
-      <button type="button" class="close-btn" on:click={() => importModalOpen = false}>×</button>
+      <button type="button" class="close-btn" aria-label="关闭技能导入对话框" on:click={() => importModalOpen = false}>×</button>
     </div>
 
     <!-- Modal Mode Tab -->
@@ -1482,12 +1581,12 @@ activation:
 {/if}
 
 <!-- 3. Upgrade Modal -->
-{#if upgradeModalOpen && upgradeTarget}
+{#if canManageSkills && upgradeModalOpen && upgradeTarget}
   <div class="modal-backdrop" role="presentation" on:click={() => upgradeModalOpen = false}></div>
   <div class="gov-modal" role="dialog" aria-modal="true" aria-label="技能版本升级">
     <div class="modal-header">
       <h2>升级技能：{upgradeTarget.capability_key}</h2>
-      <button type="button" class="close-btn" on:click={() => upgradeModalOpen = false}>×</button>
+      <button type="button" class="close-btn" aria-label="关闭技能升级对话框" on:click={() => upgradeModalOpen = false}>×</button>
     </div>
 
     <div class="modal-tabs">
@@ -1548,12 +1647,12 @@ activation:
 {/if}
 
 <!-- 4. Delete & Cleanup / Cold Archive Confirmation Modal -->
-{#if deleteModalOpen && deleteTarget}
+{#if canManageSkills && deleteModalOpen && deleteTarget}
   <div class="modal-backdrop" role="presentation" on:click={() => deleteModalOpen = false}></div>
   <div class="gov-modal modal-danger" role="dialog" aria-modal="true" aria-label="卸载或冷归档技能">
     <div class="modal-header">
       <h2>确认{deleteMode === 'cold_archive' ? '冷归档' : '卸载清理'}技能？</h2>
-      <button type="button" class="close-btn" on:click={() => deleteModalOpen = false}>×</button>
+      <button type="button" class="close-btn" aria-label="关闭技能清理对话框" on:click={() => deleteModalOpen = false}>×</button>
     </div>
 
     <div class="modal-body">
@@ -1619,6 +1718,10 @@ activation:
   /* finesse · register=product · ai-governance-center · SOUL=4 SPECTACLE=1 DENSITY=7 */
   .gov-workbench {
     box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
     display: flex;
     flex-direction: column;
     gap: 18px;
@@ -1679,6 +1782,7 @@ activation:
   .gov-metrics-strip {
     display: flex;
     align-items: center;
+    overflow-x: auto;
     background: #ffffff;
     border: 1px solid var(--wa-border, #e2e8f0);
     border-radius: 8px;
@@ -1745,6 +1849,8 @@ activation:
     display: flex;
     gap: 8px;
     margin-top: 4px;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .gov-tab {
@@ -1760,6 +1866,8 @@ activation:
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s ease;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .gov-tab:hover {
@@ -1808,6 +1916,7 @@ activation:
 
   /* Pane */
   .gov-pane {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1900,15 +2009,20 @@ activation:
 
   /* Table */
   .gov-table-container {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     background: #ffffff;
     border: 1px solid var(--wa-border, #e2e8f0);
     border-radius: 8px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     box-shadow: 0 1px 2px rgba(0,0,0,0.02);
   }
 
   .gov-table {
     width: 100%;
+    min-width: 1180px;
     border-collapse: collapse;
     font-size: 13.5px;
   }
@@ -2239,6 +2353,11 @@ activation:
   }
 
   .close-btn {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: transparent;
     font-size: 18px;
@@ -2246,71 +2365,25 @@ activation:
     cursor: pointer;
   }
 
-  /* Prompts layout */
-  .prompt-split-workbench {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    gap: 20px;
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 8px;
-    padding: 20px;
-  }
-
-  .prompt-purpose-nav h3 {
-    margin: 0 0 12px 0;
-    font-size: 13px;
-    text-transform: uppercase;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  .purpose-nav-list {
+  .notice-actions {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
   }
 
-  .purpose-nav-item {
-    text-align: left;
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    background: transparent;
-    cursor: pointer;
-    transition: all 0.15s ease;
+  .icon-action {
+    min-width: 40px;
+    padding-inline: 10px;
   }
 
-  .purpose-nav-item:hover {
-    background: #f7fafc;
+  .gov-no-access h2,
+  .gov-no-access p {
+    margin: 0;
+    text-align: center;
   }
 
-  .purpose-nav-item.active {
-    background: #ebf8fa;
-    border-color: #b2e3e8;
-  }
-
-  .purpose-nav-item .item-title {
-    font-weight: 650;
-    color: var(--wa-text-strong, #1a202c);
-    font-size: 13.5px;
-  }
-
-  .purpose-nav-item .item-meta {
-    font-size: 11.5px;
-    color: var(--wa-text-muted, #718096);
-    margin-top: 2px;
-  }
-
-  .prompt-editor-area {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .prompt-form {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+  .gov-no-access p {
+    max-width: 56ch;
   }
 
   .form-row {
@@ -2374,66 +2447,11 @@ activation:
     cursor: pointer;
   }
 
-  .prompt-history-block h3 {
-    margin: 20px 0 10px 0;
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--wa-text-strong, #1a202c);
-  }
-
-  .history-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .history-card {
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 12px;
-    background: #f8fafc;
-  }
-
-  .history-card.active-ver {
-    border-color: #b2e3e8;
-    background: #f4fdfe;
-  }
-
-  .history-card-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
-  }
-
-  .ver-badge {
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: #cbd5e0;
-    font-weight: 700;
-    font-size: 11px;
-  }
-
-  .hash-tag {
-    font-size: 11px;
-    color: #a0aec0;
-  }
-
-  .history-preview {
-    margin: 0;
-    font-size: 11.5px;
-    color: #4a5568;
-    white-space: pre-wrap;
-    background: #ffffff;
-    padding: 8px;
-    border-radius: 4px;
-    border: 1px solid #edf2f7;
-  }
-
   /* Rules layout */
   .rules-workbench {
+    min-width: 0;
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 240px minmax(0, 1fr);
     gap: 20px;
     background: #ffffff;
     border: 1px solid var(--wa-border, #e2e8f0);
@@ -3045,6 +3063,104 @@ activation:
     border-top-color: var(--wa-focus-ring, #008f96);
     border-radius: 50%;
     animation: rotate 0.8s linear infinite;
+  }
+
+  @media (max-width: 900px) {
+    .gov-workbench {
+      padding: 20px;
+    }
+
+    .gov-title-row,
+    .gov-filter-bar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .gov-header-actions,
+    .filter-controls {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      max-width: none;
+    }
+
+    .rules-workbench {
+      grid-template-columns: 1fr;
+    }
+
+    .rules-repo-list {
+      max-height: 240px;
+      overflow-y: auto;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .gov-workbench {
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .gov-title-group h1 {
+      font-size: 20px;
+    }
+
+    .gov-header-actions .btn:not(.icon-action),
+    .gov-filter-bar .filter-controls,
+    .filter-label,
+    .custom-select-wrap,
+    .modern-select,
+    .form-actions-row .btn {
+      width: 100%;
+    }
+
+    .gov-header-actions .btn,
+    .gov-tab,
+    .close-btn {
+      min-height: 44px;
+    }
+
+    .gov-metrics-strip {
+      gap: 16px;
+      padding: 12px 14px;
+    }
+
+    .gov-metric-item {
+      min-width: 132px;
+    }
+
+    .gov-notice {
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .notice-actions {
+      flex: none;
+    }
+
+    .rules-workbench {
+      gap: 14px;
+      padding: 14px;
+    }
+
+    .form-row,
+    .form-actions-row {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .gov-drawer {
+      width: 100%;
+      max-width: 100vw;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin,
+    .spinner {
+      animation: none;
+    }
   }
 
   .empty-icon {

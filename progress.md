@@ -1,3 +1,54 @@
+# Session: 2026-09-27 - Final validation and one-time commit closeout
+
+- **All closeout phases completed.** AI governance Settings ownership migration, deployment `0700`/`0600` and fail-closed controls, atomic `sync-production`, maintenance rollback/durable-false/narrow-endpoint/shared-permission semantics, and setup migration retry-marker recovery are complete and recorded.
+- Read-contract inventory is finalized at `97` GET routes: `20` verified, `49` bounded, and `28` migration-pending across `31` reachable surfaces.
+- Final validation on `2026-09-27` passed: `make verify`, frontend contracts `204/204`, focused governance/maintenance/setup/sync-production coverage, production build, design detectors, and diff hygiene.
+- Authenticated config-authorization browser evidence remains authoritative: `9` isolated states at `1440/1024/760/480`, permission personas, HTTP `409` recovery with the dirty draft preserved, and no document-level horizontal overflow.
+- A later browser-agent attempt was tool-blocked before adding supplementary evidence. It is recorded as a tooling limitation only, not as a failed product test and not as a replacement for the completed authenticated run.
+- Added-line secret review found no findings. Residual pre-existing risk remains: a hardcoded AES passphrase exists in `HEAD` outside the added diff; its value is not reproduced and no waiver is required for the unchanged issue.
+- The full tracked and untracked worktree was reviewed for the one-time all-changes commit, including planning/status documents and new implementation files. Commit note date is `2026-09-27`; target subject is `feat(config): 完善运行时治理与部署安全`.
+
+---
+
+# Session: 2026-09-26 - Maintenance / AI governance atomic config completion
+
+- **Phases 1-6:** completed. Loaded cold-start/high-risk coding guidance, planning-with-files, Impeccable product register, project `DESIGN.md`, design-taste, and Finesse product/preflight guidance.
+- Confirmed the broad dirty tree and preserved its unrelated boundaries; no product edits have been made yet.
+- Established a non-escalating scoped command/edit path after the built-in wrapper conflict; all command results will carry explicit exit codes.
+- Completed the mandatory three-way read-only frontend review and recorded the shared hierarchy, responsive/accessibility contract, and disagreements before any frontend edit.
+- **Backend phase:** completed locally. Added non-secret readiness status, required config read+write for public URL PUT, added success/stale/no-loss/audit/readiness handler coverage, corrected database `maintenance_mode=false` authority over file `true`, and added generic rollback preservation coverage. Focused Go suite passes.
+- **Frontend phase:** completed. Shared definitions now drive App, Shell, and filtered local tabs; only active authorized sections load; capability search/detail responses reject stale results; Skills/Rules/Context mutations reflect their exact permissions; profile hydration always settles; breadcrumbs and scroll identity include the active governance section.
+- `SolutionPromptConfig` now receives public URL value/version/loading/read/write state, sends `expected_version` through the narrow callback, preserves dirty input across a 409 reload, and shows persistent accessible conflict feedback without posting full `/api/config`.
+- **Validation complete:** focused `internal/server` suite passed; targeted Node governance/maintenance contracts 21/21 passed; `pnpm --dir web run check` completed with 0 errors and 154 existing warnings; production build passed; Impeccable detector returned `[]`; Finesse returned `P0=0`; scoped diff check passed.
+- **Authenticated isolated browser validation:** passed 9 state records using only in-memory SQLite/local HTTP. Prompts had 4 accessible tabs and no unrelated governance-section requests at 1440/1024/760/480; stale conflict preserved `https://dirty.fixture.test`; rules/context/skills read-only personas exposed only their authorized APIs/actions; no-access rendered correctly; every tested document had zero horizontal overflow. Temporary fixture files and screenshots were removed after measurement.
+- Residual non-blocking findings are pre-existing Finesse P2 token/color/`transition: all` advisories and the repository-wide 154 Svelte warnings; no commit was created.
+
+---
+
+# Session: 2026-09-26 - PostgreSQL setup migration recovery
+
+- **Phases 1-4:** completed. Preserved existing dirty changes and limited product edits to `internal/server/setup_server.go` plus `internal/server/setup_server_test.go`.
+- Added an atomic target-resident completion marker with exact SQLite source hash and hashed PostgreSQL target identity; recovery re-verifies complete schema and both hashes before skipping recopy.
+- Added failure-once persistence recovery plus different-source, different-target, marker matching, and owner-only config-mode coverage.
+- `gofmt` completed; focused setup recovery tests passed (`ok well-ambient/internal/server 0.443s`); scoped `git diff --check` passed.
+- No `internal/db` edit was made by this task, no real PostgreSQL or business database was contacted, and no commit was created.
+
+---
+
+# Session: 2026-09-26 - AI 治理迁移后配置中心残留菜单修复
+
+- **Phase 1:** completed。已加载项目冷启动、planning-with-files、diagnosing-bugs、Impeccable product、design-taste preserve 与 Finesse product/preflight。
+- 已确认生产菜单由 `settings-sections.ts` 驱动，`solution_prompts`/`ai_context` 仍被注册；`AI 引擎配置`应保留。
+- 已完成三方只读评审并记录共同方向、所有权、响应式/可访问性范围与分歧裁决。
+- 评审发现迁移能力缺口：提示词请求字段错误且缺完整验证/激活，context 缺候选审核/手工事实/包预览；决定先复用成熟组件再删 Settings 入口。
+- **Phase 2:** completed。三份定向合同已在生产修改前稳定红灯，分别锁定 Settings 注册/渲染残留、在线评审技能所有权与配置 API 列表。
+- **Phase 3:** completed。Settings 仅保留 AI 引擎基础设施；旧 `settings=solution_prompts|ai_context` 深链迁移到 AI 治理 prompts/context；治理页复用 `SolutionPromptConfig` 与 `AIConfig view="context"`，删除 `activate_on_save` 本地编辑器和硬编码 `aiReady=true`。
+- `/api/config` 仅在具备 `config:read` 时读取，Jira 公开地址保存基于完整配置 round-trip 并广播 `config-updated`；配置未知时通过 `contextAIReady=null` 允许后端权威判定，明确 false 才在资料库阻止导入。
+- **Phase 4:** completed。定向 Node 合同、类型检查、生产 build、Impeccable/Finesse 与登录态多断点浏览器验收均已纳入最终验证；最终前端合同总计 `204/204` 通过。
+- **Phase 5:** completed。已审阅全部 tracked/untracked diff 并纳入一次性全量提交；按用户要求跳过交付反思门禁。
+
+---
+
 # Session: 2026-09-25 - 技能中心筛选样式美化、按钮防换行、技能包含层级标识与 SKILL.md 文档化展现
 
 - **Phase 1 (后端 DTO 技能血缘与 SKILL.md 生成):** completed
@@ -3907,3 +3958,27 @@ Impeccable update explicitly authorized but failed with download invalid zip dat
 - `TestCodeReviewAPI` 使用工作区 GOCACHE 通过；Svelte check 0 errors，24/24 contracts，Vite build 与 Impeccable 通过。
 - 认证 fixture 证实：五 pane 桌面/移动外框不变，后台 poll 无 overlay/文案/scroll 变化，失败重试进入队列，Commit/MR 开关 true/false 持久化且 500 回滚。
 - 证据新增 `outputs/code-review-ui-1024-modal-retry.png`、`outputs/code-review-ui-1024-policy-switches.png`，验证 JSON 已更新；fixture 正常停止。
+
+## 2026-09-26 WellOS 维护模式与动态配置数据库化
+
+- 已确认 WellOS 维护期间返回 HTTP 成功但业务码 `10002`，原网络错误回退不会触发。
+- 已验证显式维护模式下的本地凭据回退可行，且非维护模式仍拒绝停用账号。
+- 已确认现有 `runtime_configs/config_versions` 能承载动态配置，但恢复算法需要从顶层覆盖升级为字段级深度合并。
+- 已确认需要把历史 runtime 快照中的 `server.host/port` 排除，避免数据库配置覆盖不可热应用的监听地址。
+- 已实现字段级深度合并和 runtime JSON 规范化；`server.host/port/attachment_dir` 保持启动配置所有权。
+- 已新增 `/api/config/wellos-maintenance` 原子 GET/PUT、配置版本、审计日志、版本冲突和环境/CLI 覆盖状态。
+- 已新增“安全与授权 → 登录维护模式”设置页，覆盖数据库值、实际生效值、覆盖来源、双向确认、只读/错误/加载/移动状态。
+- 已将通用/生产配置示例和本地 `config.yaml` 收敛为启动字段；本地动态配置已迁移并由 `runtime_configs` v97 恢复。
+- 全仓 Go、vet、195 项前端合同、Svelte 0 error、Vite build、Impeccable、YAML 和 diff-check 全部通过。
+- 真实 Chrome 验证因当前 macOS sandbox/Crashpad/CDP 运行限制未完成；隔离后端/Vite 和临时文件已清理。
+- 已对生产 PostgreSQL 做只读核查：514 个用户中仅 3 个具备维护登录所需的本地密码缓存和权限快照；生产 runtime v97 尚无维护字段，未提前修改生产数据。
+
+## 2026-09-26 Jira 早报重复发送
+
+- 已只读核查生产发送台账、主键/唯一索引、配置版本和当前服务版本。
+- 已通过 SSH 核查生产主机：只有一个 Well Ambient server 进程，容器无重启、无 cron 重复任务。
+- 已对齐两套台账，确认今天第二封来自 16:43 启动的本地 SQLite 诊断实例；该实例独立于生产 PostgreSQL claim。
+- 已向用户明确说明该第二次发送由本轮代理的本地验证操作误触发。
+- 已实现 SQLite 默认禁用 Jira 早报自动 worker；隔离测试需显式设置 `WELL_AMBIENT_ALLOW_SQLITE_EMAIL_SCHEDULER=1`。
+- 已新增配置保存/worker 唤醒的精确回归测试：09:30 发送后改为 13:30、19:14，SMTP 调用始终为 1，台账不变。
+- 全仓 `go test ./... -count=1`、`go vet ./...` 和 `git diff --check` 全部通过；生产数据库未修改。

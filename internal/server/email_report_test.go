@@ -21,6 +21,7 @@ import (
 
 func emailTestDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
+	t.Setenv(sqliteEmailSchedulerOptInEnv, "1")
 	conn, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "email.db")), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -226,6 +227,62 @@ func TestEmailSchedulerDisabledDueAndCancellation(t *testing.T) {
 	}
 }
 
+func TestEmailWorkerDoesNotStartForSQLiteWithoutExplicitOptIn(t *testing.T) {
+	conn := emailTestDatabase(t)
+	t.Setenv(sqliteEmailSchedulerOptInEnv, "")
+	cfg := emailTestConfig()
+	cfg.SMTP.Enabled = true
+	cfg.DailyJiraEmail.Enabled = true
+	cfg.DailyJiraEmail.SendTime = "00:00"
+	cfg.DailyJiraEmail.Timezone = "Asia/Shanghai"
+	cfg.DailyJiraEmail.Recipients = []string{"qa@example.com"}
+
+	var sendCount atomic.Int32
+	s := &Server{config: &cfg}
+	s.setEmailConfig(cfg)
+	s.emailSender = func(context.Context, config.SMTPConfig, []string, string, string, string) error {
+		sendCount.Add(1)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	select {
+	case <-s.startEmailWorker(ctx):
+	case <-time.After(time.Second):
+		t.Fatal("SQLite email worker did not stop immediately")
+	}
+	if sendCount.Load() != 0 {
+		t.Fatalf("SQLite startup sent %d emails without explicit opt-in", sendCount.Load())
+	}
+	var count int64
+	if err := conn.Model(&db.DailyJiraEmailRun{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("SQLite startup created %d email claims without explicit opt-in", count)
+	}
+}
+
+func TestEmailSchedulerDriverPolicy(t *testing.T) {
+	for _, test := range []struct {
+		driver string
+		optIn  string
+		want   bool
+	}{
+		{driver: "postgres", want: true},
+		{driver: "postgresql", want: true},
+		{driver: "sqlite", want: false},
+		{driver: "sqlite", optIn: "1", want: true},
+		{driver: "sqlite3", optIn: "true", want: true},
+		{driver: "unknown", optIn: "1", want: false},
+	} {
+		if got := emailSchedulerDriverAllowed(test.driver, test.optIn); got != test.want {
+			t.Fatalf("driver=%q opt-in=%q allowed=%t, want %t", test.driver, test.optIn, got, test.want)
+		}
+	}
+}
+
 func TestExportEmailPreviews(t *testing.T) {
 	for _, style := range []string{"brief", "focus", "ledger", "hyperframe"} {
 		tmpl := config.DefaultEmailTemplate()
@@ -279,7 +336,8 @@ func TestEmailSchedulerNeverReclaimsAlreadySentDate(t *testing.T) {
 		t.Fatalf("expected 0 sends before send_time, got %d", sendCount.Load())
 	}
 
-	// 3. At 17:31 (send_time arrived), runEmailSchedule should recognize that the earlier 12:45 run was before 17:31, clear it, and send!
+	// 3. Moving the configured time later must not reclaim a date that was
+	// already sent. Schedule edits affect future dates only.
 	at1731 := time.Date(2026, 9, 16, 17, 31, 0, 0, loc)
 	s.runEmailSchedule(context.Background(), at1731)
 	if sendCount.Load() != 0 {
@@ -294,7 +352,7 @@ func TestEmailSchedulerNeverReclaimsAlreadySentDate(t *testing.T) {
 		t.Fatalf("unexpected updated run: %+v", updatedRun)
 	}
 	if updatedRun.StartedAt.In(loc).Format("15:04") != "12:45" {
-		t.Fatalf("expected run time 17:31, got %s", updatedRun.StartedAt.In(loc).Format("15:04"))
+		t.Fatalf("expected original run time 12:45, got %s", updatedRun.StartedAt.In(loc).Format("15:04"))
 	}
 
 	// 4. Calling at 17:32 must NOT duplicate!
@@ -321,6 +379,64 @@ func TestEmailSchedulerNeverReclaimsAlreadySentDate(t *testing.T) {
 	s.runEmailSchedule(context.Background(), atTomorrowScheduled)
 	if sendCount.Load() != 0 {
 		t.Fatalf("manual delivery must prevent scheduled duplicate, got %d", sendCount.Load())
+	}
+}
+
+func TestEmailConfigSaveWakeupNeverResendsClaimedDate(t *testing.T) {
+	conn := emailTestDatabase(t)
+	cfg := emailTestConfig()
+	cfg.SMTP.Enabled = true
+	cfg.DailyJiraEmail.Enabled = true
+	cfg.DailyJiraEmail.SendTime = "09:30"
+	cfg.DailyJiraEmail.Timezone = "Asia/Shanghai"
+	cfg.DailyJiraEmail.Recipients = []string{"qa@example.com"}
+
+	var sendCount atomic.Int32
+	s := &Server{config: &cfg, emailWorkerWakeup: make(chan struct{}, 1)}
+	s.setEmailConfig(cfg)
+	s.emailSender = func(ctx context.Context, smtpCfg config.SMTPConfig, recipients []string, subject, text, html string) error {
+		sendCount.Add(1)
+		return nil
+	}
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at0930 := time.Date(2026, 9, 17, 9, 30, 0, 0, loc)
+	s.runEmailSchedule(context.Background(), at0930)
+	if sendCount.Load() != 1 {
+		t.Fatalf("initial scheduled send count=%d, want 1", sendCount.Load())
+	}
+
+	for _, changedTime := range []string{"13:30", "19:14"} {
+		updated := *s.config
+		updated.DailyJiraEmail.SendTime = changedTime
+		if err := s.applyConfig(updated); err != nil {
+			t.Fatalf("apply send time %s: %v", changedTime, err)
+		}
+		select {
+		case <-s.emailWorkerWakeup:
+		default:
+			t.Fatalf("send time %s did not wake the email worker", changedTime)
+		}
+
+		hour, minute := 13, 30
+		if changedTime == "19:14" {
+			hour, minute = 19, 14
+		}
+		s.runEmailSchedule(context.Background(), time.Date(2026, 9, 17, hour, minute, 0, 0, loc))
+		if sendCount.Load() != 1 {
+			t.Fatalf("send time change to %s resent the claimed date; count=%d", changedTime, sendCount.Load())
+		}
+	}
+
+	var run db.DailyJiraEmailRun
+	if err := conn.First(&run, "date = ?", "2026-09-17").Error; err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "sent" || run.StartedAt.In(loc).Format("15:04") != "09:30" {
+		t.Fatalf("claimed date was mutated after schedule edits: %+v", run)
 	}
 }
 

@@ -241,10 +241,11 @@ func defaultTrue(value *bool) *bool {
 
 // ServerConfig holds HTTP server settings
 type ServerConfig struct {
-	Port          int    `yaml:"port" json:"port"`
-	Host          string `yaml:"host" json:"host"`
-	PublicURL     string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
-	AttachmentDir string `yaml:"attachment_dir" json:"attachment_dir"`
+	Port            int    `yaml:"port" json:"port"`
+	Host            string `yaml:"host" json:"host"`
+	PublicURL       string `yaml:"public_url,omitempty" json:"public_url,omitempty"`
+	AttachmentDir   string `yaml:"attachment_dir" json:"attachment_dir"`
+	MaintenanceMode bool   `yaml:"maintenance_mode,omitempty" json:"maintenance_mode"`
 }
 
 // GitLabConfig holds connection settings for self-hosted GitLab

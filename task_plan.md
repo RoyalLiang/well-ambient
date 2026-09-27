@@ -1,4 +1,149 @@
+# Task Plan: Maintenance and AI governance atomic config completion
+
+## 2026-09-27 Final verification and one-time commit closeout
+
+### Completion scope
+
+- [x] Complete the AI governance Settings migration: remove `solution_prompts` and `ai_context` ownership from Settings, preserve `AI 引擎配置`, migrate legacy deep links, and retain mature prompt/context workflows in the governed surface.
+- [x] Complete deployment hardening: enforce `0700` runtime/state/backup directories, `0600` configuration/snapshot/evidence files, and fail closed when an external PostgreSQL deployment lacks a verified snapshot or backup reference.
+- [x] Complete atomic `sync-production`: validate the SQLite source and PostgreSQL target, recheck target safety immediately before migration, copy owned and archive tables with static schemas, and refuse non-empty unsafe targets.
+- [x] Complete maintenance/config semantics: preserve maintenance state through bootstrap/save/rollback, keep durable database `false` authoritative, expose narrow governance endpoints, and use the shared permission matrix across route, shell, tabs, reads, and writes.
+- [x] Complete setup migration recovery: persist the owner-only same-source/same-target completion marker, verify schema and both identities before skipping recopy, and fail closed for mismatches.
+- [x] Complete read-contract refresh: inventory `97` GET routes as `20` verified, `49` bounded, and `28` migration-pending across `31` reachable surfaces.
+
+### Final phases
+
+- [completed] Phase 1: reconcile all implementation, deployment, migration, governance, and read-contract records
+- [completed] Phase 2: confirm authenticated config-authorization evidence and distinguish supplementary tool limitations
+- [completed] Phase 3: complete repository-wide validation and added-line secret review
+- [completed] Phase 4: review the full tracked and untracked worktree and prepare the one-time all-changes commit
+
+### Final evidence and residual risk
+
+- [x] Final verification date: `2026-09-27`; `make verify` passed and frontend contracts passed `204/204`.
+- [x] Authenticated isolated browser evidence passed `9` states at `1440/1024/760/480`, including permission personas, HTTP `409` recovery with the dirty draft preserved, and zero document-level horizontal overflow.
+- [x] A later browser-agent attempt was tool-blocked before it could add evidence; it is supplementary only and is not a failed product test because the completed authenticated run remains authoritative.
+- [x] Residual pre-existing risk: a hardcoded AES passphrase exists in `HEAD` outside the added diff. No passphrase value is recorded here, no security waiver is required for this unchanged issue, and the added-line secret review found no findings.
+- [x] Commit note prepared for `2026-09-27` with subject `feat(config): 完善运行时治理与部署安全`; all current modifications, planning/status documents, and untracked implementation files are in scope for the single commit.
+
+## 2026-09-26 Maintenance / AI governance partial patch completion
+
+### Goal and constraints
+
+- [x] Complete the partially edited maintenance and AI governance patch without reverting or committing unrelated worktree changes.
+- [x] Make `ai-governance-sections.ts` authoritative for route, shell, tab, read, and write permissions; never restore admin bypasses for AI governance.
+- [x] Remove full-config ownership from `AIGovernanceCenter`; use only narrow public URL and readiness endpoints with authorized active-section lazy loading.
+- [x] Keep public URL updates optimistic and atomic with `expected_version`, stale reload feedback, version/audit/apply/broadcast behavior, and no unrelated-field loss.
+- [x] Preserve database-owned maintenance mode across bootstrap, ordinary saves, and generic rollback, with explicit regressions.
+- [x] Run gofmt, focused Go tests, targeted Node governance contracts, `pnpm --dir web run check`, production build, Impeccable/Finesse detection, and scoped diff hygiene; no external services or real database.
+- [x] Honor the user's explicit request to skip the final reflection gate.
+
+### Phases
+
+- [completed] Phase 1: inspect all partial diffs, current contracts, permission wrappers, and config-version semantics
+- [completed] Phase 2: complete and record the mandatory Impeccable / design-taste / finesse UI review
+- [completed] Phase 3: repair backend atomic handlers and maintenance/bootstrap/rollback regressions
+- [completed] Phase 4: repair frontend authorization, lazy loading, stale conflict, and accessible fallback behavior
+- [completed] Phase 5: update existing governance contracts and add focused handler regressions
+- [completed] Phase 6: format, run focused/full requested validation, detectors, and scoped diff review
+
+### Mandatory three-way frontend review
+
+- [x] **Impeccable / product register:** preserve the Phase 41 admin surface; use `ai-governance-sections.ts` as the section authority, scope skill metrics/actions to Skills, expose retryable per-section loading/error states, render only accessible tabs, and keep server-authoritative stale conflict recovery without overwriting the dirty URL draft.
+- [x] **design-taste-frontend / redesign-preserve:** no visual redesign or new design system. App owns hydration/deep-link fallback/breadcrumbs, Shell owns global section projection and scroll identity, AIGovernanceCenter owns only active authorized resource orchestration, and child components own form-level read-only/loading/conflict presentation.
+- [x] **finesse-ui / product workflow:** `SOUL=3-4`, `SPECTACLE=1`, `DENSITY=8`. Hide denied destinations, disable or hide mutation controls with an adjacent permission explanation, retain existing rows on refresh, provide one horizontal table scroll boundary, collapse Rules at narrow widths, and add deterministic request revision guards for capability detail/search races.
+- [x] **Shared hierarchy and ownership:** shared definitions own labels/roles/read permissions/fallback order; App owns top-route availability and post-hydration fallback; FunctionalAdminShell consumes the same definitions with no admin bypass; AIGovernanceCenter lazily loads only the resolved active section; SolutionPromptConfig owns the public URL draft/feedback while its parent owns narrow GET/PUT transport and optimistic version reload.
+- [x] **Responsive/accessibility:** retain the in-page section tabs because the current shell hides subsection navigation between 861px and 1180px and the user explicitly requires accessible tabs; filter them by permission, wire tab/tabpanel IDs plus Arrow/Home/End keys, add `aria-busy`, live loading/error/no-access states, 44px narrow controls, and exactly one horizontally scrolling skills table wrapper.
+- [x] **Disagreements resolved:** Taste preferred removing duplicate local tabs, but Impeccable/Finesse and the existing medium-width shell behavior show that removal would make sections unreachable, so filtered local tabs remain. Finesse preferred fully child-owned public URL requests, but the direct requirement says AIGovernanceCenter fetches the narrow status and SolutionPromptConfig calls a narrow save callback, so transport remains parent-owned and complete state props cross the boundary. Existing custom dialogs remain in this patch because converting four mature workflows to shared `Modal` would materially expand scope; mutation authorization and accessible labels are fixed now, with dialog focus-trap migration recorded as residual UI debt.
+- [x] **Validation scope:** executable permission personas, valid/invalid/forbidden/legacy route fallback, permission hydration failure, active-only request contracts, public URL 409 reload with dirty draft preserved, context write/preview gating, focused Go tests, targeted Node contracts, `pnpm check`, build, Impeccable/Finesse detectors, and 1440/1024/760/480 state review where the available runtime permits.
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| Built-in command helper required a sandbox mode even though the session already runs at `danger-full-access`, so the runtime rejected it as a non-wider escalation | 1 | Reused the repository's sanctioned staging path and added a scoped text-returning command helper; no approval or sandbox escalation was requested. |
+| Existing staging command helper passed a string where `spawnSync` expected an argument array and then returned objects as `[object Object]` | 1 | Added scoped `well_ambient_command_text` and `well_ambient_exact_edit_text` staging helpers with fixed workspace roots, explicit argument arrays, exit-code text, and exact-match edits. |
+| Baseline focused Go test still expected file `maintenance_mode=true` to beat stored database `false` | 1 | Updated the expectation to database authority and added a dedicated explicit-false regression. |
+| Baseline Svelte check reported a reactive cycle plus stale `canWriteConfig` / `governanceConfig` symbols | 1 | Removed the reactive write cycle, rendered through `resolvedActiveSection`, and wired the narrow public URL state/props. |
+| Readiness leak test treated an empty API token as a substring of every response | 1 | Guarded empty secrets before substring checks; the non-secret payload tests then passed. |
+| One responsive Node assertion required the Rules collapse declaration inside the 760px block even though it correctly lived at 900px | 1 | Corrected the test to assert the effective 900px breakpoint. |
+| Finesse detector parsed JavaScript `new URL(...)` as a missing CSS/local asset reference | 1 | Switched UI URL parsing to an explicit HTTP(S) check plus the browser anchor parser; Finesse returned `P0=0`. |
+| First browser script inspected the lazy preview action before selecting its subtab | 1 | Navigated to the `上下文预览` tab before asserting preview permissions. |
+| Authenticated 480px validation exposed the skills table wrapper inheriting its table's 1290px intrinsic width | 1 | Added `min-width:0`/100% constraints to the workbench, pane, and table wrapper; rerun proved document width 480 with isolated table scrolling. |
+| No-access browser fixture serialized a nil permission slice as JSON `null` | 1 | Seeded an explicit empty array matching the production contract; the no-access state passed. |
+| Final closeout shell calls were rejected because the wrapper required an equal `danger-full-access` sandbox value and treated it as an invalid escalation | 1 | Used the already-recorded workspace-scoped staging command helper; no permission escalation or external access occurred. |
+| The existing exact-edit helper used an incompatible path-key shape, and the first hand-written repository patch had stale hunk metadata | 2 | Stopped both paths without partial changes, created one temporary workspace-rooted single-match helper, and removed it after the record-only edits. |
+
+---
+
+# Task Plan: PostgreSQL setup migration recovery
+
+## 2026-09-26 PostgreSQL setup config-persistence retry recovery
+
+### Goal and constraints
+
+- [x] Prove an identical legacy SQLite source and PostgreSQL target already completed migration before allowing retry recovery.
+- [x] Skip destructive recopy only after exact proof, then retry PostgreSQL config persistence.
+- [x] Fail closed for a different source or target; never expose DSNs/secrets; keep owner-only marker permissions.
+- [x] Add failure-once persistence regression using existing doubles/fixtures; do not connect to a real PostgreSQL or business database.
+- [x] Run gofmt, focused `internal/server` setup tests, `internal/db` tests only if touched, and scoped `git diff --check`; do not commit.
+
+### Phases
+
+- [completed] Phase 1: inspect setup/migration helpers, tests, and dirty worktree boundaries
+- [completed] Phase 2: choose and implement the smallest exact recovery proof
+- [completed] Phase 3: add regression and fail-closed source/target coverage
+- [completed] Phase 4: run focused formatting/tests/diff hygiene and report residual risk
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| `functions.bash` rejected sandbox parameters because the session already has `danger-full-access` | 1 | Do not retry escalation; use repository file tools plus temporary scoped staging helpers, then remove them before delivery. |
+| The first staging command helper used CommonJS `require`, which is unavailable in its ESM evaluator | 1 | Recreated it with dynamic `import('node:child_process')`; verified command execution succeeds. |
+| `apply_patch` is not installed in this environment | 1 | Use an exact-match UTF-8 staging edit helper because the built-in edit tool is blocked by the sandbox-parameter mismatch. |
+
+---
+
 # Task Plan: AI 治理技能中心交互优化、技能标识体系与 SKILL.md 文档化展示
+
+## 2026-09-26 AI 治理迁移后配置中心残留菜单修复
+
+### 目标与验收契约
+
+- [x] 配置中心不再注册、显示或渲染 `solution_prompts` 与 `ai_context`；`AI 引擎配置`继续留在配置中心。
+- [x] 独立 AI 治理中心承接原配置页成熟能力：提示词测试/验证/显式激活/Jira 公开地址，以及语料候选审核、手工 Context Fact、上下文包预览与真实/未知 AI 就绪状态。
+- [x] 旧 `?settings=solution_prompts|ai_context` 深链兼容迁移到 `?tab=ai_governance&section=prompts|context`；治理权限不再单独暴露配置中心路由或 fallback。
+- [x] 定向合同先红后绿，并完成类型检查、生产构建、Impeccable/Finesse 检测和登录态桌面/窄屏验证。
+- [x] 已审阅当前工作树全部改动并准备一次性全量提交；commit 正文包含功能、部署/配置与验证摘要，按用户要求跳过交付反思门禁。
+
+### 阶段
+
+- [completed] Phase 1：读取项目约束、定位统一 Settings 注册表与残留渲染链，完成三方 UI 评审
+- [completed] Phase 2：建立菜单残留与迁移能力完整性的可证伪合同
+- [completed] Phase 3：复用成熟治理组件、迁移旧深链并移除 Settings 残留所有权
+- [completed] Phase 4：完成前端/后端/部署相关验证、设计检测与登录态浏览器验收
+- [completed] Phase 5：审阅全部 diff 并准备一次性提交全部改动；按用户要求不触发交付前反思门禁
+
+### 强制 UI 三方会审（实现前）
+
+- [x] **Design Read：** Phase 41 B 端产品管理台，`redesign-preserve`，`SOUL=4 / SPECTACLE=1 / DENSITY=8`；本轮是信息架构与组件所有权纠正，不新增视觉语言、装饰或动效。
+- [x] **Impeccable / product：** `settings-sections.ts` 是配置中心唯一注册表；应移除 `solution_prompts` 与 `ai_context`，保留基础模型连接/凭证/估算的 `ai`。删除菜单前必须保证独立治理页具备原成熟工作流，避免仅隐藏入口造成能力回退。
+- [x] **design-taste-frontend / preserve：** 不重做配置页或治理页外观；只改注册、路由、组件挂载与兼容链接。保留现有 Phase 41 token、标签和密度；治理权限代码仍可在安全与授权页分配/审计。
+- [x] **finesse-ui / product：** 复用现有 `SolutionPromptConfig` 和 `AIConfig view="context"`，不在 `AIGovernanceCenter` 复制第二套行为。移动端继续依赖成熟组件的 44px/单列规则，验证治理唯一入口在 1024/760/480 下无文档级横向溢出。
+- [x] **共同层级与所有权：** `FunctionalAdminShell` 拥有全局/子导航，`App.svelte` 拥有 active route、权限/fallback 与旧深链翻译，`AIGovernanceCenter` 拥有 `skills|prompts|rules|context` 内容，`SettingsPanel` 只拥有基础设施与安全配置。
+- [x] **共同功能风险：** 当前独立提示词编辑器发送后端不识别的 `activate_on_save`，且缺少代码评审测试/验证/激活；当前独立 context 只挂载资料库并硬编码 `aiReady=true`，缺候选审核、手工事实与上下文预览。实现必须先复用成熟组件，再移除旧菜单。
+- [x] **分歧与裁决：** ① 是否把仅剩的 `AI 引擎配置` 从“AI 工作台”改组到“集成设置”：为避免无关命名/IA 扩张，本轮保留原分组。② 是否同时删除治理页内部 tab：项目合同倾向全局 rail 唯一导航，但 shell 在 861-1180px 会隐藏子导航；本轮保留内部 tab，避免中等宽度失去 section 入口，后续另做共享响应式 section picker。③ Jira 公开地址最终应归方案发布配置，但本轮先由复用的成熟提示词组件承接，确保不失联。
+- [x] **验证范围：** 定向合同覆盖 Settings 注册/权限/fallback、成熟组件挂载、错误字段消失、旧链接迁移、预览菜单和文档；随后跑相关 Node 合同、`pnpm --dir web run check`、生产 build、Impeccable detector、Finesse P0，登录态检查 Settings 与 AI 治理 prompts/context 的桌面/1024/760/480 状态。
+
+### 错误记录
+
+| 错误 | 尝试 | 处理 |
+|---|---:|---|
+| `diagnosing-bugs` 未注册为会话 skill | 1 | 按项目 AGENTS 路由直接读取 `~/.codex/skills/diagnosing-bugs/SKILL.md` 并执行其反馈循环。 |
+| 初次 bash 状态命令附带当前等宽 sandbox escalation 参数而被拒绝 | 2 | 后续只运行工具接受的只读命令；未产生文件或运行态修改。 |
+| 文件编辑工具把当前 `workspace-write` 误判为同级升级 | 4 | 停止重复传递 escalation 参数。 |
+| `apply_patch` 命令在环境中不存在 | 1 | 改用一次性 Python 精确替换；后续仍优先使用文本编辑工具。 |
 
 ## 2026-09-25 技能中心筛选样式现代美化、按钮文字防换行、技能包含层级标识与 SKILL.md 文档化展现
 
@@ -8074,3 +8219,96 @@ Allow administrators to configure Jira release-page sources with a project numbe
 - [x] 认证浏览器验证两个同步开关 true/false 往返持久化；主动注入 PUT 500 后 UI 与服务器均回滚为 false。
 - [x] silent poll 前后 summary=`38 条`、scrollTop=`120`、loading overlay=`0`，无闪烁或滚动跳变。
 - [x] 最终验证：Svelte 0 errors/148 existing warnings，24/24 contracts，Vite build，Go API，Impeccable `[]`，认证 fixture PASS。
+
+## 2026-09-26 WellOS 维护模式与动态配置数据库化
+
+### 目标
+
+- 验证手动维护模式在 WellOS 返回 `10002 / 此账号已禁用` 时的可行性与安全边界。
+- 将可在线维护的配置收敛到 `runtime_configs + config_versions`，减少静态 YAML。
+- 明确优先级：紧急环境变量覆盖 > 数据库运行时配置 > Go 默认值；数据库连接和 HTTP 监听保留为启动配置。
+
+### 阶段
+
+- [complete] 审计维护登录、配置启动和版本化配置链路。
+- [complete] 将运行时配置改为字段级深度合并，并忽略历史快照中的启动字段。
+- [complete] 将维护模式纳入数据库配置、审计版本和生产紧急覆盖流程。
+- [complete] 补齐配置瘦身、回归测试和生产操作说明。
+
+### 已确认的设计事实
+
+- `runtime_configs` 已是当前运行时配置源，`config_versions` 提供审计和回滚。
+- 当前恢复逻辑只合并顶层 section；已有 `server` section 时，新字段 `maintenance_mode` 不会自动继承。
+- 历史运行时快照包含 `server.host/port`，但监听地址在进程启动后不可在线生效，应始终由启动配置拥有。
+- `database` 已正确排除在运行时配置和浏览器 API 之外。
+- `10002` 不能自动等同维护模式；只有显式维护开关开启时才允许本地已知用户降级登录。
+
+### 三方 UI 评审结论
+
+- **Impeccable:** 建议放在“安全与授权”首位，新增独立 `WellOSMaintenanceConfig`，后端提供原子 GET/PUT 状态接口；必须区分 configured/effective/override source，环境覆盖时锁定数据库开关。
+- **Design Taste:** 建议新增“运行与维护”分组，强调这是运行策略而非集成参数；确认弹窗必须说明只影响后续登录，已签发维护 JWT 最多继续有效 2 小时。
+- **Finesse:** 建议放在“安全与授权”，复用 shared Switch 和现有确认/Toast/版本链路；覆盖 loading/off/db-on/override-on/saving/read-only/error/stale 状态，移动端单列。
+- **分歧裁决:** 当前只有一个运行维护项，不新增单项顶级分组；放入“安全与授权”首位，导航名“登录维护模式”，领域标签“认证连续性”。未来运维项达到两个以上再抽取“运行与维护”分组。部署覆盖期间允许预写数据库值，但实际状态始终单独显示为环境/CLI 覆盖。
+- **共享方向:** SettingsPanel 只拥有路由和加载；新组件拥有状态、确认和反馈；后端原子更新 `server.maintenance_mode` 并写入 `config_versions/runtime_configs`。启用和关闭都确认；环境/CLI 强制开启时显示来源并禁止误导性关闭。
+- **验证范围:** 权限、数据库 on/off、环境覆盖、并发版本冲突、保存失败、回读一致性、键盘与焦点返回、320/390/760/1024 响应式、关闭后新维护登录被拒绝、普通 JWT 不受影响、已签发维护 JWT 的 2 小时有效期文案准确。
+
+### 本轮错误记录
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Go 默认构建缓存位于用户目录，沙箱返回 `operation not permitted` | 1 | 改用工作区 `GOCACHE=outputs/go-cache` 重跑，不重复使用默认缓存。 |
+| Runtime JSON 测试用全局字符串匹配检查 `host/port`，误命中 SMTP 字段 | 1 | 改为解析 JSON 后只检查 `server` 节点，保留实现不变。 |
+| 新增 GET API 未登记 bounded read contract；配置 diff 的旧基线仍使用全配置映射 | 1 | 为维护状态注册 singleton read contract；diff 前后统一使用 runtime-only 映射。 |
+| 既有 SettingsPanel 合同仍断言旧的 `with-context` 精确表达式 | 1 | 更新合同为当前邮件页不显示右侧上下文的真实结构。 |
+| `scripts/dev.sh` 的 `DEV_API_PORT` 未传给后端，健康检查 18080 时后端仍监听 8080；并加载真实动态集成配置 | 1 | 不复用该脚本，改用临时 SQLite 与独立后端/Vite 进程进行隔离浏览器验证。 |
+| Chrome Headless 首次启动因 macOS sandbox/Crashpad 无权写用户目录而 SIGTRAP | 1 | 第二次使用隔离 HOME、`--no-sandbox`、禁用 Crashpad/GPU；若仍失败则记录为环境阻塞。 |
+| CDP 验证脚本先发送命令后登记 Promise，快速本地响应可能丢失并超时 | 2 | 调整为先登记等待器再发送，并加入阶段日志；作为最后一次协议重试。 |
+| Chrome 154 CDP 在页面目标上连续卡住 `Runtime.enable` | 3 | 停止协议调试，改用同源认证跳转页 + Chrome Headless 单次渲染/截图，并通过真实 API 切换状态。 |
+| Chrome Headless 单次渲染在当前 macOS 沙箱中仍无法按虚拟时间预算退出 | 4 | 停止浏览器尝试，清理隔离进程与临时文件；以 Impeccable `[]`、Svelte 0 error、契约测试、真实 API 和构建作为当前环境证据，并在交付中明确浏览器缺口。 |
+
+### 最终验证
+
+- [x] `GOCACHE=outputs/go-cache go test ./... -count=1`
+- [x] `GOCACHE=outputs/go-cache go vet ./...`
+- [x] `node --experimental-strip-types --test web/tests/*.test.ts`：195/195
+- [x] `pnpm -C web check`：0 error，保留既有 warning
+- [x] `pnpm -C web build`
+- [x] Impeccable detector：`[]`
+- [x] `git diff --check`
+- [x] YAML 解析：本地、通用示例和生产示例均通过
+- [x] 本地数据库迁移验证：`runtime_configs` v97 包含维护模式和全部动态 section，不再包含监听地址/附件目录
+- [ ] 认证 Chrome 响应式截图：当前 macOS 沙箱阻止 renderer/CDP 稳定运行，已记录环境阻塞
+
+## 2026-09-26 Jira 早报修改发送时间后重复发送
+
+### 目标
+
+- 对齐生产 PostgreSQL 与本地 SQLite 台账，定位今天第二次发送来源。
+- 保留生产按日期幂等，并阻止复制生产配置的本地 SQLite 实例自动发送。
+- 增加 SQLite 默认关闭调度器和配置热更新不重发的回归测试。
+
+### 阶段
+
+- [complete] 只读生产发送记录、约束、运行时配置和配置版本。
+- [complete] 审计生产主机实例、容器、cron、SMTP 调用和配置热更新链路。
+- [complete] 对齐本地 SQLite 台账，确认今天第二封由本地诊断实例发送。
+- [complete] 增加 SQLite 邮件调度安全门禁和回归测试。
+
+### 验证
+
+- [x] 精确回归：配置 09:30 发送后改为 13:30、19:14，SMTP 调用仍为 1 次，原台账时间保持 09:30。
+- [x] SQLite 默认启动不创建 claim、不调用 SMTP；仅显式测试变量允许调度器运行。
+- [x] 并发 worker 只允许一个发送 claim。
+- [x] 发送失败/未知结果仍保留 claim，重启后不重发。
+- [x] `go test ./... -count=1`
+- [x] `go vet ./...`
+- [x] `git diff --check`
+- [x] 生产只读复核：2026-09-26 只有一条 09:30 发送记录；本地 SQLite 有一条 16:43 发送记录。
+
+### 生产证据
+
+- `daily_jira_email_runs.date` 是主键；当前 11 条台账没有重复日期。
+- 当前生产版本为 `2026.09.25-79f6f1a6-dirty.20260925142607`，提交 `79f6f1a6` 包含 `b83755e` 的日期 claim 修复。
+- 生产主机仅有一个 Well Ambient server 进程，容器自 2026-09-25 启动后无重启，无 cron/systemd 重复任务。
+- 生产 PostgreSQL：2026-09-26 09:30:00 发送一次。
+- 本地 SQLite：2026-09-26 16:43:15 发送一次；该时间与本地诊断后端启动完全一致，收件人和 Confluence URL 与生产相同。

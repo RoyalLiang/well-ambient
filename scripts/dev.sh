@@ -92,6 +92,7 @@ echo "==> 编译后端服务..."
 )
 
 echo "==> 启动后端服务 (配置: $config_path)..."
+echo "==> 安全门禁: SQLite 环境默认禁用 Jira 早报自动发送"
 "$server_binary" --config "$config_path" &
 backend_pid=$!
 

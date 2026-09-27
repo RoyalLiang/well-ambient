@@ -2,7 +2,7 @@
 
 ## 结论与口径
 
-本架构覆盖全部用户可达页面和全部 77 条 GET `/api` 路由，Daily Jira 只是第一个完整迁移样本。目标不是让任意 SQL、任意模糊搜索或任意全量导出在一千万行上都返回毫秒级，而是把交互式读取约束成可证明的有限问题：
+本架构覆盖全部用户可达页面和全部 97 条 GET `/api` 路由，Daily Jira 只是第一个完整迁移样本。目标不是让任意 SQL、任意模糊搜索或任意全量导出在一千万行上都返回毫秒级，而是把交互式读取约束成可证明的有限问题：
 
 - 10M 隔离数据上，warm 有界数据库读取 p95 `< 20ms`；
 - 单机本地 HTTP handler（含查询、DTO 和 JSON）p95 `< 50ms`；
@@ -57,7 +57,7 @@ flowchart LR
 
 生产 wrapper 返回 `X-Well-Ambient-Read-*` 响应头，并在最近 2,048 次请求窗口中记录 handler p50/p95/p99、最大响应字节、SQL 数、SQL 行数、SQL p95/max、错误和预算越界。GORM `Query`、`Row/Scan`、`Raw` 都接入同一 request context；未使用 `WithContext(r.Context())` 的旧 handler 会显示为 0 条归属 SQL，作为迁移审计信号。
 
-`GET /api/status` 只返回成熟度汇总，`GET /api/status?read_contracts=full` 才返回 77 条声明，避免常规状态轮询自身膨胀。
+`GET /api/status` 只返回成熟度汇总，`GET /api/status?read_contracts=full` 才返回 97 条声明，避免常规状态轮询自身膨胀。
 
 ### 前端资源层
 
@@ -86,19 +86,25 @@ flowchart LR
 | schedule.board | work-items、demand specs、execution runs、directory/users | generation keyset + bounded detail | 多条已 bounded/verified；legacy tasks 与 workspace 聚合待迁移 |
 | schedule.projects | project scores/config/preferences | completed score projection | config bounded；scores pending |
 | solutions.catalog | catalog、standards、workspace、demand specs | keyset + search projection | demand specs/standard detail bounded；catalog/search/workspace pending |
-| evidence.health | data assets、strongest-brain evidence/quality/cockpit | keyset + completed projections | data assets verified；跨域聚合 pending |
+| evidence.health | data assets、agent runtime audit、strongest-brain evidence/quality/cockpit | keyset + completed projections | data assets verified；runtime audit bounded；跨域聚合 pending |
 | tasks.status | work-items、assignees、users、legacy tasks | generation keyset | work-items/目录 bounded；legacy `/api/tasks` pending |
 | tasks.execution | execution runs/tasks、task activity、evidence chain | generation keyset + projection + top-k | runs/activity bounded；execution aggregate/evidence pending |
+| tasks.review | code review repos/targets/runs/detail | cached directory + bounded detail | 四条 GET 路由 bounded；repo directory 同时服务 AI 治理规则 |
 | kpi.overview | KPI、project scores、users、latest assets | completed KPI projection | latest asset verified、users bounded；KPI/scores pending |
 | kpi.calculation | performance explanation/snapshots | completed score projection | pending；禁止请求内重放全部 evidence/events |
-| settings.gitlab | config、status、webhook/logs、external projects | singleton + top-k/cache | 本地状态/logs bounded；外部目录 pending 且使用独立外部 SLO |
-| settings.feishu | config/status | singleton | verified |
-| settings.jira | config/status/link、release Jira search | singleton + bounded external search | 本地 singleton verified；外部 search pending |
-| settings.performance | config、performance explanation/snapshot | singleton + score projection | config verified；绩效投影 pending |
-| settings.projects | config、project config/scores | directory + score projection | config/project directory bounded；scores pending |
-| settings.ai | config/status | singleton | verified |
-| settings.solution_prompts | solution prompts | keyset | pending |
-| settings.ai_context | context facts/docs/candidates、traces、replay | generation keyset + bounded detail | 主列表 verified，详情/trace bounded |
+| ai_governance.skills | capabilities、runs、lockfile、trace、replay | cached directory + bounded detail/top-k | 六条 GET 路由 bounded；运行审计同时服务 evidence.health |
+| ai_governance.prompts | solution prompts、public URL | keyset + singleton | public URL verified；prompt 列表 pending |
+| ai_governance.rules | code review repositories | cached directory | bounded；与 tasks.review 共享实际仓库/规则消费者 |
+| ai_governance.context | context facts/docs/candidates、traces、readiness、replay | generation keyset + bounded detail | 主列表/readiness verified，详情/trace/replay bounded |
+| settings.gitlab | config、status、webhook/logs、external projects、config versions | singleton + top-k/cache | 本地状态/logs bounded；外部目录 pending 且使用独立外部 SLO |
+| settings.email | config、candidate owners、runs、templates、config versions | singleton + bounded detail | config verified；邮件目录和运行历史 bounded |
+| settings.feishu | config/status/config versions | singleton + top-k | config verified；版本历史 bounded |
+| settings.jira | config/status/link、release Jira search、config versions | singleton + bounded external search | 本地 singleton verified；外部 search pending |
+| settings.performance | config、performance explanation/snapshot、config versions | singleton + score projection | config verified；绩效投影 pending |
+| settings.projects | config、project catalog/config/scores、config versions | directory + score projection | config/project directory bounded；scores pending |
+| settings.versions | config versions | indexed top-k | bounded；统一查看差异与回滚来源 |
+| settings.ai | config/status/config versions | singleton + top-k | config verified；版本历史 bounded |
+| settings.wellos | WellOS maintenance、config versions | singleton + top-k | maintenance verified；版本历史 bounded |
 | settings.users | users/groups | cached directory + batch memberships | bounded；用户最多 5,000，membership 固定两条查询 |
 | settings.matrix | users/groups/permissions | cached directory | bounded |
 | settings.policies | policies/authz audit | cached directory + top-k | audit bounded；policy directory pending |
@@ -106,15 +112,15 @@ flowchart LR
 
 ## 路由成熟度清单
 
-当前可执行 inventory：77 条 GET 路由中 `verified=17`、`bounded=32`、`migration_pending=28`。测试设有单调 ratchet：verified 不得低于 17，bounded-or-verified 不得低于 49，pending 不得高于 28。
+当前可执行 inventory：97 条 GET 路由中 `verified=20`、`bounded=49`、`migration_pending=28`。测试锁定当前源代码的精确路由数、成熟度计数和 31 个可达页面状态；路由或成熟度发生变化时必须同步更新 contract、测试和本文档。
 
-### Verified（17）
+### Verified（20）
 
-`/api/config`、`/api/context/documents`、`/api/context/facts`、`/api/corpus-candidates`、`/api/data-assets/events`、`/api/data-assets/events/{id}`、`/api/data-assets/snapshots/latest`、`/api/data-assets/snapshots/{id}`、`/api/decision/daily-jira`、`/api/jira/link-config`、`/api/me`、`/api/me/decision-table-columns`、`/api/me/project-preferences`、`/api/notifications/sse`、`/api/projects/{project_key}/releases`、`/api/releases/{id}`、`/api/status`。
+`/api/ai/context-readiness`、`/api/config`、`/api/config/wellos-maintenance`、`/api/context/documents`、`/api/context/facts`、`/api/corpus-candidates`、`/api/data-assets/events`、`/api/data-assets/events/{id}`、`/api/data-assets/snapshots/latest`、`/api/data-assets/snapshots/{id}`、`/api/decision/daily-jira`、`/api/jira/link-config`、`/api/me`、`/api/me/decision-table-columns`、`/api/me/project-preferences`、`/api/notifications/sse`、`/api/projects/{project_key}/releases`、`/api/releases/{id}`、`/api/solution-prompts/public-url`、`/api/status`。
 
-### Bounded（32）
+### Bounded（49）
 
-`/api/ai/output-trace`、`/api/ai/requirement-clarification`、`/api/ai/traces`、`/api/audit-logs`、`/api/authz/audit-logs`、`/api/config/versions`、`/api/context/documents/{id}`、`/api/context/pack/replay`、`/api/context/packs/{id}/replay`、`/api/corpus-candidates/{id}/impact`、`/api/delivery/directory`、`/api/demand-specs`、`/api/demands/options`、`/api/execution/runs`、`/api/gitlab/webhooks/status`、`/api/groups`、`/api/logs`、`/api/permissions`、`/api/projects/config`、`/api/releases`、`/api/releases/{id}/jira-issues`、`/api/releases/{id}/snapshot`、`/api/requirements/clarification`、`/api/review-contracts`、`/api/solution-standards/{id}`、`/api/strongest-brain/override-audit`、`/api/strongest-brain/releases`、`/api/task-tracking/assignees`、`/api/tasks/commits`、`/api/users`、`/api/work-items`、`/api/work-items/{id}`。
+`/api/agent-runtime/capabilities`、`/api/agent-runtime/capabilities/{id}`、`/api/agent-runtime/replays/{id}`、`/api/agent-runtime/runs`、`/api/agent-runtime/runs/{id}/lockfile`、`/api/agent-runtime/runs/{id}/trace`、`/api/ai/output-trace`、`/api/ai/requirement-clarification`、`/api/ai/traces`、`/api/audit-logs`、`/api/authz/audit-logs`、`/api/code-reviews`、`/api/code-reviews/repos`、`/api/code-reviews/targets`、`/api/code-reviews/{id}`、`/api/config/versions`、`/api/context/documents/{id}`、`/api/context/pack/replay`、`/api/context/packs/{id}/replay`、`/api/corpus-candidates/{id}/impact`、`/api/daily-jira-email/candidate-owners`、`/api/daily-jira-email/runs`、`/api/daily-jira-email/templates`、`/api/delivery/directory`、`/api/demand-specs`、`/api/demands/options`、`/api/execution/runs`、`/api/gitlab/webhooks/status`、`/api/groups`、`/api/logs`、`/api/permissions`、`/api/projects/catalog`、`/api/projects/config`、`/api/releases`、`/api/releases/{id}/jira-issues`、`/api/releases/{id}/snapshot`、`/api/requirements/clarification`、`/api/review-contracts`、`/api/solution-standards/{id}`、`/api/strongest-brain/capability-intelligence`、`/api/strongest-brain/capability-proposals`、`/api/strongest-brain/override-audit`、`/api/strongest-brain/releases`、`/api/strongest-brain/review-intelligence`、`/api/task-tracking/assignees`、`/api/tasks/commits`、`/api/users`、`/api/work-items`、`/api/work-items/{id}`。
 
 ### Migration pending（28）
 
@@ -178,4 +184,4 @@ GOCACHE=/tmp/well-ambient-all-page-gocache go run ./cmd/read-path-bench --rows 1
 3. strongest-brain/decision 聚合：复用同一 task/performance/release projection，不重复读取写模型。
 4. 外部 Jira/GitLab 搜索和目录：独立缓存、过期策略、熔断与外部 SLO，不纳入本地 50ms handler 承诺。
 
-完成标准不是“77 条路由都有一行配置”，而是 pending 降到 0，且每一条 route/surface 都有领域边界、查询计划、大规模基准、响应预算和浏览器稳定性证据。
+完成标准不是“97 条路由都有一行配置”，而是 pending 降到 0，且每一条 route/surface 都有领域边界、查询计划、大规模基准、响应预算和浏览器稳定性证据。

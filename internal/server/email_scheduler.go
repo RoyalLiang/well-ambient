@@ -4,12 +4,35 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
+	"strings"
 	"time"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 
 	"gorm.io/gorm"
 )
+
+const sqliteEmailSchedulerOptInEnv = "WELL_AMBIENT_ALLOW_SQLITE_EMAIL_SCHEDULER"
+
+func emailSchedulerDriverAllowed(driver, sqliteOptIn string) bool {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "postgres", "postgresql", "pg":
+		return true
+	case "sqlite", "sqlite3":
+		value := strings.TrimSpace(sqliteOptIn)
+		return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes") || strings.EqualFold(value, "on")
+	default:
+		return false
+	}
+}
+
+func automaticEmailSchedulerAllowed() bool {
+	if db.DB == nil {
+		return false
+	}
+	return emailSchedulerDriverAllowed(db.DB.Dialector.Name(), os.Getenv(sqliteEmailSchedulerOptInEnv))
+}
 
 // Wall-clock comparison catches skipped DST minutes; durable dates prevent repeats.
 func emailScheduleDue(now time.Time, cfg config.Config) (string, bool) {
@@ -72,6 +95,19 @@ func (s *Server) triggerEmailWorker() {
 
 func (s *Server) startEmailWorker(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
+	if !automaticEmailSchedulerAllowed() {
+		driver := "unavailable"
+		if db.DB != nil {
+			driver = db.DB.Dialector.Name()
+		}
+		log.Printf(
+			"Daily Jira email scheduler disabled for %s database; automatic SMTP delivery requires PostgreSQL (tests may explicitly set %s=1)",
+			driver,
+			sqliteEmailSchedulerOptInEnv,
+		)
+		close(done)
+		return done
+	}
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(10 * time.Second)

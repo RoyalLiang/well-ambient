@@ -7,17 +7,36 @@ runtime_config=${1:?runtime config path is required}
 template_config=${2:?template config path is required}
 legacy_snapshot=${3:?legacy SQLite snapshot path is required}
 container_legacy_path=/var/lib/well-ambient/legacy/well-ambient.db
+runtime_config_dir=$(dirname "$runtime_config")
+runtime_config_base=$(basename "$runtime_config")
+legacy_dir=$(dirname "$legacy_snapshot")
+data_dir=$(dirname "$legacy_dir")
+temporary_config=""
+
+cleanup() {
+  if [[ -n "$temporary_config" ]]; then
+    rm -f "$temporary_config"
+  fi
+}
+trap cleanup EXIT
 
 if [[ ! -f "$template_config" ]]; then
   echo "production config template not found: $template_config" >&2
   exit 2
 fi
 
-mkdir -p "$(dirname "$runtime_config")"
+mkdir -p "$runtime_config_dir" "$data_dir" "$legacy_dir"
+chmod 0700 "$runtime_config_dir" "$data_dir" "$legacy_dir"
+
 if [[ ! -f "$runtime_config" ]]; then
-  cp "$template_config" "$runtime_config"
+  temporary_config=$(mktemp "$runtime_config_dir/.${runtime_config_base}.tmp.XXXXXX")
+  chmod 0600 "$temporary_config"
+  cp "$template_config" "$temporary_config"
+  chmod 0600 "$temporary_config"
+  mv "$temporary_config" "$runtime_config"
+  temporary_config=""
 fi
-chmod 600 "$runtime_config"
+chmod 0600 "$runtime_config"
 
 # Runtime directories created before SQLite onboarding do not contain the
 # legacy path. Evolve only when the standard mounted snapshot is present, and
@@ -26,6 +45,7 @@ if [[ ! -f "$legacy_snapshot" ]]; then
   exit 0
 fi
 
+chmod 0600 "$legacy_snapshot"
 if [[ ! -r "$legacy_snapshot" ]]; then
   echo "legacy SQLite snapshot is not readable by the deploy user: $legacy_snapshot" >&2
   exit 2
@@ -47,11 +67,8 @@ if awk '
   exit 0
 fi
 
-temporary_config=$(mktemp "${runtime_config}.tmp.XXXXXX")
-cleanup() {
-  rm -f "$temporary_config"
-}
-trap cleanup EXIT
+temporary_config=$(mktemp "$runtime_config_dir/.${runtime_config_base}.tmp.XXXXXX")
+chmod 0600 "$temporary_config"
 
 if ! awk -v legacy_path="$container_legacy_path" '
   /^database:[[:space:]]*(#.*)?$/ && !inserted {
@@ -67,6 +84,8 @@ if ! awk -v legacy_path="$container_legacy_path" '
   exit 2
 fi
 
-chmod 600 "$temporary_config"
+chmod 0600 "$temporary_config"
 mv "$temporary_config" "$runtime_config"
+temporary_config=""
+chmod 0600 "$runtime_config"
 trap - EXIT

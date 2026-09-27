@@ -14,6 +14,7 @@
   export let footerVisible = true;
   export let stableHeight = false;
   export let layer: 'default' | 'critical' = 'default';
+  export let closeDisabled = false;
 
   let backdropEl: HTMLDivElement;
   let modalContainer: HTMLDivElement;
@@ -25,6 +26,7 @@
   let returnFocusEl: HTMLElement | null = null;
 
   function close() {
+    if (closeDisabled) return;
     dispatch('close');
   }
 
@@ -156,7 +158,7 @@
     >
       <header class="modal-header">
         <h3 class="modal-title" id={modalId}>{title}</h3>
-        <OverlayCloseButton label={closeLabel} on:click={close} />
+        <OverlayCloseButton label={closeLabel} disabled={closeDisabled} on:click={close} />
       </header>
       <div bind:this={modalBody} class:hide-body-scrollbar={hideBodyScrollbar} class="modal-body">
         <slot />

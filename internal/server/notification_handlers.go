@@ -1054,51 +1054,109 @@ func writeLoginError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+type wellOSMaintenanceError struct {
+	Code int
+	Msg  string
+}
+
+func (e *wellOSMaintenanceError) Error() string {
+	return fmt.Sprintf("WellOS in maintenance mode (code %d): %s", e.Code, e.Msg)
+}
+
+func isWellOSMaintenanceResponse(resp WellOSLoginResponse) bool {
+	if resp.Code == 10002 || strings.Contains(resp.Msg, "此账号已禁用") {
+		return true
+	}
+	msg := strings.ToLower(resp.Msg)
+	return strings.Contains(msg, "maintenance") || strings.Contains(resp.Msg, "维护")
+}
+
 func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, username, password string, upstreamErr error) {
 	if isDevAuthEnabled() && isLoopbackRequest(r) {
 		s.handleDevLogin(w, r, username, upstreamErr)
 		return
 	}
-	log.Printf("WellOS login transport failed: %T: %v", upstreamErr, upstreamErr)
+	isMaintenance := s.isMaintenanceMode()
+	if isMaintenance {
+		log.Printf("WellOS login maintenance fallback active: %v", upstreamErr)
+	} else {
+		log.Printf("WellOS login transport failed: %T: %v", upstreamErr, upstreamErr)
+	}
 
 	if db.DB == nil {
-		writeLoginError(
-			w,
-			http.StatusBadGateway,
-			"wellos_unreachable",
-			"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates.",
-		)
+		if isMaintenance {
+			writeLoginError(
+				w,
+				http.StatusBadGateway,
+				"wellos_maintenance",
+				"WellOS 处于维护模式，数据库未初始化。",
+			)
+		} else {
+			writeLoginError(
+				w,
+				http.StatusBadGateway,
+				"wellos_unreachable",
+				"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates.",
+			)
+		}
 		return
 	}
 
 	var dbUser userdb.User
 	if err := db.DB.Where("username = ?", username).First(&dbUser).Error; err != nil {
-		writeLoginError(
-			w,
-			http.StatusBadGateway,
-			"wellos_unreachable",
-			"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates; no verified local session fallback is available for this account.",
-		)
+		if isMaintenance {
+			writeLoginError(
+				w,
+				http.StatusBadGateway,
+				"wellos_maintenance",
+				"WellOS 处于维护模式，该账号暂无本地登录凭证缓存，请等待维护结束后登录。",
+			)
+		} else {
+			writeLoginError(
+				w,
+				http.StatusBadGateway,
+				"wellos_unreachable",
+				"Unable to reach WellOS from this deployment. Check outbound HTTPS, DNS, and CA certificates; no verified local session fallback is available for this account.",
+			)
+		}
 		return
 	}
 	if dbUser.LocalPasswordHash == "" || !verifyLocalPasswordHash(password, dbUser.LocalPasswordHash) {
-		writeLoginError(
-			w,
-			http.StatusUnauthorized,
-			"local_fallback_verification_failed",
-			"Unable to reach WellOS from this deployment, and local credential verification failed for this account.",
-		)
+		if isMaintenance {
+			writeLoginError(
+				w,
+				http.StatusUnauthorized,
+				"local_fallback_verification_failed",
+				"WellOS 处于维护模式，本地凭据验证失败。",
+			)
+		} else {
+			writeLoginError(
+				w,
+				http.StatusUnauthorized,
+				"local_fallback_verification_failed",
+				"Unable to reach WellOS from this deployment, and local credential verification failed for this account.",
+			)
+		}
 		return
 	}
 
 	groupNames, permCodes := loadUserAccessSnapshot(dbUser.ID)
 	if len(groupNames) == 0 || len(permCodes) == 0 {
-		writeLoginError(
-			w,
-			http.StatusForbidden,
-			"local_fallback_access_missing",
-			"Unable to reach WellOS from this deployment, and this account has no local access snapshot.",
-		)
+		if isMaintenance {
+			writeLoginError(
+				w,
+				http.StatusForbidden,
+				"local_fallback_access_missing",
+				"WellOS 处于维护模式，该账号无本地权限快照。",
+			)
+		} else {
+			writeLoginError(
+				w,
+				http.StatusForbidden,
+				"local_fallback_access_missing",
+				"Unable to reach WellOS from this deployment, and this account has no local access snapshot.",
+			)
+		}
 		return
 	}
 
@@ -1111,16 +1169,27 @@ func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
-	detail := fmt.Sprintf("WellOS login transport unavailable, issued degraded local session for existing user. upstream=%v", upstreamErr)
-	userdb.RecordAuditLog(db.DB, dbUser.Username, "user_login_degraded", "user", fmt.Sprintf("%d", dbUser.ID), detail, r.RemoteAddr)
+	var reason, msg, auditAction, auditDetail string
+	if isMaintenance {
+		reason = "wellos_maintenance"
+		msg = "WellOS 维护中，已使用本地已知用户资料创建临时会话"
+		auditAction = "user_login_maintenance"
+		auditDetail = fmt.Sprintf("WellOS maintenance mode active, issued degraded local session for existing user. upstream=%v", upstreamErr)
+	} else {
+		reason = "wellos_unavailable"
+		msg = "WellOS connection is unavailable from this deployment; a temporary session was created from verified local account data."
+		auditAction = "user_login_degraded"
+		auditDetail = fmt.Sprintf("WellOS login transport unavailable, issued degraded local session for existing user. upstream=%v", upstreamErr)
+	}
+	userdb.RecordAuditLog(db.DB, dbUser.Username, auditAction, "user", fmt.Sprintf("%d", dbUser.ID), auditDetail, r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":          "success",
 		"token":           token,
 		"degraded":        true,
-		"degraded_reason": "wellos_unavailable",
-		"message":         "WellOS connection is unavailable from this deployment; a temporary session was created from verified local account data.",
+		"degraded_reason": reason,
+		"message":         msg,
 		"user": map[string]interface{}{
 			"username":    dbUser.Username,
 			"name":        dbUser.Name,
@@ -1294,6 +1363,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := newWellOSLoginClient()
+	if s.isMaintenanceMode() {
+		client.Timeout = 3 * time.Second
+	}
 	resp, err := wellOSLoginDoer(client, req.Username, req.Password)
 	if err != nil {
 		s.handleDegradedLogin(w, r, req.Username, req.Password, err)
@@ -1342,6 +1414,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	avatar = normalizeWellOSAvatarURL(avatar)
 
 	if loginResp.Code != 0 || token == "" {
+		if s.isMaintenanceMode() && isWellOSMaintenanceResponse(loginResp) {
+			s.handleDegradedLogin(w, r, req.Username, req.Password, &wellOSMaintenanceError{Code: loginResp.Code, Msg: loginResp.Msg})
+			return
+		}
+
 		errMsg := loginResp.Msg
 		if errMsg == "" {
 			errMsg = "Authentication failed"

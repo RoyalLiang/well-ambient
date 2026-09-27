@@ -10,6 +10,8 @@ RELEASE_DIR := deploy/generated
 RELEASE_ENV := $(RELEASE_DIR)/release.env
 IMAGE_BUNDLE ?=
 COMPOSE_BUNDLE ?=
+LEGACY_SQLITE ?=
+SQLITE_PATH ?= $(LEGACY_SQLITE)
 
 PRODUCTION_SERVER_IMAGE := $(shell sed -n 's/^WELL_AMBIENT_SERVER_IMAGE=//p' deploy/.env.production 2>/dev/null | tail -n 1 | tr -d '[:space:]')
 PRODUCTION_WEB_IMAGE := $(shell sed -n 's/^WELL_AMBIENT_WEB_IMAGE=//p' deploy/.env.production 2>/dev/null | tail -n 1 | tr -d '[:space:]')
@@ -90,7 +92,9 @@ release: verify image-bundle compose-bundle
 		printf 'release %s is ready; batch: %s\n' "$$WELL_AMBIENT_VERSION" "$$WELL_AMBIENT_RELEASE_BATCH"
 
 deploy: images
-	WELL_AMBIENT_RELEASE_ENV="$(abspath $(RELEASE_ENV))" ./deploy/deploy.sh
+	WELL_AMBIENT_RELEASE_ENV="$(abspath $(RELEASE_ENV))" \
+	WELL_AMBIENT_LEGACY_SQLITE="$(if $(SQLITE_PATH),$(abspath $(SQLITE_PATH)),)" \
+	./deploy/deploy.sh $(if $(SQLITE_PATH),--legacy-sqlite "$(abspath $(SQLITE_PATH))",)
 
 rollback:
 	./deploy/rollback.sh

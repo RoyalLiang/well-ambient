@@ -9,7 +9,42 @@ state_dir="$project_root/deploy/.state"
 backup_dir="$project_root/deploy/backups"
 release_env=${WELL_AMBIENT_RELEASE_ENV:-$project_root/deploy/generated/release.env}
 release_notes=${WELL_AMBIENT_RELEASE_NOTES:-$(dirname "$release_env")/release-notes.txt}
-requested_version=${1:-${WELL_AMBIENT_VERSION:-}}
+requested_version=""
+legacy_sqlite_source=${WELL_AMBIENT_LEGACY_SQLITE:-${LEGACY_SQLITE:-}}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --legacy-sqlite|--sqlite|--sqlite-path)
+      if [[ $# -lt 2 ]]; then
+        echo "缺少 $1 参数的目标路径" >&2
+        exit 2
+      fi
+      legacy_sqlite_source="$2"
+      shift 2
+      ;;
+    --legacy-sqlite=*)
+      legacy_sqlite_source="${1#*=}"
+      shift
+      ;;
+    --sqlite=*|--sqlite-path=*)
+      legacy_sqlite_source="${1#*=}"
+      shift
+      ;;
+    -*)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$requested_version" ]]; then
+        requested_version="$1"
+      else
+        echo "多余的位置参数: $1" >&2
+        exit 2
+      fi
+      shift
+      ;;
+  esac
+done
 
 if [[ -z "$requested_version" && ! -f "$release_env" && -x "$project_root/scripts/release-metadata.sh" ]]; then
   "$project_root/scripts/release-metadata.sh" --output-dir "$(dirname "$release_env")"
@@ -47,7 +82,7 @@ if [[ ! -f "$env_file" ]]; then
   echo "copy deploy/.env.production.example to deploy/.env.production and set secrets" >&2
   exit 2
 fi
-chmod 600 "$env_file"
+chmod 0600 "$env_file"
 if grep -q 'replace-with-' "$env_file"; then
   echo "deploy/.env.production still contains placeholder secrets" >&2
   exit 2
@@ -84,11 +119,232 @@ if [[ -n "$setup_token" ]] && (( ${#setup_token} < 32 )); then
   exit 2
 fi
 
-mkdir -p "$runtime_dir/data/attachments" "$runtime_dir/data/legacy" "$state_dir" "$backup_dir"
+attachments_dir="$runtime_dir/data/attachments"
+legacy_dir="$runtime_dir/data/legacy"
+legacy_snapshot="$legacy_dir/well-ambient.db"
+legacy_temp=""
+candidate_manifest=""
+quarantined_legacy_snapshot=""
+
+cleanup_legacy_temp() {
+  if [[ -n "$legacy_temp" ]]; then
+    rm -f "$legacy_temp"
+  fi
+  if [[ -n "$candidate_manifest" ]]; then
+    rm -f "$candidate_manifest"
+  fi
+}
+trap cleanup_legacy_temp EXIT
+
+mkdir -p "$attachments_dir" "$legacy_dir" "$state_dir" "$backup_dir"
+chmod 0700 "$runtime_dir" "$runtime_dir/data" "$attachments_dir" "$legacy_dir" "$state_dir" "$backup_dir"
+find "$runtime_dir" "$legacy_dir" "$state_dir" "$backup_dir" -maxdepth 1 -type f -exec chmod 0600 {} +
+
+is_sqlite_snapshot() {
+  local source_path="$1"
+  [[ -f "$source_path" && -r "$source_path" ]] &&
+    LC_ALL=C head -c 15 "$source_path" 2>/dev/null | grep -qx 'SQLite format 3'
+}
+
+create_legacy_temp() {
+  legacy_temp=$(mktemp "$legacy_dir/.well-ambient.db.tmp.XXXXXX")
+  chmod 0600 "$legacy_temp"
+}
+
+create_candidate_manifest() {
+  candidate_manifest=$(mktemp "$runtime_dir/.legacy-candidates.XXXXXX")
+  chmod 0600 "$candidate_manifest"
+}
+
+install_completed_legacy_temp() {
+  if ! is_sqlite_snapshot "$legacy_temp"; then
+    echo "迁移快照临时文件不是合法的 SQLite 3 数据库，未替换现有规范快照。" >&2
+    exit 2
+  fi
+  chmod 0600 "$legacy_temp"
+  mv "$legacy_temp" "$legacy_snapshot"
+  legacy_temp=""
+  chmod 0600 "$legacy_snapshot"
+}
+
+install_explicit_legacy_sqlite_snapshot() {
+  local source_path="$1"
+
+  if [[ ! -f "$source_path" ]]; then
+    echo "指定的冻结 SQLite 快照不存在: $source_path" >&2
+    exit 2
+  fi
+  if [[ ! -r "$source_path" ]]; then
+    echo "指定的冻结 SQLite 快照不可读: $source_path" >&2
+    exit 2
+  fi
+  if ! is_sqlite_snapshot "$source_path"; then
+    echo "指定的文件不是合法的 SQLite 3 冻结快照: $source_path" >&2
+    exit 2
+  fi
+
+  create_legacy_temp
+  if ! cp "$source_path" "$legacy_temp"; then
+    echo "无法复制显式指定的冻结 SQLite 快照，现有规范快照保持不变: $source_path" >&2
+    exit 2
+  fi
+  chmod 0600 "$legacy_temp"
+  install_completed_legacy_temp
+  echo "已原子安装显式指定的冻结 SQLite 迁移快照: $legacy_snapshot"
+  printf '来源路径: %q\n' "$source_path"
+}
+
+fail_auto_snapshot() {
+  local reason="$1"
+  echo "$reason" >&2
+  echo "自动候选可能仍在写入，部署不会直接复制它。" >&2
+  echo "请先创建停写、冻结、只读的 SQLite 快照，再使用 --legacy-sqlite PATH 或 WELL_AMBIENT_LEGACY_SQLITE=PATH 显式导入。" >&2
+  exit 2
+}
+
+install_auto_legacy_sqlite_snapshot() {
+  local source_path="$1"
+  local temp_name
+
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    fail_auto_snapshot "自动导入 SQLite 候选需要 sqlite3 .backup，但当前主机未安装 sqlite3。"
+  fi
+
+  create_legacy_temp
+  temp_name=$(basename "$legacy_temp")
+  echo "正在使用 sqlite3 .backup 为自动候选创建一致性快照..."
+  if ! (cd "$legacy_dir" && sqlite3 "$source_path" ".backup '$temp_name'"); then
+    fail_auto_snapshot "sqlite3 .backup 失败，现有规范快照保持不变。"
+  fi
+  chmod 0600 "$legacy_temp"
+  install_completed_legacy_temp
+  echo "已原子安装自动发现的 SQLite 一致性快照: $legacy_snapshot"
+  printf '来源路径: %q\n' "$source_path"
+}
+
+quarantine_invalid_canonical_snapshot() {
+  local source_path="$1"
+  local timestamp quarantine_base quarantine_path suffix=0
+
+  chmod 0600 "$source_path"
+  timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+  quarantine_base="${source_path}.invalid-${timestamp}"
+
+  while [[ -e "$source_path" || -L "$source_path" ]]; do
+    quarantine_path="$quarantine_base"
+    if ((suffix > 0)); then
+      quarantine_path="${quarantine_base}.${suffix}"
+    fi
+    if [[ -e "$quarantine_path" || -L "$quarantine_path" ]]; then
+      ((suffix += 1))
+      continue
+    fi
+    mv -n "$source_path" "$quarantine_path"
+    if [[ ! -e "$source_path" && ! -L "$source_path" ]]; then
+      chmod 0600 "$quarantine_path"
+      quarantined_legacy_snapshot="$quarantine_path"
+      echo "规范 SQLite 路径中的无效文件已保留并隔离: $quarantine_path" >&2
+      return
+    fi
+    ((suffix += 1))
+  done
+
+  echo "无法以无覆盖方式隔离无效规范 SQLite 文件: $source_path" >&2
+  exit 2
+}
+
+discover_auto_legacy_candidates() {
+  {
+    find "$legacy_dir" -mindepth 1 -maxdepth 1 -type f ! -path "$legacy_snapshot" -print0 2>/dev/null
+    if [[ -f "$project_root/well-ambient.db" ]]; then
+      printf '%s\0' "$project_root/well-ambient.db"
+    fi
+    if [[ -f "$project_root/data.db" ]]; then
+      printf '%s\0' "$project_root/data.db"
+    fi
+  } | LC_ALL=C sort -zu
+}
+
+canonical_snapshot_valid=false
+if [[ -f "$legacy_snapshot" ]]; then
+  chmod 0600 "$legacy_snapshot"
+  if is_sqlite_snapshot "$legacy_snapshot"; then
+    canonical_snapshot_valid=true
+    echo "检测到有效的规范 SQLite 迁移快照: $legacy_snapshot"
+  else
+    quarantine_invalid_canonical_snapshot "$legacy_snapshot"
+  fi
+fi
+
+if [[ -n "$legacy_sqlite_source" ]]; then
+  if [[ "$legacy_sqlite_source" == "none" || "$legacy_sqlite_source" == "skip" ]]; then
+    echo "根据显式配置跳过 SQLite 快照导入。"
+  elif [[ "$legacy_sqlite_source" == "$legacy_snapshot" ]]; then
+    if [[ "$canonical_snapshot_valid" != true ]]; then
+      echo "显式指定的规范 SQLite 路径无效，已隔离为: $quarantined_legacy_snapshot" >&2
+      exit 2
+    fi
+    echo "使用显式指定且已验证的规范 SQLite 冻结快照: $legacy_snapshot"
+  else
+    install_explicit_legacy_sqlite_snapshot "$legacy_sqlite_source"
+    canonical_snapshot_valid=true
+  fi
+elif [[ "$canonical_snapshot_valid" != true ]]; then
+  valid_legacy_candidates=()
+  create_candidate_manifest
+  if ! discover_auto_legacy_candidates >"$candidate_manifest"; then
+    echo "SQLite 自动迁移候选发现失败（find 或 sort 返回错误）。" >&2
+    exit 2
+  fi
+  while IFS= read -r -d '' candidate; do
+    if is_sqlite_snapshot "$candidate"; then
+      printf '自动候选有效: %q\n' "$candidate"
+      valid_legacy_candidates+=("$candidate")
+    else
+      printf '自动候选无效，已忽略: %q\n' "$candidate" >&2
+    fi
+  done <"$candidate_manifest"
+  rm -f "$candidate_manifest"
+  candidate_manifest=""
+
+  case ${#valid_legacy_candidates[@]} in
+    0)
+      echo "未发现有效的 SQLite 自动迁移候选；本次不安装迁移快照。"
+      ;;
+    1)
+      install_auto_legacy_sqlite_snapshot "${valid_legacy_candidates[0]}"
+      canonical_snapshot_valid=true
+      ;;
+    *)
+      echo "发现多个有效的 SQLite 自动迁移候选，拒绝自动选择:" >&2
+      for candidate in "${valid_legacy_candidates[@]}"; do
+        printf '  %q\n' "$candidate" >&2
+      done
+      echo "请使用 --legacy-sqlite PATH 或 WELL_AMBIENT_LEGACY_SQLITE=PATH 显式指定一个冻结只读快照。" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [[ -f "$legacy_snapshot" ]]; then
+  chmod 0600 "$legacy_snapshot"
+fi
+
 "$project_root/deploy/prepare-runtime-config.sh" \
 	"$runtime_dir/config.yaml" \
 	"$project_root/deploy/config.production.example.yaml" \
-	"$runtime_dir/data/legacy/well-ambient.db"
+	"$legacy_snapshot"
+
+chmod 0700 "$runtime_dir" "$runtime_dir/data" "$attachments_dir" "$legacy_dir"
+chmod 0600 "$runtime_dir/config.yaml"
+runtime_owned_paths=("$runtime_dir" "$runtime_dir/config.yaml" "$runtime_dir/data" "$attachments_dir" "$legacy_dir")
+if [[ -f "$legacy_snapshot" ]]; then
+  chmod 0600 "$legacy_snapshot"
+  runtime_owned_paths+=("$legacy_snapshot")
+fi
+if [[ -n "${container_app_uid:-}" && -n "${container_app_gid:-}" ]]; then
+  chown "$container_app_uid:$container_app_gid" "${runtime_owned_paths[@]}" 2>/dev/null || true
+fi
 
 database_driver=$(awk '
   /^database:[[:space:]]*$/ { in_database=1; next }
@@ -139,6 +395,7 @@ fi
 if [[ -f "$state_dir/current-release-notes.txt" ]]; then
   cp "$state_dir/current-release-notes.txt" "$state_dir/previous-release-notes.txt"
 fi
+find "$state_dir" -maxdepth 1 -type f -exec chmod 0600 {} +
 
 record_release_state() {
   printf '%s\n' "$version" >"$state_dir/current-version"
@@ -157,6 +414,7 @@ record_release_state() {
     printf 'Version: %s\nBuild time: %s\nBatch: %s\n' \
       "$version" "$build_time" "$release_batch" >"$state_dir/current-release-notes.txt"
   fi
+  chmod 0600 "$state_dir/current-version" "$state_dir/current-release.env" "$state_dir/current-release-notes.txt"
 }
 
 echo "release version: $version"
@@ -169,7 +427,7 @@ if [[ "$database_driver" == "setup" ]]; then
   legacy_snapshot="$runtime_dir/data/legacy/well-ambient.db"
   if [[ ! -f "$legacy_snapshot" ]]; then
     echo "database setup mode is active, but no legacy SQLite snapshot was found." >&2
-    echo "to enable the migration guide, copy the completed snapshot to: $legacy_snapshot" >&2
+    echo "to enable migration, rerun with --legacy-sqlite PATH or WELL_AMBIENT_LEGACY_SQLITE=PATH using an operator-prepared frozen snapshot." >&2
   fi
   # Bind-mounted runtime config changes are not part of Compose's service hash.
   # Recreate setup containers so the process reloads legacy_sqlite_path and decisions.
@@ -190,14 +448,20 @@ if [[ "$database_driver" == "setup" ]]; then
       echo "legacy SQLite exists on the host but the setup service cannot inspect it." >&2
       echo "host path: $legacy_snapshot" >&2
       echo "container path: /var/lib/well-ambient/legacy/well-ambient.db" >&2
+      echo "setup status response: $setup_status" >&2
       stat -c 'host snapshot owner=%u:%g mode=%a size=%s' "$legacy_snapshot" >&2 || true
       echo "expected container identity: $container_app_uid:$container_app_gid" >&2
-      echo "check that the snapshot is complete, then run: sudo chown $container_app_uid:$container_app_gid '$legacy_snapshot' && sudo chmod 0400 '$legacy_snapshot'" >&2
+      echo "repair ownership and owner-only modes before retrying:" >&2
+      echo "sudo chown $container_app_uid:$container_app_gid '$runtime_dir' '$runtime_dir/config.yaml' '$runtime_dir/data' '$attachments_dir' '$legacy_dir' '$legacy_snapshot'" >&2
+      echo "sudo chmod 0700 '$runtime_dir' '$runtime_dir/data' '$attachments_dir' '$legacy_dir' && sudo chmod 0600 '$runtime_dir/config.yaml' '$legacy_snapshot'" >&2
       print_compose_diagnostics
       exit 1
     fi
     echo "SQLite migration guide verified: http://127.0.0.1:$http_port"
     echo "host snapshot: $legacy_snapshot"
+  else
+    echo "未配置本地 SQLite 迁移快照，服务将以全新 PostgreSQL 数据库模式部署。"
+    echo "（如需迁移历史数据，请先停止旧系统写入并制作冻结、只读且一致的 SQLite 快照；同一快照可放置于 $legacy_dir/ 目录下，也可使用 LEGACY_SQLITE=/path/to/source.snapshot.db make deploy 或 ./deploy/deploy.sh --legacy-sqlite /path/to/source.snapshot.db 显式提供后重新部署）"
   fi
   record_release_state
   echo "deployed version $version in first-install mode"
@@ -236,6 +500,7 @@ database_endpoint=${database_endpoint:-configured-external-postgresql}
 backup_path="$backup_dir/external-$(date -u +%Y%m%dT%H%M%SZ)-before-$version.txt"
 printf 'external_database_endpoint=%s\nbackup_reference=%s\nrelease_version=%s\nrelease_batch=%s\n' \
   "$database_endpoint" "$external_backup_reference" "$version" "$release_batch" >"$backup_path"
+chmod 0600 "$backup_path"
 
 "${compose[@]}" run --rm --no-deps migrate
 if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 240 server web; then

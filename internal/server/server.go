@@ -59,6 +59,7 @@ type Server struct {
 	emailConfluenceSync func(context.Context, config.ConfluenceSyncConfig, *emailReport) (string, error)
 	config              *config.Config
 	configPath          string
+	configMutationMu    sync.Mutex
 	mux                 *http.ServeMux
 	handler             http.Handler
 	readRegistry        *readmodel.Registry
@@ -250,8 +251,10 @@ func (s *Server) routes() {
 
 	// Protected Config APIs
 	s.mux.HandleFunc("GET /api/config", s.withPermission("config:read", s.handleGetConfig))
+	s.mux.HandleFunc("GET /api/config/wellos-maintenance", s.withPermission("config:read", s.handleGetWellOSMaintenance))
 	s.mux.HandleFunc("GET /api/jira/link-config", s.withAuth(s.handleGetJiraLinkConfig))
 	s.mux.HandleFunc("POST /api/config", s.withPermission("config:write", s.handleSaveConfig))
+	s.mux.HandleFunc("PUT /api/config/wellos-maintenance", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleUpdateWellOSMaintenance)))
 	s.mux.HandleFunc("POST /api/config/test", s.withPermission("config:write", s.handleTestConnection))
 	s.mux.HandleFunc("POST /api/daily-jira-email/template", s.withPermission("config:write", s.handleGenerateEmailTemplate))
 	s.mux.HandleFunc("POST /api/daily-jira-email/preview", s.withPermission("config:write", s.handlePreviewEmail))
@@ -319,6 +322,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/solution-catalog/reconcile", s.withPermission("solution:publish", s.withGlobalSuperAdmin(s.handleReconcileSolutionCatalog)))
 	s.mux.HandleFunc("POST /api/solution-catalog/proposals/{id}/review", s.withPermission("solution:publish", withSolutionCompression(s.handleReviewSolutionProposal)))
 	s.mux.HandleFunc("GET /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleListSolutionPrompts)))
+	s.mux.HandleFunc("GET /api/solution-prompts/public-url", s.withPermission("config:read", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleGetSolutionPublicURL))))
+	s.mux.HandleFunc("PUT /api/solution-prompts/public-url", s.withPermission("config:write", s.withPermission("config:read", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleUpdateSolutionPublicURL)))))
 	s.mux.HandleFunc("POST /api/solution-prompts", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleSaveSolutionPrompt)))
 	s.mux.HandleFunc("POST /api/solution-prompts/test", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleTestSolutionPrompt)))
 	s.mux.HandleFunc("POST /api/solution-prompts/{id}/test", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleTestStoredCodeReviewSkill)))
@@ -376,6 +381,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/ai/intent", s.withAuth(s.handleAIIntentSummary))
 	s.mux.HandleFunc("POST /api/ai/intent-summary", s.withAuth(s.handleAIIntentSummary))
 	s.mux.HandleFunc("POST /api/ai/assistant/summary", s.withAuth(s.handleAIIntentSummary))
+	s.mux.HandleFunc("GET /api/ai/context-readiness", s.withPermission("ai_context:read", s.handleGetAIContextReadiness))
 	s.mux.HandleFunc("GET /api/ai/output-trace", s.withPermission("ai_context:read", s.handleGetAIOutputTrace))
 	s.mux.HandleFunc("GET /api/ai/traces", s.withPermission("ai_context:read", s.handleGetAIOutputTrace))
 	s.mux.HandleFunc("GET /api/ai/requirement-clarification", s.withPermission("ai_context:read", s.handleGetRequirementClarification))

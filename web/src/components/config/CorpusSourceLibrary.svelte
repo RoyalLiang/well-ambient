@@ -6,7 +6,7 @@
   import { PagedResource } from '../../lib/paged-resource';
 
   export let currentUserPermissions: string[] = [];
-  export let aiReady = false;
+  export let aiReady: boolean | null = null;
 
   type ContextDocument = {
     id: number;
@@ -78,8 +78,8 @@
   let importContent = '';
   let importMarkdownMode: MarkdownMode = 'live';
 
-  $: canRead = currentUserPermissions.includes('ai_context:read');
-  $: canWrite = currentUserPermissions.includes('ai_context:write');
+  $: canRead = currentUserPermissions.includes('ai_context:read') || currentUserPermissions.includes('*');
+  $: canWrite = currentUserPermissions.includes('ai_context:write') || currentUserPermissions.includes('*');
 
   onMount(() => {
     if (canRead) void loadDocuments();
@@ -228,7 +228,7 @@
   async function importDocument() {
     importError = '';
     importSuccess = '';
-    if (!aiReady) {
+    if (aiReady === false) {
       importError = '请先启用并保存可用的 AI 引擎配置';
       return;
     }
@@ -395,7 +395,7 @@
             <Button variant="ghost" size="small" on:click={() => { mode = 'view'; importError = ''; }}>取消</Button>
           </div>
 
-          {#if !aiReady}
+          {#if aiReady === false}
             <div class="source-message warning">AI 引擎尚未启用或凭证不完整。可以先选择文件或编辑 Markdown，完成配置后再导入。</div>
           {/if}
           {#if importError}<div class="source-message error" role="alert">{importError}</div>{/if}
@@ -476,7 +476,7 @@
 
           <div class="source-actions">
             <span>{importSourceMode === 'file' ? '文件正文不在本系统解析或落库。' : '人工文本提交后仍需经过 LLM 解析与审核。'} 不会直接创建 active Context Fact。</span>
-            <Button variant="primary" loading={importing} disabled={!canWrite || !aiReady} on:click={importDocument}>交给 LLM 并生成候选</Button>
+            <Button variant="primary" loading={importing} disabled={!canWrite || aiReady === false} on:click={importDocument}>交给 LLM 并生成候选</Button>
           </div>
         {:else if detailLoading}
           <div class="source-detail-loading" aria-live="polite">正在读取 LLM 解析稿…</div>
