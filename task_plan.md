@@ -26,6 +26,37 @@
 - [x] Phase 3: 扩展前端 AI 治理分区，实现 `OpenCapabilitiesConfig.svelte` 页面及组合拳交互
 - [x] Phase 4: 全仓编译验证、单元测试与安装脚本连通性测试
 
+## 2026-09-27 开放能力与 MCP 配置页面 UI/按钮样式与布局 Finesse UI 规范重构
+
+### Problem Identification
+- 现状问题：`OpenCapabilitiesConfig.svelte` 中使用了未定义的 `.btn` 类，导致所有操作按钮（“刷新概览”、“保存并应用配置”、“一键安装 MCP”、“复制命令”、“下载 .tar.gz”等）回退至系统浏览器默认无样式矩形；使用了原生的粗糙 `.toggle-switch`，破坏了与全仓统一的 `Switch.svelte` 视觉规范；卡片布局存在多层嵌套卡片（`.gov-card` 嵌套 `.switch-box.main-switch` 和子卡片），不符合 Phase 41 / Finesse UI 单一工作台与平铺分区规范。
+
+### Mandatory Three-Way Frontend Review (Impeccable + design-taste + finesse-ui)
+
+- **Impeccable / Product Register:**
+  - 严格消除 nested cards（嵌套卡片），将外层 `.gov-card` 转换为符合现代 B 端高密度的单一工作台卡片与内部细分隔线（`var(--wa-border-divider)`）。
+  - 引入全局共享按钮体系与状态：全面使用系统级 `Button.svelte`（或等价规范的 `.wa-admin-action` / 严格作用域的 `.btn` 8 态规范，包含 default, hover, focus-visible, active, disabled, loading），根治原生浏览器毛胚按钮。
+  - 对齐对比度与排版：标题与辅助说明严格遵循 ≥4.5:1 对比度标准，移除突兀的 Emoji 符号（如 🚀），采用克制的微标与语义色。
+
+- **design-taste-frontend / Redesign-Preserve:**
+  - 保留并对齐 `AIGovernanceCenter.svelte` 既有视觉语言：指标条使用 `.gov-metrics-strip`，数据表格使用 `.gov-table`，状态药丸使用统一的 `.cap-kind-badge` 与 `.status-pill`。
+  - 按钮视觉层级对齐：主要操作（“保存并应用配置”、“确认签发”）采用 Accent Fill (`var(--wa-accent-fill)` / `#006f76`)；次要操作采用 Secondary / Ghost；危险操作（撤销凭证）采用 Danger Ghost。
+
+- **finesse-ui / Product Workflow (`SOUL=3-4`, `SPECTACLE=1`, `DENSITY=8`):**
+  - **开关统一化**：彻底淘汰手写 iOS 风格 `.toggle-switch`，全面替换为系统统一定制的 `Switch.svelte` 组件，享受完整的可访问性（`role="switch"`, `aria-checked`, 键盘导航 `Enter/Space`）与动画反馈。
+  - **布局扁平化**：
+    - 顶部上下文与指标栏整合为一个干净低矮的标题卡片与紧凑指标条。
+    - “分阶段能力动态开关”采用平铺式列表/网格布局，每一行/项包含功能说明、阶段标牌以及嵌入的 `Switch.svelte`，避免在卡片中嵌套多个粗框盒子。
+    - “远程接入组合拳”采用四列/双列扁平卡片（统一边框与悬浮微高亮），代码块与复制按钮集成于同一容器，使用统一等宽字体与深色语法底色。
+    - “API Key 凭证管理”使用标准的 `.gov-table`，密钥以 Monospace 掩码展示，操作列提供对齐的紧凑按钮。
+  - **交互 8 状态完整覆盖**：每个按钮均具备默认态、Hover、Active 按压、Focus-Visible（高对比度双层 outline）、Disabled（置灰禁用）、Loading（Spinner 占位）、成功反馈 Toast。
+
+### Shared Direction & Agreement
+- 统一采用系统级 `Button.svelte` 与 `Switch.svelte` 组件。
+- 移除所有手写粗糙的 `.slider`/`.toggle-switch`。
+- 重构布局结构：单层表面 + 扁平分隔线 + 高密度信息组织。
+- 验证范围：前端类型检查 (`check`)、构建校验 (`build`)、1440/1024/760/480 断点测试。
+
 ---
 
 

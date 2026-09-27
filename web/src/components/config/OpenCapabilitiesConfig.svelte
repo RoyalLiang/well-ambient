@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { showToast } from '../../lib/toast';
+  import Button from '../shared/Button.svelte';
+  import Switch from '../shared/Switch.svelte';
+  import Modal from '../shared/Modal.svelte';
 
   export let canWrite = false;
 
@@ -110,7 +113,7 @@
     draftConfig.execute_enabled !== overview.config.execute_enabled
   ) : false;
 
-  $: currentBaseURL = overview?.base_url || window.location.origin;
+  $: currentBaseURL = overview?.base_url || (typeof window !== 'undefined' ? window.location.origin : '');
   $: currentMcpURL = overview?.mcp?.endpoint_url || `${currentBaseURL}/mcp`;
   $: effectiveToken = selectedToken || '<YOUR_API_KEY>';
 
@@ -122,7 +125,7 @@
 
   async function api(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
-    const token = localStorage.getItem('jwt_token');
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('jwt_token') : null;
     if (token) headers.set('Authorization', `Bearer ${token}`);
     const res = await fetch(path, { ...init, headers });
     if (!res.ok) {
@@ -143,11 +146,6 @@
       const data: OverviewData = await api('/api/ai-governance/open-capabilities/overview');
       overview = data;
       draftConfig = { ...data.config };
-      // Select the first active key if available
-      const activeKeys = (data.credentials || []).filter(c => c.status === 'active');
-      if (activeKeys.length > 0 && !selectedToken) {
-        // We only have the prefix, so we don't overwrite full token unless user creates one
-      }
     } catch (err: any) {
       error = err.message || '加载开放能力概览失败';
     } finally {
@@ -160,7 +158,7 @@
     saving = true;
     error = '';
     try {
-      const res = await api('/api/ai-governance/open-capabilities/config', {
+      await api('/api/ai-governance/open-capabilities/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -193,7 +191,7 @@
       });
       issuedKeyResult = res;
       selectedToken = res.key;
-      showToast('API Key 签发成功，已自动填入安装指引！', { type: 'success' });
+      showToast('API Key 签发成功，已自动同步到上方安装命令！', { type: 'success' });
       await loadOverview();
     } catch (err: any) {
       error = err.message || '签发 Key 失败';
@@ -220,7 +218,7 @@
   }
 
   function copyText(text: string, label = '内容') {
-    if (navigator.clipboard) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text).then(() => {
         showToast(`${label}已复制到剪贴板！`, { type: 'success' });
       }).catch(() => {
@@ -244,11 +242,11 @@
     </div>
   {:else if error && !overview}
     <div class="gov-notice error">
-      <strong>加载异常：</strong> {error}
-      <button type="button" class="btn btn-sm btn-ghost" on:click={loadOverview}>重试</button>
+      <span><strong>加载异常：</strong> {error}</span>
+      <Button variant="ghost" size="small" on:click={loadOverview}>重试</Button>
     </div>
   {:else if overview}
-    <!-- Status & Metrics Header -->
+    <!-- Top Header: Identity & Master Status -->
     <div class="open-gov-header">
       <div class="header-main">
         <div class="header-title-row">
@@ -268,9 +266,9 @@
       </div>
 
       <div class="header-actions">
-        <button type="button" class="btn btn-ghost btn-sm" on:click={loadOverview} title="刷新状态">
+        <Button variant="secondary" size="small" on:click={loadOverview}>
           刷新概览
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -298,7 +296,7 @@
         </div>
       </div>
 
-      <div class="gov-metric-divider"></div>
+      <div class="gov-metric-divider" aria-hidden="true"></div>
 
       <div class="gov-metric-item">
         <span class="gov-metric-label">MCP 工具矩阵</span>
@@ -308,7 +306,7 @@
         </div>
       </div>
 
-      <div class="gov-metric-divider"></div>
+      <div class="gov-metric-divider" aria-hidden="true"></div>
 
       <div class="gov-metric-item">
         <span class="gov-metric-label">已签发有效 Key</span>
@@ -318,7 +316,7 @@
         </div>
       </div>
 
-      <div class="gov-metric-divider"></div>
+      <div class="gov-metric-divider" aria-hidden="true"></div>
 
       <div class="gov-metric-item">
         <span class="gov-metric-label">安全发布策略</span>
@@ -335,22 +333,26 @@
     </div>
 
     <!-- Section 1: Dynamic Feature Switches -->
-    <div class="gov-card">
+    <section class="gov-card" aria-labelledby="switches-section-title">
       <div class="card-header">
         <div class="title-wrap">
-          <h4>分阶段能力动态开关 (Runtime Feature Switches)</h4>
+          <h4 id="switches-section-title">分阶段能力动态开关 (Runtime Feature Switches)</h4>
           <span class="sub-hint">脱离离线环境变量与文件，变更即时广播至全集群实例，无需重启进程。</span>
         </div>
         {#if canWrite}
           <div class="save-bar">
-            <button
-              type="button"
-              class="btn btn-primary"
-              disabled={!isDirty || saving}
-              on:click={saveConfig}
-            >
-              {saving ? '正在保存…' : (isDirty ? '保存并应用动态配置*' : '配置已同步')}
-            </button>
+            {#if isDirty}
+              <Button
+                variant="primary"
+                size="small"
+                loading={saving}
+                on:click={saveConfig}
+              >
+                保存并应用动态配置*
+              </Button>
+            {:else}
+              <span class="synced-tag" title="当前配置与数据库生效版本完全一致">✓ 配置已同步</span>
+            {/if}
           </div>
         {/if}
       </div>
@@ -361,144 +363,156 @@
         </div>
       {/if}
 
-      <div class="switches-grid">
-        <!-- Main Switch -->
-        <div class="switch-box main-switch" class:enabled={draftConfig.enabled}>
-          <div class="switch-info">
-            <div class="switch-title">全局开放能力主控</div>
-            <p>总控总闸。开启后激活 <code>/mcp</code> 协议端点与 <code>/open/v1/*</code> 接口体系。</p>
+      <div class="switches-container">
+        <!-- Global Master Switch -->
+        <div class="master-switch-row" class:is-active={draftConfig.enabled}>
+          <div class="switch-content">
+            <div class="switch-heading">
+              <span class="switch-name">全局开放能力主控</span>
+              <span class="switch-badge">{draftConfig.enabled ? '已开启' : '已关闭'}</span>
+            </div>
+            <p class="switch-desc">总控总闸。开启后激活 <code>/mcp</code> 协议端点与 <code>/open/v1/*</code> 接口体系。</p>
           </div>
-          <label class="toggle-switch">
-            <input
-              type="checkbox"
-              bind:checked={draftConfig.enabled}
+          <div class="switch-action">
+            <Switch
+              checked={draftConfig.enabled}
               disabled={!canWrite}
+              on:change={(e) => draftConfig.enabled = e.detail}
             />
-            <span class="slider round"></span>
-          </label>
+          </div>
         </div>
 
-        <!-- Read Switch -->
-        <div class="switch-box" class:disabled={!draftConfig.enabled}>
-          <div class="switch-info">
-            <div class="switch-title">只读分析能力 (Read Phase)</div>
-            <p>Jira 权威投影多维检索/聚合、字段规约感知与 GitLab 代码评审过滤读取。</p>
+        <!-- 3 Phase Sub-switches Grid -->
+        <div class="phases-grid">
+          <!-- Read Phase -->
+          <div class="phase-card" class:is-disabled={!draftConfig.enabled}>
+            <div class="phase-card-head">
+              <span class="phase-title">只读分析能力 (Read Phase)</span>
+              <Switch
+                checked={draftConfig.read_enabled}
+                disabled={!canWrite || !draftConfig.enabled}
+                on:change={(e) => draftConfig.read_enabled = e.detail}
+              />
+            </div>
+            <p class="phase-desc">
+              Jira 权威投影多维检索/聚合、字段规约感知与 GitLab 代码评审过滤读取。
+            </p>
           </div>
-          <label class="toggle-switch">
-            <input
-              type="checkbox"
-              bind:checked={draftConfig.read_enabled}
-              disabled={!canWrite || !draftConfig.enabled}
-            />
-            <span class="slider round"></span>
-          </label>
-        </div>
 
-        <!-- Prepare Switch -->
-        <div class="switch-box" class:disabled={!draftConfig.enabled}>
-          <div class="switch-info">
-            <div class="switch-title">决策预备能力 (Prepare Phase)</div>
-            <p>冻结带远端前置校验与时间戳的单事项决策执行计划，生成确定性 Plan ID。</p>
+          <!-- Prepare Phase -->
+          <div class="phase-card" class:is-disabled={!draftConfig.enabled}>
+            <div class="phase-card-head">
+              <span class="phase-title">决策预备能力 (Prepare Phase)</span>
+              <Switch
+                checked={draftConfig.prepare_enabled}
+                disabled={!canWrite || !draftConfig.enabled}
+                on:change={(e) => draftConfig.prepare_enabled = e.detail}
+              />
+            </div>
+            <p class="phase-desc">
+              冻结带远端前置校验与时间戳的单事项决策执行计划，生成确定性 Plan ID。
+            </p>
           </div>
-          <label class="toggle-switch">
-            <input
-              type="checkbox"
-              bind:checked={draftConfig.prepare_enabled}
-              disabled={!canWrite || !draftConfig.enabled}
-            />
-            <span class="slider round"></span>
-          </label>
-        </div>
 
-        <!-- Execute Switch -->
-        <div class="switch-box warning" class:disabled={!draftConfig.enabled}>
-          <div class="switch-info">
-            <div class="switch-title">决策执行写入 (Execute Phase)</div>
-            <p>执行已冻结的决策计划写入 Jira。<strong>开启后系统将自动互斥接管旧版转派改期通道</strong>。</p>
+          <!-- Execute Phase -->
+          <div class="phase-card is-execute" class:is-disabled={!draftConfig.enabled}>
+            <div class="phase-card-head">
+              <div class="phase-title-with-badge">
+                <span class="phase-title">决策执行写入 (Execute Phase)</span>
+                <span class="exclusive-badge">互斥接管</span>
+              </div>
+              <Switch
+                checked={draftConfig.execute_enabled}
+                disabled={!canWrite || !draftConfig.enabled}
+                on:change={(e) => draftConfig.execute_enabled = e.detail}
+              />
+            </div>
+            <p class="phase-desc">
+              执行已冻结的决策计划写入 Jira。<strong>开启后系统将自动互斥接管旧版转派改期通道</strong>。
+            </p>
           </div>
-          <label class="toggle-switch">
-            <input
-              type="checkbox"
-              bind:checked={draftConfig.execute_enabled}
-              disabled={!canWrite || !draftConfig.enabled}
-            />
-            <span class="slider round"></span>
-          </label>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Section 2: Online Client Installation Combo (Core Feature) -->
-    <div class="gov-card highlight-card">
+    <!-- Section 2: Online Client Installation Combo -->
+    <section class="gov-card" aria-labelledby="install-section-title">
       <div class="card-header">
         <div class="title-wrap">
-          <h4>🚀 远程客户端接入与在线安装组合拳</h4>
+          <h4 id="install-section-title">远程客户端接入与在线安装</h4>
           <span class="sub-hint">采用“系统协议唤起 + 远程安装脚本 + 在线 Skill 仓库 + 规范配置导出”四大通路无缝接入。</span>
         </div>
       </div>
 
-      <!-- Quick Action 1: Deep Link -->
+      <!-- Channels 1 & 2: Top Quick Connect Grid -->
       <div class="combo-grid">
-        <div class="combo-box deep-link-box">
-          <div class="combo-icon">⚡</div>
-          <div class="combo-content">
-            <div class="combo-title">通道一：Cursor 协议一键拉起 (Deep Link)</div>
-            <p>点击后直接通过系统 URL Scheme 拉起本地 Cursor 并一键添加 <code>well-ambient</code> MCP Server。</p>
-            <div class="action-row">
-              <a
-                href={cursorDeepLink}
-                class="btn btn-primary btn-sm"
-                target="_blank"
-                rel="noreferrer"
-              >
-                在 Cursor 中一键安装 MCP
-              </a>
-              <button
-                type="button"
-                class="btn btn-ghost btn-sm"
-                on:click={() => copyText(cursorDeepLink, 'Cursor 深链')}
-              >
-                复制深链
-              </button>
-            </div>
+        <!-- Channel 1: Deep Link -->
+        <div class="combo-card">
+          <div class="combo-header">
+            <span class="combo-tag">通道一</span>
+            <span class="combo-title">Cursor 协议一键拉起 (Deep Link)</span>
+          </div>
+          <p class="combo-desc">
+            通过系统 URL Scheme 拉起本地 Cursor 并一键添加 <code>well-ambient</code> MCP Server：
+          </p>
+          <div class="combo-actions">
+            <Button
+              variant="primary"
+              size="small"
+              on:click={() => window.open(cursorDeepLink, '_blank')}
+            >
+              在 Cursor 中一键安装 MCP
+            </Button>
+            <Button
+              variant="secondary"
+              size="small"
+              on:click={() => copyText(cursorDeepLink, 'Cursor 深链')}
+            >
+              复制深链
+            </Button>
           </div>
         </div>
 
-        <!-- Quick Action 2: Remote Install Script -->
-        <div class="combo-box install-script-box">
-          <div class="combo-icon">📦</div>
-          <div class="combo-content">
-            <div class="combo-title">通道二：远程安装脚本 (One-line Bash Installer)</div>
-            <p>一行命令自动探查本地 Claude Desktop 与 Cursor 环境，安全合并配置并解压官方 Skill：</p>
-            <div class="code-snippet-row">
-              <code>{installCommand}</code>
-              <button
-                type="button"
-                class="btn btn-secondary btn-sm"
-                on:click={() => copyText(installCommand, '一键安装命令')}
-              >
-                复制命令
-              </button>
-            </div>
+        <!-- Channel 2: Remote Install Script -->
+        <div class="combo-card">
+          <div class="combo-header">
+            <span class="combo-tag">通道二</span>
+            <span class="combo-title">远程安装脚本 (One-line Bash Installer)</span>
+          </div>
+          <p class="combo-desc">
+            自动探查本地 Claude Desktop 与 Cursor 环境，安全合并配置并解压官方 Skill：
+          </p>
+          <div class="code-snippet-bar">
+            <code>{installCommand}</code>
+            <Button
+              variant="secondary"
+              size="small"
+              on:click={() => copyText(installCommand, '一键安装命令')}
+            >
+              复制命令
+            </Button>
           </div>
         </div>
       </div>
 
-      <!-- Quick Action 3: Official Skill Registry -->
-      <div class="skills-registry-section">
-        <div class="section-sub-header">
-          <span class="sub-title">通道三：官方微内核 Skill 在线仓库 (Online Skill Registry)</span>
-          <span class="sub-desc">服务端动态打包分发，支持标准 Agent 架构与 DSH / Codex 离线解构：</span>
+      <!-- Channel 3: Official Skill Registry -->
+      <div class="sub-section">
+        <div class="sub-section-header">
+          <div class="sub-section-title-wrap">
+            <span class="combo-tag">通道三</span>
+            <h5 class="sub-section-title">官方微内核 Skill 在线仓库 (Online Skill Registry)</h5>
+          </div>
+          <span class="sub-section-hint">服务端动态打包分发，标准通用 Agent 架构解构：</span>
         </div>
 
         <div class="skills-cards-grid">
           {#each overview.skills as skill}
-            <div class="skill-registry-card">
+            <div class="skill-card">
               <div class="skill-card-top">
                 <span class="skill-title">{skill.title}</span>
                 <span class="skill-ver">v{skill.version}</span>
               </div>
-              <div class="skill-name-code"><code>{skill.name}</code></div>
+              <div class="skill-key"><code>{skill.name}</code></div>
               <p class="skill-desc">{skill.description}</p>
               <div class="skill-tools-preview">
                 <span class="tool-tag-label">暴露工具 ({skill.tools.length}):</span>
@@ -509,58 +523,69 @@
               <div class="skill-card-actions">
                 <a
                   href={skill.archive_url}
-                  class="btn btn-sm btn-ghost"
+                  class="btn btn-sm btn-secondary"
                   download
                   title="下载离线 tar.gz 安装包"
                 >
                   下载 .tar.gz
                 </a>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-ghost"
+                <Button
+                  variant="ghost"
+                  size="small"
                   on:click={() => copyText(`curl -fsSL "${skill.archive_url}" | tar -xz -C .agents/skills`, '安装命令')}
                 >
                   复制安装指令
-                </button>
+                </Button>
               </div>
             </div>
           {/each}
         </div>
       </div>
 
-      <!-- Quick Action 4: Manual Config JSON Tabs -->
-      <div class="manual-config-section">
-        <div class="section-sub-header">
-          <span class="sub-title">通道四：主流客户端手动配置规范 (Manual MCP JSON)</span>
-          <div class="config-tabs-nav">
+      <!-- Channel 4: Manual Config JSON Tabs -->
+      <div class="sub-section">
+        <div class="sub-section-header">
+          <div class="sub-section-title-wrap">
+            <span class="combo-tag">通道四</span>
+            <h5 class="sub-section-title">主流客户端手动配置规范 (Manual MCP JSON)</h5>
+          </div>
+          <div class="config-tabs-nav" role="tablist" aria-label="客户端配置文件类型">
             <button
               type="button"
+              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'cursor'}
+              aria-selected={activeConfigTab === 'cursor'}
               on:click={() => activeConfigTab = 'cursor'}
             >
               Cursor
             </button>
             <button
               type="button"
+              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'claude'}
+              aria-selected={activeConfigTab === 'claude'}
               on:click={() => activeConfigTab = 'claude'}
             >
               Claude Desktop
             </button>
             <button
               type="button"
+              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'windsurf'}
+              aria-selected={activeConfigTab === 'windsurf'}
               on:click={() => activeConfigTab = 'windsurf'}
             >
               Windsurf
             </button>
             <button
               type="button"
+              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'cline'}
+              aria-selected={activeConfigTab === 'cline'}
               on:click={() => activeConfigTab = 'cline'}
             >
               Cline / Roo Code
@@ -581,10 +606,11 @@
     }
   }
 }`}</code></pre>
-            <button
-              type="button"
-              class="btn btn-sm btn-secondary copy-code-btn"
-              on:click={() => copyText(`{
+            <div class="code-action-pos">
+              <Button
+                variant="secondary"
+                size="small"
+                on:click={() => copyText(`{
   "mcpServers": {
     "well-ambient": {
       "url": "${currentMcpURL}",
@@ -594,9 +620,10 @@
     }
   }
 }`, 'Cursor 配置')}
-            >
-              复制代码
-            </button>
+              >
+                复制代码
+              </Button>
+            </div>
           {:else if activeConfigTab === 'claude'}
             <div class="file-hint">写入 <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>：</div>
             <pre><code>{`{
@@ -609,10 +636,11 @@
     }
   }
 }`}</code></pre>
-            <button
-              type="button"
-              class="btn btn-sm btn-secondary copy-code-btn"
-              on:click={() => copyText(`{
+            <div class="code-action-pos">
+              <Button
+                variant="secondary"
+                size="small"
+                on:click={() => copyText(`{
   "mcpServers": {
     "well-ambient": {
       "url": "${currentMcpURL}",
@@ -622,9 +650,10 @@
     }
   }
 }`, 'Claude Desktop 配置')}
-            >
-              复制代码
-            </button>
+              >
+                复制代码
+              </Button>
+            </div>
           {:else if activeConfigTab === 'windsurf'}
             <div class="file-hint">写入 <code>~/.codeium/windsurf/mcp_config.json</code>：</div>
             <pre><code>{`{
@@ -637,10 +666,11 @@
     }
   }
 }`}</code></pre>
-            <button
-              type="button"
-              class="btn btn-sm btn-secondary copy-code-btn"
-              on:click={() => copyText(`{
+            <div class="code-action-pos">
+              <Button
+                variant="secondary"
+                size="small"
+                on:click={() => copyText(`{
   "mcpServers": {
     "well-ambient": {
       "serverUrl": "${currentMcpURL}",
@@ -650,9 +680,10 @@
     }
   }
 }`, 'Windsurf 配置')}
-            >
-              复制代码
-            </button>
+              >
+                复制代码
+              </Button>
+            </div>
           {:else}
             <div class="file-hint">VS Code 扩展设置中的 MCP 服务器定义：</div>
             <pre><code>{`{
@@ -666,10 +697,11 @@
     }
   }
 }`}</code></pre>
-            <button
-              type="button"
-              class="btn btn-sm btn-secondary copy-code-btn"
-              on:click={() => copyText(`{
+            <div class="code-action-pos">
+              <Button
+                variant="secondary"
+                size="small"
+                on:click={() => copyText(`{
   "mcpServers": {
     "well-ambient": {
       "transport": "sse",
@@ -680,39 +712,40 @@
     }
   }
 }`, 'Cline 配置')}
-            >
-              复制代码
-            </button>
+              >
+                复制代码
+              </Button>
+            </div>
           {/if}
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Section 3: Credentials & Integration Key Lifecycle -->
-    <div class="gov-card">
+    <section class="gov-card" aria-labelledby="credentials-section-title">
       <div class="card-header">
         <div class="title-wrap">
-          <h4>集成凭证 (API Keys) 生命周期管理</h4>
+          <h4 id="credentials-section-title">集成凭证 (API Keys) 生命周期管理</h4>
           <span class="sub-hint">签发带有效期的集成凭证，所有密钥共享来源租约配额与安全审计。</span>
         </div>
         {#if canWrite}
-          <button
-            type="button"
-            class="btn btn-primary btn-sm"
+          <Button
+            variant="primary"
+            size="small"
             on:click={() => { showIssueModal = true; issuedKeyResult = null; }}
           >
             + 签发新 API Key
-          </button>
+          </Button>
         {/if}
       </div>
 
       {#if (overview.credentials || []).length === 0}
-        <div class="empty-keys-box">
+        <div class="empty-box">
           <p>暂无已签发的 API Key。点击右上角“+ 签发新 API Key”为外部 Agent 或 MCP 客户端创建访问密钥。</p>
         </div>
       {:else}
-        <div class="table-wrapper">
-          <table class="wa-admin-table" aria-label="API Key 凭证列表">
+        <div class="gov-table-container">
+          <table class="gov-table" aria-label="API Key 凭证列表">
             <thead>
               <tr>
                 <th>Key ID</th>
@@ -727,8 +760,8 @@
             <tbody>
               {#each overview.credentials as cred}
                 <tr>
-                  <td><code>{cred.key_id}</code></td>
-                  <td><code>{cred.prefix}...</code></td>
+                  <td><code class="mono-tag">{cred.key_id}</code></td>
+                  <td><code class="mono-prefix">{cred.prefix}...</code></td>
                   <td><span class="source-tag">{cred.source_id}</span></td>
                   <td>
                     <span class="status-pill" class:active={cred.status === 'active'} class:inactive={cred.status !== 'active'}>
@@ -739,14 +772,15 @@
                   <td>{cred.last_used_at ? new Date(cred.last_used_at).toLocaleString() : '尚未调用'}</td>
                   <td>
                     {#if canWrite && cred.status === 'active'}
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm text-danger"
+                      <Button
+                        variant="danger"
+                        size="small"
                         disabled={revokingKeyID === cred.key_id}
+                        loading={revokingKeyID === cred.key_id}
                         on:click={() => revokeKey(cred.key_id)}
                       >
-                        {revokingKeyID === cred.key_id ? '撤销中…' : '撤销'}
-                      </button>
+                        撤销
+                      </Button>
                     {:else}
                       <span class="text-muted">—</span>
                     {/if}
@@ -757,24 +791,24 @@
           </table>
         </div>
       {/if}
-    </div>
+    </section>
 
     <!-- Section 4: Jira Bindings & Execution Protection -->
-    <div class="gov-card">
+    <section class="gov-card" aria-labelledby="bindings-section-title">
       <div class="card-header">
         <div class="title-wrap">
-          <h4>Jira 写入执行绑定 (Execution Bindings)</h4>
+          <h4 id="bindings-section-title">Jira 写入执行绑定 (Execution Bindings)</h4>
           <span class="sub-hint">定义单事项排期决策被执行时，所使用的 Jira 服务账号与连接器。</span>
         </div>
       </div>
 
       {#if (overview.bindings || []).length === 0}
-        <div class="empty-keys-box">
+        <div class="empty-box">
           <p>暂无针对项目的执行绑定。请在 CLI 或策略中为项目配置 <code>reassign</code> 与 <code>reschedule</code> 绑定。</p>
         </div>
       {:else}
-        <div class="table-wrapper">
-          <table class="wa-admin-table" aria-label="Jira 写入执行绑定">
+        <div class="gov-table-container">
+          <table class="gov-table" aria-label="Jira 写入执行绑定">
             <thead>
               <tr>
                 <th>项目标识 (Project)</th>
@@ -802,112 +836,177 @@
           </table>
         </div>
       {/if}
-    </div>
+    </section>
   {/if}
 
-  <!-- Issue New Key Modal -->
-  {#if showIssueModal}
-    <div class="modal-backdrop" role="presentation" on:click={() => showIssueModal = false}></div>
-    <div class="gov-modal" role="dialog" aria-modal="true" aria-label="签发新 API Key">
-      <div class="modal-header">
-        <h2>签发开放能力集成 API Key</h2>
-        <button type="button" class="close-btn" aria-label="关闭对话框" on:click={() => showIssueModal = false}>×</button>
-      </div>
+  <!-- Issue New Key Modal (Shared Modal Component) -->
+  <Modal
+    show={showIssueModal}
+    title="签发开放能力集成 API Key"
+    size="default"
+    on:close={() => showIssueModal = false}
+  >
+    <div class="modal-form-body">
+      {#if issuedKeyResult}
+        <div class="gov-notice success">
+          <span><strong>✓ 密钥生成成功！</strong> 请务必立即复制并保存，该密钥只会完整展示一次。</span>
+        </div>
 
-      <div class="modal-body">
-        {#if issuedKeyResult}
-          <div class="gov-notice success">
-            <strong>✓ 密钥生成成功！</strong> 请务必立即复制并保存，该密钥只会完整展示一次。
-          </div>
-
-          <div class="token-result-box">
-            <label for="new-issued-key">完整 API Key (Bearer Token):</label>
-            <div class="token-copy-row">
-              <input
-                id="new-issued-key"
-                type="text"
-                readonly
-                value={issuedKeyResult.key}
-              />
-              <button
-                type="button"
-                class="btn btn-primary"
-                on:click={() => copyText(issuedKeyResult?.key || '', '完整 API Key')}
-              >
-                复制 Key
-              </button>
-            </div>
-            <p class="token-tip">该 Key 已自动同步至上方的远程安装命令与配置示例中。</p>
-          </div>
-        {:else}
-          <div class="form-group">
-            <label for="issue-source-id">集成来源标识 (Source ID):</label>
+        <div class="token-result-pane">
+          <label for="new-issued-key">完整 API Key (Bearer Token):</label>
+          <div class="token-copy-row">
             <input
-              id="issue-source-id"
+              id="new-issued-key"
               type="text"
-              bind:value={newKeySourceID}
-              placeholder="例如 target-agent, cursor-dev, ai-platform"
+              readonly
+              value={issuedKeyResult.key}
+              class="mono-key-input"
             />
-            <span class="field-hint">对应集成方身份，同一来源下的多个轮换 Key 共享统一配额。</span>
+            <Button
+              variant="primary"
+              size="small"
+              on:click={() => copyText(issuedKeyResult?.key || '', '完整 API Key')}
+            >
+              复制 Key
+            </Button>
           </div>
+          <p class="token-tip">该 Key 已自动同步至上方的远程安装命令与配置示例中。</p>
+        </div>
+      {:else}
+        <div class="form-item">
+          <label for="issue-source-id">集成来源标识 (Source ID):</label>
+          <input
+            id="issue-source-id"
+            type="text"
+            bind:value={newKeySourceID}
+            placeholder="例如 target-agent, cursor-dev, ai-platform"
+            class="gov-input"
+          />
+          <span class="field-hint">对应集成方身份，同一来源下的多个轮换 Key 共享统一配额。</span>
+        </div>
 
-          <div class="form-group">
-            <label for="issue-ttl">有效期 (TTL 时长):</label>
-            <select id="issue-ttl" bind:value={newKeyTTLHours}>
-              <option value={168}>7 天 (168h)</option>
-              <option value={720}>30 天 (720h - 默认推荐)</option>
-              <option value={2160}>90 天 (2160h)</option>
-              <option value={8760}>1 年 (8760h)</option>
-            </select>
-          </div>
-        {/if}
-      </div>
-
-      <div class="modal-footer">
-        {#if issuedKeyResult}
-          <button type="button" class="btn btn-primary" on:click={() => showIssueModal = false}>
-            完成并关闭
-          </button>
-        {:else}
-          <button type="button" class="btn btn-ghost" on:click={() => showIssueModal = false}>
-            取消
-          </button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            disabled={issuingKey || !newKeySourceID.trim()}
-            on:click={issueNewKey}
-          >
-            {issuingKey ? '正在签发…' : '确认签发'}
-          </button>
-        {/if}
-      </div>
+        <div class="form-item">
+          <label for="issue-ttl">有效期 (TTL 时长):</label>
+          <select id="issue-ttl" bind:value={newKeyTTLHours} class="gov-select">
+            <option value={168}>7 天 (168h)</option>
+            <option value={720}>30 天 (720h - 默认推荐)</option>
+            <option value={2160}>90 天 (2160h)</option>
+            <option value={8760}>1 年 (8760h)</option>
+          </select>
+        </div>
+      {/if}
     </div>
-  {/if}
+
+    <div slot="footer" class="modal-footer-actions">
+      {#if issuedKeyResult}
+        <Button variant="primary" on:click={() => showIssueModal = false}>
+          完成并关闭
+        </Button>
+      {:else}
+        <Button variant="ghost" on:click={() => showIssueModal = false}>
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          disabled={issuingKey || !newKeySourceID.trim()}
+          loading={issuingKey}
+          on:click={issueNewKey}
+        >
+          确认签发
+        </Button>
+      {/if}
+    </div>
+  </Modal>
 </div>
 
 <style>
+  /* Base Viewport Layout */
   .open-capabilities-view {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
+    color: var(--wa-text-main, #293847);
   }
 
+  /* Shared Button Fallback System (Ensures 8-state completeness) */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: var(--wa-control-h, 32px);
+    font-size: 13px;
+    font-weight: 650;
+    padding: 0 12px;
+    border-radius: var(--wa-radius-sm, 6px);
+    border: 1px solid transparent;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background var(--wa-duration-fast, 140ms) var(--wa-ease, ease),
+      border-color var(--wa-duration-fast, 140ms) var(--wa-ease, ease),
+      box-shadow var(--wa-duration-fast, 140ms) var(--wa-ease, ease);
+    outline: none;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .btn:focus-visible {
+    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.2);
+  }
+  .btn-sm {
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+  .btn-primary {
+    border-color: var(--wa-accent-fill, #006f76);
+    background: var(--wa-accent-fill, #006f76);
+    color: var(--wa-accent-fill-ink, #f6fbff);
+    box-shadow: 0 2px 4px rgba(0, 143, 150, 0.15);
+  }
+  .btn-primary:hover:not(:disabled) {
+    border-color: var(--wa-accent-fill-hover, #00545a);
+    background: var(--wa-accent-fill-hover, #00545a);
+  }
+  .btn-secondary {
+    background: #ffffff;
+    border-color: var(--wa-border, #cbd5e0);
+    color: var(--wa-text-main, #2d3748);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: #f8fafc;
+    border-color: #a0aec0;
+  }
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--wa-text-muted, #718096);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: #edf2f7;
+    color: var(--wa-text-strong, #1a202c);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  /* Loading & Notice States */
   .gov-loading-pane {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 60px 20px;
-    color: var(--wa-text-muted);
+    color: var(--wa-text-muted, #718096);
     gap: 12px;
   }
 
   .spinner {
     width: 24px;
     height: 24px;
-    border: 2px solid var(--wa-border-soft);
-    border-top-color: var(--wa-accent);
+    border: 2px solid var(--wa-border-soft, #e2e8f0);
+    border-top-color: var(--wa-accent, #008f96);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -916,48 +1015,107 @@
     to { transform: rotate(360deg); }
   }
 
+  .gov-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .gov-notice.error {
+    background: #fff5f5;
+    border: 1px solid #feb2b2;
+    color: #c53030;
+  }
+  .gov-notice.info {
+    background: #ebf8fa;
+    border: 1px solid #b2e3e8;
+    color: #0c666c;
+  }
+  .gov-notice.success {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    color: #166534;
+  }
+
+  /* Header Card */
   .open-gov-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: 16px;
-    background: var(--wa-chrome-0);
+    background: #ffffff;
     padding: 16px 20px;
-    border-radius: 12px;
-    border: 1px solid var(--wa-border-soft);
+    border-radius: 8px;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  }
+
+  .header-main {
+    flex: 1;
+    min-width: 0;
   }
 
   .header-title-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     flex-wrap: wrap;
   }
 
   .header-title-row h3 {
     margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
+    font-size: 16px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .header-desc {
     margin: 6px 0 0 0;
-    font-size: 0.88rem;
-    color: var(--wa-text-muted);
-    line-height: 1.45;
+    font-size: 13px;
+    color: var(--wa-text-muted, #718096);
+    line-height: 1.5;
+  }
+
+  /* Status Pills */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .status-pill.active {
+    background: #e6fffa;
+    color: #234e52;
+    border: 1px solid #b2f5ea;
+  }
+  .status-pill.inactive {
+    background: #f1f5f9;
+    color: #64748b;
+    border: 1px solid #e2e8f0;
+  }
+  .status-pill.warning {
+    background: #fffaf0;
+    color: #744210;
+    border: 1px solid #feebc8;
   }
 
   /* Metrics Strip */
   .gov-metrics-strip {
     display: flex;
     align-items: center;
-    background: var(--wa-chrome-0);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 8px;
     padding: 12px 20px;
     gap: 16px;
-    flex-wrap: wrap;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   }
 
   .gov-metric-item {
@@ -965,55 +1123,55 @@
     min-width: 140px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
   }
 
   .gov-metric-label {
-    font-size: 0.76rem;
-    color: var(--wa-text-muted);
-    font-weight: 500;
+    font-size: 11px;
+    color: var(--wa-text-muted, #718096);
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .gov-metric-val {
     display: flex;
     align-items: baseline;
     gap: 6px;
+    flex-wrap: wrap;
   }
 
   .gov-metric-val strong {
-    font-size: 1.1rem;
-    color: var(--wa-text-strong);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .gov-metric-sub {
-    font-size: 0.76rem;
-    color: var(--wa-text-subtle);
+    font-size: 11px;
+    color: var(--wa-text-subtle, #8a99aa);
   }
 
   .gov-metric-divider {
     width: 1px;
     height: 28px;
-    background: var(--wa-border-divider);
+    background: var(--wa-border, #e2e8f0);
   }
 
-  .highlight-cyan { color: var(--wa-palette-primary) !important; }
-  .highlight-green { color: var(--wa-palette-success) !important; }
-  .highlight-gray { color: var(--wa-text-subtle) !important; }
+  .highlight-cyan { color: var(--wa-accent-strong, #006f76) !important; }
+  .highlight-green { color: #166534 !important; }
+  .highlight-gray { color: var(--wa-text-subtle, #8a99aa) !important; }
 
-  /* Gov Card */
+  /* Standard Gov Card Surface (Single Layer, No Nested Cards) */
   .gov-card {
-    background: var(--wa-chrome-0);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 12px;
-    padding: 20px;
+    background: #ffffff;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 8px;
+    padding: 18px 20px;
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-
-  .highlight-card {
-    border-color: rgba(1, 139, 141, 0.35);
-    background: linear-gradient(180deg, rgba(248, 251, 254, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   }
 
   .card-header {
@@ -1026,216 +1184,272 @@
 
   .title-wrap h4 {
     margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .sub-hint {
-    font-size: 0.82rem;
-    color: var(--wa-text-muted);
-    margin-top: 4px;
+    font-size: 12.5px;
+    color: var(--wa-text-muted, #718096);
+    margin-top: 3px;
     display: block;
+    line-height: 1.45;
   }
 
-  /* Switches Grid */
-  .switches-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 14px;
+  .synced-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
   }
 
-  .switch-box {
-    background: var(--wa-surface-flat);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 8px;
-    padding: 14px 16px;
+  /* Switches Container */
+  .switches-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .master-switch-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 16px;
-    transition: border-color 0.2s;
+    padding: 14px 16px;
+    background: #f8fafc;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
+    transition: all 0.15s ease;
   }
 
-  .switch-box.main-switch {
-    grid-column: 1 / -1;
-    background: rgba(1, 139, 141, 0.04);
-    border-color: rgba(1, 139, 141, 0.25);
+  .master-switch-row.is-active {
+    background: rgba(0, 143, 150, 0.04);
+    border-color: rgba(0, 143, 150, 0.28);
   }
 
-  .switch-box.disabled {
-    opacity: 0.55;
-    background: var(--wa-surface-inset);
-  }
-
-  .switch-info {
-    flex: 1;
-  }
-
-  .switch-title {
-    font-size: 0.92rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
-  }
-
-  .switch-info p {
-    margin: 4px 0 0 0;
-    font-size: 0.8rem;
-    color: var(--wa-text-muted);
-    line-height: 1.4;
-  }
-
-  /* Toggle Switch Control */
-  .toggle-switch {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-    flex-shrink: 0;
-  }
-
-  .toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #cbd5e1;
-    transition: 0.25s;
-    border-radius: 24px;
-  }
-
-  .slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.25s;
-    border-radius: 50%;
-  }
-
-  input:checked + .slider {
-    background-color: var(--wa-palette-primary);
-  }
-
-  input:checked + .slider:before {
-    transform: translateX(20px);
-  }
-
-  /* Combo Grid */
-  .combo-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 16px;
-  }
-
-  .combo-box {
-    background: var(--wa-surface-flat);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 10px;
-    padding: 16px;
-    display: flex;
-    gap: 14px;
-  }
-
-  .combo-icon {
-    font-size: 1.6rem;
-    line-height: 1;
-  }
-
-  .combo-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .combo-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
-  }
-
-  .combo-content p {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--wa-text-muted);
-    line-height: 1.45;
-  }
-
-  .action-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 6px;
-  }
-
-  .code-snippet-row {
+  .switch-heading {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--wa-surface-inset);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 6px;
-    padding: 6px 10px;
-    margin-top: 6px;
-    overflow-x: auto;
   }
 
-  .code-snippet-row code {
+  .switch-name {
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
+  }
+
+  .switch-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: #edf2f7;
+    color: var(--wa-text-muted, #718096);
+  }
+
+  .master-switch-row.is-active .switch-badge {
+    background: #e6fffa;
+    color: #234e52;
+  }
+
+  .switch-desc {
+    margin: 4px 0 0 0;
+    font-size: 12.5px;
+    color: var(--wa-text-muted, #718096);
+    line-height: 1.45;
+  }
+
+  .phases-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .phase-card {
+    background: #ffffff;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 10px;
+    transition: opacity 0.15s ease;
+  }
+
+  .phase-card.is-disabled {
+    opacity: 0.55;
+    background: #fbfcfd;
+  }
+
+  .phase-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .phase-title-with-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .phase-title {
+    font-size: 13.5px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
+  }
+
+  .exclusive-badge {
+    font-size: 10.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    background: #fffaf0;
+    color: #744210;
+    border: 1px solid #feebc8;
+  }
+
+  .phase-desc {
+    margin: 0;
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
+    line-height: 1.45;
     flex: 1;
-    font-family: var(--wa-font-mono);
-    font-size: 0.78rem;
-    color: var(--wa-palette-info-deep);
+  }
+
+  /* Installation Combo */
+  .combo-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .combo-card {
+    background: #f8fafc;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .combo-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .combo-tag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #edf2f7;
+    color: var(--wa-text-muted, #718096);
+    letter-spacing: 0.02em;
     white-space: nowrap;
   }
 
-  /* Skills Registry Cards */
-  .skills-registry-section, .manual-config-section {
+  .combo-title {
+    font-size: 13.5px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
+  }
+
+  .combo-desc {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--wa-text-muted, #718096);
+    line-height: 1.45;
+    flex: 1;
+  }
+
+  .combo-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+
+  .code-snippet-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: #0f172a;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-top: 4px;
+  }
+
+  .code-snippet-bar code {
+    font-family: var(--wa-font-mono, monospace);
+    font-size: 12px;
+    color: #38bdf8;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  /* Sub Sections */
+  .sub-section {
     display: flex;
     flex-direction: column;
     gap: 12px;
-    margin-top: 8px;
+    border-top: 1px solid var(--wa-border, #e2e8f0);
+    padding-top: 14px;
   }
 
-  .section-sub-header {
+  .sub-section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .sub-section-title-wrap {
+    display: flex;
+    align-items: center;
     gap: 8px;
   }
 
-  .sub-title {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
+  .sub-section-title {
+    margin: 0;
+    font-size: 13.5px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
   }
 
-  .sub-desc {
-    font-size: 0.8rem;
-    color: var(--wa-text-muted);
+  .sub-section-hint {
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
   }
 
+  /* Skills Grid */
   .skills-cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
 
-  .skill-registry-card {
-    background: var(--wa-surface-flat);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 8px;
+  .skill-card {
+    background: #ffffff;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
     padding: 14px;
     display: flex;
     flex-direction: column;
@@ -1249,30 +1463,31 @@
   }
 
   .skill-title {
-    font-size: 0.92rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
+    font-size: 13.5px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
   }
 
   .skill-ver {
-    font-size: 0.72rem;
-    background: var(--wa-surface-inset);
-    border: 1px solid var(--wa-border-soft);
-    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    padding: 1px 6px;
     border-radius: 4px;
-    color: var(--wa-text-muted);
+    color: var(--wa-text-muted, #718096);
   }
 
-  .skill-name-code code {
-    font-size: 0.78rem;
-    color: var(--wa-palette-primary);
+  .skill-key code {
+    font-size: 12px;
+    color: var(--wa-accent-strong, #006f76);
   }
 
   .skill-desc {
     margin: 0;
-    font-size: 0.8rem;
-    color: var(--wa-text-muted);
-    line-height: 1.4;
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
+    line-height: 1.45;
     flex: 1;
   }
 
@@ -1284,59 +1499,65 @@
   }
 
   .tool-tag-label {
-    font-size: 0.72rem;
-    color: var(--wa-text-subtle);
+    font-size: 11px;
+    color: var(--wa-text-subtle, #8a99aa);
   }
 
   .tool-chip {
-    font-size: 0.7rem;
-    background: rgba(1, 139, 141, 0.08);
-    color: var(--wa-palette-primary);
+    font-size: 11px;
+    background: rgba(0, 143, 150, 0.08);
+    color: var(--wa-accent-strong, #006f76);
     padding: 1px 5px;
     border-radius: 3px;
-    font-family: var(--wa-font-mono);
+    font-family: var(--wa-font-mono, monospace);
   }
 
   .skill-card-actions {
     display: flex;
     gap: 8px;
     margin-top: 4px;
-    border-top: 1px solid var(--wa-border-divider);
-    padding-top: 8px;
+    border-top: 1px solid var(--wa-border, #edf2f7);
+    padding-top: 10px;
+    align-items: center;
   }
 
-  /* Manual Config Tabs */
+  /* Config Tabs */
   .config-tabs-nav {
     display: flex;
     gap: 6px;
+    background: #f1f5f9;
+    padding: 3px;
+    border-radius: 6px;
   }
 
   .tab-btn {
     border: none;
-    background: var(--wa-surface-inset);
-    color: var(--wa-text-muted);
-    font-size: 0.8rem;
+    background: transparent;
+    color: var(--wa-text-muted, #718096);
+    font-size: 12px;
+    font-weight: 600;
     padding: 4px 10px;
-    border-radius: 6px;
+    border-radius: 4px;
     cursor: pointer;
+    transition: all 0.15s ease;
   }
 
   .tab-btn.active {
-    background: var(--wa-palette-primary);
-    color: white;
-    font-weight: 500;
+    background: #ffffff;
+    color: var(--wa-accent-strong, #006f76);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   }
 
   .config-code-preview {
     position: relative;
     background: #0f172a;
-    border-radius: 8px;
-    padding: 14px 16px;
+    border-radius: 6px;
+    padding: 16px;
     color: #e2e8f0;
   }
 
   .file-hint {
-    font-size: 0.76rem;
+    font-size: 12px;
     color: #94a3b8;
     margin-bottom: 8px;
   }
@@ -1347,169 +1568,139 @@
 
   .config-code-preview pre {
     margin: 0;
-    font-family: var(--wa-font-mono);
-    font-size: 0.82rem;
-    line-height: 1.45;
+    font-family: var(--wa-font-mono, monospace);
+    font-size: 12.5px;
+    line-height: 1.5;
     overflow-x: auto;
   }
 
-  .copy-code-btn {
+  .code-action-pos {
     position: absolute;
-    top: 10px;
+    top: 12px;
     right: 12px;
   }
 
-  /* Status Pills */
-  .status-pill {
-    font-size: 0.72rem;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-weight: 500;
-  }
-
-  .status-pill.active {
-    background: rgba(110, 204, 84, 0.15);
-    color: #2b7a15;
-  }
-
-  .status-pill.inactive {
-    background: rgba(148, 163, 184, 0.2);
-    color: var(--wa-text-muted);
-  }
-
-  .status-pill.warning {
-    background: rgba(235, 92, 32, 0.15);
-    color: #b43b08;
-  }
-
-  /* Tables */
-  .table-wrapper {
+  /* Table Container & Table (Matching AIGovernanceCenter) */
+  .gov-table-container {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    background: #ffffff;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
     overflow-x: auto;
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 8px;
+    overflow-y: hidden;
   }
 
-  .wa-admin-table {
+  .gov-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.84rem;
+    font-size: 13px;
+  }
+
+  .gov-table th {
     text-align: left;
-  }
-
-  .wa-admin-table th, .wa-admin-table td {
     padding: 10px 14px;
-    border-bottom: 1px solid var(--wa-border-divider);
+    background: #f8fafc;
+    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    font-size: 11.5px;
+    font-weight: 650;
+    color: var(--wa-text-muted, #718096);
+    letter-spacing: 0.03em;
   }
 
-  .wa-admin-table th {
-    background: var(--wa-surface-inset);
-    color: var(--wa-text-muted);
+  .gov-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--wa-border, #edf2f7);
+    vertical-align: middle;
+  }
+
+  .gov-table tbody tr:hover {
+    background: #fafcff;
+  }
+
+  .mono-tag {
+    font-family: var(--wa-font-mono, monospace);
+    font-size: 12px;
     font-weight: 600;
-    font-size: 0.78rem;
+    color: var(--wa-text-strong, #0d1722);
+  }
+
+  .mono-prefix {
+    font-family: var(--wa-font-mono, monospace);
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
   }
 
   .source-tag {
-    background: var(--wa-surface-inset);
-    padding: 2px 6px;
+    font-size: 11.5px;
+    font-weight: 550;
+    background: #f1f5f9;
+    padding: 2px 7px;
     border-radius: 4px;
-    font-size: 0.76rem;
+    color: var(--wa-text-main, #293847);
   }
 
-  .text-danger { color: var(--wa-palette-danger) !important; }
-
-  /* Modals */
-  .modal-backdrop {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(15, 23, 42, 0.5);
-    z-index: 999;
+  .empty-box {
+    padding: 30px 16px;
+    text-align: center;
+    color: var(--wa-text-muted, #718096);
+    font-size: 13px;
+    background: #f8fafc;
+    border: 1px dashed var(--wa-border, #cbd5e0);
+    border-radius: 6px;
   }
 
-  .gov-modal {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: var(--wa-surface-flat);
-    border-radius: 12px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-    width: 90%;
-    max-width: 520px;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--wa-border-divider);
-  }
-
-  .modal-header h2 {
+  .empty-box p {
     margin: 0;
-    font-size: 1.1rem;
-    font-weight: 600;
   }
 
-  .close-btn {
-    border: none;
-    background: transparent;
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: var(--wa-text-muted);
-  }
-
-  .modal-body {
-    padding: 20px;
+  /* Modal Form Content */
+  .modal-form-body {
     display: flex;
     flex-direction: column;
     gap: 16px;
   }
 
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
-    padding: 14px 20px;
-    border-top: 1px solid var(--wa-border-divider);
-    background: var(--wa-surface-inset);
-  }
-
-  .form-group {
+  .form-item {
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
 
-  .form-group label {
-    font-size: 0.84rem;
-    font-weight: 600;
-    color: var(--wa-text-strong);
+  .form-item label {
+    font-size: 13px;
+    font-weight: 650;
+    color: var(--wa-text-strong, #0d1722);
   }
 
-  .form-group input, .form-group select {
+  .gov-input, .gov-select {
+    width: 100%;
+    box-sizing: border-box;
     padding: 8px 12px;
-    border: 1px solid var(--wa-border-soft);
+    border: 1px solid var(--wa-border, #cbd5e0);
     border-radius: 6px;
-    font-size: 0.88rem;
+    font-size: 13px;
+    background: #ffffff;
+    color: var(--wa-text-main, #293847);
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .gov-input:focus, .gov-select:focus {
+    border-color: var(--wa-accent, #008f96);
+    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.15);
   }
 
   .field-hint {
-    font-size: 0.76rem;
-    color: var(--wa-text-muted);
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
   }
 
-  .token-result-box {
-    background: var(--wa-surface-inset);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: 8px;
+  .token-result-pane {
+    background: #f8fafc;
+    border: 1px solid var(--wa-border, #e2e8f0);
+    border-radius: 6px;
     padding: 14px;
     display: flex;
     flex-direction: column;
@@ -1519,22 +1710,41 @@
   .token-copy-row {
     display: flex;
     gap: 8px;
+    align-items: center;
   }
 
-  .token-copy-row input {
+  .mono-key-input {
     flex: 1;
-    font-family: var(--wa-font-mono);
-    font-size: 0.84rem;
+    font-family: var(--wa-font-mono, monospace);
+    font-size: 12.5px;
     padding: 8px 10px;
+    border: 1px solid var(--wa-border, #cbd5e0);
+    border-radius: 6px;
+    background: #ffffff;
   }
 
   .token-tip {
     margin: 0;
-    font-size: 0.78rem;
-    color: var(--wa-text-muted);
+    font-size: 12px;
+    color: var(--wa-text-muted, #718096);
   }
 
-  /* Responsive Rules (Finesse UI Gate) */
+  .modal-footer-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  /* Responsive Rules (Finesse UI & Impeccable) */
+  @media (max-width: 1024px) {
+    .phases-grid {
+      grid-template-columns: 1fr;
+    }
+    .skills-cards-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
   @media (max-width: 760px) {
     .open-gov-header {
       flex-direction: column;
@@ -1542,6 +1752,7 @@
     .gov-metrics-strip {
       flex-direction: column;
       align-items: stretch;
+      gap: 12px;
     }
     .gov-metric-divider {
       display: none;
@@ -1551,6 +1762,9 @@
     }
     .skills-cards-grid {
       grid-template-columns: 1fr;
+    }
+    .config-tabs-nav {
+      flex-wrap: wrap;
     }
   }
 </style>

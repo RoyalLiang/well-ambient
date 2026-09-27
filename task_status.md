@@ -712,7 +712,7 @@
 | HKAA-1079 | [路径向外20cm]【靠近旁边的石墩子，颖颖改地图】【AA跑圈】AET204转弯压线 触发碰撞风险 人工接管 | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | HKAA-1081 | [路径往外20cm]【旁边拖挂有入侵，颖颖临时先修改地图，跑圈耐久结束，可以打开避障，解决此类被卡主问题】【AA跑圈】AET204转弯处有挂车，触发碰撞风险检测 （挂车摆放在白线内） | PRJ25077-香港机管局一期10台Q-Tractor (HKAA) | 刘雪健 | - | - |
 | PRJ25024-759 | 【KPI】【重点指标】装船顺序异常保留两位小数 | PRJ25024-Reewell调度算法 2.0 (PRJ25024) | 王文景 | - | - |
-| NS2-2579 |  gzn日志太多需要频繁清理，需要优化日志，防止磁盘爆满 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 吕博兴 | - | - |
+| NS2-2579 | gzn日志太多需要频繁清理，需要优化日志，防止磁盘爆满 | PRJ25151-南沙二期码头Q-Chassis运营20套 (NS2) | 吕博兴 | - | - |
 
 ## 进行中 (In Progress)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -787,6 +787,7 @@
 | rz-1 | Merge remote-tracking branch 'origin/prod_delivery_rz' into prod_delivery_rz | vehicle_manager | qiang.deng | production | Merge branch 'prod_delivery_rz' into 'production'  Prod delivery rz  See merge request fms3.0-malaysia/vehicle_manager!813 |
 | HIT-1082 | 【movelist方案上线】V2X感知结果帮助gzn给出合适的变道区间 | PRJ25053_HIT香港Q-Truck二期 (HIT) | 鲁新峰 | - | - |
 | fms-21081 | Merge branch 'prod_delivery_eng_cwh_fms21081' into 'prod_delivery_eng' | vehicle_manager | houqi.li | prod_delivery_eng_cwh | test: 删除_load_vm_module死代码——qiang.deng评审nitpick  评审指出该函数定义后从未调用,属开发过程遗留,删除。 8项测试+全量47项不受影响。 |
+| wd-2840 | revert: FEL2WD-2840 撤销 !248 的直接merge——改走qiang.deng审核merge流程 | gui_server | houqi.li | prod_delivery_eng_cwh | feat: 移植一期GetVehicleInfo车辆筛选接口,job数据源改Redis TI:vehicle_job  根因: 一期master_hq的 /api/GetVehicleInfo(按岸桥/堆场/船期/作业类型筛选车辆) 未同步到二期,现场前端需要。一期实现为逐车HTTP调TI接口(QC/YARD/task_type 分支下17车×1次串行HTTP),且二期无TaskInfoRequest.get_vehicle_running_job方法。  改动(4处,扁平): - 新增 search_vehicles.py: 接口路径/入参/响应结构与一期完全一致(前端零改动);   job数据源改为 redis hgetall TI:vehicle_job 一次取全量(系统内既有模式,   TOS侧tos_common_england.py:1374与TI自身dynamic_ts.py同款),循环内零IO,   字段适配db原始格式(movement_type/job_type/dest_area/dest_block);   坏缓存跳过该车辆不崩接口 - log.py +1行: logger_search_vehicle(与一期同名同日志路径) - api.py +2行: import+include_router(prefix=/api) - 新增tests/test_search_vehicles.py 9用例: 直接调生产路由函数,   验证五type分支/db字段适配/响应结构/坏缓存容错  行为: 与一期一致(含vehicle_status占位分支原样保留,不做二期发挥); FL分支按dest_area=FLTP判定,天然覆盖RMPI/RMGR铁路任务。 性能: QC/YARD/task_type分支从17次串行HTTP降为1次hgetall。  回归: 全量85 passed(movement_ws的7个error为基线既有,stash对照验证与本改动无关); L3 AST断言路由/五分支/八条件/Redis数据源/db字段; L4影响面恰好3生产文件+1测试(api.py+2行/log.py+1行); L5双变异红(key打错8红/字段名错5红)。 |
 
 ## 代码评审 (In Review)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
@@ -797,7 +798,6 @@
 | PRJ25024-452 | 【通知中心】【测试环境】fms来源的消息只推送有故障码的，没有故障码的消息本期版本不要推送 | PRJ25024-Reewell调度算法 2.0 (PRJ25024) | 孙海峰 | - | - |
 | fltp-4 | fix: EWA/FL点位缺heading键时兜底-0.6457,不再把None发给PP | vehicle_manager | qiang.deng | prod_delivery_eng_cwh_fms21081 | fix: 下线等待中mission_data读取失败防御——None时跳过本轮,不误判换代不噪声  qiang.deng !817 审核意见(timer_request_path.py 下线分支): request_get_node 失败(redis超时/异常的except分支无return)时返回None, mission_dict.get("vehicleMissionId") 抛 AttributeError 落入外层except, 功能自愈但日志混进大报错噪声。  修复: 读取返回None时按'本轮跳过待重试'处理(warning一条+repeat_num 自增+sleep重试),不退出循环。不复用 or {} 写法——空dict会让.get返回 None≠run_mission_id,把redis临时故障误判成任务换代而退出循环。  回归: 新增None防御3场景(失败期无大报错有warning/不误判退出循环存活 /恢复后续上PP) + 原下线等待5场景复验 + VM全量套件41 passed全过 |
 | supervisor-20260923 | Mr/prod delivery ghost supervisor 20260923 | vehicle_manager | zhiyuan.liang | mr/prod-delivery-ghost-supervisor-20260923 | fix(redis): restore async scan iteration for well-redis client  Provide an explicit scan_iter async generator for the actual ManagedAsyncRedis clients used by vehicle_manager. Keep managed paginated SCAN for single/sentinel mode and use the native cluster iterator for cluster mode. Add production-client and lock-area regression coverage. |
-| wd-2840 | revert: FEL2WD-2840 撤销 !248 的直接merge——改走qiang.deng审核merge流程 | task_executor | qiang.deng | prod_delivery_eng_cwh | fix: ts_status三值域等值过滤对齐旧SQL——codex第4轮审核意见2  codex第4轮意见2(属实): ts_status='off'原静默放行全量。旧接口 值域{on,off}做SQL等值匹配(GUI schema注释明确'锁站开闭状态on/off'), WHERE ts_status='off'返回off状态锁站。  修复: on→ts_state=='OPEN' / off→ts_state!='OPEN' / 非法值→空 (与S1非法job_type同款不静默放行) / 空串→不过滤(旧接口空值不进WHERE)。  第4轮意见1(get_vpb路径)不成立: 本仓库task_executor的get_vpb.py 位于src/project/england/sender/get_vpb.py(测试引用正确,13项全过); src/services/sender/get_vpb.py不存在——审核混淆了VM仓库结构。  测试: 新增S2三值域用例(14项)+全量57项;变异验证(删off分支→S2红, 恢复全绿)。 |
 
 ## 已完成 (Done)
 | 任务ID | 任务标题 | 代码仓库 | 指派人 | 分支名称 | 最近提交 |
