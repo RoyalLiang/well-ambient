@@ -28,7 +28,7 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 	for _, match := range routePattern.FindAllStringSubmatch(string(source), -1) {
 		registered[match[1]] = struct{}{}
 	}
-	const expectedGETAPIRoutes = 102
+	const expectedGETAPIRoutes = 109
 	if len(registered) != expectedGETAPIRoutes {
 		t.Fatalf("route discovery found %d GET API routes, want %d", len(registered), expectedGETAPIRoutes)
 	}
@@ -73,15 +73,18 @@ func TestAllReachablePageStatesAreCoveredByReadContracts(t *testing.T) {
 		"tasks.status":          {},
 		"tasks.execution":       {},
 		"tasks.review":          {},
-		"open.jira":             {},
-		"open.decision":         {},
-		"open.review":           {},
-		"kpi.overview":          {},
-		"kpi.calculation":       {},
-		"ai_governance.skills":  {},
-		"ai_governance.prompts": {},
-		"ai_governance.rules":   {},
-		"ai_governance.context": {},
+		"open.jira":                        {},
+		"open.decision":                    {},
+		"open.review":                      {},
+		"open.skills":                      {},
+		"open.installer":                   {},
+		"kpi.overview":                     {},
+		"kpi.calculation":                  {},
+		"ai_governance.skills":             {},
+		"ai_governance.prompts":            {},
+		"ai_governance.rules":              {},
+		"ai_governance.context":            {},
+		"ai_governance.open_capabilities": {},
 		"settings.gitlab":       {},
 		"settings.email":        {},
 		"settings.feishu":       {},
@@ -212,7 +215,7 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 	}
 	expected := map[readmodel.Maturity]int{
 		readmodel.MaturityVerified: 20,
-		readmodel.MaturityBounded:  54,
+		readmodel.MaturityBounded:  61,
 		readmodel.MaturityPending:  28,
 	}
 	for maturity, want := range expected {
@@ -220,8 +223,8 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 			t.Errorf("%s read contracts = %d, want %d", maturity, got, want)
 		}
 	}
-	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 102 {
-		t.Fatalf("maturity inventory totals %d routes, want 102", total)
+	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 109 {
+		t.Fatalf("maturity inventory totals %d routes, want 109", total)
 	}
 }
 

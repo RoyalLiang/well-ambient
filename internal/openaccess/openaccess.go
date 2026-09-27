@@ -247,6 +247,14 @@ func (s *Service) Source(ctx context.Context, sourceID string) (db.IntegrationSo
 	return source, nil
 }
 
+func (s *Service) Sources(ctx context.Context) ([]db.IntegrationSource, error) {
+	var list []db.IntegrationSource
+	if err := s.db.WithContext(ctx).Order("created_at desc").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("list integration sources: %w", err)
+	}
+	return list, nil
+}
+
 func (s *Service) IssueCredential(ctx context.Context, sourceID string, ttl time.Duration) (IssuedCredential, error) {
 	if ttl <= 0 {
 		return IssuedCredential{}, newError("invalid_request", "credential ttl must be positive")
@@ -522,6 +530,14 @@ func (s *Service) ExecutionBinding(ctx context.Context, project, action string) 
 		return db.JiraExecutionBinding{}, fmt.Errorf("load Jira execution binding: %w", err)
 	}
 	return binding, nil
+}
+
+func (s *Service) ExecutionBindings(ctx context.Context) ([]db.JiraExecutionBinding, error) {
+	var list []db.JiraExecutionBinding
+	if err := s.db.WithContext(ctx).Order("project_ref asc, action_class asc").Find(&list).Error; err != nil {
+		return nil, fmt.Errorf("list execution bindings: %w", err)
+	}
+	return list, nil
 }
 
 func (s *Service) RecordInvocation(ctx context.Context, invocation Invocation) error {

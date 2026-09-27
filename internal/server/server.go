@@ -446,6 +446,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/strongest-brain/open-capability-intelligence", s.withPermission("decision:read", s.handleGetStrongestBrainOpenCapabilityIntelligence))
 	s.mux.HandleFunc("GET /api/strongest-brain/capability-proposals", s.withPermission("decision:read", s.handleListStrongestBrainCapabilityProposals))
 	s.mux.HandleFunc("POST /api/strongest-brain/capability-proposals/{id}/review", s.withPermission("decision:read", s.withGlobalSuperAdmin(s.handleReviewStrongestBrainCapabilityProposal)))
+
+	// Protected AI Governance Open Capabilities APIs
+	s.mux.HandleFunc("GET /api/ai-governance/open-capabilities/overview", s.withPermission("ai_context:read", s.handleGetAIGovernanceOpenCapabilitiesOverview))
+	s.mux.HandleFunc("PUT /api/ai-governance/open-capabilities/config", s.withPermission("config:write", s.handleUpdateAIGovernanceOpenCapabilitiesConfig))
+	s.mux.HandleFunc("POST /api/ai-governance/open-capabilities/sources", s.withPermission("config:write", s.handleCreateAIGovernanceSource))
+	s.mux.HandleFunc("POST /api/ai-governance/open-capabilities/credentials", s.withPermission("config:write", s.handleIssueAIGovernanceCredential))
+	s.mux.HandleFunc("POST /api/ai-governance/open-capabilities/credentials/{id}/revoke", s.withPermission("config:write", s.handleRevokeAIGovernanceCredential))
+	s.mux.HandleFunc("PUT /api/ai-governance/open-capabilities/policy", s.withPermission("config:write", s.handleUpdateAIGovernancePolicy))
+	s.mux.HandleFunc("PUT /api/ai-governance/open-capabilities/bindings", s.withPermission("config:write", s.handleUpsertAIGovernanceBinding))
+
 	s.registerOpenCapabilityRoutes()
 }
 

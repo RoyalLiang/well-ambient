@@ -272,6 +272,7 @@ func (s *Server) applyConfig(next config.Config) error {
 		s.performance.Reconfigure(s.performanceSettings())
 	}
 	s.triggerEmailWorker()
+	s.syncOpenFeaturesFromConfig()
 	return nil
 }
 

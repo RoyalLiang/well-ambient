@@ -4,10 +4,12 @@
   import DOMPurify from 'dompurify';
   import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
+  import OpenCapabilitiesConfig from './config/OpenCapabilitiesConfig.svelte';
   import {
     AI_GOVERNANCE_SECTION_DEFINITIONS,
     canAccessAIGovernanceSection,
     canManageAIGovernanceSkills,
+    canManageOpenCapabilities,
     canReadSolutionPublicURL,
     canWriteAIGovernanceRules,
     canWriteSolutionPublicURL,
@@ -31,6 +33,7 @@
   $: canWriteRules = canWriteAIGovernanceRules(currentUserPermissions);
   $: canReadPublicURL = canReadSolutionPublicURL(currentUserPermissions, currentUserRole);
   $: canWritePublicURL = canWriteSolutionPublicURL(currentUserPermissions, currentUserRole);
+  $: canManageOpenCaps = canManageOpenCapabilities(currentUserPermissions, currentUserRole);
   $: authorizationSignature = `${currentUserRole}:${[...currentUserPermissions].sort().join(',')}`;
   $: if (authorizationSignature !== lastAuthorizationSignature) {
     lastAuthorizationSignature = authorizationSignature;
@@ -729,6 +732,7 @@ activation:
       if (section === 'prompts') loaded = await loadSolutionPublicURL();
       if (section === 'rules') loaded = await loadRepoPolicies();
       if (section === 'context') loaded = await loadContextReadiness();
+      if (section === 'open_capabilities') loaded = true;
       if (loaded) loadedSections = new Set([...loadedSections, section]);
     } finally {
       loadingSections = new Set([...loadingSections].filter((item) => item !== section));
@@ -862,7 +866,7 @@ activation:
             on:click={() => switchSection(section.id)}
             on:keydown={(event) => handleSectionTabKeydown(event, index)}
           >
-            <span class="tab-icon" aria-hidden="true">{section.id === 'skills' ? '⚡' : section.id === 'prompts' ? '📝' : section.id === 'rules' ? '⚖️' : '📚'}</span>
+            <span class="tab-icon" aria-hidden="true">{section.id === 'skills' ? '⚡' : section.id === 'prompts' ? '📝' : section.id === 'rules' ? '⚖️' : section.id === 'open_capabilities' ? '🔌' : '📚'}</span>
             {section.label}
             {#if section.id === 'skills'}<span class="tab-count">{capabilities.length}</span>{/if}
           </button>
@@ -1287,6 +1291,20 @@ activation:
         config={governanceAIConfig}
         {currentUserPermissions}
         {contextAIReady}
+      />
+    </section>
+  {/if}
+
+  <!-- TAB 5: 开放能力与 MCP 集成 (Open Capabilities) -->
+  {#if resolvedActiveSection === 'open_capabilities'}
+    <section
+      id="ai-governance-panel-open_capabilities"
+      class="gov-pane"
+      role="tabpanel"
+      aria-labelledby="ai-governance-tab-open_capabilities"
+    >
+      <OpenCapabilitiesConfig
+        canWrite={canManageOpenCaps}
       />
     </section>
   {/if}

@@ -1,4 +1,34 @@
-# Task Plan: Maintenance and AI governance atomic config completion
+# Task Plan: AI 治理页面集成开放能力动态配置与 MCP/Skill 在线安装体系
+
+## 2026-09-27 AI 治理开放能力动态配置与 MCP/Skill 在线安装
+
+### Completion scope
+
+- [x] 完全脱离离线 config 文件与环境变量，在系统版本化配置中引入 `OpenCapabilitiesConfig`，默认不启用（`Enabled=false`, `Read=false`, `Prepare=false`, `Execute=false`）。
+- [x] 后端提供 AI 治理开放能力概览与动态配置接口（`overview`, `config`, `credentials issue/revoke`），支持乐观锁与版本广播。
+- [x] 提供在线 Skill 仓库与分发端点（`/open/v1/skills`, `/open/v1/skills/{name}/archive`），支持动态打包分发 3 个官方领域 Skill。
+- [x] 提供远程客户端自动化安装脚本（`/open/v1/install.sh`），支持一键检测环境、下载 Skill 包、自动配置 Cursor / Claude Desktop / Cline。
+- [x] 在 AI 治理中心新增「开放能力与 MCP」专区，落地“协议链接唤起（Deep Link） + 远程安装脚本（Install Script） + 在线 Skill 仓库（Online Registry） + 手动配置快速复制”组合拳。
+- [x] 全量测试：Go 单元测试、HTTP 接口契约校验、前端类型与构建校验。
+
+### Mandatory three-way frontend review
+
+- [x] **Impeccable / product register:** 严格继承 Phase 41 Admin UI 规范。采用低矮上下文栏 + 紧凑指标条 + 扁平结构划分（动态配置开关、组合拳安装接入指引、Key 凭证生命周期管理）。拒绝装饰性渐变文字、侧边高亮彩条和玻璃卡片嵌套，仅在上下文头部与对话框使用克制半透明质感。
+- [x] **design-taste-frontend / redesign-preserve:** 不新增冲突的设计系统。导航权威收敛于 `ai-governance-sections.ts`，`FunctionalAdminShell` 自动继承导航子项，`App.svelte` 承载深链与面包屑，`AIGovernanceCenter` 保持按需懒加载，新建 `OpenCapabilitiesConfig.svelte` 独立管理数据请求与交互状态。
+- [x] **finesse-ui / product workflow:** `SOUL=3-4`, `SPECTACLE=1`, `DENSITY=8`。清晰区分只读用户与管理员权限：非管理员禁用配置开关与 Key 签发，展示明确权限解释；安装脚本与深链一键复制提供即时无侵入 Tooltip 反馈；支持 1440/1024/760/480 断点自适应，触控目标不低于 44px。
+- [x] **Shared hierarchy and ownership:** `ai-governance-sections.ts` 拥有路由与权限定义；`AIGovernanceCenter` 拥有 Section 渲染与懒加载守卫；`OpenCapabilitiesConfig` 拥有开放能力概览查询、乐观锁保存、Key 签发对话框与客户端配置生成。
+- [x] **Validation scope:** Go 单元测试覆盖动态配置保存/生效、密钥签发/撤销、Skill 打包下载与 install.sh 脚本输出；前端执行 `pnpm run check` 与构建验证；验证 4 个视口断点无横向溢出。
+
+### Phases
+
+- [x] Phase 1: 扩展后端配置模型与动态开关，增加 AI 治理开放能力 API
+- [x] Phase 2: 实现在线 Skill 仓库分发与 `/open/v1/install.sh` 远程安装脚本
+- [x] Phase 3: 扩展前端 AI 治理分区，实现 `OpenCapabilitiesConfig.svelte` 页面及组合拳交互
+- [x] Phase 4: 全仓编译验证、单元测试与安装脚本连通性测试
+
+---
+
+
 
 ## 2026-09-27 Final verification and one-time commit closeout
 

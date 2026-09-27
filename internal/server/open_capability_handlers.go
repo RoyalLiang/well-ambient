@@ -46,7 +46,7 @@ func (s *Server) ensureOpenCapabilities() {
 	if s.openAccess == nil {
 		s.openAccess = openaccess.New(db.DB)
 	}
-	s.openFeatures = loadOpenCapabilityFeatures()
+	s.syncOpenFeaturesFromConfig()
 	if s.openLimiter == nil {
 		s.openLimiter = openaccess.NewLimiter(db.DB, nil)
 	}
@@ -79,6 +79,12 @@ func (s *Server) registerOpenCapabilityRoutes() {
 	if s.openMCPHandler != nil {
 		s.mux.Handle("/mcp", s.withOpenMCP(s.openMCPHandler))
 	}
+	s.mux.HandleFunc("GET /open/v1/skills", s.handleGetOpenSkillsList)
+	s.mux.HandleFunc("GET /open/v1/skills/{name}", s.handleGetOpenSkillInfo)
+	s.mux.HandleFunc("GET /open/v1/skills/{name}/skill.md", s.handleGetOpenSkillDoc)
+	s.mux.HandleFunc("GET /open/v1/skills/{name}/manifest", s.handleGetOpenSkillManifest)
+	s.mux.HandleFunc("GET /open/v1/skills/{name}/archive", s.handleGetOpenSkillArchive)
+	s.mux.HandleFunc("GET /open/v1/install.sh", s.handleGetOpenInstallScript)
 }
 
 func (s *Server) withOpenCapability(toolName string, next openHandler) http.HandlerFunc {
@@ -152,6 +158,31 @@ func (s *Server) withOpenCapability(toolName string, next openHandler) http.Hand
 			result.Status = http.StatusOK
 		}
 		writeOpenJSON(w, result.Status, result.Body)
+	}
+}
+
+func (s *Server) syncOpenFeaturesFromConfig() {
+	if s == nil || s.config == nil {
+		return
+	}
+	cfg := s.config.OpenCapabilities
+	if cfg.Enabled {
+		s.openFeatures = openCapabilityFeatures{
+			Read:    cfg.ReadEnabled,
+			Prepare: cfg.PrepareEnabled,
+			Execute: cfg.ExecuteEnabled,
+		}
+		return
+	}
+	envFeatures := loadOpenCapabilityFeatures()
+	if envFeatures.Read || envFeatures.Prepare || envFeatures.Execute {
+		s.openFeatures = envFeatures
+		return
+	}
+	s.openFeatures = openCapabilityFeatures{
+		Read:    false,
+		Prepare: false,
+		Execute: false,
 	}
 }
 

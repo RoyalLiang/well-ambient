@@ -22,6 +22,7 @@ type Config struct {
 	AI               AIConfig               `yaml:"ai" json:"ai"`
 	PerformanceBrain PerformanceBrainConfig `yaml:"performance_brain" json:"performance_brain"`
 	SolutionCatalog  SolutionCatalogConfig  `yaml:"solution_catalog" json:"solution_catalog"`
+	OpenCapabilities OpenCapabilitiesConfig `yaml:"open_capabilities" json:"open_capabilities"`
 }
 
 // DatabaseConfig is bootstrap-only infrastructure configuration. It is read
@@ -448,4 +449,13 @@ func (c *AIConfig) NormalizeReasoningEffort() error {
 	default:
 		return fmt.Errorf("推理等级必须为 low、middle/medium、high、xhigh 或留空使用服务商默认")
 	}
+}
+
+// OpenCapabilitiesConfig controls open capabilities and MCP access switches.
+// All fields default to false (disabled).
+type OpenCapabilitiesConfig struct {
+	Enabled        bool `yaml:"enabled" json:"enabled"`
+	ReadEnabled    bool `yaml:"read_enabled" json:"read_enabled"`
+	PrepareEnabled bool `yaml:"prepare_enabled" json:"prepare_enabled"`
+	ExecuteEnabled bool `yaml:"execute_enabled" json:"execute_enabled"`
 }
