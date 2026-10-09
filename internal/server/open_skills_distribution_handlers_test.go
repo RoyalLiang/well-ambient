@@ -15,10 +15,24 @@ import (
 )
 
 func runIsolatedOpenInstaller(t *testing.T, failedSkill string) (string, error) {
+	output, _, err := runOpenInstallerAt(t, failedSkill, []string{".agents"}, nil)
+	return output, err
+}
+
+func runOpenInstallerAt(t *testing.T, failedSkill string, roots, args []string) (string, string, error) {
 	t.Helper()
 	workDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(workDir, ".agents", "skills"), 0o700); err != nil {
+	workDir, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workDir, "home"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range roots {
+		if err := os.MkdirAll(filepath.Join(workDir, root), 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	archiveDir := filepath.Join(workDir, "fixtures")
 	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
@@ -61,11 +75,68 @@ func runIsolatedOpenInstaller(t *testing.T, failedSkill string) (string, error) 
   cp "$WELL_AMBIENT_INSTALL_TEST_ARCHIVES/$skill.tar.gz" "$output"
 }
 `
-	command := exec.Command("bash", "--noprofile", "--norc", "-c", stub+renderInstallScript("https://source.example"))
+	commandArgs := append([]string{"--noprofile", "--norc", "-c", stub + renderInstallScript("https://source.example"), "well-ambient-install"}, args...)
+	command := exec.Command("bash", commandArgs...)
 	command.Dir = workDir
 	command.Env = append(os.Environ(), "WELL_AMBIENT_INSTALL_TEST_ARCHIVES="+archiveDir, "WELL_AMBIENT_INSTALL_TEST_FAILED_SKILL="+failedSkill)
+	command.Env = append(command.Env, "HOME="+filepath.Join(workDir, "home"), "CODEX_HOME=", "CLAUDE_CONFIG_DIR=")
 	output, err := command.CombinedOutput()
-	return string(output), err
+	return string(output), workDir, err
+}
+
+func TestOpenInstallScriptSelectsClientRoots(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		roots, args []string
+		want        string
+	}{
+		{"claude-only", []string{"home/.claude"}, nil, "home/.claude/skills"},
+		{"codex-before-agents", []string{".agents", "home/.codex"}, []string{"--yes"}, "home/.codex/skills"},
+		{"custom-root-with-spaces", nil, []string{"--root", "custom root"}, "custom root/skills"},
+		{"explicit-claude", []string{"home/.codex", "home/.claude"}, []string{"--root", "~/.claude"}, "home/.claude/skills"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			output, dir, err := runOpenInstallerAt(t, "", scenario.roots, scenario.args)
+			if err != nil {
+				t.Fatalf("install failed: %v\n%s", err, output)
+			}
+			want := filepath.Join(dir, scenario.want)
+			if !strings.Contains(output, "目标目录: "+want) {
+				t.Fatalf("wrong directory:\n%s", output)
+			}
+			if _, err := os.Stat(filepath.Join(want, "jira-analysis", "SKILL.md")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOpenInstallScriptRequiresChoiceWithoutTerminal(t *testing.T) {
+	for _, roots := range [][]string{nil, {"home/.codex", "home/.claude"}} {
+		output, _, err := runOpenInstallerAt(t, "", roots, nil)
+		if err == nil || !strings.Contains(output, "--root") {
+			t.Fatalf("expected explicit root requirement: %v\n%s", err, output)
+		}
+		if strings.Contains(output, "正在下载") {
+			t.Fatalf("download before directory selection:\n%s", output)
+		}
+	}
+}
+
+func TestOpenInstallScriptSingleSkill(t *testing.T) {
+	output, dir, err := runOpenInstallerAt(t, "", nil, []string{"--root", ".claude", "--skill", "jira-analysis"})
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/jira-analysis/SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/board-decision")); !os.IsNotExist(err) {
+		t.Fatal("unexpected other skill")
+	}
+	if !strings.Contains(output, "MCP 尚未配置") {
+		t.Fatalf("missing remaining setup:\n%s", output)
+	}
 }
 
 func TestOpenInstallScriptReportsPartialFailureAndExitsNonzero(t *testing.T) {
@@ -86,7 +157,7 @@ func TestOpenInstallScriptReportsAllSuccessfulDownloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("isolated successful installation: %v %s", err, output)
 	}
-	if !strings.Contains(output, "已成功安装: jira-analysis board-decision code-review-reader") || !strings.Contains(output, "所有就绪") {
+	if !strings.Contains(output, "已成功安装: jira-analysis board-decision code-review-reader") || !strings.Contains(output, "Skill 文件安装完成") || !strings.Contains(output, "MCP 尚未配置") {
 		t.Fatalf("successful installation summary = %s", output)
 	}
 }

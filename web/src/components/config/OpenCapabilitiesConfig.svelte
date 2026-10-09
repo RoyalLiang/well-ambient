@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { showToast } from '../../lib/toast';
+  import { copyToClipboard } from '../../lib/clipboard';
   import { buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../../lib/openCapabilityInstall';
   import Button from '../shared/Button.svelte';
   import Switch from '../shared/Switch.svelte';
@@ -228,16 +229,18 @@
     }
   }
 
-  function copyText(text: string, label = '内容') {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(() => {
-        showToast(`${label}已复制到剪贴板！`, { type: 'success' });
-      }).catch(() => {
-        prompt('请手动复制:', text);
-      });
-    } else {
-      prompt('请手动复制:', text);
+  let manualCopy: { text: string; label: string } | null = null;
+
+  async function copyText(text: string, label = '内容') {
+    if (await copyToClipboard(text)) {
+      showToast(`${label}已复制到剪贴板`, { type: 'success' });
+      return;
     }
+    manualCopy = { text, label };
+  }
+
+  function selectCopyText(event: FocusEvent) {
+    (event.currentTarget as HTMLTextAreaElement).select();
   }
 
   function closeIssueModal() {
@@ -461,7 +464,7 @@
       <div class="card-header">
         <div class="title-wrap">
           <h4 id="install-section-title">远程客户端接入与在线安装</h4>
-          <span class="sub-hint">采用“系统协议唤起 + 远程安装脚本 + 在线 Skill 仓库 + 规范配置导出”四大通路无缝接入。</span>
+            <span class="sub-hint">先安装客户端 Skill，再配置 MCP 地址与本地凭证。</span>
         </div>
       </div>
 
@@ -503,7 +506,7 @@
             <span class="combo-title">远程安装脚本 (One-line Bash Installer)</span>
           </div>
           <p class="combo-desc">
-            下载官方 Skill 并合并占位配置。安装完成后，在客户端本地填写 API Key：
+              下载官方 Skill，探测 Codex / Claude Code 技能目录，并在终端中选择或输入安装根目录。指定目录可在命令末尾加 <code>-s -- --root "$HOME/.codex"</code>；Skill 将放入该目录下的 <code>skills</code>。MCP 凭证需在客户端本地填写。
           </p>
           <div class="code-snippet-bar">
             <code>{installCommand}</code>
@@ -556,7 +559,7 @@
                 <Button
                   variant="ghost"
                   size="small"
-                  on:click={() => copyText(`curl -fsSL "${skill.archive_url}" | tar -xz -C .agents/skills`, '安装命令')}
+                  on:click={() => copyText(`${installCommand} -s -- --skill ${skill.name}`, '安装命令')}
                 >
                   复制安装指令
                 </Button>
@@ -861,6 +864,18 @@
     </section>
   {/if}
 
+  <Modal show={manualCopy !== null} title={`复制${manualCopy?.label || '内容'}`} on:close={() => manualCopy = null}>
+    <div class="manual-copy-body">
+      <p id="manual-copy-hint">浏览器未允许自动复制。点击下方文本后，按 ⌘C / Ctrl+C，或使用系统的“复制”菜单。</p>
+      <label for="manual-copy-text">{manualCopy?.label || '待复制内容'}</label>
+      <textarea id="manual-copy-text" class="manual-copy-text" readonly rows="6" value={manualCopy?.text || ''} aria-describedby="manual-copy-hint" on:focus={selectCopyText} on:click={(event) => event.currentTarget.select()}></textarea>
+    </div>
+    <svelte:fragment slot="footer">
+      <Button variant="secondary" on:click={() => document.getElementById('manual-copy-text')?.focus()}>选中文本</Button>
+      <Button variant="primary" on:click={() => manualCopy = null}>关闭</Button>
+    </svelte:fragment>
+  </Modal>
+
   <!-- Issue New Key Modal (Shared Modal Component) -->
   <Modal
     show={showIssueModal}
@@ -945,6 +960,28 @@
 </div>
 
 <style>
+  .manual-copy-body {
+    display: grid;
+    gap: var(--wa-space-3);
+    color: var(--wa-text-main);
+  }
+  .manual-copy-body p { margin: 0; line-height: 1.6; }
+  .manual-copy-body label { font-weight: 600; }
+  .manual-copy-text {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    resize: vertical;
+    padding: var(--wa-space-3);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-bg-rail-soft);
+    color: var(--wa-rail-text-strong);
+    font: 12px/1.6 var(--wa-font-mono);
+    overflow-wrap: anywhere;
+  }
+  .manual-copy-text:focus-visible { outline: 2px solid var(--wa-accent); outline-offset: 2px; }
+
   /* Shared Phase 41 material; only top-level surfaces blur. */
   .open-capabilities-view {
     display: flex;

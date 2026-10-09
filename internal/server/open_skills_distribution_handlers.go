@@ -2,10 +2,13 @@ package server
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -153,6 +156,8 @@ func (s *Server) handleGetOpenSkillManifest(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleGetOpenSkillArchive(w http.ResponseWriter, r *http.Request) {
+	// This stable URL must not retain archive bytes from a previous image.
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	name := strings.TrimSpace(r.PathValue("name"))
 	if !isValidSkillName(name) {
 		http.Error(w, "Invalid skill name", http.StatusBadRequest)
@@ -164,14 +169,11 @@ func (s *Server) handleGetOpenSkillArchive(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+"-1.0.0.tar.gz"))
-	w.Header().Set("Cache-Control", "public, max-age=300")
-
-	gw := gzip.NewWriter(w)
-	defer gw.Close()
+	// Finish packing before committing HTTP 200. Writing an error to a live
+	// gzip stream corrupts the archive and prevents curl -f detecting failure.
+	var archive bytes.Buffer
+	gw := gzip.NewWriter(&archive)
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
 
 	err := filepath.Walk(skillDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -203,9 +205,21 @@ func (s *Server) handleGetOpenSkillArchive(w http.ResponseWriter, r *http.Reques
 		_, err = io.Copy(tw, file)
 		return err
 	})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to pack skill: %v", err), http.StatusInternalServerError)
+	if err == nil {
+		err = tw.Close()
 	}
+	if err == nil {
+		err = gw.Close()
+	}
+	if err != nil {
+		log.Printf("Failed to pack skill %q: %v", name, err)
+		http.Error(w, "Failed to pack skill", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+"-1.0.0.tar.gz"))
+	w.Header().Set("Content-Length", fmt.Sprint(archive.Len()))
+	_, _ = w.Write(archive.Bytes())
 }
 
 func (s *Server) handleGetOpenInstallScript(w http.ResponseWriter, r *http.Request) {
@@ -249,120 +263,10 @@ func isValidSkillName(name string) bool {
 	return false
 }
 
+//go:embed open_skills_install.sh
+var openSkillsInstallScript string
+
 func renderInstallScript(baseURL string) string {
-	return fmt.Sprintf(`#!/usr/bin/env bash
-# ==============================================================================
-# well-ambient Open Capabilities & Skills Online Installer
-# Downloads official skills and shows a secret-free local MCP configuration
-# ==============================================================================
-set -euo pipefail
-
-BASE_URL=%s
-
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-echo -e "${BLUE}=== well-ambient 开放能力与 Skill 在线安装器 ===${NC}"
-echo -e "服务端地址: ${BASE_URL}"
-
-# 1. 检查连通性
-echo -ne "正在探测服务端健康状态... "
-if curl -fsSL "${BASE_URL}/health" >/dev/null 2>&1; then
-    echo -e "${GREEN}正常${NC}"
-else
-    echo -e "${YELLOW}警告: 服务端 /health 无法连接，请确认网络或服务端是否在线。${NC}"
-fi
-
-# 2. 准备 Skill 存储目标目录
-SKILLS_DIR=""
-if [ -d ".agents/skills" ]; then
-    SKILLS_DIR=".agents/skills"
-elif [ -d "$HOME/.codex/skills" ]; then
-    SKILLS_DIR="$HOME/.codex/skills"
-else
-    mkdir -p "$HOME/.codex/skills"
-    SKILLS_DIR="$HOME/.codex/skills"
-fi
-
-echo -e "微内核技能安装目标目录: ${BLUE}${SKILLS_DIR}${NC}"
-
-# 3. 在线下载并解压官方 Skill 包
-SKILLS=("jira-analysis" "board-decision" "code-review-reader")
-INSTALLED_SKILLS=()
-FAILED_SKILLS=()
-for skill in "${SKILLS[@]}"; do
-    echo -ne "正在下载并安装 Skill [${skill}]... "
-    TMP_FILE=$(mktemp)
-    if curl -fsSL "${BASE_URL}/open/v1/skills/${skill}/archive" -o "${TMP_FILE}" 2>/dev/null &&
-       tar -xzf "${TMP_FILE}" -C "${SKILLS_DIR}"; then
-        INSTALLED_SKILLS+=("${skill}")
-        echo -e "${GREEN}完成${NC}"
-    else
-        FAILED_SKILLS+=("${skill}")
-        echo -e "${RED}失败 (请检查网络或技能包)${NC}"
-    fi
-    rm -f "${TMP_FILE}"
-done
-if [ "${#FAILED_SKILLS[@]}" -gt 0 ]; then
-    echo -e "已成功安装: ${INSTALLED_SKILLS[*]:-无}"
-    echo -e "${RED}安装失败: ${FAILED_SKILLS[*]}${NC}"
-    echo -e "请解决失败原因后重新运行安装命令。"
-    exit 1
-fi
-
-# 4. 配置 MCP 客户端
-MCP_URL="${BASE_URL}/mcp"
-
-# A. Claude Desktop 配置检查
-CLAUDE_CONFIG_DIR=""
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    CLAUDE_CONFIG_DIR="$HOME/Library/Application Support/Claude"
-elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    CLAUDE_CONFIG_DIR="$HOME/.config/Claude"
-fi
-
-if [ -n "${CLAUDE_CONFIG_DIR}" ] && [ -d "${CLAUDE_CONFIG_DIR}" ]; then
-    CLAUDE_CONFIG_FILE="${CLAUDE_CONFIG_DIR}/claude_desktop_config.json"
-    echo -e "检测到 Claude Desktop 安装环境: ${BLUE}${CLAUDE_CONFIG_FILE}${NC}"
-fi
-
-# B. Cursor 检查
-if [ -d "$HOME/.cursor" ] || [ -d ".cursor" ]; then
-    echo -e "检测到 Cursor 编辑器工作环境"
-fi
-
-echo ""
-echo -e "${GREEN}✓ 技能安装完成！${NC}"
-echo -e "目标目录: ${BLUE}${SKILLS_DIR}${NC}"
-echo -e "已成功安装: ${INSTALLED_SKILLS[*]}"
-echo ""
-echo -e "${BLUE}=== 客户端接入配置指引 ===${NC}"
-echo -e "请在客户端本地配置 Authorization，将 <YOUR_API_KEY> 替换为真实凭证。"
-echo -e "不要将 API Key 放入下载地址、命令 URL 或客户端安装深链。"
-
-echo ""
-echo -e "1. 【Cursor / VS Code (Streamable HTTP 模式)】:"
-echo -e "在 .cursor/mcp.json 或 settings 中添加:"
-cat <<EOF
-{
-  "mcpServers": {
-    "well-ambient": {
-      "url": "${MCP_URL}",
-      "headers": {
-        "Authorization": "Bearer <YOUR_API_KEY>"
-      }
-    }
-  }
-}
-EOF
-
-echo ""
-echo -e "2. 【本地凭证配置】:"
-echo -e "在 Cursor 或其他 MCP 客户端保存上面的配置模板后，本地填写 Authorization。"
-echo ""
-echo -e "${GREEN}所有就绪！欢迎使用 well-ambient 开放能力。${NC}"
-`, "'"+strings.ReplaceAll(baseURL, "'", "'\"'\"'")+"'")
+	quotedURL := "'" + strings.ReplaceAll(baseURL, "'", "'\"'\"'") + "'"
+	return strings.Replace(openSkillsInstallScript, "__WELL_AMBIENT_BASE_URL__", quotedURL, 1)
 }

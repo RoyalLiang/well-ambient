@@ -42,12 +42,12 @@ COPY --from=server-build /out/well-ambient /usr/local/bin/well-ambient
 COPY --from=server-build /out/open-access-admin /usr/local/bin/open-access-admin
 COPY --from=server-build /out/open-mcp-stdio /usr/local/bin/open-mcp-stdio
 COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY .agents/skills/jira-analysis/ .agents/skills/jira-analysis/
-COPY .agents/skills/board-decision/ .agents/skills/board-decision/
-COPY .agents/skills/code-review-reader/ .agents/skills/code-review-reader/
+COPY --chown=1000:1000 .agents/skills/jira-analysis/ .agents/skills/jira-analysis/
+COPY --chown=1000:1000 .agents/skills/board-decision/ .agents/skills/board-decision/
+COPY --chown=1000:1000 .agents/skills/code-review-reader/ .agents/skills/code-review-reader/
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-USER ambient
+USER 1000:1000
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/well-ambient"]
 CMD ["--config", "/etc/well-ambient/config.yaml", "--skip-migrate"]
