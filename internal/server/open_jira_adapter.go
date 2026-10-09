@@ -27,6 +27,16 @@ func (a openJiraDecisionAdapter) ReadIssueState(
 	if err != nil {
 		return decisioncommands.JiraState{}, err
 	}
+	return jiraStateFromIssue(issue)
+}
+
+func jiraStateFromIssue(issue telemetry.JiraIssue) (decisioncommands.JiraState, error) {
+	issueKey := strings.ToUpper(strings.TrimSpace(issue.Key))
+	project := strings.ToUpper(strings.TrimSpace(issue.Fields.Project.Key))
+	parts := strings.SplitN(issueKey, "-", 2)
+	if len(parts) != 2 || parts[0] != project || parts[1] == "" || project == "" {
+		return decisioncommands.JiraState{}, fmt.Errorf("Jira issue identity and project are unavailable or inconsistent")
+	}
 	assignee := ""
 	if issue.Fields.Assignee != nil {
 		assignee = strings.TrimSpace(issue.Fields.Assignee.Name)
@@ -36,9 +46,10 @@ func (a openJiraDecisionAdapter) ReadIssueState(
 		updatedAt = time.Now().UTC()
 	}
 	state := decisioncommands.JiraState{
+		IssueKey: issueKey, ProjectRef: project,
 		Assignee: assignee, DueDate: strings.TrimSpace(issue.Fields.DueDate),
 		UpdatedAt:   updatedAt,
-		EvidenceRef: "jira-issue:" + strings.ToUpper(strings.TrimSpace(issueKey)) + "@" + updatedAt.UTC().Format(time.RFC3339Nano),
+		EvidenceRef: "jira-issue:" + issueKey + "@" + updatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if issue.Fields.Security != nil {
 		state.SecurityID = strings.TrimSpace(issue.Fields.Security.ID)

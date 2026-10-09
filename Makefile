@@ -4,6 +4,11 @@ SHELL := /bin/bash
 VERSION ?=
 COMMIT ?=
 BUILD_TIME ?=
+IMAGE_NAME ?= well-ambient
+BUILD_COUNT ?=
+BUILD_BRANCH ?=
+PYTHON ?= python3
+IMAGE_MAKE := $(MAKE)
 PLATFORM ?= linux/amd64
 GOPROXY ?= https://goproxy.cn,direct
 RELEASE_DIR := deploy/generated
@@ -18,7 +23,7 @@ PRODUCTION_WEB_IMAGE := $(shell sed -n 's/^WELL_AMBIENT_WEB_IMAGE=//p' deploy/.e
 SERVER_IMAGE ?= $(if $(PRODUCTION_SERVER_IMAGE),$(PRODUCTION_SERVER_IMAGE),well-ambient-server)
 WEB_IMAGE ?= $(if $(PRODUCTION_WEB_IMAGE),$(PRODUCTION_WEB_IMAGE),well-ambient-web)
 
-.PHONY: dev dev-setup verify release-metadata release-info images image-bundle compose-bundle release deploy rollback
+.PHONY: dev dev-setup verify release-metadata release-info images docker-images docker-image image-bundle compose-bundle release deploy rollback
 
 dev:
 	./scripts/dev.sh
@@ -54,6 +59,14 @@ images: release-metadata
 			--build-arg COMMIT="$$WELL_AMBIENT_COMMIT" \
 			--build-arg BUILD_TIME="$$WELL_AMBIENT_BUILD_TIME" \
 			-t "$(WEB_IMAGE):$$WELL_AMBIENT_VERSION" .
+
+# Immutable paired images: <name>.<branch>.<HEAD12>.<Shanghai yymmdd>.b<attempt>.
+# Counters are local; CI may supply a unique BUILD_COUNT. Failed attempts keep it.
+docker-images docker-image:
+	IMAGE_NAME="$(IMAGE_NAME)" BUILD_COUNT="$(BUILD_COUNT)" BUILD_BRANCH="$(BUILD_BRANCH)" \
+		BUILD_TIME="$(BUILD_TIME)" COMMIT="$(COMMIT)" \
+		SERVER_IMAGE="$(SERVER_IMAGE)" WEB_IMAGE="$(WEB_IMAGE)" \
+		$(PYTHON) ./scripts/docker-images.py --make "$(IMAGE_MAKE)"
 
 image-bundle: images
 	. "$(RELEASE_ENV)"; \

@@ -7,6 +7,7 @@
 
   export let currentUserPermissions: string[] = [];
   export let aiReady: boolean | null = null;
+  export let governanceSurface = false;
 
   type ContextDocument = {
     id: number;
@@ -330,7 +331,7 @@
 </script>
 
 {#if canRead}
-  <section class="corpus-source-library" aria-label="原始资料与导入">
+  <section class="corpus-source-library" class:governance-surface={governanceSurface} aria-label="原始资料与导入">
     <header class="source-library-header">
       <div>
         <h4>原始资料与导入</h4>
@@ -470,6 +471,7 @@
               description="输入时即时排版，当前行保留 Markdown 语法；提交后保存内容仍以 LLM 返回的解析稿为准"
               placeholder="# 系统设计资料\n\n架构、流程、边界、风险或术语内容…"
               minHeight={520}
+              embedded={governanceSurface}
               on:change={(event) => importContent = event.detail}
             />
           {/if}
@@ -512,6 +514,7 @@
             label="LLM 解析稿"
             description="由模型返回并按版本保存；候选和正式事实均保留文件哈希与此解析版本引用"
             minHeight={560}
+            embedded={governanceSurface}
           />
         {:else}
           <div class="source-empty workbench-empty">
@@ -524,6 +527,56 @@
 {/if}
 
 <style>
+  .corpus-source-library.governance-surface .source-directory,
+  .corpus-source-library.governance-surface .source-workbench {
+    min-width: 0;
+    padding: var(--wa-space-4);
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+
+  .governance-surface .source-list {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .governance-surface .source-list > button:hover,
+  .governance-surface .source-list > button.active {
+    background: var(--wa-row-active);
+  }
+
+  .governance-surface .source-library-grid {
+    gap: var(--wa-space-4);
+  }
+
+  .governance-surface .source-workbench-head > div:first-child,
+  .governance-surface .source-workbench-head span,
+  .governance-surface .source-facts code {
+    overflow-wrap: anywhere;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .corpus-source-library.governance-surface .source-directory,
+    .corpus-source-library.governance-surface .source-workbench {
+      background: var(--wa-admin-list-surface-solid-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .corpus-source-library.governance-surface .source-directory,
+    .corpus-source-library.governance-surface .source-workbench {
+      background: var(--wa-admin-list-surface-solid-background);
+    }
+  }
+
   .corpus-source-library { min-width: 0; display: grid; gap: 16px; color: var(--scw-text, #293847); }
   .source-library-header, .source-workbench-head, .source-directory-head, .source-actions, .source-message.success { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .source-library-header { padding-bottom: 14px; border-bottom: 1px solid var(--scw-line, rgba(92, 116, 137, .16)); }

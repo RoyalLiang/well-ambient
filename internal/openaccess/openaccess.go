@@ -587,7 +587,44 @@ func (s *Service) RecordInvocation(ctx context.Context, invocation Invocation) e
 	if record.RequestID == "" {
 		return newError("invalid_request", "request id is required")
 	}
-	return s.db.WithContext(ctx).Create(&record).Error
+	conflict := clause.OnConflict{
+		Columns:   []clause.Column{{Name: "request_id"}},
+		DoNothing: true,
+	}
+	if invocation.Outcome != "started" {
+		conflict.DoNothing = false
+		conflict.DoUpdates = clause.AssignmentColumns([]string{
+			"target_refs_json", "duration_ms", "outcome", "error_code",
+		})
+		// Only the owner of an unfinished invocation may finalize it. A random
+		// request ID collision cannot rewrite another source's history.
+		for _, field := range []struct {
+			name  string
+			value any
+		}{
+			{"source_id", record.SourceID}, {"key_id", record.KeyID},
+			{"transport", record.Transport}, {"tool_name", record.ToolName},
+			{"tool_version", record.ToolVersion}, {"policy_version", record.PolicyVersion},
+			{"outcome", "started"},
+		} {
+			conflict.Where.Exprs = append(conflict.Where.Exprs, clause.Eq{
+				Column: clause.Column{Table: clause.CurrentTable, Name: field.name},
+				Value:  field.value,
+			})
+		}
+	}
+	// Request cancellation must not erase the evidence of work already run.
+	// Keep audit persistence bounded even when the caller's deadline has ended.
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	result := s.db.WithContext(auditCtx).Clauses(conflict).Create(&record)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return newError("audit_conflict", "invocation audit request id is already owned or finalized")
+	}
+	return nil
 }
 
 func RandomID(prefix string) (string, error) {

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,151 @@ import (
 	"well-ambient/internal/db"
 	"well-ambient/internal/decisioncommands"
 	"well-ambient/internal/openaccess"
+
+	"gorm.io/gorm"
 )
+
+func TestOpenHTTPInvocationAuditFailurePreventsExecution(t *testing.T) {
+	srv, credential, _ := setupOpenCapabilityServer(t)
+	const callbackName = "test_open_invocation_audit_failure"
+	if err := db.DB.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "capability_invocations" {
+			tx.AddError(errors.New("audit storage unavailable"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.DB.Callback().Create().Remove(callbackName) })
+	executed := false
+	handler := srv.withOpenCapability("jira_describe_schema", func(_ *http.Request, _ openCall) (openResult, error) {
+		executed = true
+		return openResult{Body: map[string]bool{"executed": true}}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "/open/v1/jira/schema", nil)
+	request.Header.Set("Authorization", "Bearer "+credential.Secret)
+	recorder := httptest.NewRecorder()
+	handler(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), `"code":"audit_unavailable"`) {
+		t.Fatalf("audit failure response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if executed {
+		t.Fatal("business handler ran without a durable invocation audit")
+	}
+}
+
+func TestOpenHTTPInvocationAuditSurvivesCancellation(t *testing.T) {
+	srv, credential, _ := setupOpenCapabilityServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler := srv.withOpenCapability("jira_describe_schema", func(_ *http.Request, _ openCall) (openResult, error) {
+		cancel()
+		return openResult{Body: map[string]bool{"completed": true}, TargetRefs: []string{"WA-1"}}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "/open/v1/jira/schema", nil).WithContext(ctx)
+	request.Header.Set("Authorization", "Bearer "+credential.Secret)
+	recorder := httptest.NewRecorder()
+	handler(recorder, request)
+	var invocation db.CapabilityInvocation
+	if err := db.DB.First(&invocation, "request_id = ?", recorder.Header().Get("X-Request-ID")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Outcome != "succeeded" || !strings.Contains(invocation.TargetRefsJSON, "WA-1") {
+		t.Fatalf("cancelled request lost its completed audit: %+v", invocation)
+	}
+}
+
+func TestOpenHTTPInvocationCompletionFailureRequiresReconciliation(t *testing.T) {
+	srv, credential, _ := setupOpenCapabilityServer(t)
+	const callbackName = "test_open_http_completion_failure"
+	t.Cleanup(func() { db.DB.Callback().Create().Remove(callbackName) })
+	executions := 0
+	handler := srv.withOpenCapability("jira_describe_schema", func(_ *http.Request, _ openCall) (openResult, error) {
+		executions++
+		if err := db.DB.Callback().Create().Before("gorm:create").Register(callbackName, func(tx *gorm.DB) {
+			if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "capability_invocations" {
+				tx.AddError(errors.New("audit completion unavailable"))
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return openResult{Body: map[string]bool{"completed": true}}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "/open/v1/jira/schema", nil)
+	request.Header.Set("Authorization", "Bearer "+credential.Secret)
+	recorder := httptest.NewRecorder()
+	handler(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || executions != 1 {
+		t.Fatalf("completion failure response = %d %s, executions=%d", recorder.Code, recorder.Body.String(), executions)
+	}
+	requestID := recorder.Header().Get("X-Request-ID")
+	for _, text := range []string{`"code":"audit_unavailable"`, "business result may already have occurred", requestID, "do not retry blindly"} {
+		if !strings.Contains(recorder.Body.String(), text) {
+			t.Fatalf("completion failure response missing %q: %s", text, recorder.Body.String())
+		}
+	}
+	var invocation db.CapabilityInvocation
+	if err := db.DB.Where("request_id = ?", requestID).First(&invocation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if invocation.Outcome != "started" {
+		t.Fatalf("completion failure erased admission evidence: %+v", invocation)
+	}
+}
+
+func TestOpenInvocationAuditPreservesOwnershipAndCreationTime(t *testing.T) {
+	srv, credential, policy := setupOpenCapabilityServer(t)
+	invocation := openaccess.Invocation{
+		RequestID: "audit-ownership", Identity: openaccess.Identity{SourceID: "trusted-agent", KeyID: credential.KeyID},
+		Transport: "http", ToolName: "jira_describe_schema", ToolVersion: "1", PolicyVersion: policy.Version,
+		Outcome: "started",
+	}
+	if err := srv.openAccess.RecordInvocation(context.Background(), invocation); err != nil {
+		t.Fatal(err)
+	}
+	var original db.CapabilityInvocation
+	if err := db.DB.Where("request_id = ?", invocation.RequestID).First(&original).Error; err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*openaccess.Invocation){
+		"source":    func(v *openaccess.Invocation) { v.Identity.SourceID = "another-source" },
+		"key":       func(v *openaccess.Invocation) { v.Identity.KeyID = "another-key" },
+		"transport": func(v *openaccess.Invocation) { v.Transport = "mcp-http" },
+		"tool":      func(v *openaccess.Invocation) { v.ToolName = "decision_execute" },
+		"version":   func(v *openaccess.Invocation) { v.ToolVersion = "another-version" },
+		"policy":    func(v *openaccess.Invocation) { v.PolicyVersion++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			other := invocation
+			other.Outcome = "succeeded"
+			mutate(&other)
+			if err := srv.openAccess.RecordInvocation(context.Background(), other); openaccess.ErrorCode(err) != "audit_conflict" {
+				t.Fatalf("mismatched %s overwrote an existing invocation: %v", name, err)
+			}
+		})
+	}
+	invocation.Outcome = "succeeded"
+	invocation.TargetRefs = []string{"WA-1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := srv.openAccess.RecordInvocation(ctx, invocation); err != nil {
+		t.Fatal(err)
+	}
+	var final db.CapabilityInvocation
+	if err := db.DB.Where("request_id = ?", invocation.RequestID).First(&final).Error; err != nil {
+		t.Fatal(err)
+	}
+	if final.Outcome != "succeeded" || !final.CreatedAt.Equal(original.CreatedAt) || final.ID != original.ID {
+		t.Fatalf("final invocation changed ownership/creation time: original=%+v final=%+v", original, final)
+	}
+	invocation.Outcome = "failed"
+	if err := srv.openAccess.RecordInvocation(context.Background(), invocation); openaccess.ErrorCode(err) != "audit_conflict" {
+		t.Fatalf("finalized invocation could be overwritten: %v", err)
+	}
+	invocation.Outcome = "started"
+	if err := srv.openAccess.RecordInvocation(context.Background(), invocation); openaccess.ErrorCode(err) != "audit_conflict" {
+		t.Fatalf("finalized invocation could be restarted: %v", err)
+	}
+}
 
 type openHTTPJiraFake struct {
 	mu          sync.Mutex
@@ -25,13 +170,13 @@ type openHTTPJiraFake struct {
 }
 
 func (f *openHTTPJiraFake) ReadIssueState(
-	context.Context,
-	db.JiraExecutionBinding,
-	string,
+	_ context.Context, _ db.JiraExecutionBinding, issueKey string,
 ) (decisioncommands.JiraState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.state, nil
+	state := f.state
+	state.IssueKey = issueKey
+	return state, nil
 }
 
 func (f *openHTTPJiraFake) Assign(
@@ -334,7 +479,8 @@ func TestOpenReviewDTOAndDecisionOperationLifecycle(t *testing.T) {
 	}
 
 	fake := &openHTTPJiraFake{state: decisioncommands.JiraState{
-		Assignee: "Alice", DueDate: "2026-09-30", UpdatedAt: now, EvidenceRef: "jira:before",
+		ProjectRef: "WA",
+		Assignee:   "Alice", DueDate: "2026-09-30", UpdatedAt: now, EvidenceRef: "jira:before",
 	}}
 	srv.decisionCommands = decisioncommands.New(db.DB, srv.openAccess, fake)
 	assigneeBody := `{"issue_key":"WA-9","assignee":"Bob"}`

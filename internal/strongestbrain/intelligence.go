@@ -179,6 +179,7 @@ func (ie *IntelligenceEngine) ComputeReport(ctx context.Context, limit int) (*Ca
 
 	totalPromptTokens := 0
 	totalDuration := int64(0)
+	bindingsByRun := ie.loadRunBindings(ctx, agentRuns)
 
 	// Process AgentRuns
 	for _, run := range agentRuns {
@@ -196,9 +197,7 @@ func (ie *IntelligenceEngine) ComputeReport(ctx context.Context, limit int) (*Ca
 		totalPromptTokens += run.PromptTokens
 		totalDuration += run.DurationMs
 
-		// Query capability bindings for this run
-		var bindings []db.RunCapabilityBinding
-		_ = ie.db.WithContext(ctx).Where("run_id = ?", run.ID).Find(&bindings).Error
+		bindings := bindingsByRun[run.ID]
 
 		for _, b := range bindings {
 			m := getMetric(b.CapabilityKey, b.Version, b.Digest)
@@ -350,6 +349,26 @@ func (ie *IntelligenceEngine) ComputeReport(ctx context.Context, limit int) (*Ca
 	report.Recommendations = ie.buildRecommendations(report.Summary, len(report.ActiveSkills))
 
 	return report, nil
+}
+
+// loadRunBindings bounds each IN list below SQLite's legacy 999-parameter limit.
+// Keep binding reads best-effort, as they were when queried separately per run.
+func (ie *IntelligenceEngine) loadRunBindings(ctx context.Context, runs []db.AgentRun) map[uint][]db.RunCapabilityBinding {
+	const batchSize = 500
+	byRun := make(map[uint][]db.RunCapabilityBinding, len(runs))
+	for start := 0; start < len(runs); start += batchSize {
+		end := min(start+batchSize, len(runs))
+		ids := make([]uint, 0, end-start)
+		for _, run := range runs[start:end] {
+			ids = append(ids, run.ID)
+		}
+		var bindings []db.RunCapabilityBinding
+		_ = ie.db.WithContext(ctx).Where("run_id IN ?", ids).Order("id ASC").Find(&bindings).Error
+		for _, binding := range bindings {
+			byRun[binding.RunID] = append(byRun[binding.RunID], binding)
+		}
+	}
+	return byRun
 }
 
 func (ie *IntelligenceEngine) buildRecommendations(summary DimensionSummary, activeSkills int) []string {

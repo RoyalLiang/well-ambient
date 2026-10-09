@@ -28,7 +28,7 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 	for _, match := range routePattern.FindAllStringSubmatch(string(source), -1) {
 		registered[match[1]] = struct{}{}
 	}
-	const expectedGETAPIRoutes = 109
+	const expectedGETAPIRoutes = 110
 	if len(registered) != expectedGETAPIRoutes {
 		t.Fatalf("route discovery found %d GET API routes, want %d", len(registered), expectedGETAPIRoutes)
 	}
@@ -61,43 +61,43 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 
 func TestAllReachablePageStatesAreCoveredByReadContracts(t *testing.T) {
 	expectedSurfaces := map[string]struct{}{
-		"shell":                 {},
-		"decision.agenda":       {},
-		"decision.daily_jira":   {},
-		"schedule.schedule":     {},
-		"schedule.releases":     {},
-		"schedule.board":        {},
-		"schedule.projects":     {},
-		"solutions.catalog":     {},
-		"evidence.health":       {},
-		"tasks.status":          {},
-		"tasks.execution":       {},
-		"tasks.review":          {},
-		"open.jira":                        {},
-		"open.decision":                    {},
-		"open.review":                      {},
-		"open.skills":                      {},
-		"open.installer":                   {},
-		"kpi.overview":                     {},
-		"kpi.calculation":                  {},
-		"ai_governance.skills":             {},
-		"ai_governance.prompts":            {},
-		"ai_governance.rules":              {},
-		"ai_governance.context":            {},
+		"shell":                           {},
+		"decision.agenda":                 {},
+		"decision.daily_jira":             {},
+		"schedule.schedule":               {},
+		"schedule.releases":               {},
+		"schedule.board":                  {},
+		"schedule.projects":               {},
+		"solutions.catalog":               {},
+		"evidence.health":                 {},
+		"tasks.status":                    {},
+		"tasks.execution":                 {},
+		"tasks.review":                    {},
+		"open.jira":                       {},
+		"open.decision":                   {},
+		"open.review":                     {},
+		"open.skills":                     {},
+		"open.installer":                  {},
+		"kpi.overview":                    {},
+		"kpi.calculation":                 {},
+		"ai_governance.skills":            {},
+		"ai_governance.prompts":           {},
+		"ai_governance.rules":             {},
+		"ai_governance.context":           {},
 		"ai_governance.open_capabilities": {},
-		"settings.gitlab":       {},
-		"settings.email":        {},
-		"settings.feishu":       {},
-		"settings.jira":         {},
-		"settings.performance":  {},
-		"settings.projects":     {},
-		"settings.versions":     {},
-		"settings.ai":           {},
-		"settings.wellos":       {},
-		"settings.users":        {},
-		"settings.matrix":       {},
-		"settings.policies":     {},
-		"settings.audit":        {},
+		"settings.gitlab":                 {},
+		"settings.email":                  {},
+		"settings.feishu":                 {},
+		"settings.jira":                   {},
+		"settings.performance":            {},
+		"settings.projects":               {},
+		"settings.versions":               {},
+		"settings.ai":                     {},
+		"settings.wellos":                 {},
+		"settings.users":                  {},
+		"settings.matrix":                 {},
+		"settings.policies":               {},
+		"settings.audit":                  {},
 	}
 	covered := map[string]struct{}{}
 	for _, contract := range allPageReadContracts() {
@@ -136,6 +136,7 @@ func TestReadContractRouteOwnershipMatchesCurrentConsumers(t *testing.T) {
 		"/api/agent-runtime/runs/{id}/trace":    {"ai_governance.skills", "evidence.health"},
 		"/api/agent-runtime/replays/{id}":       {"ai_governance.skills", "evidence.health"},
 		"/api/code-reviews/repos":               {"tasks.review", "ai_governance.rules"},
+		"/api/code-reviews/comment-settings":    {"tasks.review"},
 		"/api/solution-prompts":                 {"ai_governance.prompts"},
 		"/api/solution-prompts/public-url":      {"ai_governance.prompts"},
 		"/api/ai/context-readiness":             {"ai_governance.context"},
@@ -215,7 +216,7 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 	}
 	expected := map[readmodel.Maturity]int{
 		readmodel.MaturityVerified: 20,
-		readmodel.MaturityBounded:  61,
+		readmodel.MaturityBounded:  62,
 		readmodel.MaturityPending:  28,
 	}
 	for maturity, want := range expected {
@@ -223,8 +224,8 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 			t.Errorf("%s read contracts = %d, want %d", maturity, got, want)
 		}
 	}
-	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 109 {
-		t.Fatalf("maturity inventory totals %d routes, want 109", total)
+	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 110 {
+		t.Fatalf("maturity inventory totals %d routes, want 110", total)
 	}
 }
 

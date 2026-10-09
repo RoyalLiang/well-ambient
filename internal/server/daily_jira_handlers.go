@@ -140,7 +140,7 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 		}
 		limit = parsed
 	}
-	page, err := dailyjira.NewReader(db.DB).ReadPage(r.Context(), dailyjira.Query{
+	page, err := s.dailyJiraReadModel().ReadPage(r.Context(), dailyjira.Query{
 		Bucket:    dailyJiraReadBucket(bucket),
 		Search:    r.URL.Query().Get("search"),
 		Cursor:    strings.TrimSpace(r.URL.Query().Get("cursor")),
@@ -209,9 +209,33 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// Keep one bounded summary cache per server and database connection. Tests and
+// database replacement must not reuse counts from a different connection.
+func (s *Server) dailyJiraReadModel() *dailyjira.Reader {
+	s.dailyJiraReaderMu.Lock()
+	defer s.dailyJiraReaderMu.Unlock()
+	if s.dailyJiraReader == nil || s.dailyJiraReaderDB != db.DB {
+		s.dailyJiraReaderDB = db.DB
+		s.dailyJiraReader = dailyjira.NewReader(db.DB)
+	}
+	return s.dailyJiraReader
+}
+
 func loadDailyJiraPageEnrichments(taskIDs []string) ([]db.DecisionEvent, []db.DailyJiraDecision, error) {
 	if len(taskIDs) == 0 {
 		return []db.DecisionEvent{}, []db.DailyJiraDecision{}, nil
+	}
+	eventTable := "decision_events"
+	decisionTable := "daily_jira_decisions"
+	actionPredicate := "action LIKE ? ESCAPE '!'"
+	actionPattern := "daily!_jira!_%"
+	// INDEXED BY and GLOB are SQLite-only. Escape literal underscores in
+	// PostgreSQL's LIKE pattern to preserve the exact daily_jira_ prefix.
+	if db.DB.Dialector.Name() == "sqlite" {
+		eventTable += " INDEXED BY idx_daily_jira_event_task_action_created"
+		decisionTable += " INDEXED BY idx_daily_jira_decision_task_created"
+		actionPredicate = "action GLOB ?"
+		actionPattern = "daily_jira_*"
 	}
 	var events []db.DecisionEvent
 	if err := db.DB.Raw(`WITH ranked_events AS (
@@ -219,13 +243,13 @@ func loadDailyJiraPageEnrichments(taskIDs []string) ([]db.DecisionEvent, []db.Da
 				ROW_NUMBER() OVER (
 					PARTITION BY task_id ORDER BY created_at DESC, id DESC
 				) AS daily_jira_rank
-			FROM decision_events INDEXED BY idx_daily_jira_event_task_action_created
-			WHERE task_id IN ? AND action GLOB ?
+			FROM `+eventTable+`
+			WHERE task_id IN ? AND `+actionPredicate+`
 		)
 		SELECT id, task_id, actor, action, old_value, new_value, reason, confidence, created_at
 		FROM ranked_events
 		WHERE daily_jira_rank <= 8
-		ORDER BY created_at DESC, id DESC`, taskIDs, "daily_jira_*").Scan(&events).Error; err != nil {
+		ORDER BY created_at DESC, id DESC`, taskIDs, actionPattern).Scan(&events).Error; err != nil {
 		return nil, nil, fmt.Errorf("read Daily Jira audit events: %w", err)
 	}
 	var decisions []db.DailyJiraDecision
@@ -234,7 +258,7 @@ func loadDailyJiraPageEnrichments(taskIDs []string) ([]db.DecisionEvent, []db.Da
 				ROW_NUMBER() OVER (
 					PARTITION BY task_id ORDER BY created_at DESC, id DESC
 				) AS daily_jira_rank
-			FROM daily_jira_decisions INDEXED BY idx_daily_jira_decision_task_created
+			FROM `+decisionTable+`
 			WHERE task_id IN ?
 		)
 		SELECT id, task_id, status, assignee, actor, note, reminder_at, created_at

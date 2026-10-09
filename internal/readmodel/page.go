@@ -126,6 +126,7 @@ func VerifyDatasets(conn *gorm.DB, datasets []Dataset) error {
 			}
 			if conn.Dialector.Name() == "postgres" {
 				triggerName := "read_generation_" + dataset.Name + "_" + table
+				// pg_trigger.tgtype 60 = AFTER STATEMENT for INSERT (4), DELETE (8), UPDATE (16), TRUNCATE (32).
 				var triggerCount int64
 				if err := conn.Raw(`SELECT COUNT(*)
 					FROM pg_trigger trigger
@@ -134,11 +135,12 @@ func VerifyDatasets(conn *gorm.DB, datasets []Dataset) error {
 					WHERE namespace.nspname = current_schema()
 						AND relation.relname = ?
 						AND trigger.tgname = ?
-						AND NOT trigger.tgisinternal`, table, triggerName).Scan(&triggerCount).Error; err != nil {
+						AND NOT trigger.tgisinternal
+						AND trigger.tgtype = 60 AND trigger.tgenabled IN ('O', 'A')`, table, triggerName).Scan(&triggerCount).Error; err != nil {
 					return fmt.Errorf("verify read generation trigger %s: %w", triggerName, err)
 				}
 				if triggerCount != 1 {
-					return fmt.Errorf("read dataset %q is missing generation trigger for %q", dataset.Name, table)
+					return fmt.Errorf("read dataset %q requires an enabled INSERT/UPDATE/DELETE/TRUNCATE generation trigger for %q; run read-model migration", dataset.Name, table)
 				}
 			}
 		}
@@ -172,7 +174,7 @@ func ensurePostgresGenerationTrigger(conn *gorm.DB, dataset, table string) error
 	if err := conn.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS "%s" ON "%s"`, triggerName, table)).Error; err != nil {
 		return fmt.Errorf("replace PostgreSQL read generation trigger %s: %w", triggerName, err)
 	}
-	triggerSQL := fmt.Sprintf(`CREATE TRIGGER "%s" AFTER INSERT OR UPDATE OR DELETE ON "%s"
+	triggerSQL := fmt.Sprintf(`CREATE TRIGGER "%s" AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON "%s"
 		FOR EACH STATEMENT EXECUTE FUNCTION "%s"()`, triggerName, table, functionName)
 	if err := conn.Exec(triggerSQL).Error; err != nil {
 		return fmt.Errorf("create PostgreSQL read generation trigger %s: %w", triggerName, err)

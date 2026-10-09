@@ -1,0 +1,157 @@
+# 在仓库根目录使用：docker compose -f deploy/compose.production.example.yaml up -d
+# 只需填入两个 image：migrate 的 server 镜像由 server 自动复用。
+# 前置条件：deploy/runtime/config.yaml 已完成 PostgreSQL 配置，所需秘密保存在
+# owner-only 配置文件或现有数据库配置中，不在 Compose 内保存密码/token。
+# deploy/runtime 和 deploy/runtime/data 必须已存在，由 1000:1000 持有；
+# 目录权限 0700、config.yaml 权限 0600。使用既有部署准备流程创建目录。
+# 首次部署或升级前，先备份数据库并显式运行迁移：
+# docker compose -f deploy/compose.production.example.yaml --profile maintenance run --rm migrate
+# HTTP 仅绑定宿主机回环地址；公网访问由宿主机的 TLS 入口转发到 127.0.0.1:8080。
+# server.public_url 应在既有配置中设为实际 HTTPS 入口地址。
+name: well-ambient
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: "5"
+
+x-security: &security
+  user: "1000:1000"
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  init: true
+
+x-server-volumes: &server-volumes
+  # 挂载目录而非单个文件：数据库引导需要原子替换 config.yaml。
+  - type: bind
+    source: ./runtime
+    target: /etc/well-ambient
+    bind:
+      create_host_path: false
+  - type: bind
+    source: ./runtime/data
+    target: /var/lib/well-ambient
+    bind:
+      create_host_path: false
+
+services:
+  server:
+    <<: *security
+    image: &server-image ""
+    command:
+      - --config
+      - /etc/well-ambient/config.yaml
+      - --skip-migrate
+      - --http-host
+      - 0.0.0.0
+      - --http-port
+      - "8080"
+    environment:
+      TZ: Asia/Shanghai
+      WELL_AMBIENT_OPEN_READ_ENABLED: "0"
+      WELL_AMBIENT_OPEN_PREPARE_ENABLED: "0"
+      WELL_AMBIENT_OPEN_EXECUTE_ENABLED: "0"
+    volumes: *server-volumes
+    tmpfs:
+      - /tmp:size=128m,mode=1777,nosuid,nodev
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/well-ambient
+        - --healthcheck-url
+        - http://127.0.0.1:8080/ready
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logging
+    networks:
+      - ambient
+
+  web:
+    <<: *security
+    image: ""
+    # 将日志送入 Docker logging，避免依赖基础镜像日志目录的所有权。
+    # 绕过镜像入口脚本，避免其尝试改写只读配置。
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        ln -sf /dev/stdout /var/log/nginx/access.log
+        ln -sf /dev/stderr /var/log/nginx/error.log
+        exec nginx -g 'daemon off;'
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    tmpfs:
+      - /var/cache/nginx:size=64m,uid=1000,gid=1000,mode=0700,nosuid,nodev
+      - /var/log/nginx:size=8m,uid=1000,gid=1000,mode=0755,nosuid,nodev
+      - /var/run:size=8m,uid=1000,gid=1000,mode=0755,nosuid,nodev
+      - /tmp:size=32m,mode=1777,nosuid,nodev
+    healthcheck:
+      # 镜像未承诺自带 curl/wget；此探针验证配置与 master 存活，
+      # 不等价于端到端 HTTP/TLS 探针，后者由部署入口的监控承担。
+      test:
+        - CMD-SHELL
+        - 'nginx -t -q && test -s /var/run/nginx.pid && kill -0 "$$(cat /var/run/nginx.pid)"'
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+    stop_signal: SIGQUIT
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logging
+    networks:
+      - ambient
+
+  migrate:
+    <<: *security
+    image: *server-image
+    profiles:
+      - maintenance
+    command:
+      - --config
+      - /etc/well-ambient/config.yaml
+      - --migrate-only
+    environment:
+      TZ: Asia/Shanghai
+    volumes: *server-volumes
+    tmpfs:
+      - /tmp:size=128m,mode=1777,nosuid,nodev
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    restart: "no"
+    logging: *logging
+    networks:
+      - ambient
+
+networks:
+  # 保留受控出站访问，以连接外部 PostgreSQL、SMTP、Jira 和模型服务。
+  ambient:
+    driver: bridge

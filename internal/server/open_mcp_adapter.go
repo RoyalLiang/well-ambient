@@ -88,24 +88,51 @@ func (i openMCPLocalInvoker) Invoke(
 	if call.Identity.SourceID == "" {
 		return openmcp.InvocationResult{}, openaccess.NewError("unauthenticated", "MCP integration identity is unavailable")
 	}
-	requestID, err := openaccess.RandomID("mcp_call")
+	// Keep each tool invocation independent while allowing operators to locate
+	// every call from the transport's X-Request-ID, including disconnected calls.
+	requestIDPrefix := "mcp_call"
+	if call.RequestID != "" {
+		requestIDPrefix = call.RequestID
+	}
+	requestID, err := openaccess.RandomID(requestIDPrefix)
 	if err != nil {
 		return openmcp.InvocationResult{}, err
 	}
+	if len(requestID) > 64 {
+		return openmcp.InvocationResult{}, openaccess.NewError("internal_error", "MCP invocation request id exceeds the audit limit")
+	}
 	started := time.Now()
+	invocation := openaccess.Invocation{
+		RequestID:     requestID,
+		Identity:      call.Identity,
+		Transport:     "mcp-http",
+		ToolName:      toolName,
+		ToolVersion:   openmcp.ServerVersion,
+		PolicyVersion: call.Policy.Version,
+		Outcome:       "started",
+	}
+	if err := i.server.openAccess.RecordInvocation(ctx, invocation); err != nil {
+		return openmcp.InvocationResult{}, invocationAuditError(requestID, false)
+	}
 	defer func() {
-		outcome := "succeeded"
-		errorCode := ""
-		if resultErr != nil {
-			outcome = "failed"
-			errorCode = openaccess.ErrorCode(resultErr)
+		panicValue := recover()
+		invocation.Outcome = "succeeded"
+		if panicValue != nil {
+			invocation.Outcome = "failed"
+			invocation.ErrorCode = "internal_error"
+		} else if resultErr != nil {
+			invocation.Outcome = "failed"
+			invocation.ErrorCode = openaccess.ErrorCode(resultErr)
 		}
-		_ = i.server.openAccess.RecordInvocation(ctx, openaccess.Invocation{
-			RequestID: requestID, Identity: call.Identity, Transport: "mcp-http",
-			ToolName: toolName, ToolVersion: openmcp.ServerVersion,
-			PolicyVersion: call.Policy.Version, TargetRefs: result.TargetRefs,
-			Duration: time.Since(started), Outcome: outcome, ErrorCode: errorCode,
-		})
+		invocation.TargetRefs = result.TargetRefs
+		invocation.Duration = time.Since(started)
+		if err := i.server.openAccess.RecordInvocation(ctx, invocation); err != nil {
+			result = openmcp.InvocationResult{}
+			resultErr = invocationAuditError(requestID, true)
+		}
+		if panicValue != nil {
+			panic(panicValue)
+		}
 	}()
 	if err := i.server.openFeatureError(toolName); err != nil {
 		return result, err

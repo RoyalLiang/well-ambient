@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"well-ambient/internal/db"
 	userdb "well-ambient/internal/db/user"
@@ -360,8 +361,18 @@ func (s *Server) handleTestSolutionPrompt(w http.ResponseWriter, r *http.Request
 		http.Error(w, "system_prompt and markdown are required", http.StatusBadRequest)
 		return
 	}
-	output, err := queryServerLLMContext(r.Context(), s.config, request.SystemPrompt+solutionSourceSafetyBoundary, "当前 Markdown：\n\n"+request.Markdown)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	output, err := queryServerLLMContext(ctx, s.config, request.SystemPrompt+solutionSourceSafetyBoundary, "当前 Markdown：\n\n"+request.Markdown)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]any{"message": "模型测试已超时，请稍后重试。"})
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			writeJSON(w, http.StatusRequestTimeout, map[string]any{"message": "模型测试已取消。"})
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}

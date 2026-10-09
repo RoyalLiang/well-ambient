@@ -245,7 +245,7 @@ func TestOpenSkillsPublicDistributionEndpoints(t *testing.T) {
 	}
 
 	// 5. GET /open/v1/install.sh
-	scriptReq := httptest.NewRequest(http.MethodGet, "/open/v1/install.sh?token=wa_sec_test_secret_123", nil)
+	scriptReq := httptest.NewRequest(http.MethodGet, "/open/v1/install.sh", nil)
 	scriptRec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(scriptRec, scriptReq)
 	if scriptRec.Code != http.StatusOK {
@@ -255,10 +255,10 @@ func TestOpenSkillsPublicDistributionEndpoints(t *testing.T) {
 	if !strings.HasPrefix(scriptContent, "#!/usr/bin/env bash") {
 		t.Fatalf("expected bash script, got prefix: %s", scriptContent[:30])
 	}
-	if !strings.Contains(scriptContent, "wa_sec_test_secret_123") {
-		t.Fatal("expected token to be injected into install script")
+	if strings.Contains(scriptContent, "wa_sec_test_secret_123") || !strings.Contains(scriptContent, "<YOUR_API_KEY>") {
+		t.Fatal("expected a credential-free install script with a local API Key placeholder")
 	}
-	if !strings.Contains(scriptContent, "mcpServers") || !strings.Contains(scriptContent, "cursor://") {
-		t.Fatal("expected mcpServers and cursor scheme in install script")
+	if !strings.Contains(scriptContent, "mcpServers") {
+		t.Fatal("expected mcpServers template in install script")
 	}
 }

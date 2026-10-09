@@ -72,7 +72,15 @@ go run ./cmd/open-access-admin -config config.yaml credential-issue \
 
 命令只显示一次完整 Key。系统只保存 Key ID、前缀和验证摘要。
 
-`-ttl` 必须是正时长；首版不签发无期限 Key。
+CLI 的 `-ttl` 必须是正时长。治理页面与管理 API 另支持永久 Key（`ttl_hours <= 0`）；不能把 CLI 限制理解为系统禁止永久 Key。签发时按集成来源的实际需要选择有效期。
+
+安装脚本和客户端安装链接仅分发占位配置，不携带真实 Key：
+
+```bash
+curl -fsSL 'https://ambient.example.com/open/v1/install.sh' | bash
+```
+
+将示例地址替换为部署的公开地址。安装后在客户端本地把 `Authorization: Bearer <YOUR_API_KEY>` 替换为真实 Key。`install.sh` 拒绝所有查询参数，旧的 `?token=...` 安装命令会返回 HTTP 400。完整 Key 仅在签发结果中显示一次；关闭弹窗即清除页面中的结果，请先保存。
 
 查看安全元数据或临时禁用 Key：
 

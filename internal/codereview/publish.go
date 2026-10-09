@@ -118,6 +118,10 @@ func (s *Service) Publish(ctx context.Context, run db.CodeReviewRun) error {
 	if err = s.status(run, "publishing"); err != nil {
 		return s.releasePublicationClaim(run, key, leaseToken, err)
 	}
+	// Match settings updates with a fixed global-then-repository lock order.
+	// Both gates remain stable through the final check and external write.
+	unlockGlobalPolicy := LockPolicy(globalCommentPolicyProjectID)
+	defer unlockGlobalPolicy()
 	unlockPolicy := LockPolicy(run.ProjectID)
 	defer unlockPolicy()
 	// Check current policy immediately before the external write, including a switch turned off mid-run.

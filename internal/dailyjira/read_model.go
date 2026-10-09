@@ -96,12 +96,14 @@ type Page struct {
 }
 
 type Reader struct {
-	conn *gorm.DB
+	conn      *gorm.DB
+	summaries summaryCache
 }
 
 type pageCursor struct {
 	Version      int    `json:"v"`
 	Generation   int64  `json:"g"`
+	TimeBasis    string `json:"d,omitempty"`
 	Fingerprint  string `json:"f"`
 	SortOverdue  int    `json:"o"`
 	CreatedUnix  int64  `json:"c"`
@@ -128,6 +130,11 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 	}
 
 	var result Page
+	var pendingSummary *summaryCacheEntry
+	// A Reader built on a caller's transaction must not publish uncommitted
+	// facts into a cache that can survive a rollback of that transaction.
+	_, nestedTransaction := r.conn.Statement.ConnPool.(gorm.TxCommitter)
+	cacheSummary := r.conn.Dialector.Name() == "postgres" && !nestedTransaction
 	transactionOptions := &sql.TxOptions{ReadOnly: true}
 	if r.conn.Dialector.Name() == "postgres" {
 		transactionOptions.Isolation = sql.LevelRepeatableRead
@@ -136,9 +143,16 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 		var state struct {
 			Generation int64  `gorm:"column:generation"`
 			SearchMode string `gorm:"column:search_mode"`
+			TimeBasis  string `gorm:"column:time_basis"`
 		}
 		if tx.Dialector.Name() == "postgres" {
-			if err := tx.Raw("SELECT generation FROM read_model_generations WHERE dataset = ?", "task_facts").Scan(&state).Error; err != nil {
+			// Lock before the first snapshot: TRUNCATE is not MVCC-safe and
+			// must not replace the table between the generation and item reads.
+			// This lock does not block normal INSERT/UPDATE/DELETE statements.
+			if err := tx.Exec("LOCK TABLE task_telemetries IN ACCESS SHARE MODE").Error; err != nil {
+				return fmt.Errorf("lock PostgreSQL Daily Jira snapshot: %w", err)
+			}
+			if err := tx.Raw("SELECT generation, CURRENT_DATE::text || '|' || current_setting('TimeZone') AS time_basis FROM read_model_generations WHERE dataset = ?", "task_facts").Scan(&state).Error; err != nil {
 				return fmt.Errorf("read PostgreSQL Daily Jira generation: %w", err)
 			}
 			state.SearchMode = "postgres_prefix"
@@ -158,15 +172,28 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 			if decoded.Fingerprint != fingerprint {
 				return ErrInvalidCursor
 			}
-			if decoded.Generation != state.Generation {
+			if decoded.Generation != state.Generation || decoded.TimeBasis != state.TimeBasis {
 				return ErrStaleCursor
 			}
 			cursor = &decoded
 		}
 
-		summary, err := readSummary(tx, query.Scope)
-		if err != nil {
-			return err
+		var key summaryCacheKey
+		var summary Summary
+		var cached bool
+		if cacheSummary {
+			key = newSummaryCacheKey(query.Scope, state.Generation, state.TimeBasis)
+			summary, cached = r.summaries.get(key)
+		}
+		if !cached {
+			var err error
+			summary, err = readSummary(tx, query.Scope)
+			if err != nil {
+				return err
+			}
+			if cacheSummary {
+				pendingSummary = &summaryCacheEntry{key: key, summary: summary}
+			}
 		}
 		items, err := readItems(tx, query, cursor, state.SearchMode)
 		if err != nil {
@@ -195,14 +222,14 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 			result.HasMore = hasDirectionalContinuation
 		}
 		if result.HasPrevious {
-			encoded, err := encodeItemCursor(result.Items[0], state.Generation, fingerprint)
+			encoded, err := encodeItemCursor(result.Items[0], state.Generation, fingerprint, state.TimeBasis)
 			if err != nil {
 				return err
 			}
 			result.PreviousCursor = encoded
 		}
 		if result.HasMore {
-			encoded, err := encodeItemCursor(result.Items[len(result.Items)-1], state.Generation, fingerprint)
+			encoded, err := encodeItemCursor(result.Items[len(result.Items)-1], state.Generation, fingerprint, state.TimeBasis)
 			if err != nil {
 				return err
 			}
@@ -212,6 +239,9 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 	}, transactionOptions)
 	if err != nil {
 		return Page{}, err
+	}
+	if pendingSummary != nil {
+		r.summaries.put(*pendingSummary)
 	}
 	return result, nil
 }
@@ -437,10 +467,11 @@ func encodeCursor(cursor pageCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
-func encodeItemCursor(item Item, generation int64, fingerprint string) (string, error) {
+func encodeItemCursor(item Item, generation int64, fingerprint, timeBasis string) (string, error) {
 	return encodeCursor(pageCursor{
 		Version:      cursorVersion,
 		Generation:   generation,
+		TimeBasis:    timeBasis,
 		Fingerprint:  fingerprint,
 		SortOverdue:  boolInt(!item.Overdue),
 		CreatedUnix:  item.CreatedUnix,

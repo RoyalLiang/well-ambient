@@ -201,7 +201,7 @@ func TestEmailConcurrentWorkersClaimOneAttempt(t *testing.T) {
 }
 func TestEmailSchedulerDisabledDueAndCancellation(t *testing.T) {
 	cfg := emailTestConfig()
-	now := time.Date(2026, 3, 9, 14, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 3, 9, 13, 0, 0, 0, time.UTC)
 	if _, due := emailScheduleDue(now, cfg); due {
 		t.Fatal("disabled mail due")
 	}
@@ -316,7 +316,7 @@ func TestEmailSchedulerNeverReclaimsAlreadySentDate(t *testing.T) {
 	}
 
 	loc, _ := time.LoadLocation("Asia/Shanghai")
-	// 1. Simulate an earlier run from 12:45 today (e.g. startup catchup or older send time).
+	// 1. Simulate an earlier run from 12:45 today under an older send time.
 	earlierToday := time.Date(2026, 9, 16, 12, 45, 0, 0, loc)
 	staleRun := db.DailyJiraEmailRun{
 		Date:      "2026-09-16",

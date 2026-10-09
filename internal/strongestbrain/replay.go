@@ -19,7 +19,7 @@ type ReplayCommand struct {
 	SampleRunIDs       []uint `json:"sample_run_ids,omitempty"`
 }
 
-// ReplayEngine performs deterministic, isolated evaluation against historical execution baselines.
+// ReplayEngine checks manifests only; it does not execute historical samples.
 type ReplayEngine struct {
 	db       *gorm.DB
 	registry *agentruntime.Registry
@@ -33,140 +33,112 @@ func NewReplayEngine(database *gorm.DB, registry *agentruntime.Registry) *Replay
 	}
 }
 
-// Evaluate runs deterministic comparison between candidate and baseline against sample runs.
+// Evaluate validates declared permissions without claiming an executed replay.
 func (re *ReplayEngine) Evaluate(ctx context.Context, cmd ReplayCommand) (*db.CapabilityEvaluation, error) {
+	if cmd.CandidateVersionID == 0 || cmd.BaselineVersionID == 0 {
+		return nil, fmt.Errorf("candidate and baseline version IDs are required for manifest checks")
+	}
 	if cmd.DatasetRef == "" {
 		cmd.DatasetRef = "standard-regression-suite"
 	}
 
-	// Fetch candidate version
 	var candidateVer db.CapabilityVersion
 	if err := re.db.WithContext(ctx).First(&candidateVer, cmd.CandidateVersionID).Error; err != nil {
 		return nil, fmt.Errorf("candidate version %d not found: %w", cmd.CandidateVersionID, err)
 	}
-
-	// Fetch baseline version
 	var baselineVer db.CapabilityVersion
-	if cmd.BaselineVersionID > 0 {
-		_ = re.db.WithContext(ctx).First(&baselineVer, cmd.BaselineVersionID).Error
+	if err := re.db.WithContext(ctx).First(&baselineVer, cmd.BaselineVersionID).Error; err != nil {
+		return nil, fmt.Errorf("baseline version %d not found: %w", cmd.BaselineVersionID, err)
 	}
 
 	var candidateManifest agentruntime.CapabilityManifest
 	if err := json.Unmarshal([]byte(candidateVer.ManifestJSON), &candidateManifest); err != nil {
 		return nil, fmt.Errorf("failed to parse candidate manifest: %w", err)
 	}
-
+	if err := candidateManifest.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid candidate manifest: %w", err)
+	}
 	var baselineManifest agentruntime.CapabilityManifest
-	if baselineVer.ID > 0 {
-		_ = json.Unmarshal([]byte(baselineVer.ManifestJSON), &baselineManifest)
+	if err := json.Unmarshal([]byte(baselineVer.ManifestJSON), &baselineManifest); err != nil {
+		return nil, fmt.Errorf("failed to parse baseline manifest: %w", err)
+	}
+	if err := baselineManifest.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid baseline manifest: %w", err)
+	}
+	if candidateVer.CapabilityID != baselineVer.CapabilityID || candidateManifest.ID != baselineManifest.ID {
+		return nil, fmt.Errorf("baseline and candidate must belong to the same capability")
 	}
 
-	// 1. Calculate Evaluation Metrics
-	// Quality: does it meet all output schemas and business contracts?
-	qualityScore := 95.0
-	// Evidence: does it cite valid diff lines and references without hallucination?
-	evidenceScore := 92.0
-	// Safety: does it strictly respect non-expansion of permissions and boundary isolation?
-	safetyScore := 100.0
-	// Stability: run success rate and deterministic format handling
-	stabilityScore := 96.0
-	// Token efficiency: token reduction vs raw representation
-	tokenEfficiencyScore := 88.0
-	// Latency score: evaluation execution latency
-	latencyScore := 90.0
-
-	// Check Permission Expansion Hard Gate: Candidate permissions must NOT exceed baseline permissions
+	// An empty baseline permission set still prohibits every new permission.
+	baselinePermissions := make(map[string]bool, len(baselineManifest.Permissions))
+	for _, permission := range baselineManifest.Permissions {
+		baselinePermissions[permission] = true
+	}
 	permissionExpanded := false
-	if baselineVer.ID > 0 && len(baselineManifest.Permissions) > 0 {
-		basePermMap := make(map[string]bool)
-		for _, p := range baselineManifest.Permissions {
-			basePermMap[p] = true
-		}
-		for _, cp := range candidateManifest.Permissions {
-			if !basePermMap[cp] {
-				permissionExpanded = true
-				safetyScore = 50.0 // Penalize safety heavily
-				break
-			}
+	for _, permission := range candidateManifest.Permissions {
+		if !baselinePermissions[permission] {
+			permissionExpanded = true
+			break
 		}
 	}
 
-	// Check Token Savings from Slicing / ACP
-	if candidateManifest.Budgets.InstructionTokens > 0 && baselineManifest.Budgets.InstructionTokens > 0 {
-		if candidateManifest.Budgets.InstructionTokens < baselineManifest.Budgets.InstructionTokens {
-			savings := float64(baselineManifest.Budgets.InstructionTokens-candidateManifest.Budgets.InstructionTokens) /
-				float64(baselineManifest.Budgets.InstructionTokens)
-			tokenEfficiencyScore += savings * 20.0
-			if tokenEfficiencyScore > 100.0 {
-				tokenEfficiencyScore = 100.0
-			}
-		}
-	}
-
-	// Calculate weighted overall score according to specification:
-	// score = 0.40 * quality + 0.20 * evidence + 0.15 * safety + 0.10 * stability + 0.10 * token_efficiency + 0.05 * latency
-	overallScore := 0.40*qualityScore +
-		0.20*evidenceScore +
-		0.15*safetyScore +
-		0.10*stabilityScore +
-		0.10*tokenEfficiencyScore +
-		0.05*latencyScore
-
-	// Hard Gate Verdict Decision
+	verdict := "manual_review"
 	regressions := []string{}
-	verdict := "pass"
-
 	if permissionExpanded {
 		verdict = "reject"
 		regressions = append(regressions, "硬门禁违规：候选版本要求了超出基线权限集合的权限（禁止权限静默扩大）")
 	}
-	if safetyScore < 90.0 {
-		verdict = "reject"
-		regressions = append(regressions, "硬门禁违规：安全合规性评分下降")
-	}
-	if evidenceScore < 80.0 {
-		verdict = "reject"
-		regressions = append(regressions, "硬门禁违规：证据完整度评分低于准入基线")
-	}
-	if verdict == "pass" && overallScore < 85.0 {
-		verdict = "manual_review"
-	}
-
 	regressionsBytes, _ := json.Marshal(regressions)
-	metricsDetails := map[string]any{
-		"weights": map[string]float64{
-			"quality":          0.40,
-			"evidence":         0.20,
-			"safety":           0.15,
-			"stability":        0.10,
-			"token_efficiency": 0.10,
-			"latency":          0.05,
-		},
-		"candidate_digest": candidateVer.ContentDigest,
-		"dataset_ref":      cmd.DatasetRef,
-	}
-	metricsBytes, _ := json.Marshal(metricsDetails)
-
+	metricsBytes, _ := json.Marshal(map[string]any{
+		"candidate_digest":    candidateVer.ContentDigest,
+		"baseline_digest":     baselineVer.ContentDigest,
+		"dataset_ref":         cmd.DatasetRef,
+		"permission_expanded": permissionExpanded,
+	})
 	evaluation := db.CapabilityEvaluation{
-		CandidateVersionID:   cmd.CandidateVersionID,
-		BaselineVersionID:    cmd.BaselineVersionID,
-		DatasetRef:           cmd.DatasetRef,
-		QualityScore:         qualityScore,
-		EvidenceScore:        evidenceScore,
-		SafetyScore:          safetyScore,
-		StabilityScore:       stabilityScore,
-		TokenEfficiencyScore: tokenEfficiencyScore,
-		LatencyScore:         latencyScore,
-		OverallScore:         overallScore,
-		Verdict:              verdict,
-		RegressionsJSON:      string(regressionsBytes),
-		MetricsJSON:          string(metricsBytes),
-		CreatedAt:            time.Now(),
+		CandidateVersionID: cmd.CandidateVersionID,
+		BaselineVersionID:  cmd.BaselineVersionID,
+		DatasetRef:         cmd.DatasetRef,
+		Verdict:            verdict,
+		RegressionsJSON:    string(regressionsBytes),
+		MetricsJSON:        string(metricsBytes),
+		CreatedAt:          time.Now(),
 	}
-
+	markManifestChecksOnly(&evaluation, false)
 	if err := re.db.WithContext(ctx).Create(&evaluation).Error; err != nil {
 		return nil, fmt.Errorf("failed to save capability evaluation: %w", err)
 	}
-
 	return &evaluation, nil
+}
+
+// markManifestChecksOnly annotates the actual evaluation boundary. Zero-valued
+// score fields preserve the existing DTO shape; metrics_available is authoritative.
+// Historical results are annotated in memory without rewriting stored records.
+func markManifestChecksOnly(evaluation *db.CapabilityEvaluation, readingStored bool) {
+	var metrics map[string]any
+	_ = json.Unmarshal([]byte(evaluation.MetricsJSON), &metrics)
+	if metrics == nil {
+		metrics = make(map[string]any)
+	}
+	if readingStored && metrics["evaluation_kind"] != "manifest_checks_only" {
+		metrics["legacy_static_result"] = true
+		metrics["stored_verdict"] = evaluation.Verdict
+	}
+	delete(metrics, "weights")
+	metrics["evaluation_kind"] = "manifest_checks_only"
+	metrics["metrics_available"] = false
+	metrics["evaluated_sample_count"] = 0
+	metrics["evaluation_note"] = "Historical samples were not executed; manifest checks do not establish replay quality or performance."
+	metricsBytes, _ := json.Marshal(metrics)
+	evaluation.MetricsJSON = string(metricsBytes)
+	if evaluation.Verdict == "pass" {
+		evaluation.Verdict = "manual_review"
+	}
+	evaluation.QualityScore = 0
+	evaluation.EvidenceScore = 0
+	evaluation.SafetyScore = 0
+	evaluation.StabilityScore = 0
+	evaluation.TokenEfficiencyScore = 0
+	evaluation.LatencyScore = 0
+	evaluation.OverallScore = 0
 }

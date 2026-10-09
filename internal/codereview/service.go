@@ -45,14 +45,14 @@ func (s *Service) Repo(project string) (config.RepoMapping, error) {
 	return config.RepoMapping{}, errors.New("仓库未配置，拒绝评审或评论")
 }
 func (s *Service) Policy(project string) (db.CodeReviewPolicy, error) {
-	p := db.CodeReviewPolicy{ProjectID: project, AutoReview: true, Domain: "general", Scenario: "general"}
+	p := SystemCorpusPolicy(db.CodeReviewPolicy{ProjectID: project})
 	err := s.DB.Where("project_id = ?", project).First(&p).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return p, nil
+		return SystemCorpusPolicy(p), nil
 	}
-	// Automatic review is mandatory for new events; ignore the legacy opt-in value.
-	p.AutoReview = true
-	return p, err
+	// The governance contract uses the system corpus; legacy narrowing fields
+	// are retained in storage for audit but do not restrict new reviews.
+	return SystemCorpusPolicy(p), err
 }
 func (s *Service) ActiveReviewSkill(ctx context.Context) (db.SolutionPromptTemplate, error) {
 	var skill db.SolutionPromptTemplate
@@ -111,7 +111,11 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 		eventKey = hex.EncodeToString(b)
 	}
 	publishStatus := "off"
-	if (kind == "mr" && p.SyncMRs) || (kind == "commit" && p.SyncCommits) {
+	allowed, err := s.commentsAllowed(ctx, kind, p)
+	if err != nil {
+		return run, err
+	}
+	if allowed {
 		publishStatus = "waiting_review"
 	}
 	run = db.CodeReviewRun{
@@ -313,6 +317,13 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if err = json.Unmarshal([]byte(run.PolicyJSON), &policy); err != nil {
 		return fail(err)
 	}
+	policy = SystemCorpusPolicy(policy)
+	// A queued run has not produced evidence yet. Freeze its actual effective
+	// policy now; completed historical reports retain their original snapshot.
+	run.PolicyJSON = encode(policy)
+	if err = s.DB.Model(&run).Update("policy_json", run.PolicyJSON).Error; err != nil {
+		return fail(err)
+	}
 	skillPrompt := db.DefaultCodeReviewSkillPrompt
 	if run.SkillVersionID > 0 {
 		skill, skillErr := s.ReviewSkillByID(ctx, run.SkillVersionID)
@@ -390,7 +401,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if (run.Kind == "mr" && current.SyncMRs) || (run.Kind == "commit" && current.SyncCommits) {
+	allowed, err := s.commentsAllowed(ctx, run.Kind, current)
+	if err != nil {
+		return fail(err)
+	}
+	if allowed {
 		publish = "pending"
 	}
 	if status == "partial" {
@@ -493,6 +508,10 @@ func (s *Service) policyAllows(run db.CodeReviewRun) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	allowed, err := s.commentsAllowed(context.Background(), run.Kind, p)
+	if err != nil || !allowed {
+		return false, err
+	}
 	var old db.CodeReviewPolicy
 	if err = json.Unmarshal([]byte(run.PolicyJSON), &old); err != nil {
 		return false, err
@@ -500,7 +519,7 @@ func (s *Service) policyAllows(run db.CodeReviewRun) (bool, error) {
 	if p.Domain != old.Domain || p.Scenario != old.Scenario || p.KnowledgeScope != old.KnowledgeScope || p.Rules != old.Rules {
 		return false, errors.New("仓库评审规则、场景或知识范围已变更；旧报告不可同步，后续新事件将按新策略评审")
 	}
-	return (run.Kind == "commit" && p.SyncCommits) || (run.Kind == "mr" && p.SyncMRs), nil
+	return true, nil
 }
 func (s *Service) status(run db.CodeReviewRun, status string) error {
 	return s.DB.Model(&db.CodeReviewRun{}).Where("id = ?", run.ID).Update("publish_status", status).Error

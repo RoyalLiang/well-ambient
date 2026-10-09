@@ -66,7 +66,38 @@ func (s *Server) handleCodeReviewRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		repos = append(repos, repoDTO{repo.ProjectID, repo.Name, p})
 	}
-	emailJSON(w, 200, map[string]any{"repos": repos, "dimensions": codereview.Dimensions, "scenarios": codereview.Scenarios, "default_rules": codereview.DefaultReviewRules})
+	settings, err := s.codeReview.CommentSettings(r.Context())
+	if err != nil {
+		http.Error(w, "无法读取全局评论设置", http.StatusInternalServerError)
+		return
+	}
+	emailJSON(w, 200, map[string]any{"repos": repos, "dimensions": codereview.Dimensions, "scenarios": codereview.Scenarios, "default_rules": codereview.DefaultReviewRules, "comment_settings": settings})
+}
+
+func (s *Server) handleGetCodeReviewCommentSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.codeReview.CommentSettings(r.Context())
+	if err != nil {
+		http.Error(w, "无法读取全局评论设置", http.StatusInternalServerError)
+		return
+	}
+	emailJSON(w, http.StatusOK, settings)
+}
+
+func (s *Server) handlePatchCodeReviewCommentSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SyncCommits *bool `json:"sync_commits"`
+		SyncMRs     *bool `json:"sync_mrs"`
+	}
+	if err := decodeEmailRequest(w, r, &req); err != nil || (req.SyncCommits == nil && req.SyncMRs == nil) {
+		http.Error(w, "请提供有效的全局评论开关", http.StatusBadRequest)
+		return
+	}
+	settings, err := s.codeReview.PatchCommentSettings(r.Context(), req.SyncCommits, req.SyncMRs)
+	if err != nil {
+		http.Error(w, "全局评论设置保存失败", http.StatusInternalServerError)
+		return
+	}
+	emailJSON(w, http.StatusOK, settings)
 }
 func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -111,7 +142,8 @@ func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Reque
 	if req.Rules != nil {
 		p.Rules = *req.Rules
 	}
-	p.AutoReview = true // New webhook events always trigger review.
+	// Scope is fixed even for older clients submitting legacy narrowing fields.
+	p = codereview.SystemCorpusPolicy(p)
 	if err := codereview.ValidatePolicy(p); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
@@ -212,6 +244,13 @@ func (s *Server) handleSyncCodeReview(w http.ResponseWriter, r *http.Request) {
 		switch run.PublishStatus {
 		case "off":
 			message = "当前仓库的评论同步开关已关闭"
+			if settings, err := s.codeReview.CommentSettings(r.Context()); err == nil {
+				if run.Kind == "mr" && !settings.SyncMRs {
+					message = "全局 MR 评论同步已关闭"
+				} else if run.Kind == "commit" && !settings.SyncCommits {
+					message = "全局 Commit 评论同步已关闭"
+				}
+			}
 		case "stale":
 			message = "代码版本已变化，不能同步旧评审"
 		case "unknown":

@@ -34,7 +34,7 @@ func automaticEmailSchedulerAllowed() bool {
 	return emailSchedulerDriverAllowed(db.DB.Dialector.Name(), os.Getenv(sqliteEmailSchedulerOptInEnv))
 }
 
-// Wall-clock comparison catches skipped DST minutes; durable dates prevent repeats.
+// Only the configured wall-clock minute is eligible; durable dates prevent repeats.
 func emailScheduleDue(now time.Time, cfg config.Config) (string, bool) {
 	settings := cfg.DailyJiraEmail.Normalized()
 	deliveryConfig := cfg
@@ -47,7 +47,7 @@ func emailScheduleDue(now time.Time, cfg config.Config) (string, bool) {
 		return "", false
 	}
 	local := now.In(location)
-	return local.Format("2006-01-02"), local.Format("15:04") >= settings.SendTime
+	return local.Format("2006-01-02"), local.Format("15:04") == settings.SendTime
 }
 
 func (s *Server) runEmailSchedule(ctx context.Context, now time.Time) {
@@ -112,7 +112,7 @@ func (s *Server) startEmailWorker(ctx context.Context) <-chan struct{} {
 		defer close(done)
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
-		// Catch up today's report after restart, without replaying past days.
+		// Check immediately so a restart within the sending minute remains eligible.
 		if ctx.Err() == nil {
 			s.runEmailSchedule(ctx, time.Now())
 		}
@@ -129,8 +129,8 @@ func (s *Server) startEmailWorker(ctx context.Context) <-chan struct{} {
 				return
 			case <-wakeup:
 				s.runEmailSchedule(ctx, time.Now())
-			case now := <-ticker.C:
-				s.runEmailSchedule(ctx, now)
+			case <-ticker.C:
+				s.runEmailSchedule(ctx, time.Now())
 			}
 		}
 	}()

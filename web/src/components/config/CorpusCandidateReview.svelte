@@ -7,6 +7,7 @@
   import { PagedResource } from '../../lib/paged-resource';
 
   export let currentUserPermissions: string[] = [];
+  export let governanceSurface = false;
 
   type SourceDocumentRef = {
     id: number;
@@ -400,7 +401,7 @@
 </script>
 
 {#if canRead}
-  <section class="unified-corpus-review" aria-label="统一语料审核中心">
+  <section class="unified-corpus-review" class:governance-surface={governanceSurface} aria-label="统一语料审核中心">
     <header class="review-header">
       <div>
         <h4>统一审核中心</h4>
@@ -635,6 +636,49 @@
 {/if}
 
 <style>
+  .unified-corpus-review.governance-surface .candidate-queue,
+  .unified-corpus-review.governance-surface .review-workbench,
+  .unified-corpus-review.governance-surface > .review-empty {
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+
+  .governance-surface .review-layout {
+    gap: var(--wa-space-4);
+  }
+
+  .governance-surface .source-batch-head {
+    background: var(--wa-surface-inset);
+  }
+
+  .governance-surface .source-batch-candidates > button:hover,
+  .governance-surface .source-batch-candidates > button.active {
+    background: var(--wa-row-active);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .unified-corpus-review.governance-surface .candidate-queue,
+    .unified-corpus-review.governance-surface .review-workbench,
+    .unified-corpus-review.governance-surface > .review-empty {
+      background: var(--wa-admin-list-surface-solid-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .unified-corpus-review.governance-surface .candidate-queue,
+    .unified-corpus-review.governance-surface .review-workbench,
+    .unified-corpus-review.governance-surface > .review-empty {
+      background: var(--wa-admin-list-surface-solid-background);
+    }
+  }
+
   .unified-corpus-review { min-width: 0; display: grid; gap: 16px; color: var(--scw-text, #293847); }
   .review-header, .review-workbench-head, .candidate-queue-head, .review-actions, .review-actions > div { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .review-header { padding-bottom: 14px; border-bottom: 1px solid var(--scw-line, rgba(92, 116, 137, .16)); }

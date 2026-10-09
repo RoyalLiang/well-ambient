@@ -2,6 +2,7 @@ package strongestbrain_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -51,10 +52,10 @@ func TestStrongestBrain_7DimensionIntelligenceReport(t *testing.T) {
 
 	// 1. 初始化一个激活的能力版本
 	manifest := &agentruntime.CapabilityManifest{
-		Schema:  "capability-manifest/v1",
-		ID:      "code_review",
-		Kind:    agentruntime.KindSkill,
-		Version: 1,
+		Schema:   "capability-manifest/v1",
+		ID:       "code_review",
+		Kind:     agentruntime.KindSkill,
+		Version:  1,
 		Provides: []string{"review"},
 	}
 	_, _ = reg.Register(ctx, manifest)
@@ -239,7 +240,7 @@ func TestStrongestBrain_DeterministicReplayAndHardGates(t *testing.T) {
 		t.Fatalf("register v1 failed: %v", err)
 	}
 
-	// 2. 优秀候选版本 V2 (相同权限，Token 压缩优化到 1200 token)
+	// 2. 候选版本 V2 (相同权限，声明的 Token 预算减少并非实测收益)
 	candManifest := &agentruntime.CapabilityManifest{
 		Schema:      "capability-manifest/v1",
 		ID:          "code_review",
@@ -266,15 +267,10 @@ func TestStrongestBrain_DeterministicReplayAndHardGates(t *testing.T) {
 		t.Fatalf("run replay failed: %v", err)
 	}
 
-	if eval.Verdict != "pass" {
-		t.Fatalf("expected replay verdict pass, got %s", eval.Verdict)
+	if eval.Verdict != "manual_review" {
+		t.Fatalf("manifest-only checks must not pass a replay, got %s", eval.Verdict)
 	}
-	if eval.OverallScore < 90.0 {
-		t.Fatalf("expected overall score >= 90, got %f", eval.OverallScore)
-	}
-	if eval.TokenEfficiencyScore <= 88.0 {
-		t.Fatalf("expected token efficiency score boost due to 40%% instruction token savings")
-	}
+	assertManifestOnlyEvaluation(t, eval)
 
 	// 3. 恶意/越权候选版本 V3 (试图暗中扩大权限请求 root.access)
 	badManifest := &agentruntime.CapabilityManifest{
@@ -357,5 +353,157 @@ func TestStrongestBrain_CanaryProgressionAndAutoRollback(t *testing.T) {
 	resSecRollback := strongestbrain.EvaluateCanarySafety(strongestbrain.CanaryStage50Pct, securityBreachSummary, thresholds)
 	if !resSecRollback.AutoRollbackTriggered {
 		t.Fatalf("expected security breach to trigger auto rollback immediately")
+	}
+}
+
+func assertManifestOnlyEvaluation(t *testing.T, evaluation *db.CapabilityEvaluation) {
+	t.Helper()
+	if evaluation.QualityScore != 0 || evaluation.EvidenceScore != 0 || evaluation.SafetyScore != 0 ||
+		evaluation.StabilityScore != 0 || evaluation.TokenEfficiencyScore != 0 ||
+		evaluation.LatencyScore != 0 || evaluation.OverallScore != 0 {
+		t.Fatalf("unevaluated replay exposed fabricated metrics: %+v", evaluation)
+	}
+	var metrics map[string]any
+	if err := json.Unmarshal([]byte(evaluation.MetricsJSON), &metrics); err != nil {
+		t.Fatalf("decode evaluation metadata: %v", err)
+	}
+	if metrics["evaluation_kind"] != "manifest_checks_only" || metrics["metrics_available"] != false ||
+		metrics["evaluated_sample_count"] != float64(0) {
+		t.Fatalf("missing explicit unevaluated metadata: %s", evaluation.MetricsJSON)
+	}
+	if _, exists := metrics["weights"]; exists {
+		t.Fatalf("manifest checks exposed a weighted performance score: %s", evaluation.MetricsJSON)
+	}
+}
+
+func registerReplayVersion(t *testing.T, registry *agentruntime.Registry, version int, permissions []string) *db.CapabilityVersion {
+	t.Helper()
+	value, err := registry.Register(context.Background(), &agentruntime.CapabilityManifest{
+		Schema: "capability-manifest/v1", ID: "code_review", Kind: agentruntime.KindSkill,
+		Version: version, Permissions: permissions,
+	})
+	if err != nil {
+		t.Fatalf("register replay fixture: %v", err)
+	}
+	return value
+}
+
+func TestStrongestBrain_ReplayDoesNotEvaluateNamedSamples(t *testing.T) {
+	for _, sampleIDs := range [][]uint{nil, {123, 456}} {
+		t.Run(fmt.Sprintf("samples-%d", len(sampleIDs)), func(t *testing.T) {
+			database := setupTestDB(t)
+			registry := agentruntime.NewRegistry(database)
+			service := strongestbrain.NewService(database, registry)
+			baseline := registerReplayVersion(t, registry, 1, []string{"source.read"})
+			candidate := registerReplayVersion(t, registry, 2, []string{"source.read"})
+			evaluation, err := service.RunReplay(context.Background(), strongestbrain.ReplayCommand{
+				CandidateVersionID: candidate.ID, BaselineVersionID: baseline.ID,
+				DatasetRef: "unexecuted-dataset", SampleRunIDs: sampleIDs,
+			})
+			if err != nil {
+				t.Fatalf("static manifest check failed: %v", err)
+			}
+			if evaluation.Verdict != "manual_review" {
+				t.Fatalf("unexecuted samples produced %q", evaluation.Verdict)
+			}
+			assertManifestOnlyEvaluation(t, evaluation)
+		})
+	}
+}
+
+func TestStrongestBrain_ReplayRequiresValidBaseline(t *testing.T) {
+	for _, scenario := range []string{"omitted", "not-found", "malformed-json", "invalid-manifest"} {
+		t.Run(scenario, func(t *testing.T) {
+			database := setupTestDB(t)
+			registry := agentruntime.NewRegistry(database)
+			service := strongestbrain.NewService(database, registry)
+			baseline := registerReplayVersion(t, registry, 1, []string{"source.read"})
+			candidate := registerReplayVersion(t, registry, 2, []string{"source.read"})
+			baselineID := baseline.ID
+			switch scenario {
+			case "omitted":
+				baselineID = 0
+			case "not-found":
+				baselineID = candidate.ID + 100
+			case "malformed-json", "invalid-manifest":
+				manifest := "{broken"
+				if scenario == "invalid-manifest" {
+					manifest = "{}"
+				}
+				if err := database.Model(baseline).Update("manifest_json", manifest).Error; err != nil {
+					t.Fatalf("corrupt baseline fixture: %v", err)
+				}
+			}
+			_, err := service.RunReplay(context.Background(), strongestbrain.ReplayCommand{
+				CandidateVersionID: candidate.ID, BaselineVersionID: baselineID,
+			})
+			if err == nil {
+				t.Fatal("missing or invalid baseline silently produced an evaluation")
+			}
+			var count int64
+			if err := database.Model(&db.CapabilityEvaluation{}).Count(&count).Error; err != nil || count != 0 {
+				t.Fatalf("invalid baseline must not persist an evaluation: count=%d error=%v", count, err)
+			}
+		})
+	}
+}
+
+func TestStrongestBrain_ReplayRejectsExpansionFromEmptyPermissions(t *testing.T) {
+	database := setupTestDB(t)
+	registry := agentruntime.NewRegistry(database)
+	service := strongestbrain.NewService(database, registry)
+	baseline := registerReplayVersion(t, registry, 1, nil)
+	candidate := registerReplayVersion(t, registry, 2, []string{"source.read"})
+	evaluation, err := service.RunReplay(context.Background(), strongestbrain.ReplayCommand{
+		CandidateVersionID: candidate.ID, BaselineVersionID: baseline.ID,
+	})
+	if err != nil {
+		t.Fatalf("static manifest check failed: %v", err)
+	}
+	if evaluation.Verdict != "reject" {
+		t.Fatalf("permission expansion from empty baseline produced %q", evaluation.Verdict)
+	}
+	var regressions []string
+	if err := json.Unmarshal([]byte(evaluation.RegressionsJSON), &regressions); err != nil || len(regressions) == 0 {
+		t.Fatalf("permission rejection lacks evidence: %q, %v", evaluation.RegressionsJSON, err)
+	}
+	assertManifestOnlyEvaluation(t, evaluation)
+}
+
+func TestStrongestBrain_GetReplayMarksLegacyStaticResults(t *testing.T) {
+	for _, verdict := range []string{"pass", "reject", "manual_review"} {
+		t.Run(verdict, func(t *testing.T) {
+			database := setupTestDB(t)
+			service := strongestbrain.NewService(database, agentruntime.NewRegistry(database))
+			stored := db.CapabilityEvaluation{
+				DatasetRef: "legacy-static-suite", Verdict: verdict,
+				QualityScore: 95, EvidenceScore: 92, SafetyScore: 100, StabilityScore: 96,
+				TokenEfficiencyScore: 88, LatencyScore: 90, OverallScore: 94,
+				MetricsJSON:     `{"weights":{"quality":0.4},"candidate_digest":"sha256:legacy"}`,
+				RegressionsJSON: "[]", CreatedAt: time.Now(),
+			}
+			if err := database.Create(&stored).Error; err != nil {
+				t.Fatalf("save legacy fixture: %v", err)
+			}
+			result, err := service.GetReplay(context.Background(), stored.ID)
+			if err != nil {
+				t.Fatalf("read legacy result: %v", err)
+			}
+			wantVerdict := verdict
+			if wantVerdict == "pass" {
+				wantVerdict = "manual_review"
+			}
+			if result.Verdict != wantVerdict {
+				t.Fatalf("legacy verdict = %q, want %q", result.Verdict, wantVerdict)
+			}
+			assertManifestOnlyEvaluation(t, result)
+			var persisted db.CapabilityEvaluation
+			if err := database.First(&persisted, stored.ID).Error; err != nil {
+				t.Fatalf("check legacy storage: %v", err)
+			}
+			if persisted.Verdict != verdict || persisted.QualityScore != 95 || persisted.MetricsJSON != stored.MetricsJSON {
+				t.Fatal("read annotation changed stored history")
+			}
+		})
 	}
 }

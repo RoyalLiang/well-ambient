@@ -19,6 +19,7 @@ import (
 	"well-ambient/internal/agentruntime"
 	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
+	"well-ambient/internal/dailyjira"
 	"well-ambient/internal/db"
 	"well-ambient/internal/decisioncommands"
 	"well-ambient/internal/deliveryplanning"
@@ -54,6 +55,9 @@ func SetBuildInfo(version, commit, buildTime string) {
 
 // Server encapsulates the HTTP server logic
 type Server struct {
+	dailyJiraReaderMu   sync.Mutex
+	dailyJiraReaderDB   *gorm.DB
+	dailyJiraReader     *dailyjira.Reader
 	codeReview          *codereview.Service
 	emailConfigMu       sync.RWMutex
 	emailConfigSnapshot *config.Config
@@ -212,6 +216,8 @@ func (s *Server) performanceSettings() performance.Settings {
 // routes sets up API routing
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/code-reviews/repos", s.withPermission("dashboard:read", s.handleCodeReviewRepos))
+	s.mux.HandleFunc("GET /api/code-reviews/comment-settings", s.withPermission("dashboard:read", s.handleGetCodeReviewCommentSettings))
+	s.mux.HandleFunc("PATCH /api/code-reviews/comment-settings", s.withPermission("config:write", s.handlePatchCodeReviewCommentSettings))
 	s.mux.HandleFunc("GET /api/code-reviews/targets", s.withPermission("dashboard:read", s.handleCodeReviewTargets))
 	s.mux.HandleFunc("PUT /api/code-reviews/policy", s.withPermission("config:write", s.handleSaveCodeReviewPolicy))
 	s.mux.HandleFunc("GET /api/code-reviews", s.withPermission("dashboard:read", s.handleListCodeReviews))

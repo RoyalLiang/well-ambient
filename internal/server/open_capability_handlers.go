@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -115,12 +116,15 @@ func (s *Server) withOpenCapability(toolName string, next openHandler) http.Hand
 		started := time.Now()
 		release, err := s.openLimiter.Acquire(r.Context(), identity)
 		if err != nil {
-			_ = s.openAccess.RecordInvocation(r.Context(), openaccess.Invocation{
+			if auditErr := s.openAccess.RecordInvocation(r.Context(), openaccess.Invocation{
 				RequestID: requestID, Identity: identity, Transport: "http",
 				ToolName: toolName, ToolVersion: "1", PolicyVersion: policy.Version,
 				Duration: time.Since(started), Outcome: "failed",
 				ErrorCode: openaccess.ErrorCode(err),
-			})
+			}); auditErr != nil {
+				writeOpenError(w, requestID, invocationAuditError(requestID, false))
+				return
+			}
 			writeOpenError(w, requestID, err)
 			return
 		}
@@ -128,13 +132,25 @@ func (s *Server) withOpenCapability(toolName string, next openHandler) http.Hand
 
 		call := openCall{Identity: identity, Policy: policy, RequestID: requestID}
 		if featureErr := s.openFeatureError(toolName); featureErr != nil {
-			_ = s.openAccess.RecordInvocation(r.Context(), openaccess.Invocation{
+			if auditErr := s.openAccess.RecordInvocation(r.Context(), openaccess.Invocation{
 				RequestID: requestID, Identity: identity, Transport: "http",
 				ToolName: toolName, ToolVersion: "1", PolicyVersion: policy.Version,
 				Duration: time.Since(started), Outcome: "failed",
 				ErrorCode: openaccess.ErrorCode(featureErr),
-			})
+			}); auditErr != nil {
+				writeOpenError(w, requestID, invocationAuditError(requestID, false))
+				return
+			}
 			writeOpenError(w, requestID, featureErr)
+			return
+		}
+		invocation := openaccess.Invocation{
+			RequestID: requestID, Identity: identity, Transport: "http",
+			ToolName: toolName, ToolVersion: "1", PolicyVersion: policy.Version,
+			Outcome: "started",
+		}
+		if auditErr := s.openAccess.RecordInvocation(r.Context(), invocation); auditErr != nil {
+			writeOpenError(w, requestID, invocationAuditError(requestID, false))
 			return
 		}
 		result, callErr := next(r, call)
@@ -144,12 +160,14 @@ func (s *Server) withOpenCapability(toolName string, next openHandler) http.Hand
 			outcome = "failed"
 			errorCode = openaccess.ErrorCode(callErr)
 		}
-		_ = s.openAccess.RecordInvocation(r.Context(), openaccess.Invocation{
-			RequestID: requestID, Identity: identity, Transport: "http",
-			ToolName: toolName, ToolVersion: "1", PolicyVersion: policy.Version,
-			TargetRefs: result.TargetRefs, Duration: time.Since(started),
-			Outcome: outcome, ErrorCode: errorCode,
-		})
+		invocation.TargetRefs = result.TargetRefs
+		invocation.Duration = time.Since(started)
+		invocation.Outcome = outcome
+		invocation.ErrorCode = errorCode
+		if auditErr := s.openAccess.RecordInvocation(r.Context(), invocation); auditErr != nil {
+			writeOpenError(w, requestID, invocationAuditError(requestID, true))
+			return
+		}
 		if callErr != nil {
 			writeOpenError(w, requestID, callErr)
 			return
@@ -159,6 +177,15 @@ func (s *Server) withOpenCapability(toolName string, next openHandler) http.Hand
 		}
 		writeOpenJSON(w, result.Status, result.Body)
 	}
+}
+
+func invocationAuditError(requestID string, executionStarted bool) error {
+	if executionStarted {
+		return openaccess.NewError("audit_unavailable", fmt.Sprintf(
+			"invocation audit completion failed; the business result may already have occurred. Check request_id %s with the operator before retrying; do not retry blindly", requestID,
+		))
+	}
+	return openaccess.NewError("audit_unavailable", "invocation audit unavailable; the business operation was not started")
 }
 
 func (s *Server) syncOpenFeaturesFromConfig() {
@@ -406,7 +433,7 @@ func writeOpenError(w http.ResponseWriter, requestID string, err error) {
 		status = http.StatusConflict
 	case "rate_limited":
 		status = http.StatusTooManyRequests
-	case "upstream_unavailable":
+	case "upstream_unavailable", "audit_unavailable":
 		status = http.StatusServiceUnavailable
 	case "outcome_unknown":
 		status = http.StatusAccepted

@@ -684,7 +684,7 @@
   }
 </script>
 
-<div class="scw-workbench">
+<div class="scw-workbench" class:governance-context={view === 'context'}>
   {#if showEnginePanel && !editing && isConfigured}
     <section class="scw-overview" aria-label="AI 引擎配置状态">
       <header class="scw-header">
@@ -1049,6 +1049,7 @@
       <CorpusSourceLibrary
         {currentUserPermissions}
         aiReady={resolvedContextAIReady}
+        governanceSurface={view === 'context'}
         on:openreview={() => setContextWorkspaceTab('candidates')}
       />
 
@@ -1258,7 +1259,7 @@
         aria-labelledby="context-tab-candidates"
         tabindex="0"
       >
-        <CorpusCandidateReview {currentUserPermissions} on:promoted={fetchContextFacts} />
+      <CorpusCandidateReview {currentUserPermissions} governanceSurface={view === 'context'} on:promoted={fetchContextFacts} />
       </div>
       {:else}
       <div
@@ -1348,6 +1349,85 @@
 </div>
 
 <style>
+  /* Keep the shared material local to the AI governance context view. */
+  .scw-workbench.governance-context {
+    --scw-line: var(--wa-border-divider);
+    --scw-line-strong: var(--wa-border-strong);
+    --scw-surface: var(--wa-glass-panel);
+    --scw-surface-soft: var(--wa-surface-inset);
+    --scw-subtle: var(--wa-text-muted);
+    gap: var(--wa-space-4);
+  }
+
+  .governance-context > .scw-overview {
+    gap: var(--wa-space-4);
+  }
+
+  .governance-context .scw-context-toolbar,
+  .governance-context .scw-task-tabs,
+  .governance-context .scw-list,
+  .governance-context .scw-editor-column {
+    min-width: 0;
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+
+  .governance-context .scw-context-toolbar,
+  .governance-context .scw-editor-column {
+    padding: var(--wa-space-3) var(--wa-space-4);
+  }
+
+  .governance-context .scw-task-tabs {
+    padding: var(--wa-space-1);
+  }
+
+  .governance-context .scw-list-item {
+    background: transparent;
+  }
+
+  .governance-context .scw-list-item:hover,
+  .governance-context .scw-list-item.active {
+    background: var(--wa-row-active);
+  }
+
+  @media (max-width: 760px) {
+    .governance-context .scw-context-toolbar {
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: var(--wa-space-2);
+    }
+
+    .governance-context .scw-task-tabs button,
+    .governance-context .manual-context-tools summary {
+      min-height: var(--wa-touch-h);
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .governance-context .scw-context-toolbar,
+    .governance-context .scw-task-tabs,
+    .governance-context .scw-list,
+    .governance-context .scw-editor-column {
+      background: var(--wa-admin-list-surface-solid-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .governance-context .scw-context-toolbar,
+    .governance-context .scw-task-tabs,
+    .governance-context .scw-list,
+    .governance-context .scw-editor-column {
+      background: var(--wa-admin-list-surface-solid-background);
+    }
+  }
+
   .text-success {
     color: var(--wa-success, #04966f);
   }

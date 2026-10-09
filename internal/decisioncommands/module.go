@@ -36,6 +36,8 @@ const (
 )
 
 type JiraState struct {
+	IssueKey    string    `json:"issue_key,omitempty"`
+	ProjectRef  string    `json:"project_ref,omitempty"`
 	Assignee    string    `json:"assignee"`
 	DueDate     string    `json:"due_date"`
 	SecurityID  string    `json:"security_id,omitempty"`
@@ -79,6 +81,8 @@ type Preconditions struct {
 	RemoteUpdatedAt time.Time `json:"remote_updated_at"`
 	EvidenceRef     string    `json:"evidence_ref"`
 	Values          []Change  `json:"values"`
+	// Nil marks an older snapshot without verified issue visibility; an empty value means unrestricted.
+	IssueSecurityID *string `json:"issue_security_id,omitempty"`
 }
 
 type Plan struct {
@@ -102,7 +106,7 @@ type ExecuteRequest struct {
 type ActionResult struct {
 	ID                   uint       `json:"id"`
 	Action               string     `json:"action"`
-	DesiredValue         string     `json:"desired_value"`
+	DesiredValue         string     `json:"desired_value,omitempty"`
 	ConfirmedRemoteValue string     `json:"confirmed_remote_value,omitempty"`
 	State                string     `json:"state"`
 	RemoteEvidence       any        `json:"remote_evidence,omitempty"`
@@ -112,14 +116,16 @@ type ActionResult struct {
 }
 
 type Operation struct {
-	ID        string         `json:"operation_id"`
-	PlanID    string         `json:"plan_id"`
-	SourceID  string         `json:"source_id"`
-	State     string         `json:"state"`
-	ErrorCode string         `json:"error_code,omitempty"`
-	Actions   []ActionResult `json:"actions"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID                string         `json:"operation_id"`
+	PlanID            string         `json:"plan_id,omitempty"`
+	SourceID          string         `json:"source_id"`
+	State             string         `json:"state"`
+	ErrorCode         string         `json:"error_code,omitempty"`
+	Actions           []ActionResult `json:"actions"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	PublicationStatus string         `json:"publication_status"`
+	MissingReason     string         `json:"missing_reason,omitempty"`
 }
 
 type Module struct {
@@ -179,6 +185,9 @@ func (m *Module) GetContext(
 	if err != nil {
 		return ContextResponse{}, openaccess.NewError("upstream_unavailable", "Jira issue state could not be read")
 	}
+	if err := authorizeRemoteIdentity(state, project, issueKey); err != nil {
+		return ContextResponse{}, err
+	}
 	if err := authorizeRemoteIssue(policy, state); err != nil {
 		return ContextResponse{}, err
 	}
@@ -226,6 +235,9 @@ func (m *Module) Prepare(
 	if err != nil {
 		return Plan{}, openaccess.NewError("upstream_unavailable", "Jira issue state could not be read")
 	}
+	if err := authorizeRemoteIdentity(current, project, issueKey); err != nil {
+		return Plan{}, err
+	}
 	if err := authorizeRemoteIssue(policy, current); err != nil {
 		return Plan{}, err
 	}
@@ -253,7 +265,8 @@ func (m *Module) Prepare(
 	}
 	preconditions := Preconditions{
 		RemoteUpdatedAt: current.UpdatedAt, EvidenceRef: current.EvidenceRef,
-		Values: append([]Change(nil), changes...),
+		Values:          append([]Change(nil), changes...),
+		IssueSecurityID: &current.SecurityID,
 	}
 	plan := Plan{
 		ID: planID, SourceID: identity.SourceID, IssueKey: issueKey, Project: project,
@@ -604,6 +617,9 @@ func (m *Module) dispatchClaimed(ctx context.Context, outbox db.OpenOutbox, reco
 			}
 		}
 		confirmed, verifyErr := m.jira.ReadIssueState(ctx, binding, plan.TargetRef)
+		if verifyErr == nil {
+			verifyErr = authorizeRemoteIdentity(confirmed, plan.ProjectRef, plan.TargetRef)
+		}
 		if verifyErr == nil && currentValue(confirmed, action.ActionType) == action.DesiredValue {
 			evidence := map[string]any{"after": confirmed, "recovery": "verification_only"}
 			return m.finishClaim(ctx, outbox, action, StateSucceeded, action.DesiredValue, "", "", evidence)
@@ -642,8 +658,11 @@ func (m *Module) dispatchClaimed(ctx context.Context, outbox db.OpenOutbox, reco
 	if err != nil {
 		return m.finishClaim(ctx, outbox, action, StateFailed, "", "upstream_unavailable", "Jira state could not be read before dispatch", nil)
 	}
+	if err := authorizeRemoteIdentity(current, plan.ProjectRef, plan.TargetRef); err != nil {
+		return m.finishClaim(ctx, outbox, action, StateFailed, "", openaccess.ErrorCode(err), err.Error(), map[string]any{"before": current})
+	}
 	if err := authorizeRemoteIssue(policy, current); err != nil {
-		return m.finishClaim(ctx, outbox, action, StateFailed, "", openaccess.ErrorCode(err), err.Error(), nil)
+		return m.finishClaim(ctx, outbox, action, StateFailed, "", openaccess.ErrorCode(err), err.Error(), map[string]any{"before": current})
 	}
 	expected, ok := preconditionFor(preconditions, action.ActionType)
 	if !ok || currentValue(current, action.ActionType) != expected {
@@ -659,6 +678,9 @@ func (m *Module) dispatchClaimed(ctx context.Context, outbox db.OpenOutbox, reco
 	}
 	dispatchErr := m.dispatch(ctx, binding, plan.TargetRef, action)
 	confirmed, verifyErr := m.jira.ReadIssueState(ctx, binding, plan.TargetRef)
+	if verifyErr == nil {
+		verifyErr = authorizeRemoteIdentity(confirmed, plan.ProjectRef, plan.TargetRef)
+	}
 	if verifyErr == nil && currentValue(confirmed, action.ActionType) == action.DesiredValue {
 		evidence := map[string]any{
 			"before": current, "after": confirmed, "dispatch_error": errorText(dispatchErr),
@@ -872,16 +894,45 @@ func (m *Module) loadOperation(ctx context.Context, operationID, sourceID string
 	if err != nil {
 		return Operation{}, fmt.Errorf("load operation: %w", err)
 	}
+	policy, err := m.access.ActivePolicy(ctx)
+	if err != nil {
+		return Operation{}, err
+	}
+	var plan db.DecisionPlan
+	if err := m.db.WithContext(ctx).Where("id = ? AND source_id = ?", record.PlanID, sourceID).First(&plan).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return Operation{}, openaccess.NewError("not_found", "operation was not found")
+		}
+		return Operation{}, fmt.Errorf("load operation publication: %w", err)
+	}
+	if !policy.AllowsProject(plan.ProjectRef) {
+		return Operation{}, openaccess.NewError("not_found", "operation was not found")
+	}
 	var actions []db.OpenOperationAction
 	if err := m.db.WithContext(ctx).Where("operation_id = ?", record.ID).Order("id ASC").Find(&actions).Error; err != nil {
 		return Operation{}, fmt.Errorf("load operation actions: %w", err)
 	}
+	missingReason := m.operationPublicationReason(ctx, policy, plan, actions)
 	result := Operation{
 		ID: record.ID, PlanID: record.PlanID, SourceID: record.SourceID,
 		State: record.State, ErrorCode: record.LastErrorCode,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
+	result.PublicationStatus = "published"
+	if missingReason != "" {
+		result.PublicationStatus = "redacted"
+		result.MissingReason = missingReason
+		result.PlanID = ""
+		result.ErrorCode = ""
+	}
 	for _, action := range actions {
+		if missingReason != "" {
+			result.Actions = append(result.Actions, ActionResult{
+				ID: action.ID, Action: action.ActionType, State: action.State,
+				DispatchedAt: action.DispatchedAt, ConfirmedAt: action.ConfirmedAt,
+			})
+			continue
+		}
 		var evidence any
 		if action.RemoteEvidenceJSON != "" {
 			_ = json.Unmarshal([]byte(action.RemoteEvidenceJSON), &evidence)
@@ -894,6 +945,82 @@ func (m *Module) loadOperation(ctx context.Context, operationID, sourceID string
 		})
 	}
 	return result, nil
+}
+
+func (m *Module) operationPublicationReason(ctx context.Context, policy openaccess.Policy, plan db.DecisionPlan, actions []db.OpenOperationAction) string {
+	// A past snapshot cannot prove that the issue still belongs to this project.
+	// Even policies publishing every security level must refresh current identity.
+	if m.jira == nil || len(actions) == 0 {
+		return "visibility_unavailable"
+	}
+	binding, err := m.access.ExecutionBinding(ctx, plan.ProjectRef, actions[0].ActionType)
+	if err != nil {
+		return "visibility_unavailable"
+	}
+	for _, action := range actions {
+		if action.ConnectorRef != binding.ConnectorRef || action.ExecutorRef != binding.ExecutorRef {
+			return "visibility_unavailable"
+		}
+	}
+	visibilityCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	current, err := m.jira.ReadIssueState(visibilityCtx, binding, plan.TargetRef)
+	if err != nil || strings.TrimSpace(current.EvidenceRef) == "" {
+		return "visibility_unavailable"
+	}
+	if err := authorizeRemoteIdentity(current, plan.ProjectRef, plan.TargetRef); err != nil {
+		return "issue_scope_unverified"
+	}
+	if err := authorizeRemoteIssue(policy, current); err != nil {
+		return "restricted_issue"
+	}
+	if err := authorizeOperationPublication(policy, plan, actions); err != nil {
+		return "stored_visibility_unverified"
+	}
+	return ""
+}
+
+func authorizeOperationPublication(policy openaccess.Policy, plan db.DecisionPlan, actions []db.OpenOperationAction) error {
+	var preconditions Preconditions
+	if err := json.Unmarshal([]byte(plan.PreconditionsJSON), &preconditions); err != nil {
+		return openaccess.NewError("forbidden", "operation issue publication could not be verified")
+	}
+	verified := preconditions.IssueSecurityID != nil
+	if verified {
+		if err := authorizeRemoteIssue(policy, JiraState{SecurityID: *preconditions.IssueSecurityID}); err != nil {
+			return err
+		}
+	}
+	for _, action := range actions {
+		if strings.TrimSpace(action.RemoteEvidenceJSON) == "" {
+			continue
+		}
+		var evidence struct {
+			Before *JiraState `json:"before"`
+			After  *JiraState `json:"after"`
+		}
+		if err := json.Unmarshal([]byte(action.RemoteEvidenceJSON), &evidence); err != nil {
+			return openaccess.NewError("forbidden", "operation issue publication could not be verified")
+		}
+		for _, state := range []*JiraState{evidence.Before, evidence.After} {
+			if state == nil {
+				continue
+			}
+			if err := authorizeRemoteIdentity(*state, plan.ProjectRef, plan.TargetRef); err != nil {
+				return err
+			}
+			if err := authorizeRemoteIssue(policy, *state); err != nil {
+				return err
+			}
+			if strings.TrimSpace(state.EvidenceRef) != "" {
+				verified = true
+			}
+		}
+	}
+	if !verified && !policy.AllowsRestrictedJiraIssues() {
+		return openaccess.NewError("forbidden", "operation issue publication could not be verified; stored visibility evidence is required")
+	}
+	return nil
 }
 
 func prepareChanges(policy openaccess.Policy, current JiraState, request PrepareRequest) ([]Change, error) {
@@ -966,6 +1093,17 @@ func compatibleBindings(bindings []db.JiraExecutionBinding) error {
 		if binding.ConnectorRef != first.ConnectorRef || binding.ExecutorRef != first.ExecutorRef {
 			return openaccess.NewError("forbidden", "decision actions resolve to incompatible Jira execution bindings")
 		}
+	}
+	return nil
+}
+
+func authorizeRemoteIdentity(state JiraState, expectedProject, expectedIssueKey string) error {
+	issueKey, project, err := normalizeIssueKey(state.IssueKey)
+	if err != nil || strings.TrimSpace(state.ProjectRef) == "" ||
+		!strings.EqualFold(project, strings.TrimSpace(state.ProjectRef)) ||
+		!strings.EqualFold(project, strings.TrimSpace(expectedProject)) ||
+		!strings.EqualFold(issueKey, strings.TrimSpace(expectedIssueKey)) {
+		return openaccess.NewError("forbidden", "Jira issue identity and project could not be verified for the requested scope")
 	}
 	return nil
 }

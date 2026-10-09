@@ -179,29 +179,56 @@ func (module *Module) Reconcile(ctx context.Context) (int, error) {
 	module.runMu.Lock()
 	defer module.runMu.Unlock()
 
-	var assets []db.SolutionAsset
-	if err := module.conn.WithContext(ctx).
-		Where("published_revision_id <> 0").Order("id ASC").Find(&assets).Error; err != nil {
+	// Bound one pass so concurrent publications cannot keep extending it.
+	var highWatermark uint
+	if err := module.conn.WithContext(ctx).Model(&db.SolutionAsset{}).
+		Select("COALESCE(MAX(id), 0)").Scan(&highWatermark).Error; err != nil {
 		return 0, err
 	}
 	queued := 0
-	for _, asset := range assets {
-		var entry db.SolutionCatalogEntry
-		lookup := module.conn.WithContext(ctx).Where("solution_asset_id = ?", asset.ID).Limit(1).Find(&entry)
-		if lookup.Error != nil {
-			return queued, lookup.Error
-		}
-		if lookup.RowsAffected > 0 && entry.PublishedRevisionID == asset.PublishedRevisionID {
-			continue
-		}
-		var revision db.SolutionRevision
-		if err := module.conn.WithContext(ctx).First(&revision, asset.PublishedRevisionID).Error; err != nil {
+	const batchSize = 250
+	var afterID uint
+	for afterID < highWatermark {
+		var assets []db.SolutionAsset
+		if err := module.conn.WithContext(ctx).
+			Select("solution_assets.id", "solution_assets.published_revision_id").
+			Where("solution_assets.id > ? AND solution_assets.id <= ? AND solution_assets.published_revision_id <> 0", afterID, highWatermark).
+			Where(`NOT EXISTS (SELECT 1 FROM solution_catalog_entries
+				WHERE solution_catalog_entries.solution_asset_id = solution_assets.id
+				AND solution_catalog_entries.published_revision_id = solution_assets.published_revision_id)`).
+			Order("solution_assets.id ASC").Limit(batchSize).Find(&assets).Error; err != nil {
 			return queued, err
 		}
-		if err := EnqueuePublished(module.conn.WithContext(ctx), asset, revision, module.now().UTC()); err != nil {
+		if len(assets) == 0 {
+			break
+		}
+		revisionIDs := make([]uint, 0, len(assets))
+		for _, asset := range assets {
+			revisionIDs = append(revisionIDs, asset.PublishedRevisionID)
+		}
+		// Reconciliation only needs revision existence, never the Markdown payload.
+		var revisions []db.SolutionRevision
+		if err := module.conn.WithContext(ctx).Select("id").Where("id IN ?", revisionIDs).Find(&revisions).Error; err != nil {
 			return queued, err
 		}
-		queued++
+		existing := make(map[uint]db.SolutionRevision, len(revisions))
+		for _, revision := range revisions {
+			existing[revision.ID] = revision
+		}
+		for _, asset := range assets {
+			revision, ok := existing[asset.PublishedRevisionID]
+			if !ok {
+				return queued, gorm.ErrRecordNotFound
+			}
+			if err := EnqueuePublished(module.conn.WithContext(ctx), asset, revision, module.now().UTC()); err != nil {
+				return queued, err
+			}
+			queued++
+		}
+		afterID = assets[len(assets)-1].ID
+		if len(assets) < batchSize {
+			break
+		}
 	}
 	return queued, nil
 }

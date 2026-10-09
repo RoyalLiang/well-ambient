@@ -1,0 +1,8 @@
+goos: darwin
+goarch: arm64
+pkg: well-ambient/internal/dailyjira
+cpu: Apple M4 Pro
+BenchmarkPostgresDailyJiraReadPage/rows_10000-12         	     100	   6490185 ns/op	         7.647 p95-ms	         7.725 p99-ms	  118279 B/op	    1188 allocs/op
+BenchmarkPostgresDailyJiraReadPage/rows_100000-12        	     100	  29605997 ns/op	        33.52 p95-ms	        33.84 p99-ms	  120569 B/op	    1190 allocs/op
+PASS
+ok  	well-ambient/internal/dailyjira	10.876s

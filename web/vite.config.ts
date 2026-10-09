@@ -21,7 +21,17 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: apiProxyTarget,
-        changeOrigin: true,
+        changeOrigin: false,
+        secure: false
+      },
+      '/open/': {
+        target: apiProxyTarget,
+        changeOrigin: false,
+        secure: false
+      },
+      '^/mcp(?:\\?|$)': {
+        target: apiProxyTarget,
+        changeOrigin: false,
         secure: false
       }
     }

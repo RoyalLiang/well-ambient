@@ -700,7 +700,7 @@
       <div
         class="workspace-frame"
         class:flow-frame={activeRoute === 'schedule' && (activeScheduleView === 'board' || activeScheduleView === 'projects')}
-        class:viewport-fit-frame={['decision', 'schedule', 'solutions', 'evidence', 'tasks'].includes(activeRoute)}
+          class:viewport-fit-frame={['decision', 'schedule', 'solutions', 'evidence', 'tasks', 'ai_governance'].includes(activeRoute)}
         class:daily-jira-frame={activeRoute === 'decision' && activeDecisionView === 'daily_jira'}
         bind:this={workspaceFrameEl}
       >

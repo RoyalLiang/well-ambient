@@ -173,7 +173,7 @@ func TestTwoPassReviewAndKnowledgeScope(t *testing.T) {
 	}
 	var s Snapshot
 	_ = json.Unmarshal([]byte(run.SnapshotJSON), &s)
-	if len(s.Knowledge) != 2 || strings.Contains(run.SnapshotJSON, "unrelated") || s.Head != head {
+	if len(s.Knowledge) != 3 || !strings.Contains(run.SnapshotJSON, "unrelated") || s.Head != head {
 		t.Fatal("knowledge scope or version not frozen")
 	}
 }
@@ -232,18 +232,18 @@ func TestEnqueueFailsWithoutActiveValidatedReviewSkill(t *testing.T) {
 		t.Fatalf("enqueue err=%v", err)
 	}
 }
-func TestFMSEvidenceGapBlocksAutoComments(t *testing.T) {
+func TestLegacyFMSFieldsUseSystemCorpusReview(t *testing.T) {
 	f := newFixture(t)
 	f.policy(t, db.CodeReviewPolicy{Domain: "fms", Scenario: "yard", SyncMRs: true})
 	run := f.review(t, "mr")
-	if run.Status != "partial" || run.PublishStatus != "blocked" {
+	if run.Status != "completed" || run.PublishStatus != "pending" {
 		t.Fatalf("unexpected state %s/%s", run.Status, run.PublishStatus)
 	}
 	if err := f.s.Publish(context.Background(), run); err != nil {
 		t.Fatal(err)
 	}
-	if f.posts != 0 {
-		t.Fatal("published incomplete FMS review")
+	if f.posts != 1 {
+		t.Fatal("legacy FMS fields unexpectedly restricted the system corpus review")
 	}
 }
 func TestSwitchesAndStaleVersion(t *testing.T) {

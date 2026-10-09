@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import Select from '../shared/Select.svelte';
   import { showToast } from '../../lib/toast';
+  import { PromptPreviewError, requestPromptPreview } from '../../lib/promptPreview';
 
   export let publicURL = '';
   export let publicURLVersion = 0;
@@ -49,6 +50,7 @@
   let activateOnSave = true;
   let testMarkdown = '# 示例需求方案\n\n## 目标\n\n- 验证提示词输出结构';
   let testOutput = '';
+  let previewController: AbortController | null = null;
   let drafts: Partial<Record<PromptPurpose, PromptDraft>> = {};
   let publicURLDraft = '';
   let publicURLSource = '';
@@ -64,6 +66,11 @@
 
   onMount(() => {
     void loadPrompts();
+  });
+
+  onDestroy(() => {
+    previewController?.abort();
+    previewController = null;
   });
 
   async function api(path: string, init: RequestInit = {}) {
@@ -172,15 +179,23 @@
   }
 
   async function testPrompt() {
+    if (action) return;
+    const controller = new AbortController();
+    previewController = controller;
     action = 'test'; error = ''; notice = ''; testOutput = '';
     try {
-      const response = await api('/api/solution-prompts/test', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system_prompt: systemPrompt, markdown: testMarkdown })
-      });
-      testOutput = response.markdown || '';
-    } catch (requestError: any) { error = requestError.message || '测试提示词失败'; }
-    finally { action = ''; }
+      const output = await requestPromptPreview({ system_prompt: systemPrompt, markdown: testMarkdown }, controller.signal);
+      if (previewController === controller) testOutput = output;
+    } catch (requestError: any) {
+      if (previewController !== controller) return;
+      if (requestError instanceof PromptPreviewError && requestError.kind === 'cancelled') notice = requestError.message;
+      else error = requestError.message || '测试提示词失败';
+    } finally {
+      if (previewController === controller) {
+        previewController = null;
+        action = '';
+      }
+    }
   }
 
   async function savePublicURL() {
@@ -217,7 +232,7 @@
     <div class="section-copy">
       <h2>AI 运行技能治理</h2>
       <p>每次运行绑定确切技能版本；启用只影响新任务，历史结果保持不变。</p>
-      <div class="skill-selector"><Select label="在线技能" value={purpose} options={purposeOptions} searchable={false} compact shadowless on:change={(event) => changePurpose(event.detail)} /></div>
+      <div class="skill-selector"><Select label="在线技能" value={purpose} options={purposeOptions} disabled={action === 'test'} searchable={false} compact shadowless on:change={(event) => changePurpose(event.detail)} /></div>
     </div>
     <div class="prompt-metrics">
       <div><span>当前技能版本</span><strong>{purposePrompts.length}</strong></div>
@@ -259,18 +274,25 @@
       <div class="prompt-select-field"><Select label="作用域" value={isCodeReview ? 'global' : scopeType} options={scopeOptions} searchable={false} compact shadowless disabled={isCodeReview} on:change={(event) => { scopeType = event.detail as 'global' | 'project'; if (scopeType === 'global') scopeID = ''; }} /></div>
       {#if !isCodeReview}<label>项目 Key<input bind:value={scopeID} disabled={scopeType === 'global'} placeholder="例如 WA" /></label>{/if}
       <label class="span-two">版本名称<input bind:value={name} placeholder={isCodeReview ? '例如 代码评审技能 2026-09' : '例如 方案润色规则 2026-09'} /></label>
-      <label class="span-two">系统指令<textarea bind:value={systemPrompt} rows="16" spellcheck="true"></textarea></label>
+          <label class="span-two">系统指令<textarea bind:value={systemPrompt} rows="16" spellcheck="true" disabled={action === 'test'}></textarea></label>
       {#if isCodeReview}
         <p class="activation-note span-two">代码评审技能先保存为草稿；对该版本运行真实两轮评审验证通过后，才能设为生效版本。</p>
       {:else}
         <label class="toggle-row span-two"><input type="checkbox" bind:checked={activateOnSave} /><span>保存后立即启用，并将同作用域旧版本标记为已退役</span></label>
       {/if}
     </div>
-    <div class="prompt-actions">{#if !isCodeReview}<button disabled={!!action || !systemPrompt.trim()} on:click={testPrompt}>{action === 'test' ? '测试中…' : '使用示例测试'}</button>{/if}<button class="primary" disabled={!!action || !systemPrompt.trim() || (!isCodeReview && scopeType === 'project' && !scopeID.trim())} on:click={savePrompt}>{action === 'save' ? '保存中…' : '保存新版本'}</button></div>
+    <div class="prompt-actions">
+      {#if !isCodeReview}
+        <button disabled={!!action || !systemPrompt.trim()} on:click={testPrompt}>{action === 'test' ? '测试中…' : '使用示例测试'}</button>
+        {#if action === 'test'}<button on:click={() => previewController?.abort()}>取消测试</button>{/if}
+      {/if}
+      <button class="primary" disabled={!!action || !systemPrompt.trim() || (!isCodeReview && scopeType === 'project' && !scopeID.trim())} on:click={savePrompt}>{action === 'save' ? '保存中…' : '保存新版本'}</button>
+    </div>
+    {#if action === 'test'}<p role="status" class="preview-status">正在等待模型结果，最多三分钟，可随时取消。</p>{/if}
     {#if !isCodeReview}
       <div class="test-grid">
-        <label>测试 Markdown<textarea bind:value={testMarkdown} rows="9"></textarea></label>
-        <label>测试结果<textarea value={testOutput} rows="9" readonly placeholder="点击“使用示例测试”后显示真实模型结果"></textarea></label>
+          <label>测试 Markdown<textarea bind:value={testMarkdown} rows="9" disabled={action === 'test'}></textarea></label>
+          <label>最近测试结果<textarea value={testOutput} rows="9" readonly placeholder="点击“使用示例测试”后显示真实模型结果"></textarea></label>
       </div>
     {:else if testOutput}
       <label>最近验证结果<textarea value={testOutput} rows="9" readonly></textarea></label>
@@ -286,7 +308,7 @@
         <div class="prompt-row" role="row">
           <div role="cell"><span>{prompt.scope_type === 'global' ? '全局默认' : prompt.scope_id}</span><strong>v{prompt.version} · {prompt.name}</strong><small>创建：{formatTime(prompt.created_at)} · {prompt.created_by}</small><small>最近启用：{prompt.activated_at ? `${formatTime(prompt.activated_at)} · ${prompt.activated_by || '-'}` : '未启用'}</small>{#if prompt.purpose === 'code_review'}<small>验证：{prompt.validation_status === 'passed' ? '已通过' : prompt.validation_status === 'failed' ? '未通过' : '未验证'}</small>{/if}</div>
           <span role="cell" class="status {prompt.status}">{prompt.status === 'active' ? '生效中' : prompt.status === 'draft' ? '草稿' : '已退役'}</span>
-          <div role="cell" class="row-actions"><button on:click={() => editFrom(prompt)}>基于此版本编辑</button>{#if prompt.purpose === 'code_review' && prompt.validation_status !== 'passed'}<button disabled={!!action} on:click={() => testStoredPrompt(prompt)}>{action === `test-${prompt.id}` ? '验证中…' : '运行验证'}</button>{/if}{#if prompt.status !== 'active'}<button disabled={!!action || (prompt.purpose === 'code_review' && prompt.validation_status !== 'passed')} on:click={() => activatePrompt(prompt)}>{action === `activate-${prompt.id}` ? '启用中…' : '设为生效版本'}</button>{/if}</div>
+          <div role="cell" class="row-actions"><button disabled={!!action} on:click={() => editFrom(prompt)}>基于此版本编辑</button>{#if prompt.purpose === 'code_review' && prompt.validation_status !== 'passed'}<button disabled={!!action} on:click={() => testStoredPrompt(prompt)}>{action === `test-${prompt.id}` ? '验证中…' : '运行验证'}</button>{/if}{#if prompt.status !== 'active'}<button disabled={!!action || (prompt.purpose === 'code_review' && prompt.validation_status !== 'passed')} on:click={() => activatePrompt(prompt)}>{action === `activate-${prompt.id}` ? '启用中…' : '设为生效版本'}</button>{/if}</div>
         </div>
       {/each}
     </div>{/if}
@@ -294,9 +316,19 @@
 </div>
 
 <style>
-  .prompt-config { display:grid; gap:14px; color:var(--wa-text-main,#293847); }
-  .prompt-overview,.prompt-section { padding:18px; border:1px solid var(--wa-border-soft,rgba(123,143,160,.18)); border-radius:12px; background:var(--wa-surface,#fff); }
-  .prompt-overview { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:20px; align-items:start; }
+  .prompt-config { min-width:0; display:grid; gap:var(--wa-space-4); color:var(--wa-text-main,#293847); }
+  .prompt-overview,.prompt-section {
+    min-width:0;
+    padding:var(--wa-space-4);
+    border:1px solid var(--wa-admin-list-surface-border);
+    border-top-color:var(--wa-admin-list-surface-border-top);
+    border-radius:var(--wa-admin-list-surface-radius);
+    background:var(--wa-admin-list-surface-background);
+    box-shadow:var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter:var(--wa-admin-list-surface-filter);
+    backdrop-filter:var(--wa-admin-list-surface-filter);
+  }
+  .prompt-overview { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:var(--wa-space-5); align-items:start; }
   .section-head span { color:var(--wa-accent-strong,#006f76); font:700 11px/1.2 var(--wa-font-mono,monospace); letter-spacing:.08em; text-transform:uppercase; }
   h2,h3 { margin:5px 0 0; color:var(--wa-text-strong,#0d1722); }
   h2 { font-size:20px; } h3 { font-size:16px; }
@@ -305,7 +337,7 @@
   .skill-selector { width:min(360px,100%); margin-top:14px; }
   .prompt-metrics>div { min-width:92px; display:grid; gap:4px; padding:12px; border-left:1px solid var(--wa-border-soft,rgba(123,143,160,.18)); }
   .prompt-metrics span { color:var(--wa-text-muted,#667789); font-size:11px; } .prompt-metrics strong { color:var(--wa-text-strong,#0d1722); font-size:20px; }
-  .prompt-section { display:grid; gap:14px; }
+  .prompt-section { display:grid; gap:var(--wa-space-4); }
   .inline-form { display:grid; grid-template-columns:100px minmax(0,1fr) auto; gap:10px; align-items:center; }
   .public-url-readonly { color:var(--wa-text-muted,#667789); font-size:12px; font-weight:700; white-space:nowrap; }
   .inline-form label,.prompt-form-grid label,.test-grid label { display:grid; gap:6px; color:var(--wa-text-muted,#667789); font-size:12px; font-weight:700; }
@@ -314,18 +346,30 @@
   input { min-height:42px; padding:0 11px; } textarea { resize:vertical; padding:11px; font-family:var(--wa-font-mono,monospace); }
   input:focus,textarea:focus { outline:2px solid color-mix(in srgb,var(--wa-accent,#008f96) 25%,transparent); border-color:var(--wa-accent,#008f96); }
   button { min-height:40px; padding:0 14px; border:1px solid var(--wa-border-strong,rgba(91,119,137,.28)); border-radius:8px; background:var(--wa-surface,#fff); color:var(--wa-text-main,#293847); font-weight:700; cursor:pointer; }
-  button.primary { border-color:var(--wa-accent,#008f96); background:var(--wa-accent,#008f96); color:#fff; } button:disabled { opacity:.48; cursor:not-allowed; }
+  button.primary { border-color:var(--wa-accent-fill,#006f76); background:var(--wa-accent-fill,#006f76); color:var(--wa-accent-fill-ink,#f6fbff); } button:disabled { opacity:.48; cursor:not-allowed; }
   .prompt-form-grid,.test-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }
   .span-two { grid-column:1/-1; }
   .toggle-row { display:flex!important; grid-template-columns:auto 1fr!important; align-items:center; } .toggle-row input { width:18px; min-height:18px; }
   .activation-note { margin:0; padding:10px 12px; border:1px solid var(--wa-border-soft,rgba(123,143,160,.18)); border-radius:8px; background:var(--wa-surface-soft,#f4f8f9); }
   .prompt-actions { display:flex; justify-content:flex-end; gap:8px; }
+  .preview-status { margin:0; color:var(--wa-text-muted); font-size:12px; line-height:1.5; }
   .prompt-table { display:grid; border-top:1px solid var(--wa-border-soft,rgba(123,143,160,.18)); }
-  .prompt-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:14px; align-items:center; padding:12px 0; border-bottom:1px solid var(--wa-border-soft,rgba(123,143,160,.18)); }
+  .prompt-row { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:var(--wa-space-3); align-items:center; padding:var(--wa-space-3) 0; border-bottom:1px solid var(--wa-border-divider); }
   .prompt-row>div:first-child { display:grid; gap:3px; min-width:0; } .prompt-row>div:first-child span,.prompt-row small { color:var(--wa-text-muted,#667789); font-size:11px; } .prompt-row strong { overflow:hidden; color:var(--wa-text-strong,#0d1722); text-overflow:ellipsis; white-space:nowrap; }
   .status { padding:5px 8px; border-radius:999px; background:var(--wa-surface-soft,#f4f8f9); color:var(--wa-text-muted,#667789); font-size:11px; } .status.active { background:#e8f7f1; color:#17634f; }
   .row-actions { display:flex; gap:7px; } .row-actions button { min-height:34px; padding:0 10px; }
   .prompt-message,.prompt-empty { padding:12px; border-radius:8px; font-size:13px; } .prompt-message.error { border:1px solid rgba(194,75,88,.24); background:#fff3f4; color:#8c2d39; } .prompt-message.success { border:1px solid rgba(32,133,105,.24); background:#f0fbf7; color:#17634f; } .prompt-empty { background:var(--wa-surface-soft,#f4f8f9); color:var(--wa-text-muted,#667789); }
-  @media (max-width:800px) { .prompt-overview { grid-template-columns:1fr; } .prompt-metrics { overflow-x:auto; } .inline-form,.prompt-form-grid,.test-grid,.prompt-row { grid-template-columns:1fr; } .span-two { grid-column:auto; } .row-actions { flex-wrap:wrap; } }
+  .section-copy,.section-head,.prompt-metrics,.prompt-form-grid,.test-grid,.inline-form,.prompt-table { min-width:0; }
+  .prompt-form-grid label,.test-grid label { min-width:0; }
+  .prompt-metrics { display:grid; grid-template-columns:repeat(3,minmax(92px,1fr)); gap:var(--wa-space-2); }
+  .prompt-metrics>div { min-width:0; padding:var(--wa-space-3); }
+  button:hover:not(:disabled) { background:var(--wa-row-hover); border-color:var(--wa-border-focus); }
+  button.primary:hover:not(:disabled) { background:var(--wa-accent-fill-hover); }
+  button:focus-visible { outline:2px solid var(--wa-border-focus); outline-offset:2px; }
+  @media (max-width:1024px) { .prompt-overview { grid-template-columns:1fr; } .prompt-row { grid-template-columns:minmax(0,1fr) auto; } .row-actions { grid-column:1/-1; justify-content:flex-end; flex-wrap:wrap; } }
+  @media (max-width:800px) { .inline-form,.prompt-form-grid,.test-grid,.prompt-row { grid-template-columns:1fr; } .span-two { grid-column:auto; } .row-actions { grid-column:auto; } }
   @media (max-width:760px) { input,button { min-height:44px; } .row-actions { display:grid; grid-template-columns:1fr; } .row-actions button,.prompt-actions button { width:100%; min-height:44px; } .prompt-actions { display:grid; grid-template-columns:1fr; } .toggle-row { min-height:44px; } }
+  @media (max-width:480px) { .prompt-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--wa-space-1); } .prompt-metrics>div { padding:var(--wa-space-2); } .prompt-metrics span { overflow-wrap:anywhere; } }
+  @media (prefers-reduced-transparency:reduce) { .prompt-overview,.prompt-section { background:var(--wa-admin-list-surface-solid-background); -webkit-backdrop-filter:none; backdrop-filter:none; } }
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) { .prompt-overview,.prompt-section { background:var(--wa-admin-list-surface-solid-background); } }
 </style>

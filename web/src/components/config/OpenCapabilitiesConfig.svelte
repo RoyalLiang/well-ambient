@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { showToast } from '../../lib/toast';
+  import { buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../../lib/openCapabilityInstall';
   import Button from '../shared/Button.svelte';
   import Switch from '../shared/Switch.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -101,8 +102,6 @@
     execute_enabled: false
   };
 
-  // Selected key for install instructions
-  let selectedToken = '';
   let activeConfigTab: 'cursor' | 'claude' | 'windsurf' | 'cline' = 'cursor';
 
   // Issue Key Modal State
@@ -122,15 +121,19 @@
     draftConfig.execute_enabled !== overview.config.execute_enabled
   ) : false;
 
+  $: activeRuntimeStages = [
+    { name: 'Read', label: '只读', enabled: overview?.active_features.Read },
+    { name: 'Prepare', label: '预备', enabled: overview?.active_features.Prepare },
+    { name: 'Execute', label: '执行', enabled: overview?.active_features.Execute }
+  ].filter(stage => stage.enabled);
+  $: effectiveOpenEnabled = activeRuntimeStages.length > 0;
+
   $: currentBaseURL = overview?.base_url || (typeof window !== 'undefined' ? window.location.origin : '');
-  $: currentMcpURL = overview?.mcp?.endpoint_url || `${currentBaseURL}/mcp`;
-  $: effectiveToken = selectedToken || '<YOUR_API_KEY>';
-
-  // Deep Link for Cursor
-  $: cursorDeepLink = `cursor://anysphere.cursor-mcp/install?name=well-ambient&url=${encodeURIComponent(currentMcpURL)}&headers=${encodeURIComponent(JSON.stringify({ Authorization: `Bearer ${effectiveToken}` }))}`;
-
-  // Install command
-  $: installCommand = `curl -fsSL "${currentBaseURL}/open/v1/install.sh?token=${effectiveToken}" | bash`;
+  $: installation = buildOpenCapabilityInstall(currentBaseURL, overview?.mcp?.endpoint_url || '');
+  $: currentMcpURL = installation.mcpURL;
+  $: cursorDeepLink = installation.cursorDeepLink;
+  $: installCommand = installation.installCommand;
+  const effectiveToken = OPEN_API_KEY_PLACEHOLDER;
 
   async function api(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
@@ -199,8 +202,7 @@
         })
       });
       issuedKeyResult = res;
-      selectedToken = res.key;
-      showToast('API Key 签发成功，已自动同步到上方安装命令！', { type: 'success' });
+      showToast('API Key 已签发，请复制保存并填写到客户端 Authorization 字段。', { type: 'success' });
       await loadOverview();
     } catch (err: any) {
       error = err.message || '签发 Key 失败';
@@ -238,6 +240,12 @@
     }
   }
 
+  function closeIssueModal() {
+    if (issuingKey) return;
+    showIssueModal = false;
+    issuedKeyResult = null;
+  }
+
   onMount(() => {
     loadOverview();
   });
@@ -245,12 +253,12 @@
 
 <div class="open-capabilities-view" role="region" aria-label="开放能力与 MCP 集成管理">
   {#if loading}
-    <div class="gov-loading-pane">
+    <div class="gov-loading-pane" role="status" aria-live="polite">
       <span class="spinner" aria-hidden="true"></span>
       <p>正在拉取开放能力配置与服务概览…</p>
     </div>
   {:else if error && !overview}
-    <div class="gov-notice error">
+    <div class="gov-notice error" role="alert">
       <span><strong>加载异常：</strong> {error}</span>
       <Button variant="ghost" size="small" on:click={loadOverview}>重试</Button>
     </div>
@@ -259,9 +267,8 @@
     <div class="open-gov-header">
       <div class="header-main">
         <div class="header-title-row">
-          <h3>开放能力与 MCP 服务治理</h3>
-          <span class="status-pill" class:active={overview.config.enabled} class:inactive={!overview.config.enabled}>
-            {overview.config.enabled ? '● 服务运行中' : '○ 服务默认未启用'}
+          <span class="status-pill" class:active={effectiveOpenEnabled} class:inactive={!effectiveOpenEnabled}>
+            {effectiveOpenEnabled ? '运行能力已启用' : '未开放运行阶段'}
           </span>
           {#if overview.active_features.Execute}
             <span class="status-pill warning" title="执行写入已开启，旧版页面直接写入已被全局互斥拦截">
@@ -270,7 +277,7 @@
           {/if}
         </div>
         <p class="header-desc">
-          完全脱离离线文件控制，基于数据库动态版本化配置提供 Jira 分析、排期决策与代码评审能力，支持原生 Streamable HTTP MCP 与标准领域微内核 Skill 分发。
+          管理能力开关、客户端接入、集成凭证与 Jira 执行绑定。
         </p>
       </div>
 
@@ -281,26 +288,23 @@
       </div>
     </div>
 
+    {#if !overview.config.enabled && effectiveOpenEnabled}
+      <div class="gov-notice info" role="status">
+        配置总开关已关闭，但部署环境变量仍启用：{activeRuntimeStages.map(stage => stage.name).join('、')}。运行状态以上述生效能力为准。
+      </div>
+    {/if}
+
     <!-- Top Key Metrics Strip -->
     <div class="gov-metrics-strip" aria-label="开放能力运行指标">
       <div class="gov-metric-item">
         <span class="gov-metric-label">当前运行阶段</span>
         <div class="gov-metric-val">
-          {#if !overview.config.enabled}
-            <strong class="highlight-gray">已禁用</strong>
-            <span class="gov-metric-sub">外部调用全部阻断</span>
-          {:else if overview.active_features.Execute}
-            <strong class="highlight-cyan">全阶段 (Execute)</strong>
-            <span class="gov-metric-sub">只读 + 预备 + 真实写入</span>
-          {:else if overview.active_features.Prepare}
-            <strong class="highlight-cyan">预备期 (Prepare)</strong>
-            <span class="gov-metric-sub">只读 + 决策计划校验</span>
-          {:else if overview.active_features.Read}
-            <strong class="highlight-green">只读阶段 (Read)</strong>
-            <span class="gov-metric-sub">Jira 与评审深度分析</span>
+          {#if effectiveOpenEnabled}
+            <strong class="highlight-cyan">{activeRuntimeStages.map(stage => stage.label).join(' / ')}</strong>
+            <span class="gov-metric-sub">{activeRuntimeStages.map(stage => stage.name).join(' / ')} 已生效</span>
           {:else}
-            <strong>已开启</strong>
-            <span class="gov-metric-sub">未激活细分阶段</span>
+            <strong class="highlight-gray">未开放运行阶段</strong>
+            <span class="gov-metric-sub">Read、Prepare、Execute 均未生效</span>
           {/if}
         </div>
       </div>
@@ -318,10 +322,10 @@
       <div class="gov-metric-divider" aria-hidden="true"></div>
 
       <div class="gov-metric-item">
-        <span class="gov-metric-label">已签发有效 Key</span>
+        <span class="gov-metric-label">标记启用的 Key</span>
         <div class="gov-metric-val">
           <strong>{(overview.credentials || []).filter(c => c.status === 'active').length} 个</strong>
-          <span class="gov-metric-sub">共 {(overview.sources || []).length} 个集成来源</span>
+          <span class="gov-metric-sub">有效性同时取决于到期时间与来源状态</span>
         </div>
       </div>
 
@@ -380,10 +384,12 @@
               <span class="switch-name">全局开放能力主控</span>
               <span class="switch-badge">{draftConfig.enabled ? '已开启' : '已关闭'}</span>
             </div>
-            <p class="switch-desc">总控总闸。开启后激活 <code>/mcp</code> 协议端点与 <code>/open/v1/*</code> 接口体系。</p>
+          <p class="switch-desc">配置优先控制运行阶段；关闭后，部署环境变量可能继续启用对应能力。以上方实际运行状态为准。</p>
           </div>
           <div class="switch-action">
             <Switch
+              label="开放能力总开关"
+              expandedHitArea
               checked={draftConfig.enabled}
               disabled={!canWrite}
               on:change={(e) => draftConfig.enabled = e.detail}
@@ -398,6 +404,8 @@
             <div class="phase-card-head">
               <span class="phase-title">只读分析能力 (Read Phase)</span>
               <Switch
+                label="只读分析能力"
+                expandedHitArea
                 checked={draftConfig.read_enabled}
                 disabled={!canWrite || !draftConfig.enabled}
                 on:change={(e) => draftConfig.read_enabled = e.detail}
@@ -413,6 +421,8 @@
             <div class="phase-card-head">
               <span class="phase-title">决策预备能力 (Prepare Phase)</span>
               <Switch
+                label="决策预备能力"
+                expandedHitArea
                 checked={draftConfig.prepare_enabled}
                 disabled={!canWrite || !draftConfig.enabled}
                 on:change={(e) => draftConfig.prepare_enabled = e.detail}
@@ -431,6 +441,8 @@
                 <span class="exclusive-badge">互斥接管</span>
               </div>
               <Switch
+                label="决策执行写入"
+                expandedHitArea
                 checked={draftConfig.execute_enabled}
                 disabled={!canWrite || !draftConfig.enabled}
                 on:change={(e) => draftConfig.execute_enabled = e.detail}
@@ -462,19 +474,21 @@
             <span class="combo-title">Cursor 协议一键拉起 (Deep Link)</span>
           </div>
           <p class="combo-desc">
-            通过系统 URL Scheme 拉起本地 Cursor 并一键添加 <code>well-ambient</code> MCP Server：
+            添加 <code>well-ambient</code> MCP 占位配置后，在 Cursor 中填写 Authorization。安装链接不包含真实密钥。
           </p>
           <div class="combo-actions">
             <Button
               variant="primary"
               size="small"
+              disabled={!cursorDeepLink}
               on:click={() => window.open(cursorDeepLink, '_blank')}
             >
-              在 Cursor 中一键安装 MCP
+              在 Cursor 中添加 MCP 配置
             </Button>
             <Button
               variant="secondary"
               size="small"
+              disabled={!cursorDeepLink}
               on:click={() => copyText(cursorDeepLink, 'Cursor 深链')}
             >
               复制深链
@@ -489,13 +503,14 @@
             <span class="combo-title">远程安装脚本 (One-line Bash Installer)</span>
           </div>
           <p class="combo-desc">
-            自动探查本地 Claude Desktop 与 Cursor 环境，安全合并配置并解压官方 Skill：
+            下载官方 Skill 并合并占位配置。安装完成后，在客户端本地填写 API Key：
           </p>
           <div class="code-snippet-bar">
             <code>{installCommand}</code>
             <Button
               variant="secondary"
               size="small"
+              disabled={!installCommand}
               on:click={() => copyText(installCommand, '一键安装命令')}
             >
               复制命令
@@ -558,43 +573,39 @@
             <span class="combo-tag">通道四</span>
             <h5 class="sub-section-title">主流客户端手动配置规范 (Manual MCP JSON)</h5>
           </div>
-          <div class="config-tabs-nav" role="tablist" aria-label="客户端配置文件类型">
+          <div class="config-tabs-nav" role="group" aria-label="客户端配置文件类型">
             <button
               type="button"
-              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'cursor'}
-              aria-selected={activeConfigTab === 'cursor'}
+              aria-pressed={activeConfigTab === 'cursor'}
               on:click={() => activeConfigTab = 'cursor'}
             >
               Cursor
             </button>
             <button
               type="button"
-              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'claude'}
-              aria-selected={activeConfigTab === 'claude'}
+              aria-pressed={activeConfigTab === 'claude'}
               on:click={() => activeConfigTab = 'claude'}
             >
               Claude Desktop
             </button>
             <button
               type="button"
-              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'windsurf'}
-              aria-selected={activeConfigTab === 'windsurf'}
+              aria-pressed={activeConfigTab === 'windsurf'}
               on:click={() => activeConfigTab = 'windsurf'}
             >
               Windsurf
             </button>
             <button
               type="button"
-              role="tab"
               class="tab-btn"
               class:active={activeConfigTab === 'cline'}
-              aria-selected={activeConfigTab === 'cline'}
+              aria-pressed={activeConfigTab === 'cline'}
               on:click={() => activeConfigTab = 'cline'}
             >
               Cline / Roo Code
@@ -753,7 +764,8 @@
           <p>暂无已签发的 API Key。点击右上角“+ 签发新 API Key”为外部 Agent 或 MCP 客户端创建访问密钥。</p>
         </div>
       {:else}
-        <div class="gov-table-container">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Named scroll regions need keyboard focus for horizontal navigation.) -->
+        <div class="gov-table-container" role="region" aria-label="API Key 凭证列表，支持横向滚动" tabindex="0">
           <table class="gov-table" aria-label="API Key 凭证列表">
             <thead>
               <tr>
@@ -816,7 +828,8 @@
           <p>暂无针对项目的执行绑定。请在 CLI 或策略中为项目配置 <code>reassign</code> 与 <code>reschedule</code> 绑定。</p>
         </div>
       {:else}
-        <div class="gov-table-container">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Named scroll regions need keyboard focus for horizontal navigation.) -->
+        <div class="gov-table-container" role="region" aria-label="Jira 执行绑定列表，支持横向滚动" tabindex="0">
           <table class="gov-table" aria-label="Jira 写入执行绑定">
             <thead>
               <tr>
@@ -853,7 +866,7 @@
     show={showIssueModal}
     title="签发开放能力集成 API Key"
     size="default"
-    on:close={() => showIssueModal = false}
+    on:close={closeIssueModal}
   >
     <div class="modal-form-body">
       {#if issuedKeyResult}
@@ -879,7 +892,7 @@
               复制 Key
             </Button>
           </div>
-          <p class="token-tip">该 Key 已自动同步至上方的远程安装命令与配置示例中。</p>
+          <p class="token-tip">将 Key 填写到客户端配置的 Authorization 字段。安装命令和链接仅包含占位符；关闭后不再显示完整 Key。</p>
         </div>
       {:else}
         <div class="form-item">
@@ -911,11 +924,11 @@
 
     <div slot="footer" class="modal-footer-actions">
       {#if issuedKeyResult}
-        <Button variant="primary" on:click={() => showIssueModal = false}>
+        <Button variant="primary" on:click={closeIssueModal}>
           完成并关闭
         </Button>
       {:else}
-        <Button variant="ghost" on:click={() => showIssueModal = false}>
+        <Button variant="ghost" on:click={closeIssueModal}>
           取消
         </Button>
         <Button
@@ -932,105 +945,554 @@
 </div>
 
 <style>
-  /* Base Viewport Layout */
+  /* Shared Phase 41 material; only top-level surfaces blur. */
   .open-capabilities-view {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    color: var(--wa-text-main, #293847);
+    gap: var(--wa-space-4);
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-sans);
   }
 
-  /* Shared Button Fallback System (Ensures 8-state completeness) */
-  .btn {
+  .gov-card,
+  .gov-metrics-strip,
+  .gov-loading-pane {
+    min-width: 0;
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+
+  .gov-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-4);
+    padding: var(--wa-space-4) var(--wa-space-5);
+  }
+
+  .open-gov-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--wa-space-4);
+    min-width: 0;
+  }
+
+  .header-main,
+  .title-wrap,
+  .switch-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .header-title-row,
+  .card-header,
+  .sub-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wa-space-3);
+    flex-wrap: wrap;
+  }
+
+  .card-header,
+  .sub-section-header {
+    justify-content: space-between;
+  }
+
+  .header-actions,
+  .save-bar,
+  .switch-action {
+    flex: 0 0 auto;
+  }
+
+  .header-desc,
+  .switch-desc {
+    margin: var(--wa-space-2) 0 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .status-pill,
+  .synced-tag,
+  .switch-badge,
+  .exclusive-badge,
+  .combo-tag,
+  .skill-ver,
+  .source-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--wa-space-1);
+    padding: var(--wa-space-1) var(--wa-space-2);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-neutral-soft);
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  .status-pill,
+  .synced-tag,
+  .switch-badge,
+  .exclusive-badge,
+  .combo-tag,
+  .skill-ver {
+    white-space: nowrap;
+  }
+
+  .status-pill.active,
+  .synced-tag,
+  .master-switch-row.is-active .switch-badge {
+    background: var(--wa-success-soft);
+    color: var(--wa-success);
+  }
+
+  .status-pill.warning,
+  .exclusive-badge {
+    background: var(--wa-warning-soft);
+    color: var(--wa-warning);
+  }
+
+  .gov-metrics-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--wa-space-4);
+    padding: var(--wa-space-4) var(--wa-space-5);
+  }
+
+  .gov-metric-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-1);
+    min-width: 0;
+  }
+
+  .gov-metric-divider {
+    display: none;
+  }
+
+  .gov-metric-label,
+  .gov-metric-sub {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .gov-metric-label {
+    font-weight: 600;
+  }
+
+  .gov-metric-val {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--wa-space-1) var(--wa-space-2);
+    overflow-wrap: anywhere;
+  }
+
+  .gov-metric-val strong {
+    color: var(--wa-text-strong);
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .highlight-cyan {
+    color: var(--wa-accent-strong) !important;
+  }
+
+  .highlight-green {
+    color: var(--wa-success) !important;
+  }
+
+  .highlight-gray,
+  .text-muted {
+    color: var(--wa-text-muted) !important;
+  }
+
+  .title-wrap h4,
+  .sub-section-title {
+    margin: 0;
+    color: var(--wa-text-strong);
+    font-size: 16px;
+    font-weight: 650;
+    line-height: 1.4;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .sub-section-title {
+    font-size: 14px;
+  }
+
+  .sub-hint,
+  .sub-section-hint,
+  .field-hint,
+  .token-tip {
+    display: block;
+    margin: var(--wa-space-1) 0 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .switches-container,
+  .sub-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-4);
+    min-width: 0;
+  }
+
+  .sub-section {
+    border-top: 1px solid var(--wa-border-divider);
+    padding-top: var(--wa-space-4);
+  }
+
+  .master-switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-4);
+    padding-block: var(--wa-space-2) var(--wa-space-3);
+    border-bottom: 1px solid var(--wa-border-divider);
+  }
+
+  .switch-heading,
+  .combo-header,
+  .sub-section-title-wrap,
+  .phase-title-with-badge {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2);
+    min-width: 0;
+  }
+
+  .switch-name,
+  .phase-title,
+  .combo-title,
+  .skill-title {
+    color: var(--wa-text-strong);
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .open-capabilities-view :global(.switch-label) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .phases-grid,
+  .skills-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--wa-space-4);
+    min-width: 0;
+  }
+
+  .combo-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--wa-space-4);
+    min-width: 0;
+  }
+
+  .phase-card,
+  .combo-card,
+  .skill-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--wa-space-3);
+    min-width: 0;
+    padding-block: var(--wa-space-3);
+    border-top: 1px solid var(--wa-border-divider);
+    background: transparent;
+  }
+
+  .phase-card {
+    padding-block-start: 0;
+    border-top: 0;
+  }
+
+  .phase-card.is-disabled {
+    opacity: 0.6;
+  }
+
+  .phase-card-head,
+  .skill-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
+    min-width: 0;
+  }
+
+  .phase-desc,
+  .combo-desc,
+  .skill-desc {
+    flex: 1;
+    margin: 0;
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .combo-actions,
+  .skill-card-actions,
+  .skill-tools-preview {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--wa-space-2);
+    min-width: 0;
+  }
+
+  .skill-card-actions {
+    margin-top: auto;
+  }
+
+  .skill-key {
+    color: var(--wa-accent-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .tool-tag-label {
+    color: var(--wa-text-muted);
+    font-size: 12px;
+  }
+
+  .tool-chip {
+    max-width: 100%;
+    padding: var(--wa-space-1) var(--wa-space-2);
+    border-radius: var(--wa-radius-xs);
+    background: var(--wa-accent-soft);
+    color: var(--wa-accent-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .code-snippet-bar,
+  .config-code-preview {
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--wa-space-3);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-bg-rail-soft);
+    color: var(--wa-rail-text-main);
+  }
+
+  .code-snippet-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--wa-space-3);
+  }
+
+  .code-snippet-bar code {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    color: var(--wa-rail-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+
+  .code-snippet-bar :global(.btn) {
+    flex: 0 0 auto;
+  }
+
+  .config-tabs-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wa-space-1);
+    min-width: 0;
+  }
+
+  .tab-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    min-height: var(--wa-control-h, 32px);
-    font-size: 13px;
-    font-weight: 650;
-    padding: 0 12px;
-    border-radius: var(--wa-radius-sm, 6px);
+    min-height: var(--wa-control-h);
+    padding: var(--wa-space-2) var(--wa-space-3);
     border: 1px solid transparent;
-    cursor: pointer;
-    text-decoration: none;
-    transition: background var(--wa-duration-fast, 140ms) var(--wa-ease, ease),
-      border-color var(--wa-duration-fast, 140ms) var(--wa-ease, ease),
-      box-shadow var(--wa-duration-fast, 140ms) var(--wa-ease, ease);
-    outline: none;
-    user-select: none;
-    white-space: nowrap;
-  }
-  .btn:focus-visible {
-    box-shadow: 0 0 0 2px rgba(0, 143, 150, 0.2);
-  }
-  .btn-sm {
-    min-height: 28px;
-    padding: 0 10px;
-    font-size: 12px;
-  }
-  .btn-primary {
-    border-color: var(--wa-accent-fill, #006f76);
-    background: var(--wa-accent-fill, #006f76);
-    color: var(--wa-accent-fill-ink, #f6fbff);
-    box-shadow: 0 2px 4px rgba(0, 143, 150, 0.15);
-  }
-  .btn-primary:hover:not(:disabled) {
-    border-color: var(--wa-accent-fill-hover, #00545a);
-    background: var(--wa-accent-fill-hover, #00545a);
-  }
-  .btn-secondary {
-    background: #ffffff;
-    border-color: var(--wa-border, #cbd5e0);
-    color: var(--wa-text-main, #2d3748);
-  }
-  .btn-secondary:hover:not(:disabled) {
-    background: #f8fafc;
-    border-color: #a0aec0;
-  }
-  .btn-ghost {
+    border-radius: var(--wa-radius-sm);
     background: transparent;
-    border-color: transparent;
-    color: var(--wa-text-muted, #718096);
-  }
-  .btn-ghost:hover:not(:disabled) {
-    background: #edf2f7;
-    color: var(--wa-text-strong, #1a202c);
-  }
-  .btn-danger {
-    border-color: rgba(221, 75, 62, 0.24);
-    background: var(--wa-danger-soft, rgba(221, 75, 62, 0.12));
-    color: var(--wa-danger, #dd4b3e);
-  }
-  .btn-danger:hover:not(:disabled) {
-    background: var(--wa-danger, #dd4b3e);
-    border-color: var(--wa-danger, #dd4b3e);
-    color: #ffffff;
-    box-shadow: 0 4px 12px rgba(221, 75, 62, 0.2);
-  }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
+    color: var(--wa-text-muted);
+    font: 600 13px var(--wa-font-sans);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color var(--wa-duration-fast) var(--wa-ease),
+      color var(--wa-duration-fast) var(--wa-ease),
+      border-color var(--wa-duration-fast) var(--wa-ease);
   }
 
-  /* Loading & Notice States */
+  .tab-btn:hover {
+    background: var(--wa-row-hover);
+    color: var(--wa-text-strong);
+  }
+
+  .tab-btn.active {
+    border-color: var(--wa-border-soft);
+    background: var(--wa-surface-lift);
+    color: var(--wa-accent-strong);
+  }
+
+  .config-code-preview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--wa-space-3);
+    padding: var(--wa-space-4);
+  }
+
+  .file-hint {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    color: var(--wa-rail-text-main);
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .file-hint code {
+    color: var(--wa-rail-text-strong);
+  }
+
+  .config-code-preview pre {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    margin: 0;
+    overflow-x: auto;
+    color: var(--wa-rail-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .code-action-pos {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  /* Lists are embedded in their parent glass surface. */
+  .gov-table-container {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    border-top: 1px solid var(--wa-border-divider);
+    background: transparent;
+  }
+
+  .gov-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .gov-table th,
+  .gov-table td {
+    padding: var(--wa-space-3) var(--wa-space-4);
+    border-bottom: 1px solid var(--wa-border-divider);
+    text-align: left;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  .gov-table th {
+    background: var(--wa-surface-lift);
+    color: var(--wa-text-muted);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .gov-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .gov-table tbody tr:hover {
+    background: var(--wa-row-hover);
+  }
+
+  .mono-tag,
+  .mono-prefix {
+    color: var(--wa-text-strong);
+    font-family: var(--wa-font-mono);
+    font-size: 12px;
+  }
+
+  .mono-prefix {
+    color: var(--wa-text-muted);
+  }
+
+  .source-tag {
+    color: var(--wa-text-main);
+  }
+
+  .empty-box {
+    padding: var(--wa-space-5) 0;
+    border-top: 1px solid var(--wa-border-divider);
+    color: var(--wa-text-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .empty-box p {
+    max-width: 72ch;
+    margin: 0;
+  }
+
   .gov-loading-pane {
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 60px 20px;
-    color: var(--wa-text-muted, #718096);
-    gap: 12px;
+    gap: var(--wa-space-3);
+    min-height: 160px;
+    padding: var(--wa-space-5);
+    color: var(--wa-text-muted);
+    font-size: 13px;
+  }
+
+  .gov-loading-pane p {
+    margin: 0;
+    line-height: 1.5;
   }
 
   .spinner {
+    flex: 0 0 auto;
     width: 24px;
     height: 24px;
-    border: 2px solid var(--wa-border-soft, #e2e8f0);
-    border-top-color: var(--wa-accent, #008f96);
-    border-radius: 50%;
+    border: 2px solid var(--wa-border-soft);
+    border-top-color: var(--wa-accent);
+    border-radius: var(--wa-radius-pill);
     animation: spin 0.8s linear infinite;
   }
 
@@ -1042,752 +1504,234 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 10px 16px;
-    border-radius: 6px;
+    flex-wrap: wrap;
+    gap: var(--wa-space-3);
+    min-width: 0;
+    padding: var(--wa-space-3) var(--wa-space-4);
+    border-radius: var(--wa-radius-sm);
     font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
   }
+
   .gov-notice.error {
-    background: #fff5f5;
-    border: 1px solid #feb2b2;
-    color: #c53030;
+    background: var(--wa-danger-soft);
+    color: var(--wa-danger);
   }
+
   .gov-notice.info {
-    background: #ebf8fa;
-    border: 1px solid #b2e3e8;
-    color: #0c666c;
+    background: var(--wa-info-soft);
+    color: var(--wa-info-strong);
   }
+
   .gov-notice.success {
-    background: #f0fdf4;
-    border: 1px solid #bbf7d0;
-    color: #166534;
+    background: var(--wa-success-soft);
+    color: var(--wa-success);
   }
 
-  /* Header Card */
-  .open-gov-header {
+  .modal-form-body,
+  .form-item,
+  .token-result-pane {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
-    background: #ffffff;
-    padding: 16px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-  }
-
-  .header-main {
-    flex: 1;
+    flex-direction: column;
+    gap: var(--wa-space-3);
     min-width: 0;
   }
 
-  .header-title-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .header-title-row h3 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .header-desc {
-    margin: 6px 0 0 0;
-    font-size: 13px;
-    color: var(--wa-text-muted, #718096);
-    line-height: 1.5;
-  }
-
-  /* Status Pills */
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 12px;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-  }
-  .status-pill.active {
-    background: #e6fffa;
-    color: #234e52;
-    border: 1px solid #b2f5ea;
-  }
-  .status-pill.inactive {
-    background: #f1f5f9;
-    color: #64748b;
-    border: 1px solid #e2e8f0;
-  }
-  .status-pill.warning {
-    background: #fffaf0;
-    color: #744210;
-    border: 1px solid #feebc8;
-  }
-
-  /* Metrics Strip */
-  .gov-metrics-strip {
-    display: flex;
-    align-items: center;
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 8px;
-    padding: 12px 20px;
-    gap: 16px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-  }
-
-  .gov-metric-item {
-    flex: 1;
-    min-width: 140px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .gov-metric-label {
-    font-size: 11px;
-    color: var(--wa-text-muted, #718096);
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .gov-metric-val {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .gov-metric-val strong {
-    font-size: 17px;
-    font-weight: 700;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .gov-metric-sub {
-    font-size: 11px;
-    color: var(--wa-text-subtle, #8a99aa);
-  }
-
-  .gov-metric-divider {
-    width: 1px;
-    height: 28px;
-    background: var(--wa-border, #e2e8f0);
-  }
-
-  .highlight-cyan { color: var(--wa-accent-strong, #006f76) !important; }
-  .highlight-green { color: #166534 !important; }
-  .highlight-gray { color: var(--wa-text-subtle, #8a99aa) !important; }
-
-  /* Standard Gov Card Surface (Single Layer, No Nested Cards) */
-  .gov-card {
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 8px;
-    padding: 18px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
-  }
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-
-  .title-wrap h4 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .sub-hint {
-    font-size: 12.5px;
-    color: var(--wa-text-muted, #718096);
-    margin-top: 3px;
-    display: block;
-    line-height: 1.45;
-  }
-
-  .synced-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
-  }
-
-  /* Switches Container */
-  .switches-container {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .master-switch-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 16px;
-    padding: 14px 16px;
-    background: #f8fafc;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    transition: all 0.15s ease;
-  }
-
-  .master-switch-row.is-active {
-    background: rgba(0, 143, 150, 0.04);
-    border-color: rgba(0, 143, 150, 0.28);
-  }
-
-  .switch-heading {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .switch-name {
-    font-size: 14px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .switch-badge {
-    font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-weight: 600;
-    background: #edf2f7;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  .master-switch-row.is-active .switch-badge {
-    background: #e6fffa;
-    color: #234e52;
-  }
-
-  .switch-desc {
-    margin: 4px 0 0 0;
-    font-size: 12.5px;
-    color: var(--wa-text-muted, #718096);
-    line-height: 1.45;
-  }
-
-  .phases-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .phase-card {
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 10px;
-    transition: opacity 0.15s ease;
-  }
-
-  .phase-card.is-disabled {
-    opacity: 0.55;
-    background: #fbfcfd;
-  }
-
-  .phase-card-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .phase-title-with-badge {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .phase-title {
-    font-size: 13.5px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .exclusive-badge {
-    font-size: 10.5px;
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-weight: 600;
-    background: #fffaf0;
-    color: #744210;
-    border: 1px solid #feebc8;
-  }
-
-  .phase-desc {
-    margin: 0;
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
-    line-height: 1.45;
-    flex: 1;
-  }
-
-  /* Installation Combo */
-  .combo-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-  }
-
-  .combo-card {
-    background: #f8fafc;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .combo-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .combo-tag {
-    font-size: 11px;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: #edf2f7;
-    color: var(--wa-text-muted, #718096);
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-  }
-
-  .combo-title {
-    font-size: 13.5px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .combo-desc {
-    margin: 0;
-    font-size: 12.5px;
-    color: var(--wa-text-muted, #718096);
-    line-height: 1.45;
-    flex: 1;
-  }
-
-  .combo-actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
-    margin-top: 4px;
-  }
-
-  .code-snippet-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    background: #0f172a;
-    border-radius: 6px;
-    padding: 6px 10px;
-    margin-top: 4px;
-  }
-
-  .code-snippet-bar code {
-    font-family: var(--wa-font-mono, monospace);
-    font-size: 12px;
-    color: #38bdf8;
-    overflow-x: auto;
-    white-space: nowrap;
-    scrollbar-width: none;
-  }
-
-  /* Sub Sections */
-  .sub-section {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    border-top: 1px solid var(--wa-border, #e2e8f0);
-    padding-top: 14px;
-  }
-
-  .sub-section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .sub-section-title-wrap {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .sub-section-title {
-    margin: 0;
-    font-size: 13.5px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .sub-section-hint {
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  /* Skills Grid */
-  .skills-cards-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .skill-card {
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .skill-card-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .skill-title {
-    font-size: 13.5px;
-    font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .skill-ver {
-    font-size: 11px;
-    font-weight: 600;
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    padding: 1px 6px;
-    border-radius: 4px;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  .skill-key code {
-    font-size: 12px;
-    color: var(--wa-accent-strong, #006f76);
-  }
-
-  .skill-desc {
-    margin: 0;
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
-    line-height: 1.45;
-    flex: 1;
-  }
-
-  .skill-tools-preview {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-  }
-
-  .tool-tag-label {
-    font-size: 11px;
-    color: var(--wa-text-subtle, #8a99aa);
-  }
-
-  .tool-chip {
-    font-size: 11px;
-    background: rgba(0, 143, 150, 0.08);
-    color: var(--wa-accent-strong, #006f76);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-family: var(--wa-font-mono, monospace);
-  }
-
-  .skill-card-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 4px;
-    border-top: 1px solid var(--wa-border, #edf2f7);
-    padding-top: 10px;
-    align-items: center;
-  }
-
-  /* Config Tabs */
-  .config-tabs-nav {
-    display: flex;
-    gap: 6px;
-    background: #f1f5f9;
-    padding: 3px;
-    border-radius: 6px;
-  }
-
-  .tab-btn {
-    border: none;
-    background: transparent;
-    color: var(--wa-text-muted, #718096);
-    font-size: 12px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .tab-btn.active {
-    background: #ffffff;
-    color: var(--wa-accent-strong, #006f76);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  }
-
-  .config-code-preview {
-    position: relative;
-    background: #0f172a;
-    border-radius: 6px;
-    padding: 16px;
-    color: #e2e8f0;
-  }
-
-  .file-hint {
-    font-size: 12px;
-    color: #94a3b8;
-    margin-bottom: 8px;
-  }
-
-  .file-hint code {
-    color: #38bdf8;
-  }
-
-  .config-code-preview pre {
-    margin: 0;
-    font-family: var(--wa-font-mono, monospace);
-    font-size: 12.5px;
-    line-height: 1.5;
-    overflow-x: auto;
-  }
-
-  .code-action-pos {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-  }
-
-  /* Table Container & Table (Matching AIGovernanceCenter) */
-  .gov-table-container {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-
-  .gov-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-  }
-
-  .gov-table th {
-    text-align: left;
-    padding: 10px 14px;
-    background: #f8fafc;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
-    font-size: 11.5px;
-    font-weight: 650;
-    color: var(--wa-text-muted, #718096);
-    letter-spacing: 0.03em;
-  }
-
-  .gov-table td {
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--wa-border, #edf2f7);
-    vertical-align: middle;
-  }
-
-  .gov-table tbody tr:hover {
-    background: #fafcff;
-  }
-
-  .mono-tag {
-    font-family: var(--wa-font-mono, monospace);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--wa-text-strong, #0d1722);
-  }
-
-  .mono-prefix {
-    font-family: var(--wa-font-mono, monospace);
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  .source-tag {
-    font-size: 11.5px;
-    font-weight: 550;
-    background: #f1f5f9;
-    padding: 2px 7px;
-    border-radius: 4px;
-    color: var(--wa-text-main, #293847);
-  }
-
-  .empty-box {
-    padding: 30px 16px;
-    text-align: center;
-    color: var(--wa-text-muted, #718096);
-    font-size: 13px;
-    background: #f8fafc;
-    border: 1px dashed var(--wa-border, #cbd5e0);
-    border-radius: 6px;
-  }
-
-  .empty-box p {
-    margin: 0;
-  }
-
-  /* Modal Form Content */
   .modal-form-body {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+    gap: var(--wa-space-5);
   }
 
-  .form-item {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .form-item label {
+  .form-item label,
+  .token-result-pane label {
+    color: var(--wa-text-strong);
     font-size: 13px;
     font-weight: 650;
-    color: var(--wa-text-strong, #0d1722);
   }
 
-  .gov-input, .gov-select {
-    width: 100%;
+  .gov-input,
+  .mono-key-input {
     box-sizing: border-box;
-    padding: 8px 12px;
-    border: 1px solid var(--wa-border, #cbd5e0);
-    border-radius: 6px;
+    min-width: 0;
+    width: 100%;
+    min-height: var(--wa-control-h);
+    padding: var(--wa-space-2) var(--wa-space-3);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-surface-lift);
+    color: var(--wa-text-main);
+    font-family: var(--wa-font-sans);
     font-size: 13px;
-    background: #ffffff;
-    color: var(--wa-text-main, #293847);
-    outline: none;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
 
-  .gov-input:focus, .gov-select:focus {
-    border-color: var(--wa-accent, #008f96);
-    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.15);
-  }
-
-  .field-hint {
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
+  .gov-input::placeholder {
+    color: var(--wa-text-muted);
   }
 
   .token-result-pane {
-    background: #f8fafc;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 6px;
-    padding: 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    border-top: 1px solid var(--wa-border-divider);
+    padding-top: var(--wa-space-4);
   }
 
   .token-copy-row {
     display: flex;
-    gap: 8px;
     align-items: center;
+    gap: var(--wa-space-2);
+    min-width: 0;
   }
 
   .mono-key-input {
     flex: 1;
-    font-family: var(--wa-font-mono, monospace);
-    font-size: 12.5px;
-    padding: 8px 10px;
-    border: 1px solid var(--wa-border, #cbd5e0);
-    border-radius: 6px;
-    background: #ffffff;
-  }
-
-  .token-tip {
-    margin: 0;
-    font-size: 12px;
-    color: var(--wa-text-muted, #718096);
+    font-family: var(--wa-font-mono);
   }
 
   .modal-footer-actions {
     display: flex;
     justify-content: flex-end;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: var(--wa-space-3);
   }
 
-  /* Responsive Rules (Finesse UI & Impeccable) */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--wa-control-h);
+    padding: var(--wa-space-2) var(--wa-space-3);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-surface-lift);
+    color: var(--wa-text-main);
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color var(--wa-duration-fast) var(--wa-ease),
+      border-color var(--wa-duration-fast) var(--wa-ease);
+  }
+
+  .btn:hover {
+    background: var(--wa-row-hover);
+    border-color: var(--wa-border-strong);
+  }
+
+  .btn:focus-visible,
+  .tab-btn:focus-visible,
+  .gov-table-container:focus-visible,
+  .gov-input:focus-visible,
+  .mono-key-input:focus-visible {
+    outline: 2px solid var(--wa-border-focus);
+    outline-offset: 2px;
+  }
+
   @media (max-width: 1024px) {
-    .phases-grid {
-      grid-template-columns: 1fr;
-    }
+    .gov-metrics-strip,
     .skills-cards-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .phases-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .phase-card + .phase-card {
+      border-top: 1px solid var(--wa-border-divider);
+      padding-top: var(--wa-space-3);
     }
   }
 
   @media (max-width: 760px) {
     .open-gov-header {
-      flex-direction: column;
+      align-items: flex-start;
+      flex-wrap: wrap;
     }
+
+    .gov-card,
     .gov-metrics-strip {
+      padding: var(--wa-space-4);
+    }
+
+    .combo-grid,
+    .skills-cards-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .open-capabilities-view :global(.btn),
+    .modal-footer-actions :global(.btn),
+    .open-capabilities-view :global(.select-trigger),
+    .btn,
+    .tab-btn,
+    .gov-input,
+    .mono-key-input {
+      min-height: var(--wa-touch-h);
+    }
+
+    .skill-card-actions {
+      gap: var(--wa-space-3);
+    }
+
+    .code-snippet-bar {
       flex-direction: column;
       align-items: stretch;
-      gap: 12px;
     }
-    .gov-metric-divider {
-      display: none;
+
+    .code-snippet-bar code {
+      width: 100%;
     }
-    .combo-grid {
-      grid-template-columns: 1fr;
+
+    .code-snippet-bar :global(.btn) {
+      align-self: flex-end;
     }
-    .skills-cards-grid {
-      grid-template-columns: 1fr;
+  }
+
+  @media (max-width: 480px) {
+    .gov-metrics-strip {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--wa-space-3);
     }
-    .config-tabs-nav {
+
+    .config-code-preview {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .code-action-pos {
+      grid-column: 1;
+      grid-row: 2;
+      justify-self: end;
+    }
+
+    .config-code-preview pre {
+      grid-row: 3;
+    }
+
+    .token-copy-row {
       flex-wrap: wrap;
+    }
+
+    .mono-key-input {
+      flex-basis: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
+
+    .btn,
+    .tab-btn {
+      transition: none;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .gov-card,
+    .gov-metrics-strip,
+    .gov-loading-pane {
+      background: var(--wa-admin-list-surface-solid-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
   }
 </style>

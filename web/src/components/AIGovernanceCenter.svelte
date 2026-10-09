@@ -1,8 +1,19 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
   import Select from './shared/Select.svelte';
+  import Button from './shared/Button.svelte';
+  import Switch from './shared/Switch.svelte';
+  import TextInput from './shared/TextInput.svelte';
+  import Textarea from './shared/Textarea.svelte';
+  import MarkdownWorkbench from './shared/MarkdownWorkbench.svelte';
+  import CapabilityUpgradeModal from './config/CapabilityUpgradeModal.svelte';
+  import AdminListFilterBar from './admin-console/AdminListFilterBar.svelte';
+  import AdminDataList from './admin-console/AdminDataList.svelte';
+  import type { AdminCellValue, AdminTableColumn, AdminTableRow } from '../lib/admin-console/contract';
+  import { resolveGovernanceCapabilityHierarchy, filterGovernanceCapabilities, countIncludedGovernanceComponents } from '../lib/governance-capability-list';
+  import { normalizeReviewRepoPolicies, type ReviewRepoPolicy } from '../lib/review-repo-policy';
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
@@ -152,7 +163,7 @@
   let filterStatus = 'all';
 
   const kindOptions = [
-    { value: 'all', label: '全类别 (含内置组件)' },
+    { value: 'all', label: '全部技能与独立能力' },
     { value: 'skills_only', label: '⭐ 仅看业务技能 (Skills)' },
     { value: 'skill', label: 'Skill 业务技能' },
     { value: 'plugin', label: 'Plugin 底层插件' },
@@ -179,13 +190,14 @@
     };
   }
 
-  // Derived filtered capability list for skills_only view
-  $: displayCapabilities = capabilities.filter(c => {
-    if (filterKind === 'skills_only') {
-      return c.kind === 'skill' || c.is_top_level_skill;
-    }
-    return true;
+  // Resolve ownership from the full registry before applying display filters.
+  $: capabilityHierarchy = resolveGovernanceCapabilityHierarchy(capabilities);
+  $: displayCapabilities = filterGovernanceCapabilities(capabilityHierarchy.records, {
+    search: searchKeyword,
+    kind: filterKind,
+    status: filterStatus
   });
+  $: displayedComponentCount = countIncludedGovernanceComponents(displayCapabilities);
 
   // Detail Drawer state
   let selectedCapability: CapabilityItem | null = null;
@@ -272,23 +284,43 @@
   let contextReadinessError = '';
 
   // --- Rules Section State ---
-  interface RepoPolicyItem {
-    project_id: string;
-    repo_name: string;
-    domain: string;
-    scenario: string;
-    knowledge_scope: string;
-    sync_mrs: boolean;
-    sync_commits: boolean;
-    rules: string;
-  }
-  let repoPolicies: RepoPolicyItem[] = [];
+  interface RepoPolicyRow extends AdminTableRow { repo: ReviewRepoPolicy; }
+  const repoPolicyColumns: AdminTableColumn[] = [
+    { key: 'name', label: '名称', width: '72%' },
+    { key: 'rules', label: '规则', width: '28%' }
+  ];
+  let repoPolicies: ReviewRepoPolicy[] = [];
+  type CommentSettings = Pick<ReviewRepoPolicy, 'sync_commits' | 'sync_mrs'>;
+  type CommentSetting = keyof CommentSettings;
+  let commentSettings: CommentSettings | null = null;
+  let savingCommentSetting: CommentSetting | null = null;
+  let savingRepoSetting: CommentSetting | null = null;
+  let commentSettingsNotice = '';
+  let commentSettingsError = '';
+  let policySearch = '';
+  let policyDrafts: Record<string, string> = {};
   let loadingPolicies = false;
   let selectedPolicyRepo = '';
-  let editingPolicy: RepoPolicyItem | null = null;
+  let editingPolicy: ReviewRepoPolicy | null = null;
   let savingPolicy = false;
   let policyNotice = '';
   let policyError = '';
+  $: visibleRepoPolicies = repoPolicies.filter((repo) =>
+    `${repo.repo_name} ${repo.project_id}`.toLowerCase().includes(policySearch.trim().toLowerCase())
+  );
+  $: policyRulesDirty = !!editingPolicy && editingPolicy.rules !==
+    (repoPolicies.find((repo) => repo.project_id === editingPolicy?.project_id)?.rules ?? '');
+  $: draftRepoIDs = new Set(repoPolicies.filter((repo) =>
+    (editingPolicy?.project_id === repo.project_id ? editingPolicy.rules : policyDrafts[repo.project_id] ?? repo.rules) !== repo.rules
+  ).map((repo) => repo.project_id));
+
+  $: repoPolicyRows = visibleRepoPolicies.map((repo): RepoPolicyRow => ({
+    id: repo.project_id,
+    title: repo.repo_name || `仓库 #${repo.project_id}`,
+    status: draftRepoIDs.has(repo.project_id) ? '未保存' : repo.rules.trim() ? '已配置' : '未配置',
+    cells: { name: repo.repo_name, rules: repo.rules },
+    repo
+  }));
 
   // Manifest Sample Template
   const sampleManifest = `schema: capability-manifest/v1
@@ -368,13 +400,7 @@ activation:
     loadingCapabilities = true;
     capabilityError = '';
     try {
-      const params = new URLSearchParams();
-      if (searchKeyword.trim()) params.set('search', searchKeyword.trim());
-      if (filterKind !== 'all') params.set('kind', filterKind);
-      if (filterStatus !== 'all') params.set('status', filterStatus);
-
-      const qs = params.toString() ? `?${params.toString()}` : '';
-      const resp = await api(`/api/agent-runtime/capabilities${qs}`);
+      const resp = await api('/api/agent-runtime/capabilities');
       if (requestID !== capabilityRequestID) return false;
       capabilities = resp.capabilities || [];
       totalDiskSizeBytes = resp.total_disk_size_bytes || 0;
@@ -430,9 +456,48 @@ activation:
   }
 
   function handleWindowKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && detailDrawerOpen) {
+    if (e.key !== 'Escape' || upgradeModalOpen) return;
+    if (deleteModalOpen) {
+      if (!deleting) deleteModalOpen = false;
+    } else if (upgradeModalOpen) {
+      if (!upgrading) upgradeModalOpen = false;
+    } else if (importModalOpen) {
+      if (!importing) importModalOpen = false;
+    } else if (detailDrawerOpen) {
       closeDetailDrawer();
-    }
+    } else return;
+    e.preventDefault();
+  }
+
+  function manageDialogFocus(node: HTMLElement) {
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () => Array.from(node.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(element => element.getClientRects().length > 0);
+    void tick().then(() => {
+      if (node.isConnected) (focusable()[0] || node).focus();
+    });
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      const first = elements[0];
+      const last = elements.at(-1);
+      if (!first || !last) {
+        event.preventDefault();
+        node.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    node.addEventListener('keydown', trapFocus);
+    return { destroy() {
+      node.removeEventListener('keydown', trapFocus);
+      void tick().then(() => { if (returnFocus?.isConnected) returnFocus.focus(); });
+    } };
   }
 
   onDestroy(() => {
@@ -582,7 +647,7 @@ activation:
   }
 
   async function submitUpgrade() {
-    if (!canManageSkills || !upgradeTarget) return;
+    if (!canManageSkills || !upgradeTarget || upgrading) return;
     upgrading = true;
     upgradeError = '';
     try {
@@ -701,12 +766,16 @@ activation:
     loadingPolicies = true;
     policyError = '';
     try {
-      const repos = await api('/api/code-reviews/repos');
-      repoPolicies = repos.repos || [];
-      if (repoPolicies.length > 0 && !selectedPolicyRepo) {
-        selectedPolicyRepo = repoPolicies[0].project_id;
-        editingPolicy = { ...repoPolicies[0] };
-      }
+      const [repos, settings] = await Promise.all([
+        api('/api/code-reviews/repos'),
+        api('/api/code-reviews/comment-settings')
+      ]);
+      if (editingPolicy && policyRulesDirty) policyDrafts = { ...policyDrafts, [editingPolicy.project_id]: editingPolicy.rules };
+      repoPolicies = normalizeReviewRepoPolicies(repos.repos);
+      commentSettings = readCommentSettings(settings);
+      const selected = repoPolicies.find((repo) => repo.project_id === selectedPolicyRepo) ?? repoPolicies[0];
+      selectedPolicyRepo = selected?.project_id ?? '';
+      editingPolicy = selected ? { ...selected, rules: policyDrafts[selected.project_id] ?? selected.rules } : null;
       return true;
     } catch (err: any) {
       policyError = err.message || '加载评审工程规则失败';
@@ -716,13 +785,64 @@ activation:
     }
   }
 
-  function selectRepoPolicy(repo: RepoPolicyItem) {
+  function selectRepoPolicy(repo: ReviewRepoPolicy) {
+    if (savingPolicy || savingRepoSetting) return;
+    if (editingPolicy) policyDrafts = { ...policyDrafts, [editingPolicy.project_id]: editingPolicy.rules };
+    policyNotice = '';
+    policyError = '';
     selectedPolicyRepo = repo.project_id;
-    editingPolicy = { ...repo };
+    editingPolicy = { ...repo, rules: policyDrafts[repo.project_id] ?? repo.rules };
+  }
+
+  function readCommentSettings(value: any): CommentSettings {
+    if (typeof value?.sync_commits !== 'boolean' || typeof value?.sync_mrs !== 'boolean') {
+      throw new Error('评论同步设置响应不完整，请重试。');
+    }
+    return { sync_commits: value.sync_commits, sync_mrs: value.sync_mrs };
+  }
+
+  async function saveCommentSetting(field: CommentSetting, checked: boolean) {
+    if (!canWriteRules || !commentSettings || savingCommentSetting) return;
+    savingCommentSetting = field;
+    commentSettingsNotice = '';
+    commentSettingsError = '';
+    try {
+      commentSettings = readCommentSettings(await api('/api/code-reviews/comment-settings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: checked })
+      }));
+      commentSettingsNotice = `全局 ${field === 'sync_mrs' ? 'MR' : 'Commit'} 评论${checked ? '已允许' : '已暂停'}。`;
+    } catch (err: any) {
+      commentSettingsError = err.message || '保存全局评论设置失败';
+    } finally {
+      savingCommentSetting = null;
+    }
+  }
+
+  async function saveRepoSetting(field: CommentSetting, checked: boolean) {
+    if (!canWriteRules || !editingPolicy || savingRepoSetting || savingPolicy) return;
+    const projectID = editingPolicy.project_id;
+    savingRepoSetting = field;
+    policyNotice = '';
+    policyError = '';
+    try {
+      await api('/api/code-reviews/policy', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectID, [field]: checked })
+      });
+      repoPolicies = repoPolicies.map((repo) => repo.project_id === projectID ? { ...repo, [field]: checked } : repo);
+      if (editingPolicy?.project_id === projectID) editingPolicy = { ...editingPolicy, [field]: checked };
+      policyNotice = `仓库 ${field === 'sync_mrs' ? 'MR' : 'Commit'} 评论设置已保存。`;
+    } catch (err: any) {
+      policyError = err.message || '保存仓库评论设置失败';
+    } finally {
+      savingRepoSetting = null;
+    }
   }
 
   async function saveRepoPolicy() {
-    if (!canWriteRules || !editingPolicy) return;
+    if (!canWriteRules || !editingPolicy || savingPolicy || savingRepoSetting) return;
+    const savedPolicy = { ...editingPolicy };
     savingPolicy = true;
     policyNotice = '';
     policyError = '';
@@ -731,17 +851,13 @@ activation:
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: editingPolicy.project_id,
-          domain: editingPolicy.domain,
-          scenario: editingPolicy.scenario,
-          knowledge_scope: editingPolicy.knowledge_scope,
-          sync_mrs: editingPolicy.sync_mrs,
-          sync_commits: editingPolicy.sync_commits,
-          rules: editingPolicy.rules
+          project_id: savedPolicy.project_id,
+          rules: savedPolicy.rules
         })
       });
-      policyNotice = `项目 ${editingPolicy.repo_name} 的工程审查规则已成功更新！`;
-      await loadRepoPolicies();
+      repoPolicies = repoPolicies.map((repo) => repo.project_id === savedPolicy.project_id ? { ...repo, rules: savedPolicy.rules } : repo);
+      policyDrafts = { ...policyDrafts, [savedPolicy.project_id]: savedPolicy.rules };
+      policyNotice = '规则已保存，将用于后续代码评审。';
     } catch (err: any) {
       policyError = err.message || '更新规则失败';
     } finally {
@@ -825,78 +941,9 @@ activation:
 
 <svelte:window on:keydown={handleWindowKeydown} />
 
-<div class="gov-workbench">
-  <!-- Top Header & Metrics Strip -->
+<div class="gov-workbench" data-layout-contract="admin-viewport-workbench/v1">
+  <!-- Navigation owns module selection; each pane owns its content and actions. -->
   <header class="gov-header">
-    <div class="gov-title-row">
-      <div class="gov-title-group">
-        <div class="gov-badge-spine">AGENT RUNTIME 2.0</div>
-        <h1>AI 治理中心</h1>
-        <p class="gov-subtitle">基于通用微内核规约，统一治理 Agent 技能生命周期、场景提示词工程、合规审查规则与领域设计语料。</p>
-      </div>
-
-      {#if resolvedActiveSection === 'skills'}
-        <div class="gov-header-actions">
-          {#if canManageSkills}
-            <button type="button" class="btn btn-secondary" on:click={openImportModal}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-              </svg>
-              导入 / 远程安装技能
-            </button>
-          {/if}
-          <button type="button" class="btn btn-ghost icon-action" on:click={loadCapabilities} aria-label="刷新技能与磁盘占用" title="刷新技能与磁盘占用">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={loadingCapabilities} aria-hidden="true">
-              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-          </button>
-        </div>
-      {/if}
-    </div>
-
-    {#if resolvedActiveSection === 'skills'}
-    <!-- Metrics Strip (Finesse UI Product Register) -->
-    <div class="gov-metrics-strip" aria-label="技能治理关键指标">
-      <div class="gov-metric-item">
-        <span class="gov-metric-label">已安装技能 (Active / Total)</span>
-        <div class="gov-metric-val">
-          <strong>{capabilities.filter(c => c.status === 'active').length}</strong>
-          <span class="gov-metric-sub">/ {capabilities.length} 项</span>
-        </div>
-      </div>
-
-      <div class="gov-metric-divider"></div>
-
-      <div class="gov-metric-item">
-        <span class="gov-metric-label">物理磁盘占用</span>
-        <div class="gov-metric-val">
-          <strong class="highlight-cyan">{totalDiskSizeFormatted}</strong>
-          <span class="gov-metric-sub">{totalDiskSizeBytes.toLocaleString()} 字节</span>
-        </div>
-      </div>
-
-      <div class="gov-metric-divider"></div>
-
-      <div class="gov-metric-item">
-        <span class="gov-metric-label">微内核规约</span>
-        <div class="gov-metric-val">
-          <strong>L0-L3 切片</strong>
-          <span class="gov-metric-sub">DAG 动态规划</span>
-        </div>
-      </div>
-
-      <div class="gov-metric-divider"></div>
-
-      <div class="gov-metric-item">
-        <span class="gov-metric-label">安全状态</span>
-        <div class="gov-metric-val">
-          <span class="status-indicator good"></span>
-          <span class="gov-metric-text">沙箱隔离生效</span>
-        </div>
-      </div>
-    </div>
-    {/if}
-
     {#if accessibleSections.length > 0}
       <nav class="gov-nav-tabs" role="tablist" aria-label="AI 治理分区">
         {#each accessibleSections as section, index}
@@ -912,9 +959,9 @@ activation:
             on:click={() => switchSection(section.id)}
             on:keydown={(event) => handleSectionTabKeydown(event, index)}
           >
-            <span class="tab-icon" aria-hidden="true">{section.id === 'skills' ? '⚡' : section.id === 'prompts' ? '📝' : section.id === 'rules' ? '⚖️' : section.id === 'open_capabilities' ? '🔌' : '📚'}</span>
+            <span class="wa-icon tab-icon" class:icon-sparkles={section.id === 'skills'} class:icon-checklist={section.id === 'prompts' || section.id === 'rules'} class:icon-network={section.id === 'open_capabilities'} class:icon-library={section.id === 'context'} aria-hidden="true"></span>
             {section.label}
-            {#if section.id === 'skills'}<span class="tab-count">{capabilities.length}</span>{/if}
+            {#if section.id === 'skills'}<span class="tab-count">{capabilityHierarchy.records.length}</span>{/if}
           </button>
         {/each}
       </nav>
@@ -955,23 +1002,71 @@ activation:
       aria-labelledby="ai-governance-tab-skills"
       aria-busy={loadingCapabilities}
     >
+      <div class="gov-title-row">
+        <div class="gov-title-group">
+          <h2>技能治理中心</h2>
+          <p class="gov-subtitle">管理技能版本、内置组件与生命周期。</p>
+        </div>
+      {#if resolvedActiveSection === 'skills'}
+        <div class="gov-header-actions">
+          {#if canManageSkills}
+            <button type="button" class="btn btn-secondary" on:click={openImportModal}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+              导入 / 远程安装技能
+            </button>
+          {/if}
+          <button type="button" class="btn btn-ghost icon-action" on:click={loadCapabilities} aria-label="刷新技能与磁盘占用" title="刷新技能与磁盘占用">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class:spin={loadingCapabilities} aria-hidden="true">
+              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+      {/if}
+      </div>
+      <div class="gov-metrics-strip" aria-label="当前可治理能力摘要">
+        <div class="gov-metric-item">
+          <span class="gov-metric-label">当前可治理能力</span>
+          <div class="gov-metric-val"><strong>{displayCapabilities.length}</strong><span class="gov-metric-sub">/ {capabilityHierarchy.records.length} 项 · {displayCapabilities.filter(c => c.status === 'active').length} 项已启用</span></div>
+        </div>
+        <div class="gov-metric-divider"></div>
+        <div class="gov-metric-item">
+          <span class="gov-metric-label">所属内置组件</span>
+          <div class="gov-metric-val"><strong>{displayedComponentCount}</strong><span class="gov-metric-sub">项 · 由所属技能统一治理</span></div>
+        </div>
+        <div class="gov-metric-divider"></div>
+        <div class="gov-metric-item">
+          <span class="gov-metric-label">完整注册表磁盘占用</span>
+          <div class="gov-metric-val"><strong class="highlight-cyan">{totalDiskSizeFormatted}</strong><span class="gov-metric-sub">{totalDiskSizeBytes.toLocaleString()} 字节</span></div>
+        </div>
+      </div>
       {#if !canManageSkills}
         <div class="gov-notice" role="status">技能清单为只读。启用、升级、导入和卸载需要全局超级管理员与 solution_prompt:manage 权限。</div>
       {/if}
+
+      {#if capabilityHierarchy.orphans.length > 0}
+        <div class="gov-notice" role="status">
+          <span>检测到 {capabilityHierarchy.orphans.length} 项组件归属异常：{capabilityHierarchy.orphans.map(component => `${component.key} → ${component.parentKeys.join('、')}`).join('；')}。所属技能不在注册表中，暂不提供独立生命周期操作。</span>
+        </div>
+      {/if}
       <!-- Filter Bar -->
-      <div class="gov-filter-bar">
+      <AdminListFilterBar label="技能筛选">
+        {#snippet leading()}
         <div class="search-box">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
           </svg>
           <input
             type="text"
-            placeholder="搜索技能标识、Owner 或描述..."
+            aria-label="搜索技能与内置组件"
+            placeholder="搜索技能、内置组件、负责人或描述…"
             bind:value={searchKeyword}
-            on:input={() => loadCapabilities()}
           />
         </div>
 
+        {/snippet}
+        {#snippet controls()}
         <div class="filter-controls">
           <div class="filter-field">
             <span class="filter-field-label">类别:</span>
@@ -986,7 +1081,6 @@ activation:
                 shadowless
                 on:change={(e) => {
                   filterKind = e.detail;
-                  loadCapabilities();
                 }}
               />
             </div>
@@ -1005,13 +1099,13 @@ activation:
                 shadowless
                 on:change={(e) => {
                   filterStatus = e.detail;
-                  loadCapabilities();
                 }}
               />
             </div>
           </div>
         </div>
-      </div>
+        {/snippet}
+      </AdminListFilterBar>
 
       <!-- Skills Table / Card List -->
       {#if loadingCapabilities && capabilities.length === 0}
@@ -1027,18 +1121,29 @@ activation:
           {#if canManageSkills}<button type="button" class="btn btn-primary" on:click={openImportModal}>立即导入技能</button>{/if}
         </div>
       {:else}
-        <div class="gov-table-container">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (Keyboard users scroll this named table region.) -->
+        <div class="gov-table-container" role="region" aria-label="技能列表，可横向滚动" tabindex="0" data-surface-contract="admin-data-list-surface/v1">
           <table class="gov-table">
+            <colgroup>
+              <col class="cap-column-identity" />
+            <col class="cap-column-kind" />
+              <col class="cap-column-status" />
+              <col class="cap-column-version" />
+              <col class="cap-column-bindings" />
+              <col class="cap-column-disk" />
+              <col class="cap-column-description" />
+              <col class="cap-column-actions" />
+            </colgroup>
             <thead>
               <tr>
-                <th style="width: 250px;">技能与内置组件标识</th>
-                <th style="width: 80px;">类型</th>
-                <th style="width: 140px;">状态 / 启用滑块</th>
-                <th style="width: 70px;">版本</th>
-                <th style="width: 90px;">关联运行</th>
-                <th style="width: 100px;">物理磁盘</th>
+                <th>名称</th>
+                <th>类别</th>
+                <th>状态</th>
+                <th>版本</th>
+                <th>关联运行</th>
+                <th>物理磁盘</th>
                 <th>责任方 / 描述</th>
-                <th style="min-width: 230px; width: 240px; text-align: right; white-space: nowrap;">生命周期操作</th>
+                <th class="cap-actions-heading">生命周期操作</th>
               </tr>
             </thead>
             <tbody>
@@ -1049,13 +1154,11 @@ activation:
                     <div class="cap-identity">
                       <div class="cap-title-row">
                         <strong class="cap-key">{cap.capability_key}</strong>
-                        {#if cap.kind === 'skill' || cap.is_top_level_skill}
-                          <span class="badge badge-top-skill" title="面向特定业务目标的顶层智能技能">⭐ 业务技能</span>
-                        {/if}
                         {#if cap.sensitivity === 'restricted'}
                           <span class="badge badge-restricted">安全限制</span>
                         {/if}
                       </div>
+
 
                       <!-- Included Components (Sub-plugins / Providers) -->
                       {#if cap.included_components && cap.included_components.length > 0}
@@ -1067,32 +1170,25 @@ activation:
                             </span>
                           {/each}
                         </div>
-                      {:else if cap.parent_skill_key}
-                        <div class="cap-parent-ref-block">
-                          <span class="parent-ref-badge" title="本组件内聚在 {cap.parent_skill_key} 技能中">
-                            🏷️ 包含于: <strong>{cap.parent_skill_key}</strong>
-                          </span>
-                        </div>
                       {/if}
                     </div>
                   </td>
 
-                  <!-- Kind -->
-                  <td>
-                    <span class="cap-kind-badge {cap.kind}">{cap.kind}</span>
-                  </td>
+
+                  <td><span class="cap-kind-badge {cap.kind}">{cap.kind}</span></td>
 
                   <!-- Switch Status -->
                   <td>
                     {#if cap.status === 'uninstalled'}
-                      <span class="status-tag uninstalled">已卸载 (可恢复)</span>
+                      <span class="status-tag uninstalled" title="可通过重新安装恢复">已卸载</span>
                     {:else if cap.status === 'archived'}
-                      <span class="status-tag archived">已冷归档 (保留审计)</span>
+                      <span class="status-tag archived" title="保留历史审计，可重新安装">已冷归档</span>
                     {:else}
                       <div class="switch-container">
                         <button
                           type="button"
                           role="switch"
+                          aria-label={`切换 ${cap.capability_key} 启用状态`}
                           aria-checked={cap.status === 'active'}
                           class="gov-switch"
                           class:checked={cap.status === 'active'}
@@ -1131,7 +1227,7 @@ activation:
                   <!-- Description -->
                   <td>
                     <div class="cap-desc-block">
-                      <span class="cap-owner">{cap.owner || 'system'}</span>
+                      <span class="cap-owner" title={cap.owner || 'system'}>{cap.owner || 'system'}</span>
                       <p class="cap-desc" title={cap.description}>{cap.description || '暂无详细描述'}</p>
                     </div>
                   </td>
@@ -1139,8 +1235,8 @@ activation:
                   <!-- Actions (Strict No-Wrap) -->
                   <td style="text-align: right; white-space: nowrap;">
                     <div class="action-btn-group">
-                      <button type="button" class="btn btn-sm btn-ghost" on:click={() => openDetail(cap)}>
-                        查看详情 / SKILL.md
+                      <button type="button" class="btn btn-sm btn-ghost" title="查看详情与 SKILL.md" aria-label={`查看 ${cap.capability_key} 详情与 SKILL.md`} on:click={() => openDetail(cap)}>
+                        详情
                       </button>
 
                       {#if canManageSkills}
@@ -1148,17 +1244,18 @@ activation:
                           <button
                             type="button"
                             class="btn btn-sm btn-primary"
+                            aria-label={`重新安装 ${cap.capability_key}`}
                             disabled={reinstallingKey === cap.capability_key}
                             on:click={() => handleReinstall(cap)}
                           >
                             {reinstallingKey === cap.capability_key ? '恢复中…' : '重新安装'}
                           </button>
                         {:else}
-                          <button type="button" class="btn btn-sm btn-ghost" on:click={() => openUpgradeModal(cap)}>
+                          <button type="button" class="btn btn-sm btn-ghost" aria-label={`升级 ${cap.capability_key}`} on:click={() => openUpgradeModal(cap)}>
                             升级
                           </button>
-                          <button type="button" class="btn btn-sm btn-danger-ghost" on:click={() => openDeleteConfirm(cap)}>
-                            卸载清理
+                          <button type="button" class="btn btn-sm btn-danger-ghost" aria-label={`卸载 ${cap.capability_key}`} on:click={() => openDeleteConfirm(cap)}>
+                            卸载
                           </button>
                         {/if}
                       {/if}
@@ -1199,119 +1296,120 @@ activation:
     </section>
   {/if}
 
-  <!-- TAB 3: 规则与工程标准 (Rules) -->
+    {#snippet renderRepoPolicyCell(row: RepoPolicyRow, column: AdminTableColumn, _value: AdminCellValue)}
+      {#if column.key === 'name'}
+        <button type="button" class="repo-row-select" aria-pressed={selectedPolicyRepo === row.id}
+          disabled={savingPolicy || !!savingRepoSetting} aria-label={`选择 ${row.title} 的规则`}
+          title={row.title} on:click={() => selectRepoPolicy(row.repo)}>
+          <span class="repo-name">{row.title}</span>
+          <span class="repo-meta">项目 ID {row.id}</span>
+        </button>
+      {:else if column.key === 'rules'}
+        <span class="repo-rule-state" class:is-draft={draftRepoIDs.has(row.id)}>{row.status}</span>
+      {/if}
+    {/snippet}
+    {#snippet renderRepoPolicyEmpty()}
+      <div class="rules-empty">{repoPolicies.length === 0 ? '暂无已配置的 GitLab 仓库' : '没有匹配的仓库'}</div>
+    {/snippet}
+
+    <!-- TAB 3: 规则与工程标准 (Rules) -->
   {#if resolvedActiveSection === 'rules'}
-    <section
-      id="ai-governance-panel-rules"
-      class="gov-pane"
-      role="tabpanel"
-      aria-labelledby="ai-governance-tab-rules"
-      aria-busy={loadingPolicies}
-    >
+    <section id="ai-governance-panel-rules" class="gov-pane rules-pane" role="tabpanel"
+      aria-labelledby="ai-governance-tab-rules" aria-busy={loadingPolicies}>
       {#if !canWriteRules}
-        <div class="gov-notice" role="status">工程规则为只读。修改并保存规则需要 config:write 权限。</div>
+        <div class="gov-notice" role="status">当前为只读模式。保存规则需要 config:write 权限。</div>
       {/if}
       {#if policyError}
         <div class="gov-notice error" role="alert">
           <span>{policyError}</span>
-          <button type="button" class="btn btn-sm btn-ghost" on:click={() => retrySection('rules')}>重试</button>
+          {#if !editingPolicy}<Button variant="secondary" size="small" on:click={() => retrySection('rules')}>重试</Button>{/if}
         </div>
       {/if}
       <div class="rules-workbench">
-        <!-- Repos List -->
-        <aside class="rules-repo-list">
-          <h3>项目仓库 ({repoPolicies.length})</h3>
-          {#if loadingPolicies && repoPolicies.length === 0}
-            <p role="status" aria-live="polite">正在加载项目仓库...</p>
-          {:else}
-            {#each repoPolicies as r}
-              <button
-                type="button"
-                class="repo-nav-item"
-                class:active={selectedPolicyRepo === r.project_id}
-                on:click={() => selectRepoPolicy(r)}
-              >
-                <div class="repo-name">{r.repo_name}</div>
-                <div class="repo-meta">ID: {r.project_id} · {r.domain || '通用'}</div>
-              </button>
-            {/each}
-          {/if}
-        </aside>
-
-        <!-- Policy Editor -->
-        <div class="rules-editor-pane">
-          {#if editingPolicy}
-            <div class="pane-header">
-              <h2>{editingPolicy.repo_name} 代码审查标准与策略</h2>
-              <p class="subtitle">定义仓库级自动化评审的场景、知识库检索边界与自定义合规规则。</p>
+        <header class="rules-context-header">
+          <div class="rules-heading"><h2>规则与标准</h2><p>管理仓库工程规则与评审评论。</p></div>
+          <section class="global-comment-settings" aria-label="全局评论设置">
+            <div class="comment-switch-row">
+              <Switch optimistic={false} id="global-policy-sync-commits" label="全局 Commit 评论" expandedHitArea
+                checked={commentSettings?.sync_commits ?? false} saving={savingCommentSetting === 'sync_commits'}
+                disabled={!canWriteRules || !commentSettings || !!savingCommentSetting || loadingPolicies}
+                on:change={(event) => saveCommentSetting('sync_commits', event.detail)} />
+              <Switch optimistic={false} id="global-policy-sync-mrs" label="全局 MR 评论" expandedHitArea
+                checked={commentSettings?.sync_mrs ?? false} saving={savingCommentSetting === 'sync_mrs'}
+                disabled={!canWriteRules || !commentSettings || !!savingCommentSetting || loadingPolicies}
+                on:change={(event) => saveCommentSetting('sync_mrs', event.detail)} />
             </div>
-
-            {#if policyNotice}
-              <div class="gov-notice">{policyNotice}</div>
+            <p>全局允许后，按各仓库设置发布。</p>
+            {#if commentSettingsError}<p class="policy-feedback is-error" role="alert">{commentSettingsError}</p>
+            {:else if commentSettingsNotice}<p class="policy-feedback" role="status">{commentSettingsNotice}</p>{/if}
+          </section>
+        </header>
+        <div class="rules-workbench-body">
+          <aside class="wa-admin-card rules-repo-list" aria-label="规则所属仓库">
+              <AdminListFilterBar label="仓库规则列表筛选" className="rules-repo-filter">
+                {#snippet leading()}
+                  <div class="repo-directory-header"><h3>项目仓库</h3><span>{visibleRepoPolicies.length} / {repoPolicies.length}</span></div>
+                {/snippet}
+                {#snippet controls()}
+                  <TextInput id="rules-repo-search" label="搜索仓库" bind:value={policySearch} placeholder="搜索仓库名称或 ID" />
+                {/snippet}
+              </AdminListFilterBar>
+              <AdminDataList
+                columns={repoPolicyColumns} rows={repoPolicyRows} caption="仓库规则列表"
+                cell={renderRepoPolicyCell} empty={renderRepoPolicyEmpty}
+                loading={loadingPolicies && repoPolicies.length === 0} skeletonRows={4}
+                disabled={savingPolicy || !!savingRepoSetting} selectedRowId={selectedPolicyRepo}
+                resetKey={policySearch} surface="embedded" className="rules-repo-table"
+                scrollRegionId="rules-repo-table-content" tableMinWidth="0px" compactTableMinWidth="0px"
+              />
+            </aside>
+            <section class="wa-admin-card rules-editor-pane" aria-label="仓库规则编辑">
+            {#if editingPolicy}
+              <header class="policy-editor-header">
+                <div class="policy-editor-title">
+                  <h3>{editingPolicy.repo_name || `仓库 #${editingPolicy.project_id}`}</h3>
+                  <p>项目 ID {editingPolicy.project_id}</p>
+                </div>
+                <div class="repo-comment-settings" aria-label="当前仓库评论设置">
+                  <div class="comment-switch-row">
+                    <Switch optimistic={false} id="policy-sync-commits" label="Commit 评论" expandedHitArea
+                      checked={editingPolicy.sync_commits} saving={savingRepoSetting === 'sync_commits'}
+                      disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies}
+                      on:change={(event) => saveRepoSetting('sync_commits', event.detail)} />
+                    <Switch optimistic={false} id="policy-sync-mrs" label="MR 评论" expandedHitArea
+                      checked={editingPolicy.sync_mrs} saving={savingRepoSetting === 'sync_mrs'}
+                      disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies}
+                      on:change={(event) => saveRepoSetting('sync_mrs', event.detail)} />
+                  </div>
+                  {#if commentSettings && (!commentSettings.sync_commits || !commentSettings.sync_mrs)}
+                    <p class="policy-gate-note">全局已暂停{!commentSettings.sync_commits && !commentSettings.sync_mrs ? ' Commit 与 MR ' : !commentSettings.sync_commits ? ' Commit ' : ' MR '}评论发布。</p>
+                  {/if}
+                </div>
+              </header>
+              <div class="policy-document-heading">
+                <div><h4>自定义工程规则</h4><p>{policyRulesDirty ? '有未保存的修改' : '保存后用于后续代码评审'}</p></div>
+                <Button variant="primary" size="small" loading={savingPolicy}
+                  disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || !policyRulesDirty || editingPolicy.rules.length > 8000}
+                  on:click={saveRepoPolicy}>保存规则</Button>
+              </div>
+              {#if policyNotice}<p class="policy-feedback" role="status">{policyNotice}</p>{/if}
+              {#if editingPolicy.rules.length > 8000}<p class="policy-feedback is-error" role="alert">规则内容超过 8000 字符，请精简后保存。</p>{/if}
+              <div class="policy-primary-editor">
+                {#key editingPolicy.project_id}
+                  <MarkdownWorkbench bind:value={editingPolicy.rules} mode="live" availableModes={['live']}
+                    label="自定义工程规则" description="编辑即排版，支持 Markdown" embedded minHeight={360}
+                    readonly={!canWriteRules || savingPolicy || !!savingRepoSetting} saving={savingPolicy}
+                    placeholder={'编写本仓库的工程规则，例如：\n\n## 评审重点\n- 核对接口约定与异常处理\n- 补充关键业务场景的验证依据'}
+                    on:save={() => { if (policyRulesDirty && editingPolicy && editingPolicy.rules.length <= 8000) void saveRepoPolicy(); }} />
+                {/key}
+              </div>
+            {:else}
+              <div class="rules-empty-editor" role="status">
+                <h3>{loadingPolicies ? '正在加载仓库规则…' : '选择一个仓库'}</h3>
+                <p>{loadingPolicies ? '规则加载完成后即可查看。' : '选择仓库以查看和编辑工程规则。'}</p>
+              </div>
             {/if}
-            <div class="policy-form">
-              <div class="form-row">
-                <label>
-                  领域分类:
-                  <select bind:value={editingPolicy.domain} disabled={!canWriteRules || savingPolicy}>
-                    <option value="general">通用工程 (General)</option>
-                    <option value="fms">FMS 车辆/调度业务 (FMS)</option>
-                  </select>
-                </label>
-
-                <label>
-                  场景分类:
-                  <select bind:value={editingPolicy.scenario} disabled={!canWriteRules || savingPolicy}>
-                    <option value="general">通用场景</option>
-                    <option value="dispatch">调度协同场景</option>
-                    <option value="vehicle">车辆状态流转</option>
-                    <option value="yard">堆场作业控制</option>
-                  </select>
-                </label>
-
-                <label>
-                  知识库检索作用域:
-                  <input type="text" bind:value={editingPolicy.knowledge_scope} placeholder="例如：fms:dispatch" readonly={!canWriteRules} disabled={savingPolicy} />
-                </label>
-              </div>
-
-              <div class="form-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" bind:checked={editingPolicy.sync_mrs} disabled={!canWriteRules || savingPolicy} />
-                  自动为 Merge Request 发布审查评论
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" bind:checked={editingPolicy.sync_commits} disabled={!canWriteRules || savingPolicy} />
-                  自动为独立 Commit 发布审查评论
-                </label>
-              </div>
-
-              <div class="form-group">
-                <label for="repo-rules-input">仓库自定义工程规则 (Markdown 格式):</label>
-                <textarea
-                  id="repo-rules-input"
-                  rows="8"
-                  bind:value={editingPolicy.rules}
-                  placeholder="- 必须校验车辆反馈完整证据&#10;- 禁止使用空字符串替代完成状态"
-                  readonly={!canWriteRules}
-                  disabled={savingPolicy}
-                ></textarea>
-              </div>
-
-              <div class="form-actions-row">
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  disabled={!canWriteRules || savingPolicy}
-                  on:click={saveRepoPolicy}
-                >
-                  {savingPolicy ? '保存中…' : '保存规则策略'}
-                </button>
-              </div>
-            </div>
-          {:else}
-            <p>请选择一个仓库以查看并配置规则。</p>
-          {/if}
+          </section>
         </div>
       </div>
     </section>
@@ -1366,7 +1464,7 @@ activation:
 {#if detailDrawerOpen}
   <div use:portalToConsole class="drawer-portal-layer">
     <div class="drawer-backdrop" role="presentation" on:click={closeDetailDrawer}></div>
-    <aside class="gov-drawer" role="dialog" aria-modal="true" aria-label="技能详细规约">
+    <aside use:manageDialogFocus tabindex="-1" class="gov-drawer" role="dialog" aria-modal="true" aria-label="技能详细规约">
     <div class="drawer-header">
       <div>
         <span class="drawer-kicker">{selectedCapability?.kind?.toUpperCase()} 规约详情</span>
@@ -1571,7 +1669,7 @@ activation:
 <!-- 2. Import / Remote Install Modal -->
 {#if canManageSkills && importModalOpen}
   <div class="modal-backdrop" role="presentation" on:click={() => importModalOpen = false}></div>
-  <div class="gov-modal" role="dialog" aria-modal="true" aria-label="安装或导入能力">
+  <div use:manageDialogFocus tabindex="-1" class="gov-modal" role="dialog" aria-modal="true" aria-label="安装或导入能力">
     <div class="modal-header">
       <h2>新增 / 导入 Agent 微内核技能</h2>
       <button type="button" class="close-btn" aria-label="关闭技能导入对话框" on:click={() => importModalOpen = false}>×</button>
@@ -1651,75 +1749,26 @@ activation:
 {/if}
 
 <!-- 3. Upgrade Modal -->
-{#if canManageSkills && upgradeModalOpen && upgradeTarget}
-  <div class="modal-backdrop" role="presentation" on:click={() => upgradeModalOpen = false}></div>
-  <div class="gov-modal" role="dialog" aria-modal="true" aria-label="技能版本升级">
-    <div class="modal-header">
-      <h2>升级技能：{upgradeTarget.capability_key}</h2>
-      <button type="button" class="close-btn" aria-label="关闭技能升级对话框" on:click={() => upgradeModalOpen = false}>×</button>
-    </div>
-
-    <div class="modal-tabs">
-      <button
-        type="button"
-        class="modal-tab-btn"
-        class:active={upgradeMode === 'manifest'}
-        on:click={() => upgradeMode = 'manifest'}
-      >
-        提供新版 Manifest
-      </button>
-      <button
-        type="button"
-        class="modal-tab-btn"
-        class:active={upgradeMode === 'remote'}
-        on:click={() => upgradeMode = 'remote'}
-      >
-        远程拉取升级
-      </button>
-    </div>
-
-    <div class="modal-body">
-      {#if upgradeError}
-        <div class="gov-notice error">{upgradeError}</div>
-      {/if}
-
-      <div class="info-banner">
-        当前最新版本：<strong>v{upgradeTarget.latest_version || 1}</strong>。升级后系统将自动生成新版本记录并原子切换激活，历史版本将安全标记为 retired。
-      </div>
-
-      {#if upgradeMode === 'manifest'}
-        <label for="upgrade-manifest-editor">新版本 Manifest (版本号建议为 v{ (upgradeTarget.latest_version || 1) + 1 }):</label>
-        <textarea
-          id="upgrade-manifest-editor"
-          rows="12"
-          class="code-editor"
-          bind:value={upgradeManifestText}
-          placeholder="在此输入升级后的新版本 Manifest (YAML 或 JSON)..."
-        ></textarea>
-      {:else}
-        <label for="upgrade-remote-url">远程升级 Manifest URL:</label>
-        <input
-          id="upgrade-remote-url"
-          type="url"
-          bind:value={upgradeRemoteURL}
-          placeholder="https://example.com/capabilities/fms-review-v2.yaml"
-        />
-      {/if}
-    </div>
-
-    <div class="modal-footer">
-      <button type="button" class="btn btn-ghost" on:click={() => upgradeModalOpen = false}>取消</button>
-      <button type="button" class="btn btn-primary" disabled={upgrading} on:click={submitUpgrade}>
-        {upgrading ? '正在升级部署…' : '确认升级'}
-      </button>
-    </div>
-  </div>
+  {#if canManageSkills && upgradeTarget}
+  <CapabilityUpgradeModal
+    show={upgradeModalOpen}
+    capabilityKey={upgradeTarget.capability_key}
+    latestVersion={upgradeTarget.latest_version || 1}
+    busy={upgrading}
+    error={upgradeError}
+    bind:mode={upgradeMode}
+    bind:manifestText={upgradeManifestText}
+    bind:remoteURL={upgradeRemoteURL}
+    on:modechange={() => upgradeError = ''}
+    on:close={() => { if (!upgrading) upgradeModalOpen = false; }}
+    on:submit={submitUpgrade}
+  />
 {/if}
 
 <!-- 4. Delete & Cleanup / Cold Archive Confirmation Modal -->
 {#if canManageSkills && deleteModalOpen && deleteTarget}
   <div class="modal-backdrop" role="presentation" on:click={() => deleteModalOpen = false}></div>
-  <div class="gov-modal modal-danger" role="dialog" aria-modal="true" aria-label="卸载或冷归档技能">
+  <div use:manageDialogFocus tabindex="-1" class="gov-modal modal-danger" role="dialog" aria-modal="true" aria-label="卸载或冷归档技能">
     <div class="modal-header">
       <h2>确认{deleteMode === 'cold_archive' ? '冷归档' : '卸载清理'}技能？</h2>
       <button type="button" class="close-btn" aria-label="关闭技能清理对话框" on:click={() => deleteModalOpen = false}>×</button>
@@ -1794,12 +1843,14 @@ activation:
     overflow-x: clip;
     display: flex;
     flex-direction: column;
-    gap: 18px;
-    padding: 24px 32px;
-    min-height: 100%;
+    gap: var(--wa-space-4);
+    padding: 0;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
     color: var(--wa-text-main, #293847);
     font-size: 14px;
-    background: #f7fafc;
+    background: transparent;
   }
 
   /* Header */
@@ -1807,8 +1858,8 @@ activation:
     display: flex;
     flex-direction: column;
     gap: 16px;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
-    padding-bottom: 14px;
+    min-width: 0;
+    flex-shrink: 0;
   }
 
   .gov-title-row {
@@ -1818,21 +1869,13 @@ activation:
     gap: 16px;
   }
 
-  .gov-badge-spine {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--wa-focus-ring, #008f96);
-    text-transform: uppercase;
-    margin-bottom: 4px;
-  }
-
-  .gov-title-group h1 {
+  .gov-title-group h2 {
     margin: 0;
-    font-size: 24px;
-    font-weight: 750;
-    color: var(--wa-text-strong, #1a202c);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--wa-text-strong);
     letter-spacing: -0.02em;
+    text-wrap: balance;
   }
 
   .gov-subtitle {
@@ -1845,7 +1888,7 @@ activation:
   .gov-header-actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--wa-space-2);
   }
 
   /* Metrics Strip */
@@ -1854,7 +1897,7 @@ activation:
     align-items: center;
     overflow-x: auto;
     background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 8px;
     padding: 12px 20px;
     gap: 24px;
@@ -1888,7 +1931,7 @@ activation:
   }
 
   .highlight-cyan {
-    color: var(--wa-focus-ring, #008f96) !important;
+    color: var(--wa-accent-strong, #008f96) !important;
   }
 
   .gov-metric-sub {
@@ -1899,26 +1942,14 @@ activation:
   .gov-metric-divider {
     width: 1px;
     height: 32px;
-    background: var(--wa-border, #edf2f7);
+    background: var(--wa-border-soft, #edf2f7);
   }
 
-  .status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-
-  .status-indicator.good {
-    background: #38a169;
-    box-shadow: 0 0 0 2px rgba(56, 161, 105, 0.2);
-  }
-
-  /* Tab Navigation */
   .gov-nav-tabs {
     display: flex;
     gap: 8px;
-    margin-top: 4px;
+    margin-top: 0;
+    padding: var(--wa-space-2);
     overflow-x: auto;
     scrollbar-width: thin;
   }
@@ -1947,7 +1978,7 @@ activation:
 
   .gov-tab.active {
     background: #ffffff;
-    color: var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
     box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   }
 
@@ -1962,7 +1993,7 @@ activation:
 
   .gov-tab.active .tab-count {
     background: rgba(0, 143, 150, 0.1);
-    color: var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
   }
 
   /* Alerts */
@@ -1986,26 +2017,26 @@ activation:
 
   /* Pane */
   .gov-pane {
+    flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: var(--wa-space-4);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
+  .gov-pane > :global(*) { flex-shrink: 0; }
+  .gov-workbench > .gov-notice { flex-shrink: 0; }
 
   /* Filter bar */
-  .gov-filter-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
   .search-box {
     display: flex;
     align-items: center;
     gap: 8px;
     background: #ffffff;
-    border: 1px solid var(--wa-border, #cbd5e0);
+    border: 1px solid var(--wa-border-soft, #cbd5e0);
     border-radius: 6px;
     padding: 8px 12px;
     flex: 1;
@@ -2055,7 +2086,7 @@ activation:
     font-size: 13px;
     border-radius: 6px;
     background: #ffffff;
-    border-color: var(--wa-border, #cbd5e0);
+    border-color: var(--wa-border-soft, #cbd5e0);
   }
 
   .filter-select-wrap :global(.select-trigger:hover) {
@@ -2064,59 +2095,8 @@ activation:
   }
 
   .filter-select-wrap :global(.select-trigger:focus-within) {
-    border-color: var(--wa-focus-ring, #008f96);
+    border-color: var(--wa-accent-strong, #008f96);
     box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.15);
-  }
-
-  .filter-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--wa-text-muted, #4a5568);
-    font-weight: 500;
-  }
-
-  .custom-select-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .modern-select {
-    appearance: none;
-    -webkit-appearance: none;
-    -moz-appearance: none;
-    height: 32px;
-    padding: 0 28px 0 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--wa-text-strong, #1a202c);
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #cbd5e0);
-    border-radius: 6px;
-    cursor: pointer;
-    line-height: 30px;
-    transition: all 0.15s ease;
-  }
-
-  .modern-select:hover {
-    border-color: #a0aec0;
-    background: #fcfdfe;
-  }
-
-  .modern-select:focus {
-    outline: none;
-    border-color: var(--wa-focus-ring, #008f96);
-    box-shadow: 0 0 0 3px rgba(0, 143, 150, 0.15);
-  }
-
-  .select-chevron {
-    position: absolute;
-    right: 9px;
-    pointer-events: none;
-    color: var(--wa-text-muted, #718096);
-    transition: transform 0.15s ease;
   }
 
   /* Table */
@@ -2125,7 +2105,7 @@ activation:
     min-width: 0;
     max-width: 100%;
     background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 8px;
     overflow-x: auto;
     overflow-y: hidden;
@@ -2134,16 +2114,17 @@ activation:
 
   .gov-table {
     width: 100%;
-    min-width: 1180px;
+    min-width: 960px;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 13.5px;
   }
 
   .gov-table th {
     text-align: left;
-    padding: 12px 16px;
-    background: #f8fafc;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    padding: var(--wa-space-3);
+    background: var(--wa-surface-inset);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
     font-size: 12px;
     font-weight: 650;
     color: var(--wa-text-muted, #718096);
@@ -2151,14 +2132,24 @@ activation:
   }
 
   .gov-table td {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--wa-border, #edf2f7);
+    padding: var(--wa-space-3);
+    border-bottom: 1px solid var(--wa-border-soft, #edf2f7);
     vertical-align: middle;
   }
 
   .gov-table tbody tr:hover {
-    background: #fafcff;
+    background: var(--wa-row-hover);
   }
+
+  .cap-column-identity { width: 208px; }
+  .cap-column-kind { width: 96px; }
+  .cap-column-status { width: 108px; }
+  .cap-column-version { width: 56px; }
+  .cap-column-bindings { width: 68px; }
+  .cap-column-disk { width: 80px; }
+  .cap-column-description { width: 140px; }
+  .cap-column-actions { width: 204px; }
+  .cap-actions-heading { text-align: right !important; }
 
   .row-uninstalled {
     opacity: 0.7;
@@ -2166,6 +2157,7 @@ activation:
   }
 
   .cap-identity {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -2179,22 +2171,14 @@ activation:
   }
 
   .cap-key {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
     color: var(--wa-text-strong, #1a202c);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-size: 13px;
   }
 
-  .badge-top-skill {
-    background: #fefcbf;
-    color: #744210;
-    border: 1px solid #faf089;
-    font-size: 11px;
-    font-weight: 700;
-    padding: 1px 6px;
-    border-radius: 4px;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-  }
 
   .cap-included-block {
     display: flex;
@@ -2202,10 +2186,9 @@ activation:
     gap: 5px;
     flex-wrap: wrap;
     font-size: 11px;
-    background: #f8fafc;
-    border: 1px dashed var(--wa-border, #e2e8f0);
-    padding: 3px 8px;
-    border-radius: 4px;
+    min-width: 0;
+    padding-top: var(--wa-space-1);
+    border-top: 1px solid var(--wa-border-divider);
   }
 
   .inc-title {
@@ -2215,12 +2198,14 @@ activation:
   }
 
   .inc-badge {
+    max-width: 100%;
+    overflow-wrap: anywhere;
     padding: 1px 6px;
     border-radius: 3px;
     font-size: 11px;
     font-weight: 550;
     font-family: ui-monospace, SFMono-Regular, monospace;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   .inc-badge.plugin {
@@ -2235,26 +2220,8 @@ activation:
     border: 1px solid #bee3f8;
   }
 
-  .cap-parent-ref-block {
-    display: flex;
-    align-items: center;
-    font-size: 11px;
-  }
-
-  .parent-ref-badge {
-    color: #4a5568;
-    background: #edf2f7;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-size: 11px;
-    white-space: nowrap;
-  }
-
-  .parent-ref-badge strong {
-    color: #2b6cb0;
-  }
-
   .cap-kind-badge {
+    align-self: flex-start;
     padding: 3px 8px;
     border-radius: 4px;
     font-size: 11px;
@@ -2289,7 +2256,7 @@ activation:
   }
 
   .gov-switch.checked {
-    background: var(--wa-focus-ring, #008f96);
+    background: var(--wa-accent-strong, #008f96);
   }
 
   .gov-switch:disabled {
@@ -2356,12 +2323,16 @@ activation:
   }
 
   .cap-desc-block {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
 
   .cap-owner {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 11.5px;
     font-weight: 600;
     color: var(--wa-text-muted, #718096);
@@ -2372,7 +2343,7 @@ activation:
     color: var(--wa-text-main, #4a5568);
     font-size: 12.5px;
     line-height: 1.4;
-    max-width: 380px;
+    max-width: 100%;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2414,7 +2385,7 @@ activation:
   }
 
   .btn-primary {
-    background: var(--wa-focus-ring, #008f96);
+    background: var(--wa-accent-strong, #008f96);
     color: #ffffff;
   }
 
@@ -2425,7 +2396,7 @@ activation:
   .btn-secondary {
     background: #ffffff;
     color: var(--wa-text-strong, #2d3748);
-    border: 1px solid var(--wa-border, #cbd5e0);
+    border: 1px solid var(--wa-border-soft, #cbd5e0);
   }
 
   .btn-secondary:hover {
@@ -2436,7 +2407,7 @@ activation:
   .btn-ghost {
     background: transparent;
     color: var(--wa-text-main, #4a5568);
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
   }
 
   .btn-ghost:hover {
@@ -2473,7 +2444,7 @@ activation:
     border: none;
     background: transparent;
     font-size: 18px;
-    color: #a0aec0;
+    color: var(--wa-text-muted);
     cursor: pointer;
   }
 
@@ -2498,27 +2469,76 @@ activation:
     max-width: 56ch;
   }
 
-  .form-row {
-    display: flex;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
+  /* Jira-style peer panels: each panel owns its surface and scroll region. */
+  .gov-pane.rules-pane { overflow: hidden; scrollbar-gutter: auto; }
+  .gov-pane > .rules-workbench { flex: 1 1 0; }
+  .rules-workbench { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--wa-space-3); }
+  .rules-context-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-6); padding: var(--wa-space-3) var(--wa-space-4); }
+  .rules-heading { min-width: 0; }
+  .rules-context-header h2 { margin: 0; color: var(--wa-text-strong); font-size: 16px; line-height: 1.4; font-weight: 700; }
+  .rules-context-header p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
+  .global-comment-settings { min-width: 0; }
+  .comment-switch-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wa-space-2) var(--wa-space-5); }
+  .comment-switch-row :global(.switch-label) { font-size: 12px; white-space: nowrap; }
+  .comment-switch-row :global(.switch-container) { gap: var(--wa-space-2); }
+  .rules-workbench-body { flex: 1 1 0; display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--wa-space-3); align-items: stretch; }
+  .rules-repo-list, .rules-editor-pane { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; overflow: hidden; }
+  .rules-repo-list { display: flex; flex-direction: column; padding: 0; }
+  .rules-repo-list :global(.rules-repo-filter) { flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: var(--wa-space-3); border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+  .rules-repo-list :global(.filter-controls) { width: 100%; }
+  .repo-directory-header { display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-2); }
+  .repo-directory-header h3 { margin: 0; font-size: 13px; color: var(--wa-text-main); }
+  .repo-directory-header span { font-size: 12px; color: var(--wa-text-muted); font-variant-numeric: tabular-nums; }
+  .rules-repo-list :global(.input-group) { margin-bottom: 0; }
+  .rules-repo-list :global(.input-label) { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .rules-repo-list :global(.text-input) { min-height: 38px; font-size: 12px; }
+  .rules-repo-list :global(.rules-repo-table) { flex: 1 1 0; }
+  .rules-repo-list :global(.admin-table) { table-layout: fixed; }
+  .rules-repo-list :global(.admin-table td) { white-space: normal; }
+  .repo-row-select { display: flex; flex-direction: column; gap: var(--wa-space-1); width: 100%; min-width: 0; min-height: 44px; padding: var(--wa-space-1) 0; border: 0; border-radius: 0; background: transparent; text-align: left; cursor: pointer; }
+  .repo-row-select:disabled { cursor: not-allowed; opacity: 0.6; }
+  .repo-name { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; color: var(--wa-text-strong); font-size: 13px; line-height: 1.5; font-weight: 650; }
+  .repo-meta { color: var(--wa-text-muted); font-size: 11px; line-height: 1.5; }
+  .repo-rule-state { color: var(--wa-text-muted); font-size: 11px; line-height: 1.5; white-space: nowrap; }
+  .repo-rule-state.is-draft { color: var(--wa-accent-strong); }
+  .rules-editor-pane { display: flex; flex-direction: column; padding: var(--wa-space-4) var(--wa-space-5); }
+  .policy-editor-header { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--wa-space-3); padding-bottom: var(--wa-space-4); border-bottom: 1px solid var(--wa-border-divider); }
+  .policy-editor-title { flex: 1 1 160px; min-width: 0; }
+  .policy-editor-header h3 { margin: 0; font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; color: var(--wa-text-strong); }
+  .policy-editor-header p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
+  .repo-comment-settings { min-width: 0; }
+  .policy-gate-note { text-align: right; }
+  .policy-document-heading { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-3); margin: var(--wa-space-4) 0 var(--wa-space-3); }
+  .policy-document-heading h4 { margin: 0; color: var(--wa-text-main); font-size: 13px; font-weight: 650; }
+  .policy-document-heading p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
+  .policy-document-heading :global(.btn) { flex-shrink: 0; min-width: 90px; }
+  .policy-primary-editor { flex: 1 1 0; min-width: 0; min-height: 0; }
+  .policy-primary-editor :global(.markdown-workbench) { height: 100%; }
+  .policy-feedback { flex: 0 0 auto; margin: 0 0 var(--wa-space-3); color: var(--wa-accent-strong); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+  .rules-context-header .policy-feedback { color: var(--wa-accent-strong); }
+  .policy-feedback.is-error, .rules-context-header .policy-feedback.is-error { color: var(--wa-danger, #b42318); }
+  .rules-empty { color: var(--wa-text-muted); font-size: 13px; line-height: 1.6; }
+  .rules-empty-editor { flex: 1; display: grid; align-content: center; min-height: 0; text-align: center; padding: var(--wa-space-5); }
+  .rules-empty-editor h3 { margin: 0; color: var(--wa-text-strong); font-size: 15px; }
+  .rules-empty-editor p { margin: var(--wa-space-2) 0 0; color: var(--wa-text-muted); font-size: 13px; line-height: 1.6; }
 
-  .form-row label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: #4a5568;
-    flex: 1;
+  @media (min-width: 761px) and (max-width: 1100px) {
+    .rules-workbench-body { grid-template-columns: minmax(230px, 32%) minmax(0, 1fr); }
+    .rules-context-header { align-items: flex-start; gap: var(--wa-space-3); }
+    .rules-editor-pane { padding: var(--wa-space-4); }
+    .comment-switch-row { gap: var(--wa-space-1) var(--wa-space-3); }
   }
-
-  .form-row input, .form-row select {
-    border: 1px solid var(--wa-border, #cbd5e0);
-    border-radius: 6px;
-    padding: 8px 10px;
-    font-size: 13.5px;
+  @media (max-width: 760px) {
+    .gov-pane.rules-pane { overflow-y: auto; }
+    .gov-pane > .rules-workbench { flex: 0 0 auto; }
+    .rules-context-header { align-items: stretch; flex-direction: column; gap: var(--wa-space-2); padding: var(--wa-space-4); }
+    .rules-workbench-body { flex: 0 0 auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: 260px minmax(600px, auto); }
+    .rules-repo-list :global(.text-input) { min-height: 44px; }
+    .rules-editor-pane { height: auto; min-height: 600px; padding: var(--wa-space-4); }
+    .policy-editor-header { align-items: flex-start; }
+    .policy-editor-title { flex-basis: 100%; }
+    .policy-gate-note { text-align: left; }
+    .policy-primary-editor { flex: 0 0 auto; height: 420px; }
   }
 
   .form-group {
@@ -2533,23 +2553,6 @@ activation:
     color: #4a5568;
   }
 
-  .form-group textarea, textarea.code-editor {
-    border: 1px solid var(--wa-border, #cbd5e0);
-    border-radius: 6px;
-    padding: 12px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 12.5px;
-    line-height: 1.5;
-    background: #fdfdfd;
-    resize: vertical;
-  }
-
-  .form-actions-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
   .checkbox-label {
     display: inline-flex;
     align-items: center;
@@ -2559,55 +2562,10 @@ activation:
     cursor: pointer;
   }
 
-  /* Rules layout */
-  .rules-workbench {
-    min-width: 0;
-    display: grid;
-    grid-template-columns: 240px minmax(0, 1fr);
-    gap: 20px;
-    background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
-    border-radius: 8px;
-    padding: 20px;
-  }
-
-  .rules-repo-list h3 {
-    margin: 0 0 12px 0;
-    font-size: 13px;
-    text-transform: uppercase;
-    color: var(--wa-text-muted, #718096);
-  }
-
-  .repo-nav-item {
-    text-align: left;
-    width: 100%;
-    padding: 10px 12px;
-    border-radius: 6px;
-    border: 1px solid transparent;
-    background: transparent;
-    cursor: pointer;
-    margin-bottom: 4px;
-  }
-
-  .repo-nav-item.active {
-    background: #ebf8fa;
-    border-color: #b2e3e8;
-  }
-
-  .repo-name {
-    font-weight: 650;
-    color: var(--wa-text-strong, #1a202c);
-  }
-
-  .repo-meta {
-    font-size: 11px;
-    color: #a0aec0;
-  }
-
-  .policy-form {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+  textarea.code-editor {
+    width: 100%; box-sizing: border-box; border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm); padding: var(--wa-space-3); background: var(--wa-surface-lift);
+    color: var(--wa-text-main); font: 12.5px/1.5 var(--wa-font-mono); resize: vertical;
   }
 
   /* Drawer */
@@ -2662,14 +2620,14 @@ activation:
     align-items: center;
     justify-content: space-between;
     padding: 20px 24px;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
   }
 
   .drawer-kicker {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
-    color: var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
   }
 
   .drawer-header h2 {
@@ -2695,7 +2653,7 @@ activation:
 
   .summary-box {
     background: #f8fafc;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 6px;
     padding: 12px;
     display: flex;
@@ -2717,7 +2675,7 @@ activation:
 
   .summary-box .sub {
     font-size: 11px;
-    color: #a0aec0;
+    color: var(--wa-text-muted);
   }
 
   /* Dual View Tabs in Drawer */
@@ -2727,7 +2685,7 @@ activation:
     padding: 4px;
     background: #f1f5f9;
     border-radius: 8px;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
   }
 
   .drawer-tab-btn {
@@ -2754,7 +2712,7 @@ activation:
 
   .drawer-tab-btn.active {
     background: #ffffff;
-    color: var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
     box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   }
 
@@ -2851,7 +2809,7 @@ activation:
     align-items: center;
     justify-content: space-between;
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
   }
 
   .doc-meta-tip {
@@ -2865,7 +2823,7 @@ activation:
     line-height: 1.65;
     color: var(--wa-text-main, #334155);
     background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 8px;
     padding: 18px 20px;
   }
@@ -2901,7 +2859,7 @@ activation:
     margin: 8px 0 12px;
     padding: 10px 14px;
     background: #f8fafc;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     color: #475569;
     border-radius: 6px;
     font-size: 13px;
@@ -2945,13 +2903,13 @@ activation:
   .version-tabs {
     display: flex;
     gap: 8px;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
     padding-bottom: 8px;
     margin-bottom: 14px;
   }
 
   .ver-tab-btn {
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     background: #f8fafc;
     padding: 6px 12px;
     border-radius: 6px;
@@ -2961,9 +2919,9 @@ activation:
   }
 
   .ver-tab-btn.active {
-    background: var(--wa-focus-ring, #008f96);
+    background: var(--wa-accent-strong, #008f96);
     color: #ffffff;
-    border-color: var(--wa-focus-ring, #008f96);
+    border-color: var(--wa-accent-strong, #008f96);
   }
 
   .ver-meta-strip {
@@ -2989,7 +2947,7 @@ activation:
   }
 
   .resource-card {
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 6px;
     background: #ffffff;
     overflow: hidden;
@@ -3007,7 +2965,7 @@ activation:
 
   .res-level {
     font-weight: 700;
-    color: var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
   }
 
   .res-kind, .res-tokens, .res-size {
@@ -3068,7 +3026,7 @@ activation:
     align-items: center;
     justify-content: space-between;
     padding: 16px 20px;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
   }
 
   .modal-header h2 {
@@ -3079,7 +3037,7 @@ activation:
 
   .modal-tabs {
     display: flex;
-    border-bottom: 1px solid var(--wa-border, #e2e8f0);
+    border-bottom: 1px solid var(--wa-border-soft, #e2e8f0);
     background: #f8fafc;
   }
 
@@ -3096,8 +3054,8 @@ activation:
 
   .modal-tab-btn.active {
     background: #ffffff;
-    color: var(--wa-focus-ring, #008f96);
-    border-bottom: 2px solid var(--wa-focus-ring, #008f96);
+    color: var(--wa-accent-strong, #008f96);
+    border-bottom: 2px solid var(--wa-accent-strong, #008f96);
   }
 
   .modal-body {
@@ -3139,7 +3097,7 @@ activation:
     justify-content: flex-end;
     gap: 10px;
     padding: 14px 20px;
-    border-top: 1px solid var(--wa-border, #e2e8f0);
+    border-top: 1px solid var(--wa-border-soft, #e2e8f0);
     background: #f8fafc;
   }
 
@@ -3186,7 +3144,7 @@ activation:
     padding: 48px 24px;
     gap: 12px;
     background: #ffffff;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 8px;
     color: #718096;
   }
@@ -3195,18 +3153,18 @@ activation:
     width: 28px;
     height: 28px;
     border: 3px solid #edf2f7;
-    border-top-color: var(--wa-focus-ring, #008f96);
+    border-top-color: var(--wa-accent-strong, #008f96);
     border-radius: 50%;
     animation: rotate 0.8s linear infinite;
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1024px) {
     .gov-workbench {
-      padding: 20px;
+      padding: 0;
     }
 
     .gov-title-row,
-    .gov-filter-bar {
+    .filter-controls {
       align-items: stretch;
       flex-direction: column;
     }
@@ -3221,14 +3179,6 @@ activation:
       max-width: none;
     }
 
-    .rules-workbench {
-      grid-template-columns: 1fr;
-    }
-
-    .rules-repo-list {
-      max-height: 240px;
-      overflow-y: auto;
-    }
   }
 
   @media (max-width: 760px) {
@@ -3237,16 +3187,12 @@ activation:
       padding: 16px;
     }
 
-    .gov-title-group h1 {
+    .gov-title-group h2 {
       font-size: 20px;
     }
 
     .gov-header-actions .btn:not(.icon-action),
-    .gov-filter-bar .filter-controls,
-    .filter-label,
-    .custom-select-wrap,
-    .modern-select,
-    .form-actions-row .btn {
+    .filter-controls {
       width: 100%;
     }
 
@@ -3274,16 +3220,6 @@ activation:
       flex: none;
     }
 
-    .rules-workbench {
-      gap: 14px;
-      padding: 14px;
-    }
-
-    .form-row,
-    .form-actions-row {
-      align-items: stretch;
-      flex-direction: column;
-    }
 
     .gov-drawer {
       width: 100%;
@@ -3360,7 +3296,7 @@ activation:
     align-items: flex-start;
     gap: 12px;
     padding: 12px 14px;
-    border: 1px solid var(--wa-border, #e2e8f0);
+    border: 1px solid var(--wa-border-soft, #e2e8f0);
     border-radius: 6px;
     background: #ffffff;
     cursor: pointer;
@@ -3371,7 +3307,7 @@ activation:
     background: #fcfcfc;
   }
   .mode-select-card.active {
-    border-color: var(--wa-focus-ring, #008f96);
+    border-color: var(--wa-accent-strong, #008f96);
     background: #f0fdfa;
   }
   .mode-select-card input[type="radio"] {
@@ -3405,4 +3341,81 @@ activation:
     padding: 1px 5px;
     border-radius: 3px;
   }
+
+  /* Peer surfaces share the admin material; the workspace itself owns no elevation. */
+  .gov-nav-tabs,
+  .gov-metrics-strip,
+  .gov-table-container,
+  .rules-context-header,
+  .rules-repo-list,
+  .rules-editor-pane,
+  .gov-loading-state,
+  .gov-empty-state {
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+
+  .gov-metrics-strip { padding: var(--wa-space-3) var(--wa-space-4); gap: var(--wa-space-6); }
+  .gov-metric-label { text-transform: none; letter-spacing: normal; }
+  .gov-metric-val strong { font-size: 18px; }
+  .gov-title-row { align-items: flex-start; text-align: left; }
+  .gov-title-group { min-width: 0; text-align: left; }
+  .gov-tab { min-height: 36px; border-radius: var(--wa-radius-sm); }
+  .gov-tab:hover { background: var(--wa-row-hover); }
+  .gov-tab.active { background: var(--wa-accent-soft); color: var(--wa-accent-strong); box-shadow: none; }
+  .gov-tab:focus-visible,
+  .gov-table-container:focus-visible,
+  .repo-row-select:focus-visible,
+  .search-box:focus-within { outline: 2px solid var(--wa-border-focus); outline-offset: 2px; }
+  .tab-icon { width: 16px; height: 16px; }
+  .search-box { min-width: 0; width: 360px; max-width: 100%; box-sizing: border-box; background: var(--wa-surface-lift); }
+  .search-box input { min-width: 0; background: transparent; }
+  .search-box input::placeholder { color: var(--wa-text-muted); }
+  .filter-controls { gap: var(--wa-space-3); }
+  .gov-table th, .gov-table td { white-space: nowrap; }
+  .gov-switch { flex: 0 0 36px; }
+  .gov-drawer, .gov-modal {
+    background: var(--wa-glass-panel-strong);
+    -webkit-backdrop-filter: blur(20px) saturate(128%);
+    backdrop-filter: blur(20px) saturate(128%);
+  }
+  .gov-loading-state, .gov-empty-state { color: var(--wa-text-muted); }
+  .gov-notice > span { min-width: 0; overflow-wrap: anywhere; }
+
+  @media (max-width: 760px) {
+    .gov-workbench { padding: 0; }
+    .gov-title-group h2 { font-size: 18px; }
+    .gov-title-row { align-items: stretch; flex-direction: column; }
+    .gov-metrics-strip { flex-wrap: wrap; gap: var(--wa-space-3); }
+    .gov-metric-divider { display: none; }
+    .filter-controls, .filter-field { width: 100%; }
+    .filter-field { justify-content: space-between; }
+    .filter-select-wrap { min-width: 0; flex: 1; }
+    .filter-select-wrap :global(.select-trigger), .btn, .gov-tab { min-height: var(--wa-touch-h); }
+    .search-box { width: 100%; max-width: none; min-height: var(--wa-touch-h); }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .gov-nav-tabs, .gov-metrics-strip, .gov-table-container, .rules-context-header, .rules-repo-list, .rules-editor-pane,
+    .gov-loading-state, .gov-empty-state, .gov-drawer, .gov-modal {
+      background: var(--wa-admin-list-surface-solid-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    .gov-nav-tabs, .gov-metrics-strip, .gov-table-container, .rules-context-header, .rules-repo-list, .rules-editor-pane,
+    .gov-loading-state, .gov-empty-state, .gov-drawer, .gov-modal { background: var(--wa-admin-list-surface-solid-background); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gov-drawer, .drawer-backdrop, .gov-modal, .gov-switch-handle { animation: none; transition: none; }
+  }
+
 </style>

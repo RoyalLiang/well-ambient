@@ -1,0 +1,181 @@
+{
+  "SQL": "WITH candidates AS (\n\tSELECT\n\t\ttask_id,\n\t\tCOALESCE(title, '') AS title,\n\t\tUPPER(TRIM(COALESCE(NULLIF(project_key, ''), split_part(task_id, '-', 1)))) AS project_key,\n\t\tCOALESCE(repo, '') AS project,\n\t\tCOALESCE(assignee, '') AS assignee,\n\t\tLOWER(TRIM(COALESCE(assignee, ''))) AS assignee_key,\n\t\tCOALESCE(jira_reporter, '') AS reporter,\n\t\tCOALESCE(status, '') AS status,\n\t\tCOALESCE(issue_type, '') AS issue_type,\n\t\ttask_created_at,\n\t\tCASE WHEN EXTRACT(YEAR FROM task_created_at) \u003e 1 THEN EXTRACT(EPOCH FROM task_created_at)::BIGINT ELSE 0 END AS created_unix,\n\t\tCASE WHEN EXTRACT(YEAR FROM source_updated_at) \u003e 1 THEN source_updated_at ELSE last_update END AS last_activity_at,\n\t\tCASE\n\t\t\tWHEN EXTRACT(YEAR FROM source_updated_at) \u003e 1 THEN EXTRACT(EPOCH FROM source_updated_at)::BIGINT\n\t\t\tWHEN EXTRACT(YEAR FROM last_update) \u003e 1 THEN EXTRACT(EPOCH FROM last_update)::BIGINT\n\t\t\tELSE 0\n\t\tEND AS activity_unix,\n\t\tdue_date,\n\t\tCOALESCE(decision_logs, '') AS decision_logs,\n\t\tCASE\n\t\t\tWHEN EXTRACT(YEAR FROM task_created_at) \u003c= 1 OR CURRENT_DATE - task_created_at::date \u003c 0 THEN 'unclassified'\n\t\t\tWHEN CURRENT_DATE - task_created_at::date = 0 THEN 'today'\n\t\t\tWHEN CURRENT_DATE - task_created_at::date BETWEEN 1 AND 2 THEN 'recent_watch'\n\t\t\tWHEN CURRENT_DATE - task_created_at::date BETWEEN 3 AND 6 THEN 'three_day'\n\t\t\tELSE 'seven_day'\n\t\tEND AS bucket,\n\t\tCOALESCE(EXTRACT(YEAR FROM due_date) \u003e 1 AND due_date::date \u003c CURRENT_DATE, FALSE) AS overdue,\n\t\tCASE WHEN COALESCE(EXTRACT(YEAR FROM due_date) \u003e 1 AND due_date::date \u003c CURRENT_DATE, FALSE) THEN 0 ELSE 1 END AS sort_overdue\n\tFROM task_telemetries\n\tWHERE (\n\t\tLOWER(TRIM(COALESCE(source, ''))) = 'jira'\n\t\tOR (\n\t\t\tTRIM(COALESCE(source, '')) = ''\n\t\t\tAND task_id ~ '^[A-Z][A-Z0-9_]*-[0-9]+$'\n\t\t\tAND task_id NOT LIKE 'TASK-%'\n\t\t\tAND task_id NOT LIKE 'DEMAND-%'\n\t\t\tAND UPPER(COALESCE(repo, '')) LIKE '%(' || split_part(task_id, '-', 1) || ')%'\n\t\t)\n\t)\n\tAND (status IS NULL OR LOWER(TRIM(status)) NOT IN\n\t\t('done','closed','resolved','completed','archived','已完成','已关闭'))\n) SELECT task_id, title, project_key, project, assignee, reporter, status, issue_type,\n\t\ttask_created_at, last_activity_at, due_date, decision_logs, bucket, overdue, created_unix, activity_unix\n\t\tFROM candidates WHERE bucket = 'seven_day' AND project_key IN ('P1') AND assignee_key IN ('alice','') ORDER BY sort_overdue ASC, created_unix ASC, activity_unix ASC, task_id ASC LIMIT 21",
+  "Plan": [
+    {
+      "Plan": {
+        "Node Type": "Limit",
+        "Parallel Aware": false,
+        "Async Capable": false,
+        "Startup Cost": 15323.69,
+        "Total Cost": 15323.87,
+        "Plan Rows": 1,
+        "Plan Width": 341,
+        "Actual Startup Time": 14.043,
+        "Actual Total Time": 14.583,
+        "Actual Rows": 21,
+        "Actual Loops": 1,
+        "Shared Hit Blocks": 8438,
+        "Shared Read Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Dirtied Blocks": 0,
+        "Local Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0,
+        "Plans": [
+          {
+            "Node Type": "Gather Merge",
+            "Parent Relationship": "Outer",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 15323.69,
+            "Total Cost": 15323.87,
+            "Plan Rows": 1,
+            "Plan Width": 341,
+            "Actual Startup Time": 14.039,
+            "Actual Total Time": 14.578,
+            "Actual Rows": 21,
+            "Actual Loops": 1,
+            "Workers Planned": 2,
+            "Workers Launched": 2,
+            "Shared Hit Blocks": 8438,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Result",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 14323.66,
+                "Total Cost": 14323.81,
+                "Plan Rows": 1,
+                "Plan Width": 341,
+                "Actual Startup Time": 12.894,
+                "Actual Total Time": 12.901,
+                "Actual Rows": 18,
+                "Actual Loops": 3,
+                "Shared Hit Blocks": 8438,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Workers": [],
+                "Plans": [
+                  {
+                    "Node Type": "Sort",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Startup Cost": 14323.66,
+                    "Total Cost": 14323.67,
+                    "Plan Rows": 1,
+                    "Plan Width": 309,
+                    "Actual Startup Time": 12.891,
+                    "Actual Total Time": 12.892,
+                    "Actual Rows": 18,
+                    "Actual Loops": 3,
+                    "Sort Key": [
+                      "(CASE WHEN COALESCE(((EXTRACT(year FROM task_telemetries.due_date) \u003e '1'::numeric) AND ((task_telemetries.due_date)::date \u003c CURRENT_DATE)), false) THEN 0 ELSE 1 END)",
+                      "(CASE WHEN (EXTRACT(year FROM task_telemetries.task_created_at) \u003e '1'::numeric) THEN (EXTRACT(epoch FROM task_telemetries.task_created_at))::bigint ELSE '0'::bigint END)",
+                      "(CASE WHEN (EXTRACT(year FROM task_telemetries.source_updated_at) \u003e '1'::numeric) THEN (EXTRACT(epoch FROM task_telemetries.source_updated_at))::bigint WHEN (EXTRACT(year FROM task_telemetries.last_update) \u003e '1'::numeric) THEN (EXTRACT(epoch FROM task_telemetries.last_update))::bigint ELSE '0'::bigint END)",
+                      "task_telemetries.task_id"
+                    ],
+                    "Sort Method": "top-N heapsort",
+                    "Sort Space Used": 58,
+                    "Sort Space Type": "Memory",
+                    "Shared Hit Blocks": 8438,
+                    "Shared Read Blocks": 0,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0,
+                    "Workers": [
+                      {
+                        "Worker Number": 0,
+                        "Sort Method": "top-N heapsort",
+                        "Sort Space Used": 55,
+                        "Sort Space Type": "Memory"
+                      },
+                      {
+                        "Worker Number": 1,
+                        "Sort Method": "top-N heapsort",
+                        "Sort Space Used": 58,
+                        "Sort Space Type": "Memory"
+                      }
+                    ],
+                    "Plans": [
+                      {
+                        "Node Type": "Seq Scan",
+                        "Parent Relationship": "Outer",
+                        "Parallel Aware": true,
+                        "Async Capable": false,
+                        "Relation Name": "task_telemetries",
+                        "Alias": "task_telemetries",
+                        "Startup Cost": 0.00,
+                        "Total Cost": 14323.65,
+                        "Plan Rows": 1,
+                        "Plan Width": 309,
+                        "Actual Startup Time": 0.037,
+                        "Actual Total Time": 12.272,
+                        "Actual Rows": 2273,
+                        "Actual Loops": 3,
+                        "Filter": "((lower(TRIM(BOTH FROM COALESCE(assignee, ''::text))) = ANY ('{alice,\"\"}'::text[])) AND (upper(TRIM(BOTH FROM COALESCE(NULLIF((project_key)::text, ''::text), split_part(task_id, '-'::text, 1)))) = 'P1'::text) AND ((status IS NULL) OR (lower(TRIM(BOTH FROM status)) \u003c\u003e ALL ('{done,closed,resolved,completed,archived,已完成,已关闭}'::text[]))) AND ((lower(TRIM(BOTH FROM COALESCE(source, ''::character varying))) = 'jira'::text) OR ((TRIM(BOTH FROM COALESCE(source, ''::character varying)) = ''::text) AND (task_id ~ '^[A-Z][A-Z0-9_]*-[0-9]+$'::text) AND (task_id !~~ 'TASK-%'::text) AND (task_id !~~ 'DEMAND-%'::text) AND (upper(COALESCE(repo, ''::text)) ~~ (('%('::text || split_part(task_id, '-'::text, 1)) || ')%'::text)))) AND (CASE WHEN ((EXTRACT(year FROM task_created_at) \u003c= '1'::numeric) OR ((CURRENT_DATE - (task_created_at)::date) \u003c 0)) THEN 'unclassified'::text WHEN ((CURRENT_DATE - (task_created_at)::date) = 0) THEN 'today'::text WHEN (((CURRENT_DATE - (task_created_at)::date) \u003e= 1) AND ((CURRENT_DATE - (task_created_at)::date) \u003c= 2)) THEN 'recent_watch'::text WHEN (((CURRENT_DATE - (task_created_at)::date) \u003e= 3) AND ((CURRENT_DATE - (task_created_at)::date) \u003c= 6)) THEN 'three_day'::text ELSE 'seven_day'::text END = 'seven_day'::text))",
+                        "Rows Removed by Filter": 31061,
+                        "Shared Hit Blocks": 8334,
+                        "Shared Read Blocks": 0,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 0,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Workers": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "Settings": {},
+      "Planning": {
+        "Shared Hit Blocks": 0,
+        "Shared Read Blocks": 0,
+        "Shared Dirtied Blocks": 0,
+        "Shared Written Blocks": 0,
+        "Local Hit Blocks": 0,
+        "Local Read Blocks": 0,
+        "Local Dirtied Blocks": 0,
+        "Local Written Blocks": 0,
+        "Temp Read Blocks": 0,
+        "Temp Written Blocks": 0
+      },
+      "Planning Time": 0.209,
+      "Triggers": [],
+      "Execution Time": 14.604
+    }
+  ]
+}

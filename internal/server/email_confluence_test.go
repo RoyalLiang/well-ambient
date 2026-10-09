@@ -367,7 +367,7 @@ func TestEmailConfluenceSchedulerKeepsSyncClaim(t *testing.T) {
 	cfg.DailyJiraEmail.Enabled = true
 	cfg.DailyJiraEmail.Timezone = "UTC"
 	cfg.DailyJiraEmail.SendTime = "09:00"
-	now := time.Date(2026, 9, 17, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC)
 	for _, state := range []string{"syncing_confluence", "confluence_failed", "sending", "failed_or_unknown"} {
 		conn.Where("date = ?", "2026-09-17").Delete(&db.DailyJiraEmailRun{})
 		if err := conn.Create(&db.DailyJiraEmailRun{Date: "2026-09-17", Status: state, Trigger: "manual", StartedAt: now.Add(-time.Hour)}).Error; err != nil {

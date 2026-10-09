@@ -98,8 +98,16 @@ paths:
                 idempotency_key: {type: string}
               additionalProperties: false
       responses:
-        "202": {description: Accepted operation}
-        "200": {description: Existing terminal operation}
+        "202":
+          description: >-
+            Accepted operation. publication_status is published or redacted.
+            A redacted operation preserves action states and times but omits
+            plan_id, desired and confirmed values, remote evidence and error codes.
+            Missing evidence does not mean that the operation was not executed.
+        "200":
+          description: >-
+            Existing terminal operation, subject to current publication policy
+            and the same published or redacted response rules as a new execution.
         "409": {$ref: "#/components/responses/Conflict"}
   /operations/{id}:
     get:
@@ -107,7 +115,15 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
       responses:
-        "200": {description: Operation and action states}
+        "200":
+          description: >-
+            Operation and action states, subject to current project and Jira
+            visibility checks. publication_status is published or redacted.
+            If redacted, missing_reason is restricted_issue,
+            visibility_unavailable, issue_scope_unverified or
+            stored_visibility_unverified; only operation
+            identity, state, timestamps and action identity, type, state and times
+            are returned. Omitted values and evidence do not imply non-execution.
   /reviews/search:
     post:
       operationId: reviewSearch

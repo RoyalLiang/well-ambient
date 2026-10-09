@@ -2,8 +2,10 @@ package decisioncommands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +23,10 @@ type fakeJira struct {
 	dueDateCalls        int
 	dispatchErr         error
 	failReadsAfterWrite bool
+	readErr             error
+	omitIssueIdentity   bool
+	afterWriteIssueKey  string
+	afterWriteProject   string
 	wrote               bool
 }
 
@@ -29,13 +35,24 @@ type definiteDispatchError struct{}
 func (definiteDispatchError) Error() string         { return "definite rejection" }
 func (definiteDispatchError) DefiniteFailure() bool { return true }
 
-func (f *fakeJira) ReadIssueState(context.Context, db.JiraExecutionBinding, string) (JiraState, error) {
+func (f *fakeJira) ReadIssueState(_ context.Context, _ db.JiraExecutionBinding, issueKey string) (JiraState, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.readErr != nil {
+		return JiraState{}, f.readErr
+	}
 	if f.wrote && f.failReadsAfterWrite {
 		return JiraState{}, errors.New("verification timeout")
 	}
-	return f.state, nil
+	state := f.state
+	if state.IssueKey == "" && !f.omitIssueIdentity {
+		state.IssueKey = issueKey
+	}
+	if f.wrote && f.afterWriteIssueKey != "" {
+		state.IssueKey = f.afterWriteIssueKey
+		state.ProjectRef = f.afterWriteProject
+	}
+	return state, nil
 }
 
 func (f *fakeJira) Assign(_ context.Context, _ db.JiraExecutionBinding, _ string, assignee string) error {
@@ -108,7 +125,8 @@ func decisionFixture(t *testing.T) (*Module, *openaccess.Service, *fakeJira, ope
 		}
 	}
 	jira := &fakeJira{state: JiraState{
-		Assignee: "Alice", DueDate: "2026-09-30", UpdatedAt: now, EvidenceRef: "jira:before",
+		ProjectRef: "WA",
+		Assignee:   "Alice", DueDate: "2026-09-30", UpdatedAt: now, EvidenceRef: "jira:before",
 	}}
 	module := New(conn, access, jira)
 	module.now = func() time.Time { return now }
@@ -259,9 +277,10 @@ func TestRemoteTimeoutBecomesUnknownAndIsNotBlindlyRetried(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.State != StateUnknown || result.ErrorCode != "outcome_unknown" || jira.assignCalls != 1 {
+	if result.State != StateUnknown || jira.assignCalls != 1 {
 		t.Fatalf("unknown operation = %+v calls=%d", result, jira.assignCalls)
 	}
+	assertOperationRedacted(t, result, "visibility_unavailable", "Bob", plan.ID, "request timeout", "verification timeout")
 	processed, err = module.ProcessNext(ctx)
 	if err != nil || processed || jira.assignCalls != 1 {
 		t.Fatalf("unknown action was retried: processed=%v err=%v calls=%d", processed, err, jira.assignCalls)
@@ -404,6 +423,398 @@ func TestRestrictedJiraIssueIsDeniedByDefault(t *testing.T) {
 	}); openaccess.ErrorCode(err) != "forbidden" {
 		t.Fatalf("restricted issue error = %v, want forbidden", err)
 	}
+}
+
+func TestOperationReadHidesEvidenceAfterProjectPublicationIsRemoved(t *testing.T) {
+	module, access, _, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	assignee := "Bob"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "removed-project"}
+	operation, err := module.Execute(ctx, identity, policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := module.GetOperation(ctx, identity, operation.ID)
+	if err != nil || len(before.Actions) != 1 || before.Actions[0].ConfirmedRemoteValue != "Bob" {
+		t.Fatalf("published operation = %+v, %v", before, err)
+	}
+	tightened := policy.PolicySpec
+	tightened.AllowedProjects = []string{"OTHER"}
+	policy, err = access.ActivatePolicy(ctx, tightened, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := module.GetOperation(ctx, identity, operation.ID); openaccess.ErrorCode(err) != "not_found" || len(result.Actions) != 0 {
+		t.Fatalf("removed project operation leaked = %+v, %v", result, err)
+	}
+	if result, err := module.Execute(ctx, identity, policy, request); openaccess.ErrorCode(err) != "not_found" || len(result.Actions) != 0 {
+		t.Fatalf("idempotent replay leaked removed project operation = %+v, %v", result, err)
+	}
+}
+
+func TestOperationReadRechecksRestrictedIssuePublication(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
+			module, access, jira, identity, policy := decisionFixture(t)
+			ctx := context.Background()
+			spec := policy.PolicySpec
+			spec.DataRules = map[string]string{"jira_restricted_issues": "allow"}
+			policy, err := access.ActivatePolicy(ctx, spec, "admin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			jira.state.SecurityID = "10001"
+			jira.state.Security = "Restricted"
+			assignee := "Bob"
+			plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation, err := module.Execute(ctx, identity, policy, ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "restricted-publication"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completed {
+				if _, err := module.ProcessNext(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := module.GetOperation(ctx, identity, operation.ID); err != nil {
+				t.Fatalf("explicitly published restricted operation: %v", err)
+			}
+			jira.readErr = errors.New("current issue identity is unavailable")
+			published, err := module.GetOperation(ctx, identity, operation.ID)
+			if err != nil || published.ID != operation.ID {
+				t.Fatalf("operation status unavailable: %+v, %v", published, err)
+			}
+			assertOperationRedacted(t, published, "visibility_unavailable", assignee, plan.ID)
+			jira.readErr = nil
+			spec.DataRules = map[string]string{"jira_restricted_issues": "deny"}
+			if _, err := access.ActivatePolicy(ctx, spec, "admin"); err != nil {
+				t.Fatal(err)
+			}
+			result, err := module.GetOperation(ctx, identity, operation.ID)
+			if err != nil || result.ID != operation.ID {
+				t.Fatalf("restricted operation status unavailable = %+v, %v", result, err)
+			}
+			assertOperationRedacted(t, result, "restricted_issue", "Bob", "10001", plan.ID)
+		})
+	}
+}
+
+func TestOperationReadFailsClosedWithoutLegacyVisibilityEvidence(t *testing.T) {
+	module, _, _, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	assignee := "Bob"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := module.Execute(ctx, identity, policy, ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "legacy-visibility"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string]any{"remote_updated_at": plan.Preconditions.RemoteUpdatedAt, "evidence_ref": plan.Preconditions.EvidenceRef, "values": plan.Preconditions.Values}
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.db.Model(&db.DecisionPlan{}).Where("id = ?", plan.ID).Update("preconditions_json", string(legacyJSON)).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := module.GetOperation(ctx, identity, operation.ID)
+	if err != nil || result.ID != operation.ID {
+		t.Fatalf("legacy operation status unavailable = %+v, %v", result, err)
+	}
+	assertOperationRedacted(t, result, "stored_visibility_unverified", "Bob", plan.ID)
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatalf("publication read gate affected worker: %v", err)
+	}
+	result, err = module.GetOperation(ctx, identity, operation.ID)
+	if err != nil || result.State != StateSucceeded || len(result.Actions) != 1 || result.Actions[0].ConfirmedRemoteValue != "Bob" {
+		t.Fatalf("verified legacy operation = %+v, %v", result, err)
+	}
+}
+
+func TestOperationReadHidesIssueRestrictedBeforeDispatch(t *testing.T) {
+	module, _, jira, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	assignee := "Bob"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := module.Execute(ctx, identity, policy, ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "restricted-before-dispatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jira.state.SecurityID = "10001"
+	jira.state.Security = "Restricted"
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if jira.assignCalls != 0 {
+		t.Fatal("restricted issue was dispatched")
+	}
+	result, err := module.GetOperation(ctx, identity, operation.ID)
+	if err != nil || result.State != StateFailed {
+		t.Fatalf("restricted failed operation status unavailable = %+v, %v", result, err)
+	}
+	assertOperationRedacted(t, result, "restricted_issue", "Bob", "10001", plan.ID)
+}
+
+func TestOperationReadRechecksVisibilityAfterConfirmation(t *testing.T) {
+	module, _, jira, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	assignee := "Private Person"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "restricted-after-confirmation"}
+	operation, err := module.Execute(ctx, identity, policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	jira.state.SecurityID = "10001"
+	jira.state.Security = "Private Security"
+	for _, replay := range []bool{false, true} {
+		var result Operation
+		if replay {
+			result, err = module.Execute(ctx, identity, policy, request)
+		} else {
+			result, err = module.GetOperation(ctx, identity, operation.ID)
+		}
+		if err != nil || result.State != StateSucceeded || result.ID != operation.ID {
+			t.Fatalf("redacted status remains available, replay=%t: %+v, %v", replay, result, err)
+		}
+		assertOperationRedacted(t, result, "restricted_issue", "Private Person", "Private Security", "WA-1", plan.ID)
+	}
+}
+
+func TestOperationVisibilityFailurePreservesStatusWithoutPrivateEvidence(t *testing.T) {
+	for _, completed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
+			module, _, jira, identity, policy := decisionFixture(t)
+			ctx := context.Background()
+			assignee := "Private Person"
+			plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "visibility-unavailable"}
+			if !completed {
+				jira.readErr = errors.New("private upstream error: WA-1")
+			}
+			operation, err := module.Execute(ctx, identity, policy, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if completed {
+				if _, err := module.ProcessNext(ctx); err != nil {
+					t.Fatal(err)
+				}
+				jira.readErr = errors.New("private upstream error: WA-1")
+			} else {
+				assertOperationRedacted(t, operation, "visibility_unavailable", "Private Person", "WA-1", plan.ID, "private upstream error")
+			}
+			result, err := module.GetOperation(ctx, identity, operation.ID)
+			if err != nil || result.ID != operation.ID || result.CreatedAt.IsZero() || result.UpdatedAt.IsZero() || len(result.Actions) != 1 {
+				t.Fatalf("status unavailable: %+v, %v", result, err)
+			}
+			wantState := StateQueued
+			if completed {
+				wantState = StateSucceeded
+			}
+			if result.State != wantState || result.Actions[0].State != wantState {
+				t.Fatalf("redaction changed recovery status: %+v", result)
+			}
+			assertOperationRedacted(t, result, "visibility_unavailable", "Private Person", "WA-1", plan.ID, "private upstream error")
+		})
+	}
+}
+
+func assertOperationRedacted(t *testing.T, operation Operation, reason string, privateValues ...string) {
+	t.Helper()
+	encoded, err := json.Marshal(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["publication_status"] != "redacted" || document["missing_reason"] != reason {
+		t.Fatalf("missing explicit publication status: %s", encoded)
+	}
+	for _, field := range []string{"plan_id", "remote_evidence", "desired_value", "confirmed_remote_value", "error_code"} {
+		if strings.Contains(string(encoded), `"`+field+`"`) {
+			t.Fatalf("redacted result contains %s: %s", field, encoded)
+		}
+	}
+	for _, value := range privateValues {
+		if strings.Contains(string(encoded), value) {
+			t.Fatalf("redacted result contains private value %q: %s", value, encoded)
+		}
+	}
+}
+
+func TestDecisionRejectsMovedOrUnverifiableIssueIdentity(t *testing.T) {
+	for _, identityCase := range []struct{ issueKey, project string }{
+		{"OTHER-1", "OTHER"}, {"WA-2", "WA"}, {"WA-1", "OTHER"}, {"", "WA"}, {"WA-1", ""},
+	} {
+		t.Run(identityCase.issueKey+"/"+identityCase.project, func(t *testing.T) {
+			module, _, jira, identity, policy := decisionFixture(t)
+			jira.state.IssueKey = identityCase.issueKey
+			jira.state.ProjectRef = identityCase.project
+			jira.omitIssueIdentity = identityCase.issueKey == ""
+			ctx := context.Background()
+			if result, err := module.GetContext(ctx, identity, policy, ContextRequest{IssueKey: "WA-1"}); openaccess.ErrorCode(err) != "forbidden" || result.Current.Assignee != "" {
+				t.Fatalf("context published mismatched issue: %+v, %v", result, err)
+			}
+			assignee := "Bob"
+			if result, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee}); openaccess.ErrorCode(err) != "forbidden" || result.ID != "" {
+				t.Fatalf("prepared mismatched issue: %+v, %v", result, err)
+			}
+		})
+	}
+}
+
+func TestMovedIssueIsBlockedBeforeDispatch(t *testing.T) {
+	module, access, jira, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	spec := policy.PolicySpec
+	spec.DataRules = map[string]string{"jira_restricted_issues": "allow"}
+	policy, err := access.ActivatePolicy(ctx, spec, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignee := "Bob"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jira.state.IssueKey, jira.state.ProjectRef = "OTHER-1", "OTHER"
+	operation, err := module.Execute(ctx, identity, policy, ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "moved-before-dispatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOperationRedacted(t, operation, "issue_scope_unverified", "Bob", plan.ID)
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var stored db.OpenOperation
+	if err := module.db.First(&stored, "id = ?", operation.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != StateFailed || jira.assignCalls != 0 {
+		t.Fatalf("moved issue was written: state=%s calls=%d", stored.State, jira.assignCalls)
+	}
+}
+
+func TestMovedIssueCannotConfirmDispatchOrRecovery(t *testing.T) {
+	for _, recovering := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recovering=%t", recovering), func(t *testing.T) {
+			module, access, jira, identity, policy := decisionFixture(t)
+			ctx := context.Background()
+			spec := policy.PolicySpec
+			spec.DataRules = map[string]string{"jira_restricted_issues": "allow"}
+			policy, err := access.ActivatePolicy(ctx, spec, "admin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignee := "Bob"
+			plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "moved-confirmation"}
+			operation, err := module.Execute(ctx, identity, policy, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recovering {
+				if err := module.db.Model(&db.OpenOperationAction{}).Where("operation_id = ?", operation.ID).Update("state", StateDispatching).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := module.db.Model(&db.OpenOutbox{}).Where("operation_action_id = ?", operation.Actions[0].ID).Updates(map[string]any{"state": StateDispatching, "lease_token": "expired-worker", "leased_until": module.now().Add(-time.Minute)}).Error; err != nil {
+					t.Fatal(err)
+				}
+				jira.state.Assignee = assignee
+				jira.state.IssueKey, jira.state.ProjectRef = "OTHER-1", "OTHER"
+			} else {
+				jira.afterWriteIssueKey, jira.afterWriteProject = "OTHER-1", "OTHER"
+			}
+			if _, err := module.ProcessNext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var stored db.OpenOperation
+			if err := module.db.First(&stored, "id = ?", operation.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if stored.State != StateUnknown {
+				t.Fatalf("wrong issue identity confirmed: %+v", stored)
+			}
+			result, err := module.GetOperation(ctx, identity, operation.ID)
+			if err != nil || result.State != StateUnknown {
+				t.Fatalf("unknown status unavailable: %+v, %v", result, err)
+			}
+			assertOperationRedacted(t, result, "issue_scope_unverified", "Bob", "OTHER-1", plan.ID)
+			result, err = module.Execute(ctx, identity, policy, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertOperationRedacted(t, result, "issue_scope_unverified", "Bob", "OTHER-1", plan.ID)
+			if recovering && jira.assignCalls != 0 {
+				t.Fatal("verification recovery resent a write")
+			}
+		})
+	}
+}
+
+func TestCompletedMovedIssueRedactsPublishedEvidence(t *testing.T) {
+	module, access, jira, identity, policy := decisionFixture(t)
+	ctx := context.Background()
+	spec := policy.PolicySpec
+	spec.DataRules = map[string]string{"jira_restricted_issues": "allow"}
+	policy, err := access.ActivatePolicy(ctx, spec, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignee := "Private Person"
+	plan, err := module.Prepare(ctx, identity, policy, PrepareRequest{IssueKey: "WA-1", Assignee: &assignee})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ExecuteRequest{PlanID: plan.ID, IdempotencyKey: "moved-after-confirmation"}
+	operation, err := module.Execute(ctx, identity, policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	jira.state.IssueKey, jira.state.ProjectRef = "OTHER-1", "OTHER"
+	result, err := module.GetOperation(ctx, identity, operation.ID)
+	if err != nil || result.State != StateSucceeded {
+		t.Fatalf("status unavailable: %+v, %v", result, err)
+	}
+	assertOperationRedacted(t, result, "issue_scope_unverified", "Private Person", "WA-1", plan.ID)
+	result, err = module.Execute(ctx, identity, policy, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOperationRedacted(t, result, "issue_scope_unverified", "Private Person", "WA-1", plan.ID)
 }
 
 func TestFailedFirstActionStopsLaterActions(t *testing.T) {

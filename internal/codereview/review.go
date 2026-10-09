@@ -185,11 +185,8 @@ func parseReport(raw string, s Snapshot) (Report, error) {
 }
 func (s *Service) knowledge(ctx context.Context, p db.CodeReviewPolicy, repo config.RepoMapping, snapshot Snapshot) ([]Knowledge, error) {
 	var facts []db.ContextFact
-	q := s.DB.WithContext(ctx).Where("status = ?", "active").Where("scope = ? OR (scope = ? AND scope_id IN ?) OR (scope = ? AND scope_id = ?)", "global", "repo", []string{repo.ProjectID, repo.Name, repo.Path}, "project", p.KnowledgeScope)
-	if err := q.Order("CASE WHEN scope = 'repo' THEN 0 WHEN scope = 'project' THEN 1 ELSE 2 END, updated_at DESC, id DESC").Limit(200).Find(&facts).Error; err != nil {
-		return nil, err
-	}
-	// Scope is a hard filter. Rank within scope using actual diff/scenario text, never repository-name classification.
+	// Rank enabled system facts using actual diff/scenario text. Their source
+	// scopes remain attached to every citation; they do not imply applicability.
 	query := strings.ToLower(snapshot.Title + " " + snapshot.Description + " " + Scenarios[p.Scenario] + " " + p.Rules)
 	for _, file := range snapshot.Files {
 		query += " " + strings.ToLower(file.NewPath+" "+file.Diff)
@@ -205,10 +202,22 @@ func (s *Service) knowledge(ctx context.Context, p db.CodeReviewPolicy, repo con
 			break
 		}
 	}
+	if p.KnowledgeScope == SystemCorpusScope {
+		var err error
+		facts, err = s.systemCorpusCandidates(ctx, terms)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		q := s.DB.WithContext(ctx).Where("status = ?", "active").Where("scope = ? OR (scope = ? AND scope_id IN ?) OR (scope = ? AND scope_id = ?)", "global", "repo", []string{repo.ProjectID, repo.Name, repo.Path}, "project", p.KnowledgeScope)
+		if err := q.Order("CASE WHEN scope = 'repo' THEN 0 WHEN scope = 'project' THEN 1 ELSE 2 END, updated_at DESC, id DESC").Limit(200).Find(&facts).Error; err != nil {
+			return nil, err
+		}
+	}
 	scores := map[uint]int{}
 	for _, f := range facts {
 		value := 0
-		if f.Scope != "global" {
+		if p.KnowledgeScope != SystemCorpusScope && f.Scope != "global" {
 			value = 20
 		}
 		if len(f.Content)+len(f.Summary) > 24000 {

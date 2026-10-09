@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"gorm.io/driver/sqlite"
@@ -20,16 +19,16 @@ import (
 )
 
 type LatencyStats struct {
-	TotalOps   int64
-	Duration   time.Duration
-	QPS        float64
-	MinMs      float64
-	MaxMs      float64
-	MeanMs     float64
-	P50Ms      float64
-	P90Ms      float64
-	P95Ms      float64
-	P99Ms      float64
+	TotalOps int64
+	Duration time.Duration
+	QPS      float64
+	MinMs    float64
+	MaxMs    float64
+	MeanMs   float64
+	P50Ms    float64
+	P90Ms    float64
+	P95Ms    float64
+	P99Ms    float64
 }
 
 func calculateStats(durations []time.Duration, totalDuration time.Duration) LatencyStats {
@@ -74,7 +73,7 @@ func calculateStats(durations []time.Duration, totalDuration time.Duration) Late
 func main() {
 	fmt.Println("================================================================================")
 	fmt.Println("   Well Ambient - Agent Runtime & Strongest Brain Performance Benchmark")
-	fmt.Println("   Architecture: Microkernel + Capability Registry + ACP/1 + Replay Engine")
+	fmt.Println("   Architecture: Microkernel + Capability Registry + ACP/1 + Manifest Checks")
 	fmt.Println("================================================================================")
 	fmt.Println()
 
@@ -298,41 +297,53 @@ func main() {
 		float64(lockDuration.Microseconds())/float64(lockLoops))
 
 	// --------------------------------------------------------------------------------
-	// Benchmark 4: Replay Engine 离线评分与最强大脑吞吐
+	// Benchmark 4: Manifest 静态检查吞吐（不代表离线回放质量或性能）
 	// --------------------------------------------------------------------------------
-	fmt.Printf("[4/4] Measuring Strongest Brain Replay Evaluation Engine Throughput...\n")
+	fmt.Printf("[4/4] Measuring Manifest Check Storage Throughput (no historical replay)...\n")
 	svc := strongestbrain.NewService(database, reg)
-	candVer, _ := reg.Register(ctx, &agentruntime.CapabilityManifest{
-		Schema:  "capability-manifest/v1",
-		ID:      "code_review_candidate",
-		Kind:    agentruntime.KindSkill,
-		Version: 3,
+	_, baselineVer, err := reg.GetActive(ctx, "code_review", "global", "")
+	if err != nil {
+		panic(fmt.Errorf("load registered code_review baseline: %w", err))
+	}
+	candVer, err := reg.Register(ctx, &agentruntime.CapabilityManifest{
+		Schema:      "capability-manifest/v1",
+		ID:          "code_review",
+		Kind:        agentruntime.KindSkill,
+		Version:     3,
 		Permissions: []string{"source.read"},
 		Budgets: agentruntime.BudgetDef{
 			InstructionTokens: 1100,
 			EvidenceTokens:    5000,
 		},
 	})
-
-	replayStart := time.Now()
-	replayLoops := 5000
-	var successCount int64
-	for i := 0; i < replayLoops; i++ {
-		eval, err := svc.RunReplay(ctx, strongestbrain.ReplayCommand{
+	if err != nil {
+		panic(fmt.Errorf("register code_review candidate: %w", err))
+	}
+	checkStart := time.Now()
+	checkLoops := 5000
+	manualReviewCount := 0
+	for i := 0; i < checkLoops; i++ {
+		evaluation, err := svc.RunReplay(ctx, strongestbrain.ReplayCommand{
 			CandidateVersionID: candVer.ID,
+			BaselineVersionID:  baselineVer.ID,
 			DatasetRef:         "standard-sample-set",
 		})
-		if err == nil && eval.Verdict == "pass" {
-			atomic.AddInt64(&successCount, 1)
+		if err != nil {
+			panic(fmt.Errorf("manifest check %d failed: %w", i, err))
 		}
+		if evaluation.Verdict != "manual_review" {
+			panic(fmt.Errorf("manifest-only check produced unexpected verdict %q", evaluation.Verdict))
+		}
+		manualReviewCount++
 	}
-	replayDuration := time.Since(replayStart)
-	fmt.Printf("      - Replay Evaluations   : %d completed evaluations\n", replayLoops)
-	fmt.Printf("      - Replay Throughput    : %.0f evals/sec (%.2f ms/eval)\n",
-		float64(replayLoops)/replayDuration.Seconds(),
-		float64(replayDuration.Microseconds())/1000.0/float64(replayLoops))
+	checkDuration := time.Since(checkStart)
+	fmt.Printf(" - Manifest Checks (manual_review): %d\n", manualReviewCount)
+	fmt.Printf(" - Historical Samples Evaluated  : 0 (replay is not implemented)\n")
+	fmt.Printf(" - Manifest Check Throughput     : %.0f checks/sec (%.2f ms/check)\n",
+		float64(checkLoops)/checkDuration.Seconds(),
+		float64(checkDuration.Microseconds())/1000.0/float64(checkLoops))
 
 	fmt.Println("================================================================================")
-	fmt.Println("   All Scenario Benchmarks & Stress Tests Completed Successfully!")
+	fmt.Println("   All Benchmark Stages Completed; Replay Quality Was Not Evaluated.")
 	fmt.Println("================================================================================")
 }

@@ -3,7 +3,6 @@ package solutioncatalog
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
 
@@ -83,10 +82,6 @@ func (module *Module) List(ctx context.Context, filter ListFilter) (CatalogList,
 	}
 
 	if searchTokens := catalogTokens(filter.Search); len(searchTokens) > 0 {
-		type searchMatch struct {
-			EntryID uint
-			Matches int
-		}
 		search := module.conn.WithContext(ctx).
 			Table("solution_catalog_search_tokens AS search_tokens").
 			Select("search_tokens.entry_id, COUNT(*) AS matches").
@@ -98,30 +93,37 @@ func (module *Module) List(ctx context.Context, filter ListFilter) (CatalogList,
 		if filter.ProjectKey != "" {
 			search = search.Where("catalog_entries.project_key = ?", filter.ProjectKey)
 		}
-		var matches []searchMatch
-		if err := search.Group("search_tokens.entry_id").Order("matches DESC, search_tokens.entry_id DESC").Scan(&matches).Error; err != nil {
+		search = search.Group("search_tokens.entry_id")
+		type searchResult struct {
+			db.SolutionCatalogEntry
+			SearchTotal int64
+		}
+		var results []searchResult
+		// Rank and count in SQL so even a common token only materializes one
+		// page in Go. Keep the window on narrow IDs/scores, before joining the
+		// full entries, while counting and paging in the same query snapshot.
+		pageMatches := module.conn.WithContext(ctx).Table("(?) AS token_matches", search).
+			Select("entry_id, matches, COUNT(*) OVER() AS search_total").
+			Order("matches DESC, entry_id DESC").Offset(offset).Limit(limit)
+		if err := base.Select("solution_catalog_entries.*, search_matches.search_total").
+			Joins("JOIN (?) AS search_matches ON search_matches.entry_id = solution_catalog_entries.id", pageMatches).
+			Order("search_matches.matches DESC, solution_catalog_entries.id DESC").
+			Scan(&results).Error; err != nil {
 			return CatalogList{}, err
 		}
-		if len(matches) == 0 {
-			return CatalogList{Items: []db.SolutionCatalogEntry{}, Limit: limit, Offset: offset}, nil
+		items := make([]db.SolutionCatalogEntry, 0, len(results))
+		var total int64
+		for _, result := range results {
+			items = append(items, result.SolutionCatalogEntry)
+			total = result.SearchTotal
 		}
-		total := int64(len(matches))
-		if offset >= len(matches) {
-			return CatalogList{Items: []db.SolutionCatalogEntry{}, Total: total, Limit: limit, Offset: offset}, nil
+		if len(results) == 0 {
+			// An empty page has no window-count row, including offsets beyond
+			// the end. Preserve the exact Total required by the existing contract.
+			if err := module.conn.WithContext(ctx).Table("(?) AS search_matches", search).Count(&total).Error; err != nil {
+				return CatalogList{}, err
+			}
 		}
-		end := min(len(matches), offset+limit)
-		pageMatches := matches[offset:end]
-		ids := make([]uint, 0, len(pageMatches))
-		rank := make(map[uint]int, len(pageMatches))
-		for index, match := range pageMatches {
-			ids = append(ids, match.EntryID)
-			rank[match.EntryID] = index
-		}
-		var items []db.SolutionCatalogEntry
-		if err := base.Where("id IN ?", ids).Find(&items).Error; err != nil {
-			return CatalogList{}, err
-		}
-		sort.SliceStable(items, func(i, j int) bool { return rank[items[i].ID] < rank[items[j].ID] })
 		return CatalogList{Items: items, Total: total, Limit: limit, Offset: offset}, nil
 	}
 
@@ -223,19 +225,65 @@ func (module *Module) comparisonsForEntry(ctx context.Context, entry db.Solution
 		return nil, err
 	}
 	views := make([]ComparisonView, 0, len(comparisons))
+	if len(comparisons) == 0 {
+		return views, nil
+	}
+	// A revision history can contain many comparisons with the same entry.
+	// Fetch each counterpart once, while retaining every comparison below.
+	counterpartIDs := make([]uint, 0, len(comparisons))
+	seenCounterparts := make(map[uint]bool, len(comparisons))
 	for _, comparison := range comparisons {
 		counterpartID := comparison.RightEntryID
 		if counterpartID == entry.ID {
 			counterpartID = comparison.LeftEntryID
 		}
-		var counterpart db.SolutionCatalogEntry
-		counterpartQuery := module.conn.WithContext(ctx).Where("id = ?", counterpartID)
-		counterpartQuery = applyProjectScope(counterpartQuery, scope)
-		lookup := counterpartQuery.Limit(1).Find(&counterpart)
-		if lookup.Error != nil {
-			return nil, lookup.Error
+		if !seenCounterparts[counterpartID] {
+			seenCounterparts[counterpartID] = true
+			counterpartIDs = append(counterpartIDs, counterpartID)
 		}
-		if lookup.RowsAffected == 0 {
+	}
+	// Bound IN parameters for both SQLite and PostgreSQL, without limiting
+	// the complete detail response or assuming an upper bound on history.
+	const lookupBatchSize = 500
+	counterparts := make(map[uint]db.SolutionCatalogEntry, len(counterpartIDs))
+	for start := 0; start < len(counterpartIDs); start += lookupBatchSize {
+		var batch []db.SolutionCatalogEntry
+		query := module.conn.WithContext(ctx).Where("id IN ?", counterpartIDs[start:min(start+lookupBatchSize, len(counterpartIDs))])
+		if err := applyProjectScope(query, scope).Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		for _, counterpart := range batch {
+			counterparts[counterpart.ID] = counterpart
+		}
+	}
+	comparisonIDs := make([]uint, 0, len(comparisons))
+	for _, comparison := range comparisons {
+		counterpartID := comparison.RightEntryID
+		if counterpartID == entry.ID {
+			counterpartID = comparison.LeftEntryID
+		}
+		if _, visible := counterparts[counterpartID]; visible {
+			comparisonIDs = append(comparisonIDs, comparison.ID)
+		}
+	}
+	proposals := make(map[uint]db.SolutionStandardizationProposal, len(comparisonIDs))
+	for start := 0; start < len(comparisonIDs); start += lookupBatchSize {
+		var batch []db.SolutionStandardizationProposal
+		if err := module.conn.WithContext(ctx).
+			Where("comparison_id IN ?", comparisonIDs[start:min(start+lookupBatchSize, len(comparisonIDs))]).Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		for _, proposal := range batch {
+			proposals[proposal.ComparisonID] = proposal
+		}
+	}
+	for _, comparison := range comparisons {
+		counterpartID := comparison.RightEntryID
+		if counterpartID == entry.ID {
+			counterpartID = comparison.LeftEntryID
+		}
+		counterpart, visible := counterparts[counterpartID]
+		if !visible {
 			continue
 		}
 		view := ComparisonView{Comparison: comparison, Counterpart: counterpart}
@@ -253,12 +301,7 @@ func (module *Module) comparisonsForEntry(ctx context.Context, entry db.Solution
 			}
 			view.RoundTwo = json.RawMessage(raw)
 		}
-		var proposal db.SolutionStandardizationProposal
-		proposalLookup := module.conn.WithContext(ctx).Where("comparison_id = ?", comparison.ID).Limit(1).Find(&proposal)
-		if proposalLookup.Error != nil {
-			return nil, proposalLookup.Error
-		}
-		if proposalLookup.RowsAffected > 0 {
+		if proposal, exists := proposals[comparison.ID]; exists {
 			markdown, err := decodePayload(proposal.Content, proposal.ContentEncoding, proposal.ContentHash)
 			if err != nil {
 				return nil, err

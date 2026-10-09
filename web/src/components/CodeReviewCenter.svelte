@@ -25,6 +25,12 @@
     rules: string;
   };
   type Repo = { project_id: string; name: string; policy: Policy };
+  type CommentSettings = { sync_commits: boolean; sync_mrs: boolean };
+  type RepoResponse = {
+    repos: Repo[];
+    default_rules: string[];
+    comment_settings?: unknown;
+  };
   type Run = {
     id: number;
     project_id: string;
@@ -162,13 +168,14 @@
     sync_failed: "同步失败",
   };
   let repos: Repo[] = [];
+  let commentSettings: CommentSettings | null = null;
   let defaultRules: string[] = [];
   let ruleDrafts: Record<string, string> = {};
   let rulesOpen = false;
   $: ruleDraft = ruleDrafts[project] ?? repo?.policy.rules ?? "";
   $: rulesChanged = ruleDraft !== (repo?.policy.rules ?? "");
+  $: rulesTooLong = ruleDraft.length > 8000;
   $: reviewedPolicy = parse<Policy>(selected?.policy_json);
-  let scenarios: Record<string, string> = {};
   let runs: Run[] = [];
   let project = "";
   let filter = "";
@@ -204,9 +211,14 @@
   $: selectedRepo = selected
     ? repos.find((r) => r.project_id === selected?.project_id)
     : undefined;
+  $: selectedGlobalSyncEnabled = Boolean(
+    selected && commentSettings &&
+      (selected.kind === "mr" ? commentSettings.sync_mrs : commentSettings.sync_commits),
+  );
   $: selectedSyncEnabled = Boolean(
     selected &&
       selectedRepo &&
+      selectedGlobalSyncEnabled &&
       (selected.kind === "mr"
         ? selectedRepo.policy.sync_mrs
         : selectedRepo.policy.sync_commits),
@@ -219,6 +231,15 @@
         selected?.publish_status || "",
       ),
   );
+  $: manualSyncBlockedReason =
+    canWrite && selected?.status === "completed" &&
+    !["published", "publishing", "stale", "blocked"].includes(selected.publish_status)
+      ? !commentSettings
+        ? "全局评论设置未加载，暂不能同步评论"
+        : !selectedGlobalSyncEnabled
+          ? `全局 ${selected.kind === "mr" ? "MR" : "Commit"} 评论已暂停`
+          : ""
+      : "";
   $: visibleRuns = runs.filter(
     (r) =>
       (!project || r.project_id === project) &&
@@ -254,17 +275,25 @@
     if (response.status === 204) return undefined as T;
     return response.json();
   }
+  function applyRepoResponse(data: RepoResponse) {
+    repos = data.repos;
+    defaultRules = data.default_rules || [];
+    const settings = data.comment_settings as Partial<CommentSettings> | null;
+    commentSettings = settings && typeof settings === "object" &&
+      typeof settings.sync_commits === "boolean" && typeof settings.sync_mrs === "boolean"
+        ? { sync_commits: settings.sync_commits, sync_mrs: settings.sync_mrs }
+        : null;
+  }
   async function refreshReposSilently() {
     const version = ++listRequestVersion;
-    const data = await api<{
-      repos: Repo[];
-      scenarios: Record<string, string>;
-      default_rules: string[];
-    }>("/api/code-reviews/repos");
-    if (disposed || version !== listRequestVersion) return;
-    repos = data.repos;
-    scenarios = data.scenarios;
-    defaultRules = data.default_rules || [];
+    try {
+      const data = await api<RepoResponse>("/api/code-reviews/repos");
+      if (disposed || version !== listRequestVersion) return;
+      applyRepoResponse(data);
+    } catch (error) {
+      if (!disposed && version === listRequestVersion) commentSettings = null;
+      throw error;
+    }
   }
   function detailNeedsRefresh(previous: Run, current: Run) {
     const mutable = ["queued", "running"];
@@ -359,7 +388,7 @@
     pollBusy = true;
     const version = ++listRequestVersion;
     const visibleRefresh = mode !== "poll";
-    const anchor = mode === "poll" ? captureListAnchor() : null;
+    const anchor = mode === "initial" ? null : captureListAnchor();
     if (visibleRefresh) {
       listError = "";
       if (mode === "initial" && runs.length === 0) loading = true;
@@ -367,15 +396,15 @@
     }
     try {
       if (initial) {
-        const data = await api<{
-          repos: Repo[];
-          scenarios: Record<string, string>;
-          default_rules: string[];
-        }>("/api/code-reviews/repos");
+        let data: RepoResponse;
+        try {
+          data = await api<RepoResponse>("/api/code-reviews/repos");
+        } catch (error) {
+          if (!disposed && version === listRequestVersion) commentSettings = null;
+          throw error;
+        }
         if (disposed || version !== listRequestVersion) return false;
-        repos = data.repos;
-        scenarios = data.scenarios;
-        defaultRules = data.default_rules || [];
+        applyRepoResponse(data);
       }
       const data = await api<{ items: Run[] }>("/api/code-reviews");
       if (disposed || version !== listRequestVersion) return false;
@@ -541,6 +570,10 @@
   }
   async function runAction(action: ReviewAction) {
     if (!selected || actionKind) return;
+    if (action === "sync" && !canManualSync) {
+      actionError = manualSyncBlockedReason || "当前仓库尚未开启此类评论同步。";
+      return;
+    }
     const origin = selected;
     const generation = ++actionGeneration;
     actionKind = action;
@@ -801,13 +834,10 @@
     {#snippet leading()}
       <div class="cr-list-summary">
         <strong>评审记录</strong>
-        <small>
-          {loading
-            ? "正在读取"
-            : refreshing
-              ? `正在刷新 · ${visibleRuns.length} 条`
-              : `${visibleRuns.length} 条`}
-        </small>
+        <small>{loading ? "正在读取" : `${visibleRuns.length} 条`}</small>
+        <span class="cr-sr" role="status" aria-live="polite">
+          {refreshing ? "正在刷新评审记录，当前结果保留显示。" : ""}
+        </span>
       </div>
     {/snippet}
 
@@ -841,9 +871,10 @@
         </label>
         <button
           type="button"
-          class="wa-admin-action secondary"
+          class="wa-admin-action secondary cr-refresh-button"
           on:click={() => void refresh(true, "manual")}
           disabled={loading || refreshing || Boolean(policySaving) || Boolean(actionKind)}
+          aria-busy={refreshing}
         >
           {refreshing ? "刷新中…" : "刷新"}
         </button>
@@ -861,9 +892,7 @@
       <details class="cr-policy">
         <summary
           >仓库评审策略 <span
-            >{repo.policy.domain === "fms"
-              ? scenarios[repo.policy.scenario]
-              : "通用工程评审"} · {repo.policy.sync_commits ||
+            >{repo.policy.sync_commits ||
             repo.policy.sync_mrs
               ? "评论同步已配置"
               : "评论同步关闭"}</span
@@ -881,7 +910,7 @@
                 disabled={!canWrite || Boolean(policySaving)}
                 on:change={(e) => savePolicy({ sync_commits: e.detail })}
               />
-              <p>完整评审后同步到 Commit。</p>
+              <p>{!commentSettings ? "全局评论设置未加载，暂不能同步评论。" : commentSettings.sync_commits ? "完整评审后同步到 Commit。" : "全局 Commit 评论已暂停。"}</p>
               {#if policyFeedback.sync_commits?.message}
                 <span
                   class="cr-policy-feedback"
@@ -902,7 +931,7 @@
                 disabled={!canWrite || Boolean(policySaving)}
                 on:change={(e) => savePolicy({ sync_mrs: e.detail })}
               />
-              <p>同步前校验 MR 版本。</p>
+              <p>{!commentSettings ? "全局评论设置未加载，暂不能同步评论。" : commentSettings.sync_mrs ? "同步前校验 MR 版本。" : "全局 MR 评论已暂停。"}</p>
               {#if policyFeedback.sync_mrs?.message}
                 <span
                   class="cr-policy-feedback"
@@ -914,51 +943,8 @@
               {/if}
             </div>
           </div>
-          <div class="cr-context-fields">
-            <Select
-              label="业务领域"
-              value={repo.policy.domain}
-              options={[
-                { value: "general", label: "通用软件工程" },
-                { value: "fms", label: "FMS 车队管理系统" },
-              ]}
-              searchable={false}
-              compact
-              shadowless
-              disabled={!canWrite || Boolean(policySaving)}
-              on:change={(e) =>
-                savePolicy({
-                  domain: e.detail,
-                  scenario: e.detail === "fms" ? "dispatch" : "general",
-                })}
-            />
-            <Select
-              label="评审场景"
-              value={repo.policy.scenario}
-              options={Object.entries(scenarios)
-                .filter(
-                  ([key]) => repo?.policy.domain === "fms" || key === "general",
-                )
-                .map(([value, label]) => ({ value, label }))}
-              searchable={false}
-              compact
-              shadowless
-              disabled={!canWrite || Boolean(policySaving) || repo.policy.domain !== "fms"}
-              on:change={(e) => savePolicy({ scenario: e.detail })}
-            />
-            <label class="cr-field cr-scope"
-              >项目知识范围<input
-                value={repo.policy.knowledge_scope}
-                placeholder="知识库中 project 范围的标识"
-                disabled={!canWrite || Boolean(policySaving)}
-                on:change={(e) =>
-                  savePolicy({ knowledge_scope: e.currentTarget.value.trim() })}
-              /></label
-            >
-          </div>
           <p class="cr-hint">
-            只引用已启用的全局、当前仓库及指定项目知识。FMS
-            缺少项目或仓库知识时标记部分评审，暂停评论同步。切换策略不会补发历史报告。
+            修改同步策略后用于后续新评审，不会补发历史报告。
           </p>
           {#if !canWrite}<p class="cr-hint">
               当前为只读模式；修改策略需要配置写入权限。
@@ -986,26 +972,27 @@
             </ul>
           </section>
           <section aria-label="仓库补充评审规则">
-            <label class="cr-field" for="cr-rules-input"
-              >仓库补充规则<textarea
-                id="cr-rules-input"
-                rows="9"
-                maxlength="8000"
-                value={ruleDraft}
-                disabled={!canWrite || Boolean(policySaving)}
-                on:input={(e) =>
-                  (ruleDrafts = {
-                    ...ruleDrafts,
-                    [project]: e.currentTarget.value,
-                  })}
-                placeholder="每行写一条可验证的要求。例如：任务完成必须有匹配的任务和车辆反馈；重试不得重复释放资源。"
-              ></textarea></label
-            >
+            <h3>仓库补充规则</h3>
+            <MarkdownWorkbench
+              value={ruleDraft}
+              mode="live"
+              availableModes={["live"]}
+              readonly={!canWrite || Boolean(policySaving)}
+              saving={Boolean(policySaving)}
+              label="仓库补充规则"
+              placeholder="每行写一条可验证的要求。例如：任务完成必须有匹配的任务和车辆反馈；重试不得重复释放资源。"
+              minHeight={280}
+              showToolbar={false}
+              embedded
+              on:change={(e) =>
+                (ruleDrafts = { ...ruleDrafts, [project]: e.detail })}
+            />
             <p class="cr-hint">
-              补充规则与默认规则、FMS
-              场景及知识库一起进入两轮评审。不能替代业务证据或取消证据校验。最多
-              8000 字符。
+              补充规则与默认规则一起用于评审，不能替代业务证据或取消证据校验。最多 8000 字符。
             </p>
+            {#if rulesTooLong}<p class="cr-hint cr-rule-error" role="alert">
+                已超出 {ruleDraft.length - 8000} 字符，请缩短后保存。
+              </p>{/if}
             <div class="cr-rule-actions">
               <span class="cr-hint"
                 >{rulesChanged ? "有未保存修改" : "已与仓库配置一致"}</span
@@ -1019,7 +1006,7 @@
                   })}>撤销修改</button
               ><button
                 class="cr-button"
-                disabled={!canWrite || Boolean(policySaving) || !rulesChanged}
+                disabled={!canWrite || Boolean(policySaving) || !rulesChanged || rulesTooLong}
                 on:click={() => savePolicy({ rules: ruleDraft })}
                 >保存评审规则</button
               >
@@ -1037,7 +1024,7 @@
       caption="代码评审记录"
       cell={renderReviewCell}
       empty={renderReviewEmpty}
-      loading={loading || refreshing}
+      loading={loading}
       error={listError}
       onRetry={() => refresh(true, "manual")}
       skeletonRows={6}
@@ -1059,7 +1046,8 @@
       stableHeight
       footerVisible={Boolean(
         selected &&
-          (actionError ||
+        (actionError ||
+          manualSyncBlockedReason ||
             actionNotice ||
             selected.publish_error ||
             (selected.status === "partial" && selected.publish_status === "blocked") ||
@@ -1191,6 +1179,8 @@
             <div class="cr-modal-feedback" aria-live="polite">
               {#if actionError}
                 <span class="is-error" role="alert">{actionError}</span>
+              {:else if manualSyncBlockedReason}
+                <span>{manualSyncBlockedReason}</span>
               {:else if actionNotice}
                 <span class="is-success">{actionNotice}</span>
               {:else if selected.publish_error}
@@ -1212,6 +1202,10 @@
                     : selected.publish_status === "unknown"
                       ? "核对远端评论"
                       : "同步评论"}
+                </button>
+              {:else if manualSyncBlockedReason}
+                <button type="button" class="wa-admin-action primary" disabled title={manualSyncBlockedReason}>
+                  同步评论
                 </button>
               {:else if canWrite && selected.status === "failed"}
                 <button

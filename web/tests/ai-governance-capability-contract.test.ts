@@ -145,8 +145,8 @@ test('AI governance mutation controls use the authoritative write permissions', 
   assert.match(aiGov, /disabled=\{!canManageSkills \|\| togglingStatusKey === cap\.capability_key\}/);
   assert.match(aiGov, /\{#if canManageSkills\}[\s\S]*?openUpgradeModal/);
   assert.match(aiGov, /canWriteRules = canWriteAIGovernanceRules/);
-  assert.match(aiGov, /disabled=\{!canWriteRules \|\| savingPolicy\}/);
-  assert.match(aiGov, /readonly=\{!canWriteRules\}/);
+  assert.match(aiGov, /disabled=\{!canWriteRules \|\| savingPolicy \|\| !!savingRepoSetting/);
+  assert.match(aiGov, /readonly=\{!canWriteRules \|\| savingPolicy \|\| !!savingRepoSetting\}/);
 
   assert.match(aiConfig, /canWriteContext = hasGovernancePermission\('ai_context:write'\)/);
   assert.match(aiConfig, /canPreviewContext = hasGovernancePermission\('ai_context:preview'\)/);
@@ -211,7 +211,7 @@ test('AIGovernanceCenter keeps styled selects, responsive table scrolling, and r
   assert.match(content, /\.action-btn-group\s*\{[\s\S]*?white-space:\s*nowrap\s*!important;/);
   assert.match(content, /\.btn\s*\{[\s\S]*?word-break:\s*keep-all\s*!important;/);
   assert.match(content, /\.gov-table-container\s*\{[\s\S]*?overflow-x:\s*auto/);
-  assert.match(content, /@media \(max-width: 900px\)[\s\S]*?\.rules-workbench[\s\S]*?grid-template-columns:\s*1fr/);
+  assert.match(content, /@media \(max-width: 760px\)[\s\S]*?\.rules-workbench-body[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(content, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?animation:\s*none/);
 });
 
@@ -222,9 +222,15 @@ test('AIGovernanceCenter preserves skill hierarchy and canonical SKILL.md render
   assert.match(content, /is_top_level_skill\?:/);
   assert.match(content, /parent_skill_key\?:/);
   assert.match(content, /included_components\?:/);
-  assert.match(content, /badge-top-skill/);
+  assert.match(content, /cap-column-kind/);
+  assert.match(content, /<th>名称<\/th>\s*<th>类别<\/th>/);
+  assert.match(content, /cap-kind-badge/);
   assert.match(content, /cap-included-block/);
-  assert.match(content, /cap-parent-ref-block/);
+  assert.match(content, /resolveGovernanceCapabilityHierarchy\(capabilities\)/);
+  assert.match(content, /filterGovernanceCapabilities\(capabilityHierarchy\.records/);
+  assert.doesNotMatch(content, /class="cap-parent-ref-block"/);
+  assert.match(content, /capabilityHierarchy\.orphans\.length/);
+  assert.match(content, /暂不提供独立生命周期操作/);
   assert.match(content, /drawerActiveView:\s*'skill_doc'\s*\|\s*'slices'/);
   assert.match(content, /drawer-view-tabs/);
   assert.match(content, /skill-doc-container/);
@@ -232,6 +238,19 @@ test('AIGovernanceCenter preserves skill hierarchy and canonical SKILL.md render
   assert.match(content, /copySkillDoc/);
   assert.match(content, /detailRequestID/);
   assert.match(content, /selectedCapability\?\.capability_key !== cap\.capability_key/);
+});
+
+test('capability ownership receives a complete registry and the table preserves compact accessible actions', () => {
+  const content = source(aiGovPath);
+  const loadRegistry = content.slice(content.indexOf('async function loadCapabilities()'), content.indexOf('async function openDetail('));
+  assert.match(loadRegistry, /api\('\/api\/agent-runtime\/capabilities'\)/);
+  assert.doesNotMatch(loadRegistry, /params\.set|searchKeyword|filterKind|filterStatus/);
+  assert.match(content, /countIncludedGovernanceComponents\(displayCapabilities\)/);
+  assert.match(content, /完整注册表磁盘占用/);
+  assert.match(content, /table-layout:\s*fixed/);
+  assert.match(content, /cap-column-description/);
+  assert.match(content, /aria-label=\{`查看 \$\{cap\.capability_key\} 详情与 SKILL\.md`\}/);
+  assert.doesNotMatch(content, /全类别 \(含内置组件\)/);
 });
 
 test('Settings no longer owns AI governance sections after migration', () => {

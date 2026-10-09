@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"well-ambient/internal/openaccess"
 )
 
 type openSkillSummary struct {
@@ -207,9 +209,12 @@ func (s *Server) handleGetOpenSkillArchive(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleGetOpenInstallScript(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		writeOpenError(w, "", openaccess.NewError("invalid_request", "installer URLs must not contain query parameters or credentials; configure Authorization locally"))
+		return
+	}
 	baseURL := s.resolveRequestBaseURL(r)
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	script := renderInstallScript(baseURL, token)
+	script := renderInstallScript(baseURL)
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -244,16 +249,15 @@ func isValidSkillName(name string) bool {
 	return false
 }
 
-func renderInstallScript(baseURL, token string) string {
+func renderInstallScript(baseURL string) string {
 	return fmt.Sprintf(`#!/usr/bin/env bash
 # ==============================================================================
 # well-ambient Open Capabilities & Skills Online Installer
-# Auto-detects local clients, downloads official skills, and merges MCP configs
+# Downloads official skills and shows a secret-free local MCP configuration
 # ==============================================================================
 set -euo pipefail
 
-BASE_URL="%s"
-TOKEN="%s"
+BASE_URL=%s
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -287,19 +291,27 @@ echo -e "微内核技能安装目标目录: ${BLUE}${SKILLS_DIR}${NC}"
 
 # 3. 在线下载并解压官方 Skill 包
 SKILLS=("jira-analysis" "board-decision" "code-review-reader")
+INSTALLED_SKILLS=()
+FAILED_SKILLS=()
 for skill in "${SKILLS[@]}"; do
     echo -ne "正在下载并安装 Skill [${skill}]... "
     TMP_FILE=$(mktemp)
-    if curl -fsSL "${BASE_URL}/open/v1/skills/${skill}/archive" -o "${TMP_FILE}" 2>/dev/null; then
-        mkdir -p "${SKILLS_DIR}"
-        tar -xzf "${TMP_FILE}" -C "${SKILLS_DIR}"
-        rm -f "${TMP_FILE}"
+    if curl -fsSL "${BASE_URL}/open/v1/skills/${skill}/archive" -o "${TMP_FILE}" 2>/dev/null &&
+       tar -xzf "${TMP_FILE}" -C "${SKILLS_DIR}"; then
+        INSTALLED_SKILLS+=("${skill}")
         echo -e "${GREEN}完成${NC}"
     else
-        rm -f "${TMP_FILE}"
-        echo -e "${RED}失败 (请检查网络或服务端权限)${NC}"
+        FAILED_SKILLS+=("${skill}")
+        echo -e "${RED}失败 (请检查网络或技能包)${NC}"
     fi
+    rm -f "${TMP_FILE}"
 done
+if [ "${#FAILED_SKILLS[@]}" -gt 0 ]; then
+    echo -e "已成功安装: ${INSTALLED_SKILLS[*]:-无}"
+    echo -e "${RED}安装失败: ${FAILED_SKILLS[*]}${NC}"
+    echo -e "请解决失败原因后重新运行安装命令。"
+    exit 1
+fi
 
 # 4. 配置 MCP 客户端
 MCP_URL="${BASE_URL}/mcp"
@@ -324,15 +336,12 @@ fi
 
 echo ""
 echo -e "${GREEN}✓ 技能安装完成！${NC}"
-echo -e "已在 ${BLUE}${SKILLS_DIR}${NC} 安装: ${SKILLS[*]}"
+echo -e "目标目录: ${BLUE}${SKILLS_DIR}${NC}"
+echo -e "已成功安装: ${INSTALLED_SKILLS[*]}"
 echo ""
 echo -e "${BLUE}=== 客户端接入配置指引 ===${NC}"
-if [ -n "${TOKEN}" ]; then
-    echo -e "已使用您的凭证自动生成配置:"
-else
-    echo -e "请在 AI 治理页面签发 API Key 后将 <YOUR_API_KEY> 替换为真实凭证:"
-    TOKEN="<YOUR_API_KEY>"
-fi
+echo -e "请在客户端本地配置 Authorization，将 <YOUR_API_KEY> 替换为真实凭证。"
+echo -e "不要将 API Key 放入下载地址、命令 URL 或客户端安装深链。"
 
 echo ""
 echo -e "1. 【Cursor / VS Code (Streamable HTTP 模式)】:"
@@ -343,7 +352,7 @@ cat <<EOF
     "well-ambient": {
       "url": "${MCP_URL}",
       "headers": {
-        "Authorization": "Bearer ${TOKEN}"
+        "Authorization": "Bearer <YOUR_API_KEY>"
       }
     }
   }
@@ -351,10 +360,9 @@ cat <<EOF
 EOF
 
 echo ""
-echo -e "2. 【系统协议一键拉起】:"
-echo -e "如果您使用的是 Cursor，可在浏览器中点击以下深链直接注册 MCP:"
-echo -e "cursor://anysphere.cursor-mcp/install?name=well-ambient&url=$(printf '%%s' "${MCP_URL}" | curl -Gso /dev/null -w '%%{url_effective}' --data-urlencode @- "" | cut -c 3-)&auth=$(printf '%%s' "${TOKEN}" | curl -Gso /dev/null -w '%%{url_effective}' --data-urlencode @- "" | cut -c 3-)"
+echo -e "2. 【本地凭证配置】:"
+echo -e "在 Cursor 或其他 MCP 客户端保存上面的配置模板后，本地填写 Authorization。"
 echo ""
 echo -e "${GREEN}所有就绪！欢迎使用 well-ambient 开放能力。${NC}"
-`, baseURL, token)
+`, "'"+strings.ReplaceAll(baseURL, "'", "'\"'\"'")+"'")
 }
