@@ -16,6 +16,12 @@ function publicConnectionURL(value: string): string {
 }
 
 // Install URLs describe public configuration. Credentials belong in the local client only.
+export function buildCodexMcpConfig(endpointURL: string, token = OPEN_API_KEY_PLACEHOLDER): string {
+  const url = publicConnectionURL(endpointURL);
+  if (!url) return '';
+  return `[mcp_servers."well-ambient"]\nurl = ${JSON.stringify(url)}\nhttp_headers = { Authorization = ${JSON.stringify(`Bearer ${token}`)} }`;
+}
+
 export function buildOpenCapabilityInstall(baseURL: string, endpointURL: string) {
   const publicBaseURL = publicConnectionURL(baseURL);
   const mcpURL = publicConnectionURL(endpointURL || `${publicBaseURL}/mcp`);

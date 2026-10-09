@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { showToast } from '../../lib/toast';
   import { copyToClipboard } from '../../lib/clipboard';
-  import { buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../../lib/openCapabilityInstall';
+  import { buildCodexMcpConfig, buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../../lib/openCapabilityInstall';
   import Button from '../shared/Button.svelte';
   import Switch from '../shared/Switch.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -103,13 +103,14 @@
     execute_enabled: false
   };
 
-  let activeConfigTab: 'cursor' | 'claude' | 'windsurf' | 'cline' = 'cursor';
+  let activeConfigTab: 'codex' | 'cursor' | 'claude' | 'windsurf' | 'cline' = 'codex';
 
   // Issue Key Modal State
   let showIssueModal = false;
   let newKeySourceID = 'target-agent';
   let newKeyTTLHours = 720;
   let issuingKey = false;
+  let issueError = '';
   let issuedKeyResult: { key_id: string; key: string; expires_at: string } | null = null;
 
   // Revoking key
@@ -134,7 +135,17 @@
   $: currentMcpURL = installation.mcpURL;
   $: cursorDeepLink = installation.cursorDeepLink;
   $: installCommand = installation.installCommand;
+  $: codexConfig = buildCodexMcpConfig(currentMcpURL);
+  $: codexInstallCommand = installCommand ? `${installCommand} -s -- --root "$HOME/.codex" --mcp` : '';
   const effectiveToken = OPEN_API_KEY_PLACEHOLDER;
+
+  function openCodexCredentialModal() {
+    if (!canWrite) return;
+    newKeySourceID = 'codex-dev';
+    issueError = '';
+    issuedKeyResult = null;
+    showIssueModal = true;
+  }
 
   async function api(path: string, init: RequestInit = {}) {
     const headers = new Headers(init.headers || {});
@@ -192,6 +203,7 @@
   async function issueNewKey() {
     if (!canWrite) return;
     issuingKey = true;
+    issueError = '';
     error = '';
     try {
       const res = await api('/api/ai-governance/open-capabilities/credentials', {
@@ -206,8 +218,8 @@
       showToast('API Key 已签发，请复制保存并填写到客户端 Authorization 字段。', { type: 'success' });
       await loadOverview();
     } catch (err: any) {
-      error = err.message || '签发 Key 失败';
-      showToast(error, { type: 'error' });
+      issueError = err.message || '签发 Key 失败';
+      showToast(issueError, { type: 'error' });
     } finally {
       issuingKey = false;
     }
@@ -230,13 +242,16 @@
   }
 
   let manualCopy: { text: string; label: string } | null = null;
+  let issuedManualCopy: { text: string; label: string } | null = null;
 
   async function copyText(text: string, label = '内容') {
     if (await copyToClipboard(text)) {
+      issuedManualCopy = null;
       showToast(`${label}已复制到剪贴板`, { type: 'success' });
       return;
     }
-    manualCopy = { text, label };
+    if (showIssueModal) issuedManualCopy = { text, label };
+    else manualCopy = { text, label };
   }
 
   function selectCopyText(event: FocusEvent) {
@@ -247,6 +262,7 @@
     if (issuingKey) return;
     showIssueModal = false;
     issuedKeyResult = null;
+    issuedManualCopy = null;
   }
 
   onMount(() => {
@@ -464,9 +480,34 @@
       <div class="card-header">
         <div class="title-wrap">
           <h4 id="install-section-title">远程客户端接入与在线安装</h4>
-            <span class="sub-hint">先安装客户端 Skill，再配置 MCP 地址与本地凭证。</span>
+          <span class="sub-hint">完成凭证签发、客户端配置和连接验证，即可在 Codex 中使用开放工具。</span>
         </div>
       </div>
+
+      <ol class="onboarding-steps" aria-label="Codex 接入步骤">
+        <li>
+          <strong>签发集成凭证</strong>
+          <p>来源填写 <code>codex-dev</code>，选择有效期后签发。完整 API Key 只显示一次，请立即保存；使用完整密钥，不使用 Key ID 或网页登录令牌。</p>
+          {#if canWrite}
+            <Button variant="primary" size="small" on:click={openCodexCredentialModal}>签发 Codex API Key</Button>
+          {:else}
+            <span class="field-hint">当前为只读权限，请联系管理员签发集成凭证。</span>
+          {/if}
+        </li>
+        <li>
+          <strong>安装 Skill 并配置 MCP</strong>
+          <p>在终端执行下方命令，按提示隐藏输入 API Key。脚本安装 Skill、验证 MCP，再写入 <code>~/.codex/config.toml</code>；已有配置会备份，其他服务保留。</p>
+          <div class="code-snippet-bar">
+            <code>{codexInstallCommand}</code>
+            <Button variant="secondary" size="small" disabled={!codexInstallCommand} on:click={() => copyText(codexInstallCommand, 'Codex 安装与配置命令')}>复制 Codex 命令</Button>
+          </div>
+          <p class="field-hint">自动配置需要 Python 3.11+（或 Python 3 + tomli）。自定义根目录请替换命令中的路径；已安装 Skill 可将 <code>--mcp</code> 改为 <code>--mcp-only</code>。也可使用下方 Codex 模板手动配置。</p>
+        </li>
+        <li>
+          <strong>验证客户端连接</strong>
+          <p>重启 Codex 或重新加载会话，在 <code>/mcp</code> 查看连接与工具列表。<code>codex mcp list</code> 仅确认配置存在。401 表示凭证无效、过期或撤销；403 需管理员检查开放能力开关、当前生效策略及来源权限。</p>
+        </li>
+      </ol>
 
       <!-- Channels 1 & 2: Top Quick Connect Grid -->
       <div class="combo-grid">
@@ -506,7 +547,7 @@
             <span class="combo-title">远程安装脚本 (One-line Bash Installer)</span>
           </div>
           <p class="combo-desc">
-              下载官方 Skill，探测 Codex / Claude Code 技能目录，并在终端中选择或输入安装根目录。指定目录可在命令末尾加 <code>-s -- --root "$HOME/.codex"</code>；Skill 将放入该目录下的 <code>skills</code>。MCP 凭证需在客户端本地填写。
+            下载官方 Skill，探测 Codex / Claude Code 技能目录，并在终端中选择或输入安装根目录。指定目录可在命令末尾加 <code>-s -- --root "$HOME/.codex"</code>；Skill 将放入该目录下的 <code>skills</code>。选择 Codex 根目录后会询问是否配置 MCP；其他客户端使用下方模板。
           </p>
           <div class="code-snippet-bar">
             <code>{installCommand}</code>
@@ -574,9 +615,10 @@
         <div class="sub-section-header">
           <div class="sub-section-title-wrap">
             <span class="combo-tag">通道四</span>
-            <h5 class="sub-section-title">主流客户端手动配置规范 (Manual MCP JSON)</h5>
+            <h5 class="sub-section-title">客户端手动配置</h5>
           </div>
           <div class="config-tabs-nav" role="group" aria-label="客户端配置文件类型">
+            <button type="button" class="tab-btn" class:active={activeConfigTab === 'codex'} aria-pressed={activeConfigTab === 'codex'} on:click={() => activeConfigTab = 'codex'}>Codex</button>
             <button
               type="button"
               class="tab-btn"
@@ -617,7 +659,13 @@
         </div>
 
         <div class="config-code-preview">
-          {#if activeConfigTab === 'cursor'}
+          {#if activeConfigTab === 'codex'}
+            <div class="file-hint">合并到 <code>~/.codex/config.toml</code>（自定义 CODEX_HOME 或项目 <code>.codex</code> 时使用对应根目录）。将占位符替换为完整 API Key，并设置文件权限为 <code>600</code>。</div>
+            <pre><code>{codexConfig}</code></pre>
+            <div class="code-action-pos">
+              <Button variant="secondary" size="small" on:click={() => copyText(codexConfig, 'Codex 配置模板')}>复制 Codex 模板</Button>
+            </div>
+          {:else if activeConfigTab === 'cursor'}
             <div class="file-hint">写入 <code>.cursor/mcp.json</code> 或系统全局 MCP 配置：</div>
             <pre><code>{`{
   "mcpServers": {
@@ -755,7 +803,7 @@
           <Button
             variant="primary"
             size="small"
-            on:click={() => { showIssueModal = true; issuedKeyResult = null; }}
+            on:click={() => { issueError = ''; showIssueModal = true; issuedKeyResult = null; }}
           >
             + 签发新 API Key
           </Button>
@@ -884,6 +932,7 @@
     on:close={closeIssueModal}
   >
     <div class="modal-form-body">
+      {#if issueError}<div class="gov-notice warning" role="alert">签发失败：{issueError}。请检查权限或稍后重试。</div>{/if}
       {#if issuedKeyResult}
         <div class="gov-notice success">
           <span><strong>✓ 密钥生成成功！</strong> 请务必立即复制并保存，该密钥只会完整展示一次。</span>
@@ -907,7 +956,17 @@
               复制 Key
             </Button>
           </div>
-          <p class="token-tip">将 Key 填写到客户端配置的 Authorization 字段。安装命令和链接仅包含占位符；关闭后不再显示完整 Key。</p>
+          <p class="token-tip">将密钥填写到客户端本地 Authorization；关闭后无法再次查看完整密钥。安装命令和链接不包含真实密钥。</p>
+          <div class="issued-codex-guide">
+            <strong>下一步：写入 Codex MCP</strong>
+            <p>复制含本次凭证的 TOML，合并到 <code>~/.codex/config.toml</code>（或所选根目录），保留其他配置并将文件权限设为 <code>600</code>。重启 Codex 后用 <code>/mcp</code> 验证连接。</p>
+            <Button variant="secondary" size="small" on:click={() => copyText(buildCodexMcpConfig(currentMcpURL, issuedKeyResult?.key || ''), '含凭证的 Codex 配置')}>复制含凭证的 Codex 配置</Button>
+            {#if issuedManualCopy}
+              <label for="issued-copy-text">浏览器未允许自动复制，请选中并复制{issuedManualCopy.label}：</label>
+              <textarea id="issued-copy-text" class="manual-copy-text" readonly rows="5" value={issuedManualCopy.text} on:focus={selectCopyText} on:click={(event) => event.currentTarget.select()}></textarea>
+            {/if}
+            <p class="field-hint">也可执行接入步骤中的脚本，在隐藏输入提示中粘贴密钥；已有 Skill 使用 <code>--mcp-only</code>。请妥善保管配置，勿分享或提交到代码仓库。</p>
+          </div>
         </div>
       {:else}
         <div class="form-item">
@@ -960,6 +1019,29 @@
 </div>
 
 <style>
+  .onboarding-steps {
+    margin: 0 0 var(--wa-space-6);
+    padding-left: var(--wa-space-6);
+    color: var(--wa-text-main);
+  }
+  .onboarding-steps li {
+    padding: var(--wa-space-3) 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+  .onboarding-steps p, .issued-codex-guide p {
+    margin: var(--wa-space-2) 0;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  .issued-codex-guide {
+    margin-top: var(--wa-space-4);
+    padding-top: var(--wa-space-4);
+    border-top: 1px solid var(--wa-border-soft);
+  }
+  .issued-codex-guide label {
+    display: block;
+    margin: var(--wa-space-3) 0 var(--wa-space-2);
+  }
   .manual-copy-body {
     display: grid;
     gap: var(--wa-space-3);

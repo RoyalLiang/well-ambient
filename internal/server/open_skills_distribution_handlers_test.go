@@ -19,6 +19,49 @@ func runIsolatedOpenInstaller(t *testing.T, failedSkill string) (string, error) 
 	return output, err
 }
 
+func TestOpenInstallScriptCodexMCPOnlyWithRealServer(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("Python 3 is required for optional Codex setup")
+	}
+	srv, credential, _ := setupOpenCapabilityServer(t)
+	srv.ensureOpenMCPHandler()
+	host := httptest.NewServer(srv.withOpenMCP(srv.openMCPHandler))
+	defer host.Close()
+	root := filepath.Join(t.TempDir(), "custom codex")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.toml")
+	if err := os.WriteFile(configPath, []byte("model = \"keep-model\"\n[mcp_servers.other]\ncommand = \"other\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("bash", "-s", "--", "--root", root, "--mcp-only")
+	command.Stdin = strings.NewReader(renderInstallScript(host.URL))
+	command.Env = append(os.Environ(), "WELL_AMBIENT_API_KEY="+credential.Secret)
+	output, err := command.CombinedOutput()
+	if strings.Contains(string(output), credential.Secret) {
+		t.Fatal("installer leaked the integration credential")
+	}
+	if err != nil {
+		t.Fatalf("Codex setup failed: %v\n%s", err, output)
+	}
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"keep-model", "[mcp_servers.other]", "[mcp_servers.\"well-ambient\"]", "Bearer " + credential.Secret} {
+		if !strings.Contains(string(content), expected) {
+			t.Fatal("Codex configuration missing expected settings")
+		}
+	}
+	if !strings.Contains(string(output), "initialize / tools/list") {
+		t.Fatalf("MCP handshake was not verified: %s", output)
+	}
+	if _, err := os.Stat(filepath.Join(root, "skills")); !os.IsNotExist(err) {
+		t.Fatal("--mcp-only must not download Skills")
+	}
+}
+
 func runOpenInstallerAt(t *testing.T, failedSkill string, roots, args []string) (string, string, error) {
 	t.Helper()
 	workDir := t.TempDir()

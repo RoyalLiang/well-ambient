@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../src/lib/openCapabilityInstall.ts';
+import { buildCodexMcpConfig, buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../src/lib/openCapabilityInstall.ts';
+
+test('Codex TOML uses static HTTP headers and a placeholder by default', () => {
+  const text = buildCodexMcpConfig('https://user:password@ambient.example/mcp?token=secret');
+  assert.equal(text, '[mcp_servers."well-ambient"]\nurl = "https://ambient.example/mcp"\nhttp_headers = { Authorization = "Bearer <YOUR_API_KEY>" }');
+  assert.equal(buildCodexMcpConfig('javascript:alert(1)'), '');
+});
+
+test('only explicitly requested one-time Codex config includes the issued key', () => {
+  const token = 'wa_live_test.credential';
+  assert.match(buildCodexMcpConfig('https://ambient.example/mcp', token), /Bearer wa_live_test\.credential/);
+  assert.doesNotMatch(JSON.stringify(buildOpenCapabilityInstall('https://ambient.example', 'https://ambient.example/mcp')), /wa_live_test/);
+  assert.match(buildCodexMcpConfig('https://ambient.example/mcp', 'quote"\nvalue'), /quote\\"\\nvalue/);
+});
 
 test('installation script URL contains no credentials or query secrets', () => {
   const instructions = buildOpenCapabilityInstall(

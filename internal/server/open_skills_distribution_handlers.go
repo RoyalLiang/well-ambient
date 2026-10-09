@@ -266,7 +266,11 @@ func isValidSkillName(name string) bool {
 //go:embed open_skills_install.sh
 var openSkillsInstallScript string
 
+//go:embed open_skills_configure_codex.py
+var openSkillsCodexSetup string
+
 func renderInstallScript(baseURL string) string {
 	quotedURL := "'" + strings.ReplaceAll(baseURL, "'", "'\"'\"'") + "'"
-	return strings.Replace(openSkillsInstallScript, "__WELL_AMBIENT_BASE_URL__", quotedURL, 1)
+	script := strings.Replace(openSkillsInstallScript, "__WELL_AMBIENT_BASE_URL__", quotedURL, 1)
+	return strings.Replace(script, "__WELL_AMBIENT_CODEX_SETUP__", openSkillsCodexSetup, 1)
 }
