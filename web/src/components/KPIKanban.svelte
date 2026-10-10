@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
 
   type ReportType = 'daily' | 'weekly';
   type Tone = 'info' | 'success' | 'warning' | 'danger' | 'neutral';
@@ -376,7 +377,10 @@
   }
 
   onMount(() => {
-    fetchKPIData(true);
+    void fetchKPIData(true);
+    return subscribeTelemetryUpdates(window, () => {
+      if (!loading && !refreshing && !reportLoading) return fetchKPIData();
+    }, { visibilityTarget: document });
   });
 </script>
 

@@ -87,6 +87,7 @@ type dailyJiraPageMeta struct {
 	Bucket         dailyJiraBucketKey `json:"bucket"`
 	Limit          int                `json:"limit"`
 	Generation     int64              `json:"generation"`
+	TimeBasis      string             `json:"time_basis"`
 	SearchMode     string             `json:"search_mode"`
 	PreviousCursor string             `json:"previous_cursor,omitempty"`
 	HasPrevious    bool               `json:"has_previous"`
@@ -197,6 +198,7 @@ func (s *Server) handleGetDailyJiraAudit(w http.ResponseWriter, r *http.Request)
 		Bucket:         bucket,
 		Limit:          min(limit, 100),
 		Generation:     page.Generation,
+		TimeBasis:      page.TimeBasis,
 		SearchMode:     page.SearchMode,
 		PreviousCursor: page.PreviousCursor,
 		HasPrevious:    page.HasPrevious,

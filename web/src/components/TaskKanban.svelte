@@ -310,8 +310,8 @@
   let collapsedAssignees: Record<string, boolean> = {};
   let userToggledAssignees: Record<string, boolean> = {};
 
-  let intervalId: any;
   let taskRequestSequence = 0;
+  let intervalId: ReturnType<typeof setInterval> | undefined;
   let taskRequestController: AbortController | null = null;
   let taskScopeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let executionRequestSequence = 0;
@@ -1463,6 +1463,11 @@
       const data = snapshots.map(mapWorkItem);
       workItemTasks = data;
       workItemSummary = nextSummary;
+      if (selectedTask && showDetails && !completionSubmitting) {
+        const updatedTask = data.find(task => task.id === selectedTask?.id);
+        if (updatedTask) selectedTask = updatedTask;
+        else closeDetails();
+      }
       if (selectedSearchTask && data.some(task => task.id === selectedSearchTask?.id)) {
         selectedSearchTask = null;
       }
@@ -1560,9 +1565,7 @@
       { visibilityTarget: document }
     );
     intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void refreshCurrentTaskView(true);
-      }
+      if (document.visibilityState === 'visible') void refreshCurrentTaskView(true);
     }, 60000);
     document.addEventListener('click', handleDocumentClick);
     window.addEventListener('well-ambient:global-search-select', handleGlobalSearchSelection);
@@ -1572,9 +1575,7 @@
   });
 
   onDestroy(() => {
-    if (intervalId) {
-      clearInterval(intervalId);
-    }
+    if (intervalId) clearInterval(intervalId);
     if (taskScopeRefreshTimer) clearTimeout(taskScopeRefreshTimer);
     taskRequestController?.abort();
     document.removeEventListener('click', handleDocumentClick);

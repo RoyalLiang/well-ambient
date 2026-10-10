@@ -113,3 +113,27 @@ test('a failed refresh reports the error and a later event can retry', async () 
   assert.equal(attempts, 2);
   unsubscribe();
 });
+
+test('business events and Jira changes serialize into one follow-up without polling', async () => {
+  const target = new EventTarget();
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const batches: string[][] = [];
+  const stop = subscribeTelemetryUpdates(target, async ({ taskIDs }) => {
+    batches.push([...taskIDs]);
+    if (batches.length === 1) await gate;
+  }, { delayMs: 0, events: ['decision-events-updated'] });
+  target.dispatchEvent(new Event('decision-events-updated'));
+  await wait(5);
+  target.dispatchEvent(telemetryUpdate('NS2-2569'));
+  target.dispatchEvent(new Event('decision-events-updated'));
+  await wait(5);
+  assert.deepEqual(batches, [[]]);
+  release();
+  await wait(5);
+  assert.deepEqual(batches, [[], ['NS2-2569']]);
+  stop();
+  target.dispatchEvent(new Event('decision-events-updated'));
+  await wait(5);
+  assert.equal(batches.length, 2);
+});

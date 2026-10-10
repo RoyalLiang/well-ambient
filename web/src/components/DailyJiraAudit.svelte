@@ -17,7 +17,7 @@
     type BoundedPage,
     type DataWindowDirection
   } from '../lib/admin-data-window';
-  import { dailyJiraSnapshotFingerprint } from '../lib/daily-jira-snapshot';
+  import { canRetainDailyJiraWindow, dailyJiraSnapshotFingerprint } from '../lib/daily-jira-snapshot';
   import { fetchDeliveryDirectory, type DeliveryAssigneeOption } from '../lib/delivery-directory';
   import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
 
@@ -78,6 +78,7 @@
     bucket: DailyJiraBucketKey;
     limit: number;
     generation: number;
+    time_basis?: string;
     search_mode: string;
     previous_cursor?: string;
     has_previous: boolean;
@@ -421,7 +422,7 @@
       const currentPageState = windowPageState(currentPages);
       const retainCurrentWindow = !initial
         && currentPages.length > 0
-        && currentPageState?.generation === nextAudit.page.generation;
+        && canRetainDailyJiraWindow(currentPageState, nextAudit.page);
       const windowUpdate = retainCurrentWindow
         ? {
             pages: currentPages,
@@ -796,9 +797,7 @@
       void loadAudit(false);
     };
     const refreshInterval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void loadAudit(false);
-      }
+      if (document.visibilityState === 'visible') void loadAudit(false);
     }, 30000);
     window.addEventListener('project-preferences-updated', handleProjectPreferencesUpdated);
     return () => {

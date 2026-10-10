@@ -17,6 +17,10 @@
 
 ## 自动发布元数据与一条命令
 
+生产镜像使用 `registry.cn-hangzhou.aliyuncs.com/rookiehouse/<image_name>:<version>.<branch>.<commit前8位>.<yymmdd>.b<index>`。使用 `make docker-images VERSION=2026.10.10 SERVER_IMAGE=registry.cn-hangzhou.aliyuncs.com/rookiehouse/well-ambient-server WEB_IMAGE=registry.cn-hangzhou.aliyuncs.com/rookiehouse/well-ambient-web` 构建配套镜像；省略 `VERSION` 时取上海日期 `YYYY.MM.DD`。分支中的标点按 UTF-8 字节转义为 `_xx`。
+
+`index` 是上海时区当天的累计构建尝试序号，跨提交、分支和版本连续递增；server/web 同一批共用一个序号，失败也保留序号。计数保存在 `deploy/generated/.docker-build-counts.json`，不可删除。跨构建机发布时先核对仓库和构建记录，通过 `BUILD_COUNT` 指定当天尚未使用且大于本机已保留序号的值，避免重复。该命令只构建，发布时还需推送两个镜像并核对 digest。
+
 默认发布不再要求输入版本、日期或批次内容。`scripts/release-metadata.sh` 一次生成 `deploy/generated/release.env` 和 `release-notes.txt`，server/web 镜像、Compose 包、离线镜像包与部署状态共用这份元数据：
 
 - 干净工作树使用 Git 提交日期和短 SHA，例如 `2026.08.27-58e6467`；

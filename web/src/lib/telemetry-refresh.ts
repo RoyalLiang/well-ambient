@@ -10,6 +10,7 @@ export interface TelemetryVisibilityTarget extends EventTarget {
 
 export interface TelemetryRefreshOptions {
   delayMs?: number;
+  events?: readonly string[];
   shouldRefresh?: (taskID: string) => boolean;
   visibilityTarget?: TelemetryVisibilityTarget;
   onError?: (error: unknown) => void;
@@ -24,14 +25,16 @@ export function subscribeTelemetryUpdates(
 ): () => void {
   const delayMs = Math.max(0, options.delayMs ?? 120);
   const pendingTaskIDs = new Set<string>();
+  let pendingFullRefresh = false;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let refreshRunning = false;
   let disposed = false;
 
   const isVisible = () => options.visibilityTarget?.visibilityState !== 'hidden';
+  const hasPendingRefresh = () => pendingFullRefresh || pendingTaskIDs.size > 0;
 
   const scheduleRefresh = (delay = delayMs) => {
-    if (disposed || refreshRunning || refreshTimer !== undefined || pendingTaskIDs.size === 0 || !isVisible()) {
+    if (disposed || refreshRunning || refreshTimer !== undefined || !hasPendingRefresh() || !isVisible()) {
       return;
     }
     refreshTimer = setTimeout(() => {
@@ -41,13 +44,14 @@ export function subscribeTelemetryUpdates(
 
   const runRefresh = async () => {
     refreshTimer = undefined;
-    if (disposed || refreshRunning || pendingTaskIDs.size === 0 || !isVisible()) return;
+    if (disposed || refreshRunning || !hasPendingRefresh() || !isVisible()) return;
 
     refreshRunning = true;
     try {
-      while (!disposed && isVisible() && pendingTaskIDs.size > 0) {
+      while (!disposed && isVisible() && hasPendingRefresh()) {
         const taskIDs = [...pendingTaskIDs];
         pendingTaskIDs.clear();
+        pendingFullRefresh = false;
         try {
           await refresh({ taskIDs });
         } catch (error) {
@@ -61,7 +65,7 @@ export function subscribeTelemetryUpdates(
       }
     } finally {
       refreshRunning = false;
-      if (!disposed && pendingTaskIDs.size > 0 && isVisible()) scheduleRefresh(0);
+      if (!disposed && hasPendingRefresh() && isVisible()) scheduleRefresh(0);
     }
   };
 
@@ -78,6 +82,11 @@ export function subscribeTelemetryUpdates(
     scheduleRefresh();
   };
 
+  const requestFullRefresh = () => {
+    if (disposed) return;
+    pendingFullRefresh = true;
+    scheduleRefresh();
+  };
   const handleVisibilityChange = () => {
     if (!isVisible()) {
       if (refreshTimer !== undefined) {
@@ -91,12 +100,15 @@ export function subscribeTelemetryUpdates(
 
   target.addEventListener(TELEMETRY_UPDATE_EVENT, handleUpdate);
   options.visibilityTarget?.addEventListener('visibilitychange', handleVisibilityChange);
+  for (const event of options.events ?? []) target.addEventListener(event, requestFullRefresh);
 
   return () => {
     disposed = true;
     pendingTaskIDs.clear();
+    pendingFullRefresh = false;
     if (refreshTimer !== undefined) clearTimeout(refreshTimer);
     target.removeEventListener(TELEMETRY_UPDATE_EVENT, handleUpdate);
     options.visibilityTarget?.removeEventListener('visibilitychange', handleVisibilityChange);
+    for (const event of options.events ?? []) target.removeEventListener(event, requestFullRefresh);
   };
 }

@@ -4,7 +4,6 @@
 import argparse
 import datetime as dt
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -76,10 +75,10 @@ def build_clock():
 
 def reserve_build(output, name, branch, commit, clock, explicit_count):
     image_day = clock.astimezone(IMAGE_TIMEZONE).strftime("%y%m%d")
-    prefix = f"{name}.{branch_segment(branch)}.{commit[:12]}.{image_day}.b"
+    prefix = f"{name}.{branch_segment(branch)}.{commit[:8]}.{image_day}.b"
     if len(prefix + "1") > 128:
-        raise ValueError("image version exceeds Docker's 128-character tag limit; shorten IMAGE_NAME or branch")
-    key = hashlib.sha256(json.dumps([name, branch, commit, image_day], ensure_ascii=False).encode()).hexdigest()
+        raise ValueError("image version exceeds Docker's 128-character tag limit; shorten VERSION or branch")
+    key = f"daily:{image_day}"
     output.mkdir(parents=True, exist_ok=True)
     state_file = output / ".docker-build-counts.json"
     with (output / ".docker-build.lock").open("a+") as lock:
@@ -91,6 +90,8 @@ def reserve_build(output, name, branch, commit, clock, explicit_count):
             if not re.fullmatch(r"[1-9][0-9]*", explicit_count):
                 raise ValueError("BUILD_COUNT must be a positive integer without leading zeroes")
             count = int(explicit_count)
+            if count <= counters.get(key, 0):
+                raise ValueError("BUILD_COUNT must exceed the last reserved build for this Shanghai date")
         else:
             count = counters.get(key, 0) + 1
         version = prefix + str(count)
@@ -107,8 +108,9 @@ def reserve_build(output, name, branch, commit, clock, explicit_count):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        "Version: <IMAGE_NAME>.<encoded branch>.<actual HEAD12>.<Asia/Shanghai yymmdd>.b<BUILD_COUNT>. "
-        "Branch UTF-8 punctuation is escaped as _xx. Local counters are per name/branch/HEAD/Shanghai day; "
+        "Version: <VERSION>.<encoded branch>.<actual HEAD8>.<Asia/Shanghai yymmdd>.b<BUILD_COUNT>. "
+        "VERSION defaults to the Shanghai calendar date (YYYY.MM.DD). "
+        "Branch UTF-8 punctuation is escaped as _xx. Local counters cover all builds on the Shanghai day; "
         "failed builds retain their number. CI should set a unique BUILD_COUNT. "
         "SOURCE_DATE_EPOCH or BUILD_TIME pins the UTC instant; build_time metadata remains UTC. "
         "Image dates and daily counters follow Asia/Shanghai. Requires Python 3.9+ and IANA timezone data. "
@@ -116,9 +118,10 @@ def main():
     parser.add_argument("--make", default="make", help="GNU Make executable")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    name = os.environ.get("IMAGE_NAME", "well-ambient")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
-        raise ValueError("IMAGE_NAME must start with a letter/digit and contain only letters, digits, _ or -")
+    clock = build_clock()
+    name = os.environ.get("VERSION") or clock.astimezone(IMAGE_TIMEZONE).strftime("%Y.%m.%d")
+    if name == "latest" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+        raise ValueError("VERSION must be an immutable Docker tag segment")
     repositories = {}
     for target, fallback in (("SERVER_IMAGE", "well-ambient-server"), ("WEB_IMAGE", "well-ambient-web")):
         original = os.environ.get(target) or fallback
@@ -141,7 +144,6 @@ def main():
     branch = branch or requested_branch or "detached"
     if not branch or len(branch.encode("utf-8")) > 512:
         raise ValueError("BUILD_BRANCH is empty or too long")
-    clock = build_clock()
     output = root / "deploy" / "generated"
     version, count, build_dir = reserve_build(output, name, branch, commit, clock, os.environ.get("BUILD_COUNT", ""))
     dirty = bool(git(root, "status", "--porcelain", "--untracked-files=normal"))

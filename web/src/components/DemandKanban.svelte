@@ -1366,6 +1366,28 @@
           scheduled: item.scheduled
         };
       });
+      if (selectedDemand && !scheduleSaveLoading && !scheduleEstimateLoading) {
+        const previous = selectedDemand;
+        const updated = demands.find(item => item.task_id === previous.task_id);
+        if (updated) {
+          if (showScheduleModal || scheduleDraftDemandId === previous.task_id) {
+            if (schedAssignee === (previous.assignee || '')) schedAssignee = updated.assignee || '';
+            if (schedDueDate === (previous.due_date?.slice(0, 10) || '')) {
+              updateSchedDueDate(updated.due_date?.slice(0, 10) || '');
+            }
+            if (schedTaskGroupID === getEffectiveTaskGroupId(previous)) schedTaskGroupID = getEffectiveTaskGroupId(updated);
+            const previousHours = toNumber(previous.estimate_hours);
+            const previousDays = estimateDaysFromHours(previousHours, toNumber(previous.estimate_days));
+            if (schedEstimateHours === previousHours && schedEstimateDays === previousDays && schedDifficulty === (previous.difficulty || '')) {
+              resetScheduleEstimateFromDemand(updated);
+            }
+          }
+          selectedDemand = updated;
+        }
+      }
+      if (detailDemand) {
+        detailDemand = demands.find(item => item.task_id === detailDemand?.task_id) || detailDemand;
+      }
       const workItemTypes = new Set(['demand', 'requirement', 'story', 'bug', 'defect', '缺陷', '故障']);
       allSubTasks = (legacyTasks || []).filter((task: any) =>
         task.status !== 'archived' && !workItemTypes.has((task.issue_type || '').toLowerCase().trim())
@@ -2053,12 +2075,9 @@
       { visibilityTarget: document }
     );
 
-    // Poll updates every 15 seconds
     const interval = setInterval(() => {
       fetchDemands();
-      if (activeDemandView === 'schedule') {
-        fetchSchedule();
-      }
+      if (activeDemandView === 'schedule') fetchSchedule();
     }, 15000);
     return () => {
       clearInterval(interval);
@@ -11389,6 +11408,7 @@
   @media (max-width: 1280px) {
     .schedule-dashboard .schedule-main-grid {
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: max-content minmax(480px, 58dvh) max-content;
       align-items: start;
     }
 

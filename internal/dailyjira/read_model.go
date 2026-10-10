@@ -86,6 +86,7 @@ type Item struct {
 type Page struct {
 	GeneratedAt    time.Time
 	Generation     int64
+	TimeBasis      string
 	SearchMode     string
 	Summary        Summary
 	Items          []Item
@@ -159,6 +160,9 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 		} else if err := tx.Raw("SELECT generation, search_mode FROM daily_jira_audit_state WHERE id = 1").Scan(&state).Error; err != nil {
 			return fmt.Errorf("read Daily Jira generation: %w", err)
 		}
+		if tx.Dialector.Name() != "postgres" {
+			state.TimeBasis = now.Format("2006-01-02") + "|" + now.Location().String()
+		}
 		if state.Generation <= 0 {
 			return fmt.Errorf("Daily Jira generation is not initialized")
 		}
@@ -203,6 +207,7 @@ func (r *Reader) ReadPage(ctx context.Context, query Query) (Page, error) {
 		result = Page{
 			GeneratedAt: now,
 			Generation:  state.Generation,
+			TimeBasis:   state.TimeBasis,
 			SearchMode:  state.SearchMode,
 			Summary:     summary,
 			Items:       items,

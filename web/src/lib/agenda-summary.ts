@@ -27,6 +27,14 @@ let state: AgendaSummaryState = {
   updatedAt: 0
 };
 let inFlight: Promise<AgendaSummaryPayload> | null = null;
+let factRevision = 0;
+let invalidated = false;
+
+// SSE can arrive while a pre-change snapshot is still being read.
+export function invalidateAgendaSummary() {
+  factRevision += 1;
+  invalidated = true;
+}
 
 function publish(next: AgendaSummaryState) {
   state = next;
@@ -45,7 +53,7 @@ export async function refreshAgendaSummary(
   if (inFlight) return inFlight;
 
   const maxAgeMs = Math.max(0, options.maxAgeMs ?? 5000);
-  if (!options.force && state.data && Date.now() - state.updatedAt < maxAgeMs) {
+  if (!options.force && !invalidated && state.data && Date.now() - state.updatedAt < maxAgeMs) {
     return state.data;
   }
 
@@ -53,11 +61,16 @@ export async function refreshAgendaSummary(
   publish({ ...state, loading: true, error: '' });
   const request = (async () => {
     try {
-      const response = await fetcher('/api/agenda/summary', { cache: 'no-store' });
-      if (!response.ok) throw new Error('加载决策看板数据失败');
-      const payload = await response.json() as AgendaSummaryPayload;
-      publish({ data: payload, loading: false, error: '', updatedAt: Date.now() });
-      return payload;
+      while (true) {
+        const requestedRevision = factRevision;
+        const response = await fetcher('/api/agenda/summary', { cache: 'no-store' });
+        if (!response.ok) throw new Error('加载决策看板数据失败');
+        const payload = await response.json() as AgendaSummaryPayload;
+        if (requestedRevision !== factRevision) continue;
+        invalidated = false;
+        publish({ data: payload, loading: false, error: '', updatedAt: Date.now() });
+        return payload;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : '网络连接异常';
       publish({ ...state, loading: false, error: message });
@@ -72,5 +85,7 @@ export async function refreshAgendaSummary(
 
 export function resetAgendaSummaryResourceForTests() {
   inFlight = null;
+  factRevision = 0;
+  invalidated = false;
   publish({ data: null, loading: false, error: '', updatedAt: 0 });
 }

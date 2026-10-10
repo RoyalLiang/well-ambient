@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import type { AdminInspectorRecord, AdminTableColumn, AdminTableRow, AdminTone } from '../lib/admin-console/contract';
   import { ADMIN_TONE_CLASS, formatAdminDate } from '../lib/admin-console/contract';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
@@ -58,6 +59,7 @@
   $: projectConfigMap = new Map<string, any>(projectConfigs.map(c => [c.project_key.toUpperCase(), c]));
   let jiraProjectMap: {[key: string]: string} = {};
   let loading = false;
+  let refreshingFacts = false;
   let errorMsg = '';
   let searchQuery = '';
   let healthFilter: HealthFilter = 'all';
@@ -112,8 +114,10 @@
     }
   }
 
-  async function fetchScoresAndConfigs() {
-    loading = true;
+  async function fetchScoresAndConfigs(background = false) {
+    if (refreshingFacts) return;
+    refreshingFacts = true;
+    if (!background) loading = true;
     errorMsg = '';
     const token = localStorage.getItem('jwt_token');
     
@@ -125,6 +129,10 @@
       if (!resScores.ok) throw new Error('获取项目健康度打分失败');
       const scorePayload = await resScores.json();
       scores = Array.isArray(scorePayload) ? scorePayload : [];
+      if (selectedProjectScore) {
+        selectedProjectScore = scores.find(score => score.project_key === selectedProjectScore?.project_key) || null;
+        if (!selectedProjectScore) showDetailsModal = false;
+      }
 
       // 2. Fetch configs for robust names matching
       const resConfigs = await fetch('/api/projects/config', {
@@ -166,11 +174,15 @@
       errorMsg = err.message || '加载项目健康度遥测失败';
     } finally {
       loading = false;
+      refreshingFacts = false;
     }
   }
 
-  onMount(async () => {
-    await fetchScoresAndConfigs();
+  onMount(() => {
+    void fetchScoresAndConfigs();
+    return subscribeTelemetryUpdates(window, () => {
+      if (!loading) return fetchScoresAndConfigs(true);
+    }, { visibilityTarget: document, events: ['project-config-updated'] });
   });
 
   function cleanProjectName(name: string): string {
@@ -476,7 +488,7 @@
                   <input type="text" placeholder="搜索项目、编号" bind:value={searchQuery} class="telemetry-search-input" />
                 </div>
                 <span class="project-health-count font-mono">{projectHealthRows.length} / {scores.length}</span>
-                <button class="wa-admin-action secondary font-mono" on:click={fetchScoresAndConfigs} disabled={loading}>{loading ? '同步中' : '刷新'}</button>
+                <button class="wa-admin-action secondary font-mono" on:click={() => fetchScoresAndConfigs()} disabled={loading}>{loading ? '同步中' : '刷新'}</button>
               </div>
             </div>
 

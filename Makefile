@@ -4,7 +4,6 @@ SHELL := /bin/bash
 VERSION ?=
 COMMIT ?=
 BUILD_TIME ?=
-IMAGE_NAME ?= well-ambient
 BUILD_COUNT ?=
 BUILD_BRANCH ?=
 PYTHON ?= python3
@@ -60,10 +59,10 @@ images: release-metadata
 			--build-arg BUILD_TIME="$$WELL_AMBIENT_BUILD_TIME" \
 			-t "$(WEB_IMAGE):$$WELL_AMBIENT_VERSION" .
 
-# Immutable paired images: <name>.<branch>.<HEAD12>.<Shanghai yymmdd>.b<attempt>.
+# Immutable paired images: <version>.<branch>.<HEAD8>.<Shanghai yymmdd>.b<daily attempt>.
 # Counters are local; CI may supply a unique BUILD_COUNT. Failed attempts keep it.
 docker-images docker-image:
-	IMAGE_NAME="$(IMAGE_NAME)" BUILD_COUNT="$(BUILD_COUNT)" BUILD_BRANCH="$(BUILD_BRANCH)" \
+	VERSION="$(VERSION)" BUILD_COUNT="$(BUILD_COUNT)" BUILD_BRANCH="$(BUILD_BRANCH)" \
 		BUILD_TIME="$(BUILD_TIME)" COMMIT="$(COMMIT)" \
 		SERVER_IMAGE="$(SERVER_IMAGE)" WEB_IMAGE="$(WEB_IMAGE)" \
 		$(PYTHON) ./scripts/docker-images.py --make "$(IMAGE_MAKE)"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CryptoJS from 'crypto-js';
+  import { invalidateAgendaSummary } from './lib/agenda-summary';
   import DecisionCenter from './components/DecisionCenter.svelte';
   import DecisionEventCenter from './components/DecisionEventCenter.svelte';
   import DeliveryPlan from './components/DeliveryPlan.svelte';
@@ -857,6 +858,7 @@
       try {
         const detail = JSON.parse((event as MessageEvent).data);
         if (typeof detail?.task_id === 'string' && detail.task_id.trim()) {
+          invalidateAgendaSummary();
           window.dispatchEvent(new CustomEvent('well-ambient:telemetry-updated', {
             detail: { task_id: detail.task_id.trim() }
           }));

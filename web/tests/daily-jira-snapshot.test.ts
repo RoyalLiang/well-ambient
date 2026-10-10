@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { dailyJiraSnapshotFingerprint } from '../src/lib/daily-jira-snapshot.ts';
+import { canRetainDailyJiraWindow, dailyJiraSnapshotFingerprint } from '../src/lib/daily-jira-snapshot.ts';
+
+test('Daily Jira drops a previous-day window even when no task changed its generation', () => {
+  const previous = { generation: 10, time_basis: '2026-10-09|Asia/Shanghai' };
+  assert.equal(canRetainDailyJiraWindow(previous, { ...previous }), true);
+  assert.equal(canRetainDailyJiraWindow(previous, { ...previous, time_basis: '2026-10-10|Asia/Shanghai' }), false);
+  assert.equal(canRetainDailyJiraWindow(previous, { ...previous, generation: 11 }), false);
+  assert.equal(canRetainDailyJiraWindow(undefined, previous), false);
+  assert.equal(canRetainDailyJiraWindow({ generation: 10 }, { generation: 10 }), false);
+});
 
 function snapshot(generatedAt: string, title = 'Stable item') {
   return {

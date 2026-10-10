@@ -197,7 +197,6 @@ func (s *Server) syncJiraTasks() {
 		changed, reconcileErr := s.reconcileJiraIssue(jc, issue)
 		if changed {
 			changedCount++
-			BroadcastTelemetryUpdated(issue.Key)
 		}
 		if reconcileErr != nil {
 			log.Printf("Jira sync: failed to reconcile %s: %v", issue.Key, reconcileErr)
@@ -446,7 +445,14 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 		reconcileErrors = append(reconcileErrors, fmt.Errorf("append Jira performance events for %s: %w", issue.Key, eventErr))
 	}
 	s.reconcileJiraIssueVersions(issue)
+	if changed {
+		// Publish committed issue/version facts without waiting for comments.
+		BroadcastTelemetryUpdated(issue.Key)
+	}
 	commentsChanged, commentsErr := s.syncJiraCommentsForIssue(jc, issue.Key, sourceUpdatedAt)
+	if commentsChanged {
+		BroadcastTelemetryUpdated(issue.Key)
+	}
 	changed = changed || commentsChanged
 	if commentsErr != nil {
 		reconcileErrors = append(reconcileErrors, commentsErr)
@@ -552,6 +558,7 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 				return changed, fmt.Errorf("create historical Jira issue %s: %w", issue.Key, err)
 			}
 			changed = true
+			BroadcastTelemetryUpdated(issue.Key)
 			continue
 		}
 		if err != nil {
@@ -601,6 +608,7 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 			return changed, fmt.Errorf("save historical Jira issue %s: %w", issue.Key, err)
 		}
 		changed = true
+		BroadcastTelemetryUpdated(issue.Key)
 	}
 	return changed, nil
 }

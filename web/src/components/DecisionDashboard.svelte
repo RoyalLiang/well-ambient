@@ -528,9 +528,19 @@
     if (visible.length > 0 && !selectedItem) {
       selectItem(visible[0]);
     } else if (selectedItem) {
+      const assigneeEdited = newAssignee !== (selectedItem.assignee || '');
+      const dueDateEdited = newDueDate !== interventionDueDate(selectedItem);
       const updated = visible.find((item) => item.task_id === selectedItem?.task_id);
       selectedItem = updated || visible[0] || null;
-      if (selectedItem) syncInterventionDraft(selectedItem);
+      if (selectedItem) {
+        if (!updated || !detailDrawerOpen) {
+          syncInterventionDraft(selectedItem);
+        } else {
+          if (!assigneeEdited) newAssignee = selectedItem.assignee || '';
+          if (!dueDateEdited) newDueDate = interventionDueDate(selectedItem);
+        }
+      }
+      if (!updated && detailDrawerOpen) void closeDetailDrawer();
     }
   }
 
@@ -629,15 +639,20 @@
     }
   }
 
+  function interventionDueDate(item: AgendaItem): string {
+    const dueDate = item.due_date ? formatAdminDate(item.due_date) : '';
+    return dueDate === '-' ? '' : dueDate;
+  }
+
   function syncInterventionDraft(item: AgendaItem) {
     newAssignee = item.assignee || '';
-    const dueDate = item.due_date ? formatAdminDate(item.due_date) : '';
-    newDueDate = dueDate === '-' ? '' : dueDate;
+    newDueDate = interventionDueDate(item);
     decisionNote = '';
   }
 
   async function submitDecision(action: 'reassign' | 'reschedule') {
     if (!selectedItem) return;
+    const decisionItem = selectedItem;
     decisionLoading = true;
 
     let value = '';
@@ -662,15 +677,17 @@
       value = newDueDate;
     }
 
+    const submittedNote = decisionNote.trim();
+    const submittedOperator = operator || '系统管理员';
     try {
       const res = await fetch('/api/strongest-brain/intervention', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          task_id: selectedItem.task_id,
+          task_id: decisionItem.task_id,
           action,
           value,
-          meeting_note: decisionNote.trim()
+          meeting_note: submittedNote
         })
       });
 
@@ -680,11 +697,11 @@
       }
 
       const result = await res.json();
-      if (action === 'reschedule' && result?.due_date !== newDueDate) {
-        throw new Error(`截止日期更新校验失败：期望 ${newDueDate}，实际 ${result?.due_date || '未返回'}`);
+      if (action === 'reschedule' && result?.due_date !== value) {
+        throw new Error(`截止日期更新校验失败：期望 ${value}，实际 ${result?.due_date || '未返回'}`);
       }
       const successMessage = action === 'reschedule'
-        ? `截止日期已调整为 ${newDueDate}，排期数据已同步。`
+        ? `截止日期已调整为 ${value}，排期数据已同步。`
         : '人工干预已记录至事件账本并更新状态。';
       showToast(successMessage, {
         title: result?.meeting_note_synced
@@ -696,10 +713,10 @@
       const createdAt = new Date().toISOString();
       localDecisions = [{
         createdAt,
-        taskId: selectedItem.task_id,
+        taskId: decisionItem.task_id,
         actionLabel: actionName,
-        operator: operator || '系统管理员',
-        message: `${operator || '系统管理员'} 调停 ${selectedItem.task_id}：${actionName}${decisionNote ? ` · ${decisionNote}` : ''}`
+        operator: submittedOperator,
+        message: `${submittedOperator} 调停 ${decisionItem.task_id}：${actionName}${submittedNote ? ` · ${submittedNote}` : ''}`
       }, ...localDecisions];
 
       await fetchAgenda();

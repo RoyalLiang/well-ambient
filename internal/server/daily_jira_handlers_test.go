@@ -138,6 +138,9 @@ func TestDailyJiraAuditReadsOnlyTheBoundedProjectionPage(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&audit); err != nil {
 		t.Fatalf("decode bounded Daily Jira response: %v", err)
 	}
+	if audit.Page.TimeBasis == "" {
+		t.Fatal("Daily Jira response must expose the natural-day basis for retained frontend pages")
+	}
 	if audit.Summary.Total != 150 || audit.Summary.SevenDay != 150 {
 		t.Fatalf("Daily Jira summary = %+v, want 150 unresolved rows", audit.Summary)
 	}
@@ -170,6 +173,9 @@ func TestDailyJiraAuditReadsOnlyTheBoundedProjectionPage(t *testing.T) {
 	}
 	if !nextAudit.Page.HasPrevious || nextAudit.Page.PreviousCursor == "" {
 		t.Fatalf("Daily Jira next page did not expose a previous cursor: %+v", nextAudit.Page)
+	}
+	if nextAudit.Page.TimeBasis != audit.Page.TimeBasis {
+		t.Fatal("Daily Jira pages in one snapshot must share their natural-day basis")
 	}
 
 	previousRequest := httptest.NewRequest(

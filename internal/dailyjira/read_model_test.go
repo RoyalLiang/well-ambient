@@ -246,6 +246,26 @@ func TestReadPageRollsOnlyDueNaturalDayTransitions(t *testing.T) {
 	}
 }
 
+func TestReadPagePublishesDayBasisWithoutRequiringTaskChanges(t *testing.T) {
+	conn := openReadModelTestDB(t)
+	reader := dailyjira.NewReader(conn)
+	now := time.Date(2026, 10, 9, 23, 59, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
+	before, err := reader.ReadPage(context.Background(), dailyjira.Query{Bucket: dailyjira.BucketToday, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := reader.ReadPage(context.Background(), dailyjira.Query{Bucket: dailyjira.BucketToday, Now: now.Add(2 * time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Generation != after.Generation {
+		t.Fatal("empty task facts should keep their generation")
+	}
+	if before.TimeBasis != "2026-10-09|Asia/Shanghai" || after.TimeBasis != "2026-10-10|Asia/Shanghai" {
+		t.Fatalf("day basis did not roll forward: %q -> %q", before.TimeBasis, after.TimeBasis)
+	}
+}
+
 func TestReadPageQueryPlansStayOnCompositeIndexes(t *testing.T) {
 	conn := openReadModelTestDB(t)
 

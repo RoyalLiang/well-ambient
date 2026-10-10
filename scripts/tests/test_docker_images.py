@@ -58,7 +58,8 @@ sys.exit(9 if target == os.environ.get("FAKE_DOCKER_FAIL_TARGET") else 0)
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
 
     def tag(self, count=1, date="261003"):
-        return f"well-ambient.Feature_2fa_5fb_2ec.{self.commit[:12]}.{date}.b{count}"
+        version = f"20{date[:2]}.{date[2:4]}.{date[4:]}"
+        return f"{version}.Feature_2fa_5fb_2ec.{self.commit[:8]}.{date}.b{count}"
 
     def test_real_make_builds_server_and_web_with_one_head_and_version(self):
         result = self.run_make()
@@ -120,10 +121,24 @@ sys.exit(9 if target == os.environ.get("FAKE_DOCKER_FAIL_TARGET") else 0)
         subprocess.run(["git", "checkout", "--quiet", "--detach"], cwd=self.root, check=True)
         result = self.run_make("BUILD_BRANCH=release/1.2")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"well-ambient.release_2f1_2e2.{self.commit[:12]}.261003.b1", result.stdout)
+        self.assertIn(f"2026.10.03.release_2f1_2e2.{self.commit[:8]}.261003.b1", result.stdout)
         failed = self.run_make("COMMIT=" + "0" * 40)
         self.assertNotEqual(failed.returncode, 0)
         self.assertEqual(len(self.calls()), 2)
+
+    def test_daily_count_continues_across_commit_branch_and_version_changes(self):
+        first = self.run_make("VERSION=1.2.3")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        subprocess.run(["git", "checkout", "--quiet", "-b", "release"], cwd=self.root, check=True)
+        subprocess.run(["git", "-c", "user.name=Build Test", "-c", "user.email=build-test@example.invalid",
+                        "commit", "--quiet", "--allow-empty", "-m", "next commit"], cwd=self.root, check=True)
+        commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.root, text=True).strip()
+        second = self.run_make("VERSION=2.0.0")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn(f"version: 2.0.0.release.{commit[:8]}.261003.b2", second.stdout)
+        repeated = self.run_make("VERSION=3.0.0", "BUILD_COUNT=1")
+        self.assertNotEqual(repeated.returncode, 0)
+        self.assertEqual(len(self.calls()), 4)
 
     def test_repository_defaults_replace_tags_and_digests_but_keep_registry_port(self):
         result = self.run_make("SERVER_IMAGE=registry.example:5000/team/server:old", "WEB_IMAGE=registry.example:5000/team/web@sha256:" + "a" * 64)
@@ -132,7 +147,7 @@ sys.exit(9 if target == os.environ.get("FAKE_DOCKER_FAIL_TARGET") else 0)
         self.assertEqual(references, [f"registry.example:5000/team/{target}:{self.tag()}" for target in ("server", "web")])
 
     def test_invalid_name_counter_repository_and_oversized_branch_do_not_call_docker(self):
-        for variable in ("IMAGE_NAME=bad.name", "BUILD_COUNT=0", "BUILD_COUNT=01", "SERVER_IMAGE=BadRepo", "WEB_IMAGE=https://example.com/web", "BUILD_BRANCH=wrong", "WEB_IMAGE=well-ambient-server"):
+        for variable in ("VERSION=bad/name", "VERSION=latest", "BUILD_COUNT=0", "BUILD_COUNT=01", "SERVER_IMAGE=BadRepo", "WEB_IMAGE=https://example.com/web", "BUILD_BRANCH=wrong", "WEB_IMAGE=well-ambient-server"):
             with self.subTest(variable=variable):
                 result = self.run_make(variable)
                 self.assertNotEqual(result.returncode, 0)
@@ -154,7 +169,7 @@ sys.exit(9 if target == os.environ.get("FAKE_DOCKER_FAIL_TARGET") else 0)
         result = subprocess.run(["make", "docker-images", f"PYTHON={sys.executable}"], cwd=self.root,
                                 env=epoch_environment, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"well-ambient.Feature_2fa_5fb_2ec.{self.commit[:12]}.700101.b1", result.stdout)
+        self.assertIn(f"1970.01.01.Feature_2fa_5fb_2ec.{self.commit[:8]}.700101.b1", result.stdout)
         self.assertIn("UTC build time: 1970-01-01T00:00:00Z", result.stdout)
         legacy = self.run_make("VERSION=legacy-contract-test", target="images")
         self.assertEqual(legacy.returncode, 0, legacy.stderr)

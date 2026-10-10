@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import DemandKanban from './DemandKanban.svelte';
   import Alert from './shared/Alert.svelte';
   import Button from './shared/Button.svelte';
@@ -543,9 +544,10 @@
     }
   }
 
-  async function loadVersions(preserveSelection = true) {
+  async function loadVersions(preserveSelection = true, background = false) {
     loading = true;
     loadError = '';
+    const retainedCount = background ? items.length : 0;
     try {
       let [releaseState, directory] = await Promise.all([
         releaseResource.refresh(),
@@ -554,13 +556,18 @@
       if (releaseState.error) {
         throw new Error(releaseState.error);
       }
-      if (preserveSelection && selectedID && !releaseState.items.some(item => item.release.id === selectedID)) {
+      if (preserveSelection) {
         while (releaseState.page?.has_more && releaseState.page?.next_cursor) {
+          const selectedPresent = !selectedID || releaseState.items.some(item => item.release.id === selectedID);
+          if (selectedPresent && releaseState.items.length >= retainedCount) break;
           releaseState = await releaseResource.loadMore();
-          if (releaseState.error || releaseState.items.some(item => item.release.id === selectedID)) break;
+          if (releaseState.error) throw new Error(releaseState.error);
         }
       }
       const nextItems = releaseState.items;
+      const previousItem = items.find(item => item.release.id === selectedID);
+      const projectEdited = draftProject !== (previousItem?.release.project_key || '');
+      const previousSelectedID = selectedID;
       items = nextItems;
       hasMoreReleases = Boolean(releaseState.page?.has_more && releaseState.page?.next_cursor);
       projects = directory.projects.map((project) => normalizeProject(project));
@@ -569,8 +576,10 @@
         ? selectedID
         : nextItems[0]?.release.id || 0;
       selectedID = nextSelectedID;
-      syncDraft(nextItems.find((item: ReleasePlanItem) => item.release.id === nextSelectedID) || null);
-      await loadSelectedReleaseJiraIssues();
+      const nextItem = nextItems.find((item: ReleasePlanItem) => item.release.id === nextSelectedID) || null;
+      if (!background || previousSelectedID !== nextSelectedID) syncDraft(nextItem);
+      else if (!projectEdited) draftProject = nextItem?.release.project_key || '';
+      await loadSelectedReleaseJiraIssues(background ? jiraResourceSearch : '', background);
     } catch (error: any) {
       loadError = error?.message || '版本事实加载失败';
     } finally {
@@ -620,7 +629,7 @@
     }
   }
 
-  async function loadSelectedReleaseJiraIssues(searchTerm = '') {
+  async function loadSelectedReleaseJiraIssues(searchTerm = '', retainWindow = false) {
     const release = items.find((item) => item.release.id === selectedID)?.release;
     if (!release?.id || !release.project_key) {
       linkedJiraIssues = [];
@@ -631,15 +640,23 @@
       return;
     }
     const releaseID = release.id;
+    const linkedCount = retainWindow ? linkedJiraIssues.length : 0;
+    const candidateCount = retainWindow ? jiraCandidates.length : 0;
     jiraIssuesLoading = true;
     jiraSearchError = '';
     jiraResourceReleaseID = releaseID;
     jiraResourceSearch = searchTerm.trim();
     try {
-      const [linkedState, candidateState] = await Promise.all([
+      let [linkedState, candidateState] = await Promise.all([
         linkedJiraResource.refresh(),
         candidateJiraResource.refresh()
       ]);
+      while (!linkedState.error && linkedState.items.length < linkedCount && linkedState.page?.has_more && linkedState.page?.next_cursor && selectedID === releaseID) {
+        linkedState = await linkedJiraResource.loadMore();
+      }
+      while (!candidateState.error && candidateState.items.length < candidateCount && candidateState.page?.has_more && candidateState.page?.next_cursor && selectedID === releaseID) {
+        candidateState = await candidateJiraResource.loadMore();
+      }
       if (linkedState.error) throw new Error(linkedState.error);
       if (candidateState.error) throw new Error(candidateState.error);
       if (selectedID !== releaseID) return;
@@ -759,6 +776,13 @@
   $: if (activeDemandView === 'releases' && !loadedOnce && !loading) {
     void loadVersions(false);
   }
+
+  onMount(() => subscribeTelemetryUpdates(window, () => {
+    if (activeDemandView !== 'releases' || !loadedOnce || loading || loadingMore || jiraIssuesLoading
+      || linkedJiraLoadingMore || candidateJiraLoadingMore || jiraSearching || savingProject
+      || creatingRelease || publishingRelease || applyingLifecycleAction || linkingJiraIssues || removingJiraIssueID) return;
+    return loadVersions(true, true);
+  }, { visibilityTarget: document, events: ['project-preferences-updated'] }));
 
   onDestroy(() => {
     if (releaseFilterTimer) clearTimeout(releaseFilterTimer);

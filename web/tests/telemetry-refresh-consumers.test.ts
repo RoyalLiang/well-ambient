@@ -11,12 +11,16 @@ test('all Jira-backed product views subscribe through the shared telemetry refre
     'TaskKanban.svelte',
     'DemandKanban.svelte',
     'DecisionDashboard.svelte',
-    'DailyJiraAudit.svelte'
+    'DailyJiraAudit.svelte',
+    'DecisionEventCenter.svelte',
+    'DeliveryPlan.svelte',
+    'ProjectHealthTelemetry.svelte',
+    'KPIKanban.svelte'
   ]) {
     const source = component(name);
     assert.match(source, /import \{ subscribeTelemetryUpdates \} from '\.\.\/lib\/telemetry-refresh';/);
     assert.match(source, /subscribeTelemetryUpdates\(/);
-    assert.match(source, /unsubscribeTelemetryUpdates\(\)|return unsubscribeTelemetryUpdates|unsubscribeJiraUpdates\(\)/);
+    assert.match(source, /unsubscribeTelemetryUpdates\(\)|return unsubscribeTelemetryUpdates|unsubscribeJiraUpdates\(\)|unsubscribeUpdates\(\)|return subscribeTelemetryUpdates|onMount\(\(\) => subscribeTelemetryUpdates/);
   }
 });
 
@@ -31,4 +35,12 @@ test('Daily Jira recovers missed telemetry events with a visible-page polling fa
   assert.match(source, /setInterval\([\s\S]*?30000\)/);
   assert.match(source, /document\.visibilityState\s*===\s*'visible'/);
   assert.match(source, /clearInterval\(/);
+});
+
+test('SSE invalidates pre-change agenda reads before notifying Jira consumers', () => {
+  const app = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+  assert.match(app, /invalidateAgendaSummary\(\);\s*window\.dispatchEvent\(new CustomEvent\('well-ambient:telemetry-updated'/);
+  for (const name of ['DeliveryPlan.svelte', 'ProjectHealthTelemetry.svelte', 'KPIKanban.svelte']) {
+    assert.doesNotMatch(component(name), /pollIntervalMs|setInterval\(/);
+  }
 });

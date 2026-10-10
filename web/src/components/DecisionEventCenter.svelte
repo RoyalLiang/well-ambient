@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { refreshAgendaSummary, subscribeAgendaSummary } from '../lib/agenda-summary';
+  import { subscribeTelemetryUpdates } from '../lib/telemetry-refresh';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
 
   export let openRequest = 0;
@@ -255,8 +256,8 @@
     refreshing = true;
     try {
       const [agendaResult, manualResult] = await Promise.allSettled([
-        refreshAgendaSummary(),
-        fetch('/api/strongest-brain/override-audit?limit=200')
+        refreshAgendaSummary({ force: true }),
+        fetch('/api/strongest-brain/override-audit?limit=200', { cache: 'no-store' })
       ]);
 
       void agendaResult;
@@ -350,17 +351,18 @@
       await loadConfiguration();
       if (!disposed) await refreshEvents();
     };
-    const handleUpdate = () => refreshEvents();
-
     bootstrap();
     const interval = window.setInterval(refreshEvents, 15000);
-    window.addEventListener('decision-events-updated', handleUpdate);
+    const unsubscribeUpdates = subscribeTelemetryUpdates(window, refreshEvents, {
+      visibilityTarget: document,
+      events: ['decision-events-updated']
+    });
 
     return () => {
       disposed = true;
       unsubscribeAgenda();
       window.clearInterval(interval);
-      window.removeEventListener('decision-events-updated', handleUpdate);
+      unsubscribeUpdates();
       dispatch('summary', null);
     };
   });
