@@ -10,6 +10,7 @@
   export let size: 'default' | 'wide' = 'default';
   export let closeLabel = '关闭弹窗';
   export let shadowless = false;
+  export let solid = false;
   export let hideBodyScrollbar = false;
   export let footerVisible = true;
   export let stableHeight = false;
@@ -144,6 +145,7 @@
   >
     <div
       class="modal-container"
+      class:is-solid={solid}
       class:shadowless
       class:is-drawer={variant === 'drawer'}
       class:is-wide={size === 'wide' && variant === 'dialog'}
@@ -225,6 +227,11 @@
     box-sizing: border-box;
     overflow: hidden;
     animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .modal-container.is-solid {
+    background: #fff;
+    border-color: var(--wa-border-divider, #d9e2e8);
   }
 
   .modal-container.is-drawer {

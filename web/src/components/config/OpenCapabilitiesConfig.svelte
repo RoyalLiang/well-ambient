@@ -3,12 +3,14 @@
   import { showToast } from '../../lib/toast';
   import { copyToClipboard } from '../../lib/clipboard';
   import { buildCodexMcpConfig, buildOpenCapabilityInstall, OPEN_API_KEY_PLACEHOLDER } from '../../lib/openCapabilityInstall';
+  import { prefixError } from '../../lib/openSkillRegistry';
   import Button from '../shared/Button.svelte';
   import Switch from '../shared/Switch.svelte';
   import Modal from '../shared/Modal.svelte';
   import Select from '../shared/Select.svelte';
 
   export let canWrite = false;
+  export let onOpenRegistry: () => void = () => {};
 
   const ttlOptions = [
     { value: '0', label: '永久有效 (Permanent)' },
@@ -19,6 +21,7 @@
   ];
 
   interface OpenCapabilitiesConfigState {
+    name_prefix: string;
     enabled: boolean;
     read_enabled: boolean;
     prepare_enabled: boolean;
@@ -97,6 +100,7 @@
 
   // Local draft of switches
   let draftConfig: OpenCapabilitiesConfigState = {
+    name_prefix: 'well-ambient',
     enabled: false,
     read_enabled: false,
     prepare_enabled: false,
@@ -120,9 +124,12 @@
     draftConfig.enabled !== overview.config.enabled ||
     draftConfig.read_enabled !== overview.config.read_enabled ||
     draftConfig.prepare_enabled !== overview.config.prepare_enabled ||
-    draftConfig.execute_enabled !== overview.config.execute_enabled
+    draftConfig.execute_enabled !== overview.config.execute_enabled ||
+    draftConfig.name_prefix.trim() !== overview.config.name_prefix
   ) : false;
 
+  $: namePrefixError = prefixError(draftConfig.name_prefix);
+  $: prefixPreview = draftConfig.name_prefix.trim() || 'well-ambient';
   $: activeRuntimeStages = [
     { name: 'Read', label: '只读', enabled: overview?.active_features.Read },
     { name: 'Prepare', label: '预备', enabled: overview?.active_features.Prepare },
@@ -178,6 +185,7 @@
   }
 
   async function saveConfig() {
+    if (namePrefixError) return;
     if (!overview || !canWrite) return;
     saving = true;
     error = '';
@@ -378,6 +386,7 @@
                 variant="primary"
                 size="small"
                 loading={saving}
+                disabled={!!namePrefixError}
                 on:click={saveConfig}
               >
                 保存并应用动态配置*
@@ -395,7 +404,15 @@
         </div>
       {/if}
 
-      <div class="switches-container">
+      <div class="name-prefix-setting">
+    <div class="name-prefix-field">
+      <strong>统一主技能 well-ambient</strong>
+      <p id="name-prefix-help">主技能、连接名与工具命名空间统一为 well-ambient。四个业务子技能在“Skill 中心”按需加载、统一安装并查看调用观测。</p>
+    </div>
+    <div id="name-prefix-preview" class="name-prefix-preview"><span>对外输出</span><code>well-ambient</code><code>well-ambient-jira_search_issues</code></div>
+  </div>
+
+  <div class="switches-container">
         <!-- Global Master Switch -->
         <div class="master-switch-row" class:is-active={draftConfig.enabled}>
           <div class="switch-content">
@@ -563,58 +580,16 @@
         </div>
       </div>
 
-      <!-- Channel 3: Official Skill Registry -->
-      <div class="sub-section">
-        <div class="sub-section-header">
-          <div class="sub-section-title-wrap">
-            <span class="combo-tag">通道三</span>
-            <h5 class="sub-section-title">官方微内核 Skill 在线仓库 (Online Skill Registry)</h5>
-          </div>
-          <span class="sub-section-hint">服务端动态打包分发，标准通用 Agent 架构解构：</span>
-        </div>
-
-        <div class="skills-cards-grid">
-          {#each overview.skills as skill}
-            <div class="skill-card">
-              <div class="skill-card-top">
-                <span class="skill-title">{skill.title}</span>
-                <span class="skill-ver">v{skill.version}</span>
-              </div>
-              <div class="skill-key"><code>{skill.name}</code></div>
-              <p class="skill-desc">{skill.description}</p>
-              <div class="skill-tools-preview">
-                <span class="tool-tag-label">暴露工具 ({skill.tools.length}):</span>
-                {#each skill.tools as tool}
-                  <span class="tool-chip">{tool}</span>
-                {/each}
-              </div>
-              <div class="skill-card-actions">
-                <a
-                  href={skill.archive_url}
-                  class="btn btn-sm btn-secondary"
-                  download
-                  title="下载离线 tar.gz 安装包"
-                >
-                  下载 .tar.gz
-                </a>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  on:click={() => copyText(`${installCommand} -s -- --skill ${skill.name}`, '安装命令')}
-                >
-                  复制安装指令
-                </Button>
-              </div>
-            </div>
-          {/each}
-        </div>
+      <div class="registry-entry">
+        <div><h5>统一 Skill 中心</h5><p>一个 well-ambient 主技能，包含四个业务子技能；集中查看文档、发布状态与调用观测。</p></div>
+        <Button variant="secondary" on:click={onOpenRegistry}>打开 Skill 中心</Button>
       </div>
 
       <!-- Channel 4: Manual Config JSON Tabs -->
       <div class="sub-section">
         <div class="sub-section-header">
           <div class="sub-section-title-wrap">
-            <span class="combo-tag">通道四</span>
+            <span class="combo-tag">通道三</span>
             <h5 class="sub-section-title">客户端手动配置</h5>
           </div>
           <div class="config-tabs-nav" role="group" aria-label="客户端配置文件类型">
@@ -1019,6 +994,65 @@
 </div>
 
 <style>
+  .name-prefix-setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--wa-space-5); padding-block: var(--wa-space-4); border-bottom: 1px solid var(--wa-border-divider); margin-bottom: var(--wa-space-4); }
+  .name-prefix-field, .name-prefix-preview { display: grid; gap: var(--wa-space-2); align-content: start; min-width: 0; }
+  .name-prefix-field label { font-size: 13px; font-weight: 600; }
+  .name-prefix-field input { max-width: 320px; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--wa-border-divider); border-radius: 8px; background: var(--wa-surface-inset); color: var(--wa-text-main); font: inherit; }
+  .name-prefix-field input:focus-visible { outline: 2px solid var(--wa-accent-strong); outline-offset: 2px; }
+  .name-prefix-field p, .name-prefix-preview span, .registry-entry p { margin: 0; font-size: 12px; line-height: 1.65; color: var(--wa-text-muted); }
+  .name-prefix-field .prefix-error { color: var(--wa-danger, #9c3434); }
+  .name-prefix-preview code { font-size: 12px; color: var(--wa-accent-strong); overflow-wrap: anywhere; }
+  .registry-entry { display: flex; gap: var(--wa-space-4); align-items: center; justify-content: space-between; padding-block: var(--wa-space-4); border-top: 1px solid var(--wa-border-divider); }
+  .registry-entry h5 { margin: 0 0 var(--wa-space-2); font-size: 14px; }
+  @media (max-width: 760px) { .name-prefix-setting { grid-template-columns: minmax(0, 1fr); } .name-prefix-field input { min-height: 44px; max-width: none; } .registry-entry { flex-direction: column; align-items: stretch; } }
+
+  .onboarding-steps {
+    margin: 0 0 var(--wa-space-6);
+    padding-left: var(--wa-space-6);
+    color: var(--wa-text-main);
+  }
+  .onboarding-steps li {
+    padding: var(--wa-space-3) 0;
+    border-bottom: 1px solid var(--wa-border-soft);
+  }
+  .onboarding-steps p, .issued-codex-guide p {
+    margin: var(--wa-space-2) 0;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  .issued-codex-guide {
+    margin-top: var(--wa-space-4);
+    padding-top: var(--wa-space-4);
+    border-top: 1px solid var(--wa-border-soft);
+  }
+  .issued-codex-guide label {
+    display: block;
+    margin: var(--wa-space-3) 0 var(--wa-space-2);
+  }
+  .manual-copy-body {
+    display: grid;
+    gap: var(--wa-space-3);
+    color: var(--wa-text-main);
+  }
+  .manual-copy-body p { margin: 0; line-height: 1.6; }
+  .manual-copy-body label { font-weight: 600; }
+  .manual-copy-text {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    resize: vertical;
+    padding: var(--wa-space-3);
+    border: 1px solid var(--wa-border-soft);
+    border-radius: var(--wa-radius-sm);
+    background: var(--wa-bg-rail-soft);
+    color: var(--wa-rail-text-strong);
+    font: 12px/1.6 var(--wa-font-mono);
+    overflow-wrap: anywhere;
+  }
+  .manual-copy-text:focus-visible { outline: 2px solid var(--wa-accent); outline-offset: 2px; }
+
+  /* Shared Phase 41 material; only top-level surfaces blur. */
+
   .onboarding-steps {
     margin: 0 0 var(--wa-space-6);
     padding-left: var(--wa-space-6);
@@ -1145,7 +1179,6 @@
   .switch-badge,
   .exclusive-badge,
   .combo-tag,
-  .skill-ver,
   .source-tag {
     display: inline-flex;
     align-items: center;
@@ -1163,8 +1196,7 @@
   .synced-tag,
   .switch-badge,
   .exclusive-badge,
-  .combo-tag,
-  .skill-ver {
+  .combo-tag{
     white-space: nowrap;
   }
 
@@ -1253,7 +1285,6 @@
   }
 
   .sub-hint,
-  .sub-section-hint,
   .field-hint,
   .token-tip {
     display: block;
@@ -1299,8 +1330,7 @@
 
   .switch-name,
   .phase-title,
-  .combo-title,
-  .skill-title {
+  .combo-title{
     color: var(--wa-text-strong);
     font-size: 14px;
     font-weight: 650;
@@ -1320,8 +1350,7 @@
     border: 0;
   }
 
-  .phases-grid,
-  .skills-cards-grid {
+  .phases-grid{
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--wa-space-4);
@@ -1336,8 +1365,7 @@
   }
 
   .phase-card,
-  .combo-card,
-  .skill-card {
+  .combo-card{
     display: flex;
     flex-direction: column;
     gap: var(--wa-space-3);
@@ -1356,8 +1384,7 @@
     opacity: 0.6;
   }
 
-  .phase-card-head,
-  .skill-card-top {
+  .phase-card-head{
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1366,8 +1393,7 @@
   }
 
   .phase-desc,
-  .combo-desc,
-  .skill-desc {
+  .combo-desc{
     flex: 1;
     margin: 0;
     color: var(--wa-text-muted);
@@ -1376,9 +1402,7 @@
     overflow-wrap: anywhere;
   }
 
-  .combo-actions,
-  .skill-card-actions,
-  .skill-tools-preview {
+  .combo-actions{
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -1386,32 +1410,9 @@
     min-width: 0;
   }
 
-  .skill-card-actions {
-    margin-top: auto;
-  }
 
-  .skill-key {
-    color: var(--wa-accent-strong);
-    font-family: var(--wa-font-mono);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-  }
 
-  .tool-tag-label {
-    color: var(--wa-text-muted);
-    font-size: 12px;
-  }
 
-  .tool-chip {
-    max-width: 100%;
-    padding: var(--wa-space-1) var(--wa-space-2);
-    border-radius: var(--wa-radius-xs);
-    background: var(--wa-accent-soft);
-    color: var(--wa-accent-strong);
-    font-family: var(--wa-font-mono);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-  }
 
   .code-snippet-bar,
   .config-code-preview {
@@ -1711,31 +1712,7 @@
     gap: var(--wa-space-3);
   }
 
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: var(--wa-control-h);
-    padding: var(--wa-space-2) var(--wa-space-3);
-    border: 1px solid var(--wa-border-soft);
-    border-radius: var(--wa-radius-sm);
-    background: var(--wa-surface-lift);
-    color: var(--wa-text-main);
-    font-size: 13px;
-    font-weight: 650;
-    line-height: 1;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: background-color var(--wa-duration-fast) var(--wa-ease),
-      border-color var(--wa-duration-fast) var(--wa-ease);
-  }
 
-  .btn:hover {
-    background: var(--wa-row-hover);
-    border-color: var(--wa-border-strong);
-  }
-
-  .btn:focus-visible,
   .tab-btn:focus-visible,
   .gov-table-container:focus-visible,
   .gov-input:focus-visible,
@@ -1745,8 +1722,7 @@
   }
 
   @media (max-width: 1024px) {
-    .gov-metrics-strip,
-    .skills-cards-grid {
+    .gov-metrics-strip{
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
@@ -1771,24 +1747,19 @@
       padding: var(--wa-space-4);
     }
 
-    .combo-grid,
-    .skills-cards-grid {
+    .combo-grid{
       grid-template-columns: minmax(0, 1fr);
     }
 
     .open-capabilities-view :global(.btn),
     .modal-footer-actions :global(.btn),
     .open-capabilities-view :global(.select-trigger),
-    .btn,
     .tab-btn,
     .gov-input,
     .mono-key-input {
       min-height: var(--wa-touch-h);
     }
 
-    .skill-card-actions {
-      gap: var(--wa-space-3);
-    }
 
     .code-snippet-bar {
       flex-direction: column;
@@ -1837,8 +1808,6 @@
     .spinner {
       animation: none;
     }
-
-    .btn,
     .tab-btn {
       transition: none;
     }

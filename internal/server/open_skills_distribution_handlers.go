@@ -1,31 +1,31 @@
 package server
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"well-ambient/internal/openaccess"
+	"well-ambient/internal/opennames"
 )
 
 type openSkillSummary struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Tools       []string `json:"tools"`
-	ArchiveURL  string   `json:"archive_url"`
-	ManifestURL string   `json:"manifest_url"`
-	DocURL      string   `json:"doc_url"`
+	Enabled       bool               `json:"enabled"`
+	CanonicalName string             `json:"canonical_name"`
+	Name          string             `json:"name"`
+	Version       string             `json:"version"`
+	Title         string             `json:"title"`
+	Description   string             `json:"description"`
+	Tools         []string           `json:"tools"`
+	ArchiveURL    string             `json:"archive_url"`
+	ManifestURL   string             `json:"manifest_url"`
+	DocURL        string             `json:"doc_url"`
+	Parent        string             `json:"parent,omitempty"`
+	Children      []openSkillSummary `json:"children,omitempty"`
 }
 
 var officialSkills = []struct {
@@ -65,40 +65,34 @@ var officialSkills = []struct {
 			"review_get",
 		},
 	},
+	{
+		name:        "runtime-knowledge",
+		title:       "需求背景与系统知识",
+		description: "从定时更新的授权知识快照获取需求背景、能力边界和场景证据，支持预算压缩与来源展开",
+		tools:       []string{"knowledge_describe", "knowledge_get_context", "knowledge_get_evidence"},
+	},
 }
 
-func getOfficialSkillsCatalog(baseURL string) []openSkillSummary {
-	baseURL = strings.TrimRight(baseURL, "/")
-	var list []openSkillSummary
-	for _, s := range officialSkills {
-		list = append(list, openSkillSummary{
-			Name:        s.name,
-			Version:     "1.0.0",
-			Title:       s.title,
-			Description: s.description,
-			Tools:       s.tools,
-			ArchiveURL:  fmt.Sprintf("%s/open/v1/skills/%s/archive", baseURL, s.name),
-			ManifestURL: fmt.Sprintf("%s/open/v1/skills/%s/manifest", baseURL, s.name),
-			DocURL:      fmt.Sprintf("%s/open/v1/skills/%s/skill.md", baseURL, s.name),
-		})
-	}
-	return list
+func getOfficialSkillsCatalog(baseURL string, prefixes ...string) []openSkillSummary {
+	return bundleCatalog(baseURL)
 }
 
 func (s *Server) handleGetOpenSkillsList(w http.ResponseWriter, r *http.Request) {
 	baseURL := s.resolveRequestBaseURL(r)
-	catalog := getOfficialSkillsCatalog(baseURL)
+	catalog := s.openSkillsCatalog(baseURL)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(catalog)
 }
 
 func (s *Server) handleGetOpenSkillInfo(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
+	if _,ok:=s.resolveOpenSkillName(name,opennames.DefaultPrefix);!ok{http.Error(w,"Skill not found",http.StatusNotFound);return}
 	baseURL := s.resolveRequestBaseURL(r)
-	catalog := getOfficialSkillsCatalog(baseURL)
+	catalog := s.openSkillsCatalog(baseURL)
 	for _, skill := range catalog {
-		if skill.Name == name {
+		if skill.Name == openSkillBundleName {
+			if name!=openSkillBundleName{w.Header().Set("Deprecation","true");w.Header().Set("Content-Location","/open/v1/skills/well-ambient")}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(skill)
 			return
@@ -122,104 +116,15 @@ func resolveSkillsRoot() string {
 }
 
 func (s *Server) handleGetOpenSkillDoc(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.PathValue("name"))
-	if !isValidSkillName(name) {
-		http.Error(w, "Invalid skill name", http.StatusBadRequest)
-		return
-	}
-	filePath := filepath.Join(resolveSkillsRoot(), name, "SKILL.md")
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		http.Error(w, "Skill documentation not found", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=300")
-	_, _ = w.Write(content)
+	s.serveBundleDocument(w, r, false)
 }
 
 func (s *Server) handleGetOpenSkillManifest(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.PathValue("name"))
-	if !isValidSkillName(name) {
-		http.Error(w, "Invalid skill name", http.StatusBadRequest)
-		return
-	}
-	filePath := filepath.Join(resolveSkillsRoot(), name, "capability-manifest.yaml")
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		http.Error(w, "Skill manifest not found", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=300")
-	_, _ = w.Write(content)
+	s.serveBundleDocument(w, r, true)
 }
 
 func (s *Server) handleGetOpenSkillArchive(w http.ResponseWriter, r *http.Request) {
-	// This stable URL must not retain archive bytes from a previous image.
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	name := strings.TrimSpace(r.PathValue("name"))
-	if !isValidSkillName(name) {
-		http.Error(w, "Invalid skill name", http.StatusBadRequest)
-		return
-	}
-	skillDir := filepath.Join(resolveSkillsRoot(), name)
-	if fi, err := os.Stat(skillDir); err != nil || !fi.IsDir() {
-		http.Error(w, "Skill directory not found", http.StatusNotFound)
-		return
-	}
-
-	// Finish packing before committing HTTP 200. Writing an error to a live
-	// gzip stream corrupts the archive and prevents curl -f detecting failure.
-	var archive bytes.Buffer
-	gw := gzip.NewWriter(&archive)
-	tw := tar.NewWriter(gw)
-
-	err := filepath.Walk(skillDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(skillDir, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		header, err := tar.FileInfoHeader(info, info.Name())
-		if err != nil {
-			return err
-		}
-		header.Name = filepath.Join(name, rel)
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		_, err = io.Copy(tw, file)
-		return err
-	})
-	if err == nil {
-		err = tw.Close()
-	}
-	if err == nil {
-		err = gw.Close()
-	}
-	if err != nil {
-		log.Printf("Failed to pack skill %q: %v", name, err)
-		http.Error(w, "Failed to pack skill", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+"-1.0.0.tar.gz"))
-	w.Header().Set("Content-Length", fmt.Sprint(archive.Len()))
-	_, _ = w.Write(archive.Bytes())
+	s.serveBundleArchive(w, r)
 }
 
 func (s *Server) handleGetOpenInstallScript(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +133,16 @@ func (s *Server) handleGetOpenInstallScript(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	baseURL := s.resolveRequestBaseURL(r)
-	script := renderInstallScript(baseURL)
+	catalog := s.openSkillsCatalog(baseURL)
+	names := make([]string, 0, len(catalog))
+	for _, skill := range catalog {
+		if skill.Enabled {
+			names = append(names, skill.Name)
+		}
+	}
+	// Keep the namespace and enabled list from the same configuration snapshot.
+	prefix := strings.TrimSuffix(catalog[0].Name, "-"+catalog[0].CanonicalName)
+	script := renderInstallScriptForSkills(baseURL, prefix, names)
 
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -254,23 +168,58 @@ func (s *Server) resolveRequestBaseURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s", scheme, host)
 }
 
-func isValidSkillName(name string) bool {
-	for _, s := range officialSkills {
-		if s.name == name {
-			return true
-		}
-	}
-	return false
-}
-
 //go:embed open_skills_install.sh
 var openSkillsInstallScript string
 
 //go:embed open_skills_configure_codex.py
 var openSkillsCodexSetup string
 
-func renderInstallScript(baseURL string) string {
+func renderInstallScript(baseURL string, prefixes ...string) string {
+	return renderInstallScriptForSkills(baseURL, opennames.DefaultPrefix, []string{openSkillBundleName})
+}
+
+func renderInstallScriptForSkills(baseURL, prefix string, names []string) string {
 	quotedURL := "'" + strings.ReplaceAll(baseURL, "'", "'\"'\"'") + "'"
-	script := strings.Replace(openSkillsInstallScript, "__WELL_AMBIENT_BASE_URL__", quotedURL, 1)
+	script := strings.NewReplacer("__WELL_AMBIENT_NAME_PREFIX__", prefix, "__WELL_AMBIENT_BASE_URL__", quotedURL, "__WELL_AMBIENT_ENABLED_SKILLS__", strings.Join(names, " ")).Replace(openSkillsInstallScript)
 	return strings.Replace(script, "__WELL_AMBIENT_CODEX_SETUP__", openSkillsCodexSetup, 1)
+}
+
+func (s *Server) openSkillEnabled(name string) bool {
+	enabled := s.publishedSubskills()
+	if name == openSkillBundleName {
+		return len(enabled) > 0
+	}
+	canonical, ok := canonicalSubskill(name)
+	return ok && enabled[canonical]
+}
+
+func (s *Server) openSkillsCatalog(baseURL string) []openSkillSummary {
+	catalog := bundleCatalog(baseURL)
+	enabled := s.publishedSubskills()
+	catalog[0].Enabled = len(enabled) > 0
+	catalog[0].Tools = []string{}
+	for i := range catalog[0].Children {
+		child := &catalog[0].Children[i]
+		child.Enabled = enabled[child.CanonicalName]
+		if child.Enabled {
+			catalog[0].Tools = append(catalog[0].Tools, child.Tools...)
+		}
+	}
+	return catalog
+}
+
+func (s *Server) openNamePrefix() string { return opennames.DefaultPrefix }
+
+func (s *Server) resolveOpenSkillName(value string, prefix string) (string, bool) {
+	if strings.TrimSpace(value) == openSkillBundleName {
+		return openSkillBundleName, true
+	}
+	if _, ok := canonicalSubskill(value); ok {
+		return openSkillBundleName, true
+	}
+	return "", false
+}
+
+func (s *Server) renderOpenSkillContent(content []byte, prefix string) []byte {
+	return renderBundleTools(content)
 }

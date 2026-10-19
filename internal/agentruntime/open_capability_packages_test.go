@@ -20,6 +20,7 @@ func TestOpenCapabilityPackagesAreDiscoverableAndValid(t *testing.T) {
 		{".agents/skills/jira-analysis", "jira-analysis", "well-ambient.jira-analysis"},
 		{".agents/skills/board-decision", "board-decision", "well-ambient.board-decision"},
 		{".agents/skills/code-review-reader", "code-review-reader", "well-ambient.code-review-reader"},
+		{".agents/skills/runtime-knowledge", "runtime-knowledge", "well-ambient.runtime-knowledge"},
 	}
 	for _, skill := range skills {
 		t.Run(skill.name, func(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"well-ambient/internal/db"
 	"well-ambient/internal/openaccess"
 	"well-ambient/internal/openmcp"
+	"well-ambient/internal/opennames"
 )
 
 type openCapabilitiesOverviewResponse struct {
@@ -45,11 +46,13 @@ type openCapabilitiesPolicyInfo struct {
 }
 
 type updateOpenCapabilitiesConfigRequest struct {
-	Enabled         bool `json:"enabled"`
-	ReadEnabled     bool `json:"read_enabled"`
-	PrepareEnabled  bool `json:"prepare_enabled"`
-	ExecuteEnabled  bool `json:"execute_enabled"`
-	ExpectedVersion int  `json:"expected_version"`
+	DisabledSkills  *[]string `json:"disabled_skills"`
+	NamePrefix      *string   `json:"name_prefix"`
+	Enabled         bool      `json:"enabled"`
+	ReadEnabled     bool      `json:"read_enabled"`
+	PrepareEnabled  bool      `json:"prepare_enabled"`
+	ExecuteEnabled  bool      `json:"execute_enabled"`
+	ExpectedVersion int       `json:"expected_version"`
 }
 
 type issueCredentialRequest struct {
@@ -77,6 +80,8 @@ func (s *Server) handleGetAIGovernanceOpenCapabilitiesOverview(w http.ResponseWr
 	if err := db.DB.First(&current, runtimeConfigSingletonID).Error; err == nil {
 		version = current.Version
 	}
+	publicConfig := s.config.OpenCapabilities
+	publicConfig.NamePrefix = opennames.DefaultPrefix
 	s.configMutationMu.Unlock()
 
 	baseURL := strings.TrimRight(strings.TrimSpace(s.config.Server.PublicURL), "/")
@@ -93,17 +98,17 @@ func (s *Server) handleGetAIGovernanceOpenCapabilitiesOverview(w http.ResponseWr
 	}
 
 	response := openCapabilitiesOverviewResponse{
-		Config:         s.config.OpenCapabilities,
+		Config:         publicConfig,
 		Version:        version,
 		ActiveFeatures: s.openFeatures,
 		BaseURL:        baseURL,
 		MCP: openCapabilitiesMCPInfo{
 			EndpointURL:   fmt.Sprintf("%s/mcp", baseURL),
-			ServerName:    openmcp.ServerName,
+			ServerName:    opennames.DefaultPrefix,
 			ServerVersion: openmcp.ServerVersion,
-			Tools:         openmcp.ToolNames,
+			Tools:         openmcp.PublicToolNames(publicConfig.NamePrefix),
 		},
-		Skills: getOfficialSkillsCatalog(baseURL),
+		Skills: s.openSkillsCatalog(baseURL),
 	}
 
 	if s.openAccess != nil {
@@ -177,8 +182,35 @@ func (s *Server) handleUpdateAIGovernanceOpenCapabilitiesConfig(w http.ResponseW
 		return
 	}
 
+	prefix := opennames.DefaultPrefix
+	if req.NamePrefix != nil && strings.TrimSpace(*req.NamePrefix) != "" && *req.NamePrefix != opennames.DefaultPrefix && *req.NamePrefix != "well" {
+		http.Error(w, "对外技能名称固定为 well-ambient，请刷新配置后重试。", http.StatusBadRequest)
+		return
+	}
+	disabledSkills := previous.OpenCapabilities.DisabledSkills
+	if req.DisabledSkills != nil {
+		disabledSkills = make([]string, 0, len(*req.DisabledSkills))
+		seen := map[string]bool{}
+		for _, name := range *req.DisabledSkills {
+			canonical, ok := canonicalSubskill(name)
+			if name == openSkillBundleName {
+				canonical = openSkillBundleName
+				ok = true
+			}
+			if !ok {
+				http.Error(w, "Invalid official skill name", http.StatusBadRequest)
+				return
+			}
+			if !seen[canonical] {
+				disabledSkills = append(disabledSkills, canonical)
+				seen[canonical] = true
+			}
+		}
+	}
 	next := previous
 	next.OpenCapabilities = config.OpenCapabilitiesConfig{
+		DisabledSkills: disabledSkills,
+		NamePrefix:     prefix,
 		Enabled:        req.Enabled,
 		ReadEnabled:    req.ReadEnabled,
 		PrepareEnabled: req.PrepareEnabled,

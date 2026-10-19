@@ -2,15 +2,85 @@
   "schema": "well-ambient-open-tools/v1",
   "version": "1.0.0",
   "tools": [
-    {"name": "jira_describe_schema", "capability": "jira.read"},
-    {"name": "jira_search_issues", "capability": "jira.read"},
-    {"name": "jira_get_issue", "capability": "jira.read"},
-    {"name": "jira_aggregate_issues", "capability": "jira.read"},
-    {"name": "decision_get_context", "capability": "decision.read"},
-    {"name": "decision_prepare", "capability": "decision.prepare"},
-    {"name": "decision_execute", "capability": "decision.execute"},
-    {"name": "decision_get_operation", "capability": "decision.read"},
-    {"name": "review_search", "capability": "review.read"},
-    {"name": "review_get", "capability": "review.read"}
-  ]
+    {
+      "name": "jira_describe_schema",
+      "capability": "jira.read",
+      "public_name": "well-ambient-jira_describe_schema",
+      "subskill": "well-ambient/jira-analysis"
+    },
+    {
+      "name": "jira_search_issues",
+      "capability": "jira.read",
+      "public_name": "well-ambient-jira_search_issues",
+      "subskill": "well-ambient/jira-analysis"
+    },
+    {
+      "name": "jira_get_issue",
+      "capability": "jira.read",
+      "public_name": "well-ambient-jira_get_issue",
+      "subskill": "well-ambient/jira-analysis"
+    },
+    {
+      "name": "jira_aggregate_issues",
+      "capability": "jira.read",
+      "public_name": "well-ambient-jira_aggregate_issues",
+      "subskill": "well-ambient/jira-analysis"
+    },
+    {
+      "name": "decision_get_context",
+      "capability": "decision.read",
+      "public_name": "well-ambient-decision_get_context",
+      "subskill": "well-ambient/board-decision"
+    },
+    {
+      "name": "decision_prepare",
+      "capability": "decision.prepare",
+      "public_name": "well-ambient-decision_prepare",
+      "subskill": "well-ambient/board-decision"
+    },
+    {
+      "name": "decision_execute",
+      "capability": "decision.execute",
+      "public_name": "well-ambient-decision_execute",
+      "subskill": "well-ambient/board-decision"
+    },
+    {
+      "name": "decision_get_operation",
+      "capability": "decision.read",
+      "public_name": "well-ambient-decision_get_operation",
+      "subskill": "well-ambient/board-decision"
+    },
+    {
+      "name": "review_search",
+      "capability": "review.read",
+      "public_name": "well-ambient-review_search",
+      "subskill": "well-ambient/code-review-reader"
+    },
+    {
+      "name": "review_get",
+      "capability": "review.read",
+      "public_name": "well-ambient-review_get",
+      "subskill": "well-ambient/code-review-reader"
+    },
+    {
+      "name": "knowledge_describe",
+      "capability": "knowledge.read",
+      "public_name": "well-ambient-knowledge_describe",
+      "subskill": "well-ambient/runtime-knowledge"
+    },
+    {
+      "name": "knowledge_get_context",
+      "capability": "knowledge.read",
+      "public_name": "well-ambient-knowledge_get_context",
+      "subskill": "well-ambient/runtime-knowledge"
+    },
+    {
+      "name": "knowledge_get_evidence",
+      "capability": "knowledge.read",
+      "public_name": "well-ambient-knowledge_get_evidence",
+      "subskill": "well-ambient/runtime-knowledge"
+    }
+  ],
+  "namespace": "well-ambient",
+  "skill": "well-ambient"
 }

@@ -66,13 +66,13 @@ func TestAIGovernanceOpenCapabilitiesOverviewDefaultDisabled(t *testing.T) {
 	if !strings.HasSuffix(resp.MCP.EndpointURL, "/mcp") {
 		t.Fatalf("unexpected mcp endpoint: %s", resp.MCP.EndpointURL)
 	}
-	if len(resp.MCP.Tools) != 10 {
-		t.Fatalf("expected 10 MCP tools, got %d", len(resp.MCP.Tools))
+	if len(resp.MCP.Tools) != 13 {
+		t.Fatalf("expected 13 MCP tools, got %d", len(resp.MCP.Tools))
 	}
 
 	// Verify skills catalog
-	if len(resp.Skills) != 3 {
-		t.Fatalf("expected 3 official skills, got %d", len(resp.Skills))
+	if len(resp.Skills) != 1 {
+		t.Fatalf("expected 1 parent skill, got %d", len(resp.Skills))
 	}
 }
 
@@ -180,8 +180,8 @@ func TestOpenSkillsPublicDistributionEndpoints(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &skills); err != nil {
 		t.Fatalf("unmarshal skills: %v", err)
 	}
-	if len(skills) != 3 {
-		t.Fatalf("expected 3 skills, got %d", len(skills))
+	if len(skills) != 1 {
+		t.Fatalf("expected 1 parent skill, got %d", len(skills))
 	}
 
 	// 2. GET /open/v1/skills/jira-analysis/manifest
@@ -191,7 +191,7 @@ func TestOpenSkillsPublicDistributionEndpoints(t *testing.T) {
 	if manifestRec.Code != http.StatusOK {
 		t.Fatalf("skill manifest status = %d", manifestRec.Code)
 	}
-	if !strings.Contains(manifestRec.Body.String(), "well-ambient.jira-analysis") {
+	if !strings.Contains(manifestRec.Body.String(), "id: well-ambient") {
 		t.Fatalf("unexpected manifest content: %s", manifestRec.Body.String())
 	}
 

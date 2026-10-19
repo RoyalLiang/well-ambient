@@ -758,6 +758,10 @@
     if (!accessibleSection) return;
     activeAIGovernanceSection = accessibleSection;
     activeTab = 'ai_governance';
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', 'ai_governance');
+    url.searchParams.set('section', accessibleSection);
+    window.history.replaceState(null, '', url);
   }
 
   function handleSettingsSectionChange(section: string) {
@@ -1144,6 +1148,7 @@
           {currentUserRole}
           activeSection={activeAIGovernanceSection}
           onSectionChange={handleAIGovernanceNavigate}
+          showSectionTabs={false}
         />
       {:else if activeTab === 'settings'}
         {#key activeSettingsSection}

@@ -57,6 +57,12 @@ func isLoopbackHost(host string) bool {
 
 func (i *HTTPInvoker) Invoke(ctx context.Context, toolName string, input json.RawMessage) (InvocationResult, error) {
 	switch toolName {
+	case "knowledge_describe":
+		return i.get(ctx, "/open/v1/knowledge")
+	case "knowledge_get_context":
+		return i.post(ctx, "/open/v1/knowledge/context", input)
+	case "knowledge_get_evidence":
+		return i.post(ctx, "/open/v1/knowledge/evidence", input)
 	case "jira_describe_schema":
 		return i.get(ctx, "/open/v1/jira/schema")
 	case "jira_search_issues":

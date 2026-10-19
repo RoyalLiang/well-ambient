@@ -81,7 +81,7 @@ func runOpenInstallerAt(t *testing.T, failedSkill string, roots, args []string) 
 	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, skill := range []string{"jira-analysis", "board-decision", "code-review-reader"} {
+	for _, skill := range []string{"well-ambient"} {
 		file, err := os.Create(filepath.Join(archiveDir, skill+".tar.gz"))
 		if err != nil {
 			t.Fatal(err)
@@ -147,7 +147,7 @@ func TestOpenInstallScriptSelectsClientRoots(t *testing.T) {
 			if !strings.Contains(output, "目标目录: "+want) {
 				t.Fatalf("wrong directory:\n%s", output)
 			}
-			if _, err := os.Stat(filepath.Join(want, "jira-analysis", "SKILL.md")); err != nil {
+			if _, err := os.Stat(filepath.Join(want, "well-ambient", "SKILL.md")); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -171,10 +171,10 @@ func TestOpenInstallScriptSingleSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install failed: %v\n%s", err, output)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/jira-analysis/SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/well-ambient/SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/board-decision")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".claude/skills/well-board-decision")); !os.IsNotExist(err) {
 		t.Fatal("unexpected other skill")
 	}
 	if !strings.Contains(output, "MCP 尚未配置") {
@@ -182,26 +182,22 @@ func TestOpenInstallScriptSingleSkill(t *testing.T) {
 	}
 }
 
-func TestOpenInstallScriptReportsPartialFailureAndExitsNonzero(t *testing.T) {
-	output, err := runIsolatedOpenInstaller(t, "board-decision")
-	if err == nil {
-		t.Fatalf("partial installation reported success: %s", output)
+func TestOpenInstallScriptReportsFailureAndExitsNonzero(t *testing.T) {
+	output, err := runIsolatedOpenInstaller(t, "well-ambient")
+	if err == nil || !strings.Contains(output, "安装失败: well-ambient") {
+		t.Fatalf("wrong failure: %v %s", err, output)
 	}
-	if !strings.Contains(output, "已成功安装: jira-analysis code-review-reader") || !strings.Contains(output, "安装失败: board-decision") {
-		t.Fatalf("partial installation did not describe actual results: %s", output)
-	}
-	if strings.Contains(output, "所有就绪") || strings.Contains(output, "✓ 技能安装完成") {
-		t.Fatalf("partial installation claimed completion: %s", output)
+	if strings.Contains(output, "MCP 接入待办") {
+		t.Fatal("failure claimed completion")
 	}
 }
-
-func TestOpenInstallScriptReportsAllSuccessfulDownloads(t *testing.T) {
+func TestOpenInstallScriptReportsSuccessfulBundle(t *testing.T) {
 	output, err := runIsolatedOpenInstaller(t, "")
-	if err != nil {
-		t.Fatalf("isolated successful installation: %v %s", err, output)
+	if err != nil || !strings.Contains(output, "well-ambient") {
+		t.Fatalf("bundle failed: %v %s", err, output)
 	}
-	if !strings.Contains(output, "已成功安装: jira-analysis board-decision code-review-reader") || !strings.Contains(output, "Skill 文件安装完成") || !strings.Contains(output, "MCP 尚未配置") {
-		t.Fatalf("successful installation summary = %s", output)
+	if !strings.Contains(output, "MCP 接入待办") {
+		t.Fatal("missing MCP setup")
 	}
 }
 

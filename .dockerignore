@@ -84,3 +84,13 @@ deploy/generated
 !.agents/skills/code-review-reader/references/error-handling.md
 !.agents/skills/code-review-reader/references/report-applicability.md
 !.agents/skills/code-review-reader/references/tool-contracts.md
+
+!.agents/skills/runtime-knowledge
+.agents/skills/runtime-knowledge/*
+!.agents/skills/runtime-knowledge/SKILL.md
+!.agents/skills/runtime-knowledge/capability-manifest.yaml
+
+!.agents/skills/well-ambient
+.agents/skills/well-ambient/*
+!.agents/skills/well-ambient/SKILL.md
+!.agents/skills/well-ambient/capability-manifest.yaml

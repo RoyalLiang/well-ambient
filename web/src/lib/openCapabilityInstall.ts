@@ -38,3 +38,13 @@ export function buildOpenCapabilityInstall(baseURL: string, endpointURL: string)
       : ''
   };
 }
+
+export type SkillInstallTarget = 'codex' | 'claude' | 'choose';
+
+export function skillInstallCommand(baseURL: string, name: string, target: SkillInstallTarget): string {
+  if (!/^[a-z][a-z0-9-]{0,95}$/.test(name)) return '';
+  const { installCommand } = buildOpenCapabilityInstall(baseURL, '');
+  if (!installCommand) return '';
+  const root = target === 'codex' ? ' --root "$HOME/.codex"' : target === 'claude' ? ' --root "$HOME/.claude"' : '';
+  return `${installCommand} -s --${root} --skill ${name} --skip-mcp`;
+}

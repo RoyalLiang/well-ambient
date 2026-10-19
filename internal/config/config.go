@@ -452,10 +452,12 @@ func (c *AIConfig) NormalizeReasoningEffort() error {
 }
 
 // OpenCapabilitiesConfig controls open capabilities and MCP access switches.
-// All fields default to false (disabled).
+// Access switches default to false; the public name prefix is fixed to well-ambient.
 type OpenCapabilitiesConfig struct {
-	Enabled        bool `yaml:"enabled" json:"enabled"`
-	ReadEnabled    bool `yaml:"read_enabled" json:"read_enabled"`
-	PrepareEnabled bool `yaml:"prepare_enabled" json:"prepare_enabled"`
-	ExecuteEnabled bool `yaml:"execute_enabled" json:"execute_enabled"`
+	DisabledSkills []string `yaml:"disabled_skills" json:"disabled_skills"`
+	NamePrefix     string   `yaml:"name_prefix" json:"name_prefix"`
+	Enabled        bool     `yaml:"enabled" json:"enabled"`
+	ReadEnabled    bool     `yaml:"read_enabled" json:"read_enabled"`
+	PrepareEnabled bool     `yaml:"prepare_enabled" json:"prepare_enabled"`
+	ExecuteEnabled bool     `yaml:"execute_enabled" json:"execute_enabled"`
 }

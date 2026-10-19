@@ -15,6 +15,7 @@ import (
 	"well-ambient/internal/config"
 	"well-ambient/internal/confluence"
 	"well-ambient/internal/mailreport"
+	"well-ambient/internal/opennames"
 	"well-ambient/internal/telemetry"
 )
 
@@ -86,6 +87,21 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	newCfg.Server.AttachmentDir = s.config.Server.AttachmentDir
 	newCfg.Server.MaintenanceMode = s.config.Server.MaintenanceMode
 	mergeConfiguredSecrets(&newCfg, *s.config)
+	// Older full-config clients do not send the namespace field.
+	// Clearing it explicitly is supported by the dedicated open-capabilities API.
+	if strings.TrimSpace(newCfg.OpenCapabilities.NamePrefix) == "" {
+		newCfg.OpenCapabilities.NamePrefix = s.config.OpenCapabilities.NamePrefix
+	}
+	// Skill distribution is managed through its versioned governance endpoint.
+	// Preserve it when older full-config clients omit the field.
+	if newCfg.OpenCapabilities.DisabledSkills == nil {
+		newCfg.OpenCapabilities.DisabledSkills = append([]string(nil), s.config.OpenCapabilities.DisabledSkills...)
+	}
+	if prefix := strings.TrimSpace(newCfg.OpenCapabilities.NamePrefix); prefix != "" && prefix != "well" && prefix != opennames.DefaultPrefix {
+		writeConfigSaveError(w, http.StatusBadRequest, "开放能力命名固定为 well-ambient")
+		return
+	}
+	newCfg.OpenCapabilities.NamePrefix = opennames.DefaultPrefix
 	if err := newCfg.AI.NormalizeReasoningEffort(); err != nil {
 		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
 		return

@@ -14,6 +14,7 @@ import (
 	"well-ambient/internal/openaccess"
 	"well-ambient/internal/openmcp"
 	"well-ambient/internal/reviewread"
+	"well-ambient/internal/runtimeknowledge"
 )
 
 type openMCPLocalInvoker struct {
@@ -27,7 +28,7 @@ func (s *Server) ensureOpenMCPHandler() {
 	}
 	s.openMCPHandler = mcp.NewStreamableHTTPHandler(func(request *http.Request) *mcp.Server {
 		call, _ := openaccess.CallContextFrom(request.Context())
-		return openmcp.NewServer(openMCPLocalInvoker{server: s, call: call})
+		return openmcp.NewServer(openMCPLocalInvoker{server: s, call: call}, s.openNamePrefix())
 	}, &mcp.StreamableHTTPOptions{
 		Stateless:                    true,
 		JSONResponse:                 true,
@@ -139,6 +140,27 @@ func (i openMCPLocalInvoker) Invoke(
 	}
 
 	switch toolName {
+	case "knowledge_describe":
+		value, err := i.server.runtimeKnowledge().Describe(ctx, call.Policy)
+		return mcpResult(value, nil), publicMCPError(err)
+	case "knowledge_get_context":
+		var request runtimeknowledge.ContextRequest
+		if err := json.Unmarshal(input, &request); err != nil {
+			return result, openaccess.NewError("invalid_query", "invalid knowledge_get_context input")
+		}
+		value, err := i.server.runtimeKnowledge().Context(ctx, call.Policy, request)
+		refs := make([]string, 0, len(value.Evidence))
+		for _, evidence := range value.Evidence {
+			refs = append(refs, evidence.SourceRef)
+		}
+		return mcpResult(value, refs), publicMCPError(err)
+	case "knowledge_get_evidence":
+		var request runtimeknowledge.EvidenceRequest
+		if err := json.Unmarshal(input, &request); err != nil {
+			return result, openaccess.NewError("invalid_query", "invalid knowledge_get_evidence input")
+		}
+		value, err := i.server.runtimeKnowledge().Evidence(ctx, call.Policy, request)
+		return mcpResult(value, []string{request.SourceRef}), publicMCPError(err)
 	case "jira_describe_schema":
 		value, err := i.server.jiraQuery.DescribeSchema(ctx, call.Policy, requestID)
 		return mcpResult(value, nil), publicMCPError(err)

@@ -5,6 +5,7 @@ allowed_repositories:
   - "123"
 
 actions:
+  - knowledge.read
   - jira.read
   - review.read
   - decision.read
@@ -14,6 +15,15 @@ actions:
   - decision.reschedule
 
 field_rules:
+  # Explicitly publish source categories. Global context requires a separate
+  # data_rules.knowledge_global_context: allow opt-in below.
+  knowledge_get_context:
+    - jira
+    - solution
+    - context_fact
+    - context_document
+    - review
+    - capability
   jira_describe_schema:
     - key
     - project
@@ -42,6 +52,7 @@ field_rules:
     - updated_at
     - history_complete
   jira_get_issue:
+    - description
     - key
     - project
     - summary

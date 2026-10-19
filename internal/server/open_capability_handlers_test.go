@@ -516,7 +516,7 @@ func TestOpenReviewDTOAndDecisionOperationLifecycle(t *testing.T) {
 
 }
 
-func TestOpenMCPListsTenToolsAndCallsSharedJiraModule(t *testing.T) {
+func TestOpenMCPListsPublishedToolsAndCallsSharedJiraModule(t *testing.T) {
 	srv, credential, _ := setupOpenCapabilityServer(t)
 	now := time.Date(2026, time.September, 27, 10, 0, 0, 0, time.UTC)
 	if err := db.DB.Create(&db.TaskTelemetry{
@@ -574,12 +574,12 @@ func TestOpenMCPListsTenToolsAndCallsSharedJiraModule(t *testing.T) {
 	if err := json.Unmarshal(listed.Body.Bytes(), &listResponse); err != nil {
 		t.Fatal(err)
 	}
-	if len(listResponse.Result.Tools) != 10 {
+	if len(listResponse.Result.Tools) != 13 {
 		t.Fatalf("tools/list count = %d body=%s", len(listResponse.Result.Tools), listed.Body.String())
 	}
 
 	called := mcpRequest(
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"well-ambient-test","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}},"name":"jira_search_issues","arguments":{"filters":{"projects":["WA"]},"fields":["key","summary"],"limit":10}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"well-ambient-test","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}},"name":"well-ambient-jira_search_issues","arguments":{"filters":{"projects":["WA"]},"fields":["key","summary"],"limit":10}}}`,
 		credential.Secret,
 	)
 	if called.Code != http.StatusOK ||

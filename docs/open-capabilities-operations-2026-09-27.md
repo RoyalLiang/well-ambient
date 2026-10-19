@@ -12,6 +12,22 @@ HTTP、MCP 和内部最强大脑共享 `openaccess`、`jiraquery`、`decisioncom
 - `succeeded` 只表示写后读取 Jira 时确认了期望值。
 - `unknown` 不会自动重试。
 
+## 统一 Skill 与调用观测
+
+对外只安装 `well-ambient`。其中包含 `jira-analysis`、`board-decision`、`code-review-reader`、`runtime-knowledge` 四个子技能，按任务加载 `modules/<子技能>/WORKFLOW.md`，不会注册为四个顶级 Skill。
+
+入口为「AI 治理 → Skill 中心」（`?tab=ai_governance&section=skill_registry`）。页面提供统一安装包、文档、子技能发布开关、近 24 小时调用统计与最近 20 条审计记录。全局超级管理员可查看观测；普通有读取权限的用户可查看目录、文档和安装说明。发布修改仍需 `config:write`。
+
+MCP 连接名固定为 `well-ambient`，13 个工具统一为 `well-ambient-<原工具名>`，例如 `well-ambient-knowledge_get_context`。不再支持自定义前缀；旧配置中的 `well` 可在保存时迁移，其他旧前缀应改为 `well-ambient`。HTTP 路径、权限 action 与数据库审计的 canonical tool ID 保持现有协议；工具目录的 `public_name` 明确给出客户端名称。
+
+客户端升级时重新运行统一安装器，并重新加载 Skill 和 MCP 工具列表。旧技能安装 URL 与 `--skill jira-analysis` 等选择器会转向父包。安装器先校验和暂存，再替换 `well-ambient`，避免撤下子技能残留；旧包与可识别的旧独立目录移到 `<客户端根目录>/skill-backups/`。不识别的同名目录会保留并提示人工核对。备份可用于恢复本地修改，不要把备份复制回 skills 目录后同时启用新旧入口。
+
+发布开关只控制分发，不撤销已发凭证或工具权限。已安装的离线副本需要重新安装才同步撤下内容。调用统计按审计中的工具归类，客户端直接调用工具也会计入；它不能证明某一客户端已经装载或实际触发某份 Skill。待回写记录不代表仍在运行。知识整理显示服务已同步数据的最近检查、快照、下一次到期与失败情况，默认每 6 小时运行。
+
+分发接口：`GET /open/v1/skills` 返回一个父包及四个 children；主文档、manifest 和 archive 位于 `/open/v1/skills/well-ambient/`；子文档位于 `/open/v1/skills/well-ambient/subskills/<子技能>/skill.md`。内部观测位于 `GET /api/ai-governance/open-skills/overview`，不随公共目录公开。
+
+Docker 镜像需包含统一父包、四份子技能来源和 MCP manifest。本次变更只在本地验证；发布应用后才会在线上显示入口与新工具名。知识初始化与 schema 部署仍遵循下方迁移流程。
+
 ## 迁移数据库
 
 先运行现有迁移入口：
@@ -223,3 +239,10 @@ GET /api/strongest-brain/open-capability-intelligence
 5. 不删除 Operation、Action 或 Outbox。
 
 已确认的 Jira 变更只能通过新的补偿方案处理。
+
+
+### Skill 分发启用状态
+
+Skill 仓库分别展示用途、包含工具、启用状态、版本与操作。具备 `config:write` 权限的管理员可以切换官方 Skill 的启用状态；其他账号只能查看。
+
+启用状态与统一名称前缀一起保存在数据库的版本化运行配置中，停用列表采用稳定的官方 Skill ID，修改前缀不会重置状态。未设置过的 Skill 默认启用。停用后，列表与文档仍可查看，但安装包下载返回 403，默认批量安装脚本跳过该 Skill；显式指定停用 Skill 时脚本会提示“技能已停用”。已安装的本地文件不会自动删除，MCP 工具继续使用独立的服务开关与数据库授权策略。

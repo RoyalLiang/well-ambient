@@ -1,0 +1,39 @@
+schema: capability-manifest/v1
+id: well-ambient.runtime-knowledge
+kind: skill
+version: 1
+owner: well-ambient
+description: Retrieve scoped requirement background with source versions, bounded context and explicit evidence gaps.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: [requirement-review, solution-assessment, system-boundaries, context-retrieval]
+  conditions: []
+provides: [requirement-background, system-boundaries, scenario-context, knowledge-evidence]
+requires:
+  - id: well-ambient.open-capabilities-mcp
+    kind: mcp
+    version: ">=1"
+permissions: [knowledge.read]
+resources:
+  - key: workflow
+    load_level: L1
+    content_ref: SKILL.md
+    content_kind: markdown
+    token_estimate: 1200
+tools: [knowledge_describe, knowledge_get_context, knowledge_get_evidence]
+budgets:
+  instruction_tokens: 1400
+  evidence_tokens: 4000
+  raw_tokens: 16000
+  tool_calls: 6
+  wall_time_seconds: 120
+validation:
+  suite: runtime-knowledge-v1
+  required: [scope-isolation, source-revalidation, bounded-context]
+activation:
+  mode: human_approved
+  canary_required: true

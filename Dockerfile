@@ -45,6 +45,9 @@ COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-ce
 COPY --chown=1000:1000 .agents/skills/jira-analysis/ .agents/skills/jira-analysis/
 COPY --chown=1000:1000 .agents/skills/board-decision/ .agents/skills/board-decision/
 COPY --chown=1000:1000 .agents/skills/code-review-reader/ .agents/skills/code-review-reader/
+COPY --chown=1000:1000 .agents/skills/runtime-knowledge/ .agents/skills/runtime-knowledge/
+COPY --chown=1000:1000 .agents/skills/well-ambient/ .agents/skills/well-ambient/
+COPY --chown=1000:1000 capabilities/open/ capabilities/open/
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 USER 1000:1000

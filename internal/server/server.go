@@ -111,6 +111,9 @@ func (s *Server) ensureAgentRuntime() {
 	if s.legacySkillAdapter == nil {
 		s.legacySkillAdapter = agentruntime.NewLegacySkillAdapter(db.DB, s.capabilityRegistry)
 		_ = s.legacySkillAdapter.EnsureDefaultCapabilities(context.Background())
+		if err := s.ensureOpenSkillRegistration(context.Background()); err != nil {
+			log.Print("Open skill registry metadata unavailable; package publication remains independently governed")
+		}
 	}
 	if s.strongestBrain == nil {
 		s.strongestBrain = strongestbrain.NewService(db.DB, s.capabilityRegistry)
@@ -410,6 +413,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/context/packs/{id}/replay", s.withPermission("ai_context:read", s.handleGetContextPackReplay))
 	s.mux.HandleFunc("POST /api/tasks/import", s.withAuth(s.handleImportTasks))
 	s.mux.HandleFunc("GET /api/context/facts", s.withPermission("ai_context:read", s.handleListContextFacts))
+	s.mux.HandleFunc("GET /api/agent-runtime/knowledge/settings", s.withPermission("ai_context:read", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
+	s.mux.HandleFunc("PUT /api/agent-runtime/knowledge/settings", s.withPermission("ai_context:write", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
+	s.mux.HandleFunc("POST /api/agent-runtime/knowledge/refresh", s.withPermission("ai_context:write", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
 	s.mux.HandleFunc("POST /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
 	s.mux.HandleFunc("PUT /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
 	s.mux.HandleFunc("GET /api/context/documents", s.withPermission("ai_context:read", s.handleListContextDocuments))
@@ -457,6 +463,7 @@ func (s *Server) routes() {
 
 	// Protected AI Governance Open Capabilities APIs
 	s.mux.HandleFunc("GET /api/ai-governance/open-capabilities/overview", s.withPermission("ai_context:read", s.handleGetAIGovernanceOpenCapabilitiesOverview))
+	s.mux.HandleFunc("GET /api/ai-governance/open-skills/overview", s.withPermission("ai_context:read", s.withGlobalSuperAdmin(s.handleGetOpenSkillsOverview)))
 	s.mux.HandleFunc("PUT /api/ai-governance/open-capabilities/config", s.withPermission("config:write", s.handleUpdateAIGovernanceOpenCapabilitiesConfig))
 	s.mux.HandleFunc("POST /api/ai-governance/open-capabilities/sources", s.withPermission("config:write", s.handleCreateAIGovernanceSource))
 	s.mux.HandleFunc("POST /api/ai-governance/open-capabilities/credentials", s.withPermission("config:write", s.handleIssueAIGovernanceCredential))
@@ -608,6 +615,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Keep the latency-sensitive Jira projection independent from heavy history replay.
 	s.startJiraSyncWorkers(workerContext)
 	go s.startSolutionWorker(workerContext)
+	go s.startRuntimeKnowledgeWorker(workerContext)
 	go s.startCodeReviewWorker(workerContext)
 	go s.startDailyJiraProjectionWorker(workerContext)
 	if s.decisionCommands != nil {

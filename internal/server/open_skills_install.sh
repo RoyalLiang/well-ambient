@@ -3,6 +3,8 @@
 set -euo pipefail
 
 BASE_URL=__WELL_AMBIENT_BASE_URL__
+NAME_PREFIX=__WELL_AMBIENT_NAME_PREFIX__
+AVAILABLE_SKILLS=(__WELL_AMBIENT_ENABLED_SKILLS__)
 INSTALL_ROOT=''
 ASSUME_YES=false
 MCP_MODE=auto
@@ -13,7 +15,7 @@ usage() {
   cat <<'HELP'
 用法: bash install.sh [--root 安装根目录] [--skill 技能名] [--yes]
   --root DIR   将 Skill 安装到 DIR/skills，例如 ~/.codex 或 ~/.claude
-  --skill NAME 仅安装指定技能（默认安装全部三个官方技能）
+  --skill NAME 安装 well-ambient 统一技能包（旧独立技能名兼容为主技能别名）
   --yes        不询问，使用首个检测目录；未检测到时使用 ~/.codex
   --help       显示帮助
 在线示例: curl -fsSL '<服务端>/open/v1/install.sh' | bash -s -- --root "$HOME/.claude"
@@ -38,10 +40,20 @@ while [ "$#" -gt 0 ]; do
       INSTALL_ROOT="$2"; shift 2 ;;
     --skill)
       [ "$#" -ge 2 ] || fail '--skill 需要技能名'
-      case "$2" in
-        jira-analysis|board-decision|code-review-reader) SKILLS+=("$2") ;;
+      requested="$2"
+      case "$requested" in
+        well-ambient) ;;
+        jira-analysis|board-decision|code-review-reader|runtime-knowledge|*-jira-analysis|*-board-decision|*-code-review-reader|*-runtime-knowledge)
+          printf '旧技能名 %s 已归入 well-ambient；将安装包含已发布子技能的统一包。\n' "$requested"
+          requested=well-ambient ;;
         *) fail "未知技能: $2" ;;
       esac
+      available=false
+      for candidate in "${AVAILABLE_SKILLS[@]:-}"; do
+        if [ "$candidate" = "$requested" ]; then available=true; break; fi
+      done
+      [ "$available" = true ] || fail "暂无已发布的 well-ambient 子技能，请联系管理员。"
+      SKILLS=("$requested")
       shift 2 ;;
     --yes|-y) ASSUME_YES=true; shift ;;
     --mcp) MCP_MODE=configure; shift ;;
@@ -53,7 +65,12 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$MCP_ONLY" = false ] || [ "$MCP_MODE" = configure ] || fail '--mcp-only 不能与 --skip-mcp 同时使用'
-[ "${#SKILLS[@]}" -gt 0 ] || SKILLS=(jira-analysis board-decision code-review-reader)
+if [ "${#SKILLS[@]}" -eq 0 ] && [ "${#AVAILABLE_SKILLS[@]}" -gt 0 ]; then
+  SKILLS=("${AVAILABLE_SKILLS[@]}")
+fi
+if [ "$MCP_ONLY" = false ] && [ "${#SKILLS[@]}" -eq 0 ]; then
+  fail "暂无已启用的 Skill，请联系管理员启用后重试。"
+fi
 if [ "$MCP_ONLY" = false ]; then
   for dependency in curl gzip tar mktemp; do
     command -v "$dependency" >/dev/null 2>&1 || fail "缺少命令: $dependency"
@@ -144,8 +161,49 @@ if [ "$MCP_ONLY" = false ]; then
 
   INSTALLED_SKILLS=()
   FAILED_SKILLS=()
-  TMP_FILE=''
-  trap 'rm -f -- "${TMP_FILE:-}"' EXIT
+TMP_FILE=''
+STAGE_DIR=''
+BACKUP_DIR=''
+LOCK_DIR="$INSTALL_ROOT/.well-ambient-install.lock"
+mkdir "$LOCK_DIR" 2>/dev/null || fail "已有安装正在运行或安装锁尚未释放: ${LOCK_DIR}。确认没有安装进程后可移除该空目录再重试。"
+trap 'rm -f -- "${TMP_FILE:-}"; if [ -n "${STAGE_DIR:-}" ]; then rm -rf -- "$STAGE_DIR"; fi; rmdir -- "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+install_bundle() {
+  # Extract only regular files/directories from the one supported package.
+  tar -tzf "$TMP_FILE" | awk '($0 !~ /^well-ambient\// || $0 ~ /(^|\/)\.\.(\/|$)/) { bad=1 } END { exit bad }' || return 1
+  tar -tvzf "$TMP_FILE" | awk 'substr($0,1,1) != "-" && substr($0,1,1) != "d" { bad=1 } END { exit bad }' || return 1
+  STAGE_DIR=$(mktemp -d "${SKILLS_DIR}/.well-ambient-stage.XXXXXX") || return 1
+  tar -xzf "$TMP_FILE" -C "$STAGE_DIR" || return 1
+  [ -f "$STAGE_DIR/well-ambient/SKILL.md" ] || return 1
+  if [ -e "$SKILLS_DIR/well-ambient" ]; then
+    mkdir -p "$INSTALL_ROOT/skill-backups" || return 1
+    BACKUP_DIR=$(mktemp -d "$INSTALL_ROOT/skill-backups/well-ambient.XXXXXX") || return 1
+    mv "$SKILLS_DIR/well-ambient" "$BACKUP_DIR/well-ambient" || return 1
+  fi
+  if ! mv "$STAGE_DIR/well-ambient" "$SKILLS_DIR/well-ambient"; then
+    [ -z "$BACKUP_DIR" ] || mv "$BACKUP_DIR/well-ambient" "$SKILLS_DIR/well-ambient"
+    return 1
+  fi
+  rm -rf -- "$STAGE_DIR"
+  STAGE_DIR=''
+  # Move recognizable official legacy entries outside the discovery directory.
+  for child in jira-analysis board-decision code-review-reader runtime-knowledge; do
+    for old in "$child" "well-$child" "well-ambient-$child"; do
+      old_dir="$SKILLS_DIR/$old"
+      [ -f "$old_dir/SKILL.md" ] || continue
+      declared=$(awk '/^name:/ { print $2; exit }' "$old_dir/SKILL.md")
+      case "$declared" in "$child"|"well-$child"|"well-ambient-$child") ;;
+        *) printf '\n保留未识别的同名目录: %s（请手动检查是否为旧 Skill）\n' "$old_dir"; continue ;;
+      esac
+      if [ -z "$BACKUP_DIR" ]; then
+        mkdir -p "$INSTALL_ROOT/skill-backups" || return 1
+        BACKUP_DIR=$(mktemp -d "$INSTALL_ROOT/skill-backups/well-ambient.XXXXXX") || return 1
+      fi
+      mv "$old_dir" "$BACKUP_DIR/$old" || return 1
+    done
+  done
+  [ -z "$BACKUP_DIR" ] || printf '\n旧 Skill 已可逆迁移至: %s\n' "$BACKUP_DIR"
+}
   for skill in "${SKILLS[@]}"; do
     printf '正在下载并安装 Skill [%s]... ' "$skill"
     TMP_FILE=$(mktemp)
@@ -155,7 +213,7 @@ if [ "$MCP_ONLY" = false ]; then
     elif ! gzip -t "$TMP_FILE" >/dev/null 2>&1 || ! tar -tzf "$TMP_FILE" >/dev/null 2>&1; then
       FAILED_SKILLS+=("$skill")
       printf '技能包校验失败（下载内容损坏；未写入安装目录，请重试或联系管理员）\n'
-    elif tar -xzf "$TMP_FILE" -C "$SKILLS_DIR"; then
+  elif install_bundle; then
       INSTALLED_SKILLS+=("$skill")
       printf '完成\n'
     else

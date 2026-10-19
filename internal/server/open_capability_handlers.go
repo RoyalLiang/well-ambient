@@ -77,12 +77,16 @@ func (s *Server) registerOpenCapabilityRoutes() {
 	s.mux.HandleFunc("GET /open/v1/operations/{id}", s.withOpenCapability("decision_get_operation", s.openDecisionOperation))
 	s.mux.HandleFunc("POST /open/v1/reviews/search", s.withOpenCapability("review_search", s.openReviewSearch))
 	s.mux.HandleFunc("GET /open/v1/reviews/{id}", s.withOpenCapability("review_get", s.openReviewGet))
+	s.mux.HandleFunc("GET /open/v1/knowledge", s.withOpenCapability("knowledge_describe", s.openKnowledgeDescribe))
+	s.mux.HandleFunc("POST /open/v1/knowledge/context", s.withOpenCapability("knowledge_get_context", s.openKnowledgeContext))
+	s.mux.HandleFunc("POST /open/v1/knowledge/evidence", s.withOpenCapability("knowledge_get_evidence", s.openKnowledgeEvidence))
 	if s.openMCPHandler != nil {
 		s.mux.Handle("/mcp", s.withOpenMCP(s.openMCPHandler))
 	}
 	s.mux.HandleFunc("GET /open/v1/skills", s.handleGetOpenSkillsList)
 	s.mux.HandleFunc("GET /open/v1/skills/{name}", s.handleGetOpenSkillInfo)
 	s.mux.HandleFunc("GET /open/v1/skills/{name}/skill.md", s.handleGetOpenSkillDoc)
+	s.mux.HandleFunc("GET /open/v1/skills/{name}/subskills/{subskill}/skill.md", s.handleGetOpenSubskillDoc)
 	s.mux.HandleFunc("GET /open/v1/skills/{name}/manifest", s.handleGetOpenSkillManifest)
 	s.mux.HandleFunc("GET /open/v1/skills/{name}/archive", s.handleGetOpenSkillArchive)
 	s.mux.HandleFunc("GET /open/v1/install.sh", s.handleGetOpenInstallScript)
@@ -232,6 +236,10 @@ func environmentEnabled(name string) bool {
 
 func (s *Server) openFeatureError(toolName string) error {
 	switch toolName {
+	case "knowledge_describe", "knowledge_get_context", "knowledge_get_evidence":
+		if !s.openFeatures.Read {
+			return openaccess.NewError("forbidden", "open read capabilities are disabled")
+		}
 	case "jira_describe_schema", "jira_search_issues", "jira_get_issue", "jira_aggregate_issues",
 		"review_search", "review_get", "decision_get_context", "decision_get_operation":
 		if !s.openFeatures.Read {

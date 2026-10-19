@@ -34,13 +34,13 @@ func TestOpenMCPAuditCanBeLocatedByTransportHeader(t *testing.T) {
 				}
 				t.Cleanup(func() { db.DB.Callback().Create().Remove(callbackName) })
 			}
-			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"audit-test","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}},"name":"jira_describe_schema","arguments":{}}}`)).WithContext(ctx)
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"audit-test","version":"1.0.0"},"io.modelcontextprotocol/clientCapabilities":{}},"name":"well-ambient-jira_describe_schema","arguments":{}}}`)).WithContext(ctx)
 			request.Header.Set("Authorization", "Bearer "+credential.Secret)
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Accept", "application/json, text/event-stream")
 			request.Header.Set("MCP-Protocol-Version", "2026-07-28")
 			request.Header.Set("Mcp-Method", "tools/call")
-			request.Header.Set("Mcp-Name", "jira_describe_schema")
+			request.Header.Set("Mcp-Name", "well-ambient-jira_describe_schema")
 			recorder := httptest.NewRecorder()
 			srv.handler.ServeHTTP(recorder, request)
 			transportID := recorder.Header().Get("X-Request-ID")

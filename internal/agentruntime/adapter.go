@@ -108,6 +108,26 @@ func (a *LegacySkillAdapter) EnsureDefaultCapabilities(ctx context.Context) erro
 		}
 	}
 
+	// Runtime knowledge is an executable context provider shared by HTTP/MCP.
+	var runtimeProviders []db.Capability
+	if err := a.db.WithContext(ctx).Where("capability_key = ?", "knowledge.runtime-context").Limit(1).Find(&runtimeProviders).Error; err != nil {
+		return err
+	}
+	if len(runtimeProviders) == 0 {
+		manifest := &CapabilityManifest{Schema: "capability-manifest/v1", ID: "knowledge.runtime-context", Kind: KindContextProvider, Version: 1, Owner: "architecture-team",
+			Description: "按授权范围从定时更新的 Jira、已发布方案、事实、文档、评审与能力注册元数据提取可追溯的需求上下文；不证明运行验收",
+			Provides:    []string{"requirement.background", "system.boundaries", "scenario.context", "knowledge.evidence"}, Permissions: []string{"knowledge.read"},
+			Tools: []string{"knowledge_describe", "knowledge_get_context", "knowledge_get_evidence"}, Budgets: BudgetDef{InstructionTokens: 500, EvidenceTokens: 4000, ToolCalls: 5, WallTimeSeconds: 60}}
+		manifest.Scope.Type = "global"
+		manifest.Triggers.Intents = []string{"requirement-review", "code-review", "context-retrieval"}
+		if _, err := a.registry.Register(ctx, manifest); err != nil {
+			return err
+		}
+		if err := a.registry.ActivateVersion(ctx, manifest.ID, 1, "global", ""); err != nil {
+			return err
+		}
+	}
+
 	// 3. code_review (or merge-review) Skill
 	// Check if active SolutionPromptTemplate exists
 	var activeLegacies []db.SolutionPromptTemplate

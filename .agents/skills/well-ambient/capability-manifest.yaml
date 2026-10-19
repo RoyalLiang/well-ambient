@@ -1,0 +1,52 @@
+schema: capability-manifest/v1
+id: well-ambient
+kind: skill
+version: 2
+owner: well-ambient
+description: One parent skill with progressively loaded Jira analysis, governed board decisions, review reading and runtime knowledge workflows.
+sensitivity: restricted
+runtime:
+  min_kernel: agent-runtime-v1
+scope:
+  type: global
+triggers:
+  intents: [jira-analysis, board-decision, code-review-read, requirement-review, solution-assessment, system-boundaries]
+  conditions: []
+provides: [jira-fact-analysis, governed-board-decisions, review-evidence, requirement-background]
+requires:
+  - id: well-ambient.open-capabilities-mcp
+    kind: mcp
+    version: ">=1"
+permissions: []
+resources:
+  - {key: router, load_level: L0, content_ref: SKILL.md, content_kind: markdown, token_estimate: 700}
+  - {key: jira-analysis, load_level: L1, content_ref: ../jira-analysis/SKILL.md, content_kind: markdown, token_estimate: 1200}
+  - {key: board-decision, load_level: L1, content_ref: ../board-decision/SKILL.md, content_kind: markdown, token_estimate: 1200}
+  - {key: code-review-reader, load_level: L1, content_ref: ../code-review-reader/SKILL.md, content_kind: markdown, token_estimate: 1200}
+  - {key: runtime-knowledge, load_level: L1, content_ref: ../runtime-knowledge/SKILL.md, content_kind: markdown, token_estimate: 1200}
+tools:
+  - well-ambient-jira_describe_schema
+  - well-ambient-jira_search_issues
+  - well-ambient-jira_get_issue
+  - well-ambient-jira_aggregate_issues
+  - well-ambient-decision_get_context
+  - well-ambient-decision_prepare
+  - well-ambient-decision_execute
+  - well-ambient-decision_get_operation
+  - well-ambient-review_search
+  - well-ambient-review_get
+  - well-ambient-knowledge_describe
+  - well-ambient-knowledge_get_context
+  - well-ambient-knowledge_get_evidence
+budgets:
+  instruction_tokens: 1800
+  evidence_tokens: 4000
+  raw_tokens: 16000
+  tool_calls: 10
+  wall_time_seconds: 180
+validation:
+  suite: well-ambient-skill-bundle-v2
+  required: [single-entrypoint, progressive-subskills, source-scope, invocation-observability]
+activation:
+  mode: human_approved
+  canary_required: true

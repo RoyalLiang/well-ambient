@@ -29,14 +29,14 @@ const serverPath = path.resolve(rootDir, '../internal/server/server.go');
 const source = (filePath: string) => fs.readFileSync(filePath, 'utf8');
 
 test('AI governance permission personas use the shared section contract without admin bypass', () => {
-  assert.deepEqual(AI_GOVERNANCE_SECTION_DEFINITIONS.map(section => section.id), ['skills', 'prompts', 'rules', 'context', 'open_capabilities']);
+  assert.deepEqual(AI_GOVERNANCE_SECTION_DEFINITIONS.map(section => section.id), ['skills', 'skill_registry', 'prompts', 'rules', 'context', 'open_capabilities']);
 
   const personas = [
     {
       name: 'context reader',
       role: 'member',
       permissions: ['ai_context:read'],
-      accessible: ['skills', 'context', 'open_capabilities'],
+      accessible: ['skills', 'skill_registry', 'context', 'open_capabilities'],
     },
     {
       name: 'rules reader',
@@ -54,13 +54,13 @@ test('AI governance permission personas use the shared section contract without 
       name: 'admin with every named permission',
       role: 'admin',
       permissions: ['ai_context:read', 'solution_prompt:manage', 'dashboard:read', 'config:read', 'config:write'],
-      accessible: ['skills', 'rules', 'context', 'open_capabilities'],
+      accessible: ['skills', 'skill_registry', 'rules', 'context', 'open_capabilities'],
     },
     {
       name: 'full super admin',
       role: 'super_admin',
       permissions: ['*'],
-      accessible: ['skills', 'prompts', 'rules', 'context', 'open_capabilities'],
+      accessible: ['skills', 'skill_registry', 'prompts', 'rules', 'context', 'open_capabilities'],
     },
     {
       name: 'no governance access',

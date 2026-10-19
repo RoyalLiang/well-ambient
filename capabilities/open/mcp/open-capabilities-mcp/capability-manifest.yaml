@@ -37,6 +37,9 @@ tools:
   - decision_get_operation
   - review_search
   - review_get
+  - knowledge_describe
+  - knowledge_get_context
+  - knowledge_get_evidence
 budgets:
   instruction_tokens: 800
   evidence_tokens: 0
@@ -45,7 +48,7 @@ budgets:
   wall_time_seconds: 300
 validation:
   suite: open-capabilities-mcp-v1
-  required: [ten-tool-catalog, streamable-http, stdio, auth-header, http-mcp-equivalence]
+  required: [published-tool-catalog, streamable-http, stdio, auth-header, http-mcp-equivalence]
 activation:
   mode: human_approved
   canary_required: true

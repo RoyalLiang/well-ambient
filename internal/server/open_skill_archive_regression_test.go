@@ -18,11 +18,17 @@ func prepareOpenArchiveFixture(t *testing.T) string {
 	t.Helper()
 	t.Chdir(t.TempDir())
 	dir := filepath.Join(".agents", "skills", "jira-analysis")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("skill fixture\n"), 0o600); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"well-ambient", "jira-analysis", "board-decision", "code-review-reader", "runtime-knowledge"} {
+		folder := filepath.Join(".agents", "skills", name)
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(folder, "SKILL.md"), []byte("skill fixture\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(folder, "capability-manifest.yaml"), []byte("id: "+name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }
@@ -43,7 +49,7 @@ func TestOpenSkillArchiveDoesNotStreamPackingFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := requestOpenArchive()
-	if w.Code != http.StatusInternalServerError {
+	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("packing failure returned HTTP %d; body_hex=%x", w.Code, w.Body.Bytes())
 	}
 	if strings.Contains(w.Header().Get("Content-Type"), "gzip") || bytes.HasPrefix(w.Body.Bytes(), []byte{0x1f, 0x8b}) {
@@ -78,17 +84,34 @@ func TestOpenSkillArchiveReturnsCompleteUncacheableGzip(t *testing.T) {
 		t.Fatal(err)
 	}
 	reader := tar.NewReader(bytes.NewReader(content))
-	header, err := reader.Next()
-	if err != nil || header.Name != "jira-analysis/SKILL.md" {
-		t.Fatalf("unexpected archive member: %v, %v", header, err)
+	entries := map[string]string{}
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = string(data)
 	}
-	data, err := io.ReadAll(reader)
-	if err != nil || string(data) != "skill fixture\n" {
-		t.Fatalf("unexpected skill content: %q, %v", data, err)
+	if entries["well-ambient/SKILL.md"] != "skill fixture\n" || entries["well-ambient/modules/jira-analysis/WORKFLOW.md"] != "skill fixture\n" {
+		t.Fatalf("missing root or module: %v", entries)
 	}
-	if _, err := reader.Next(); err != io.EOF {
-		t.Fatalf("unexpected trailing archive member: %v", err)
+	count := 0
+	for name := range entries {
+		if filepath.Base(name) == "SKILL.md" {
+			count++
+		}
 	}
+	if count != 1 {
+		t.Fatalf("want one discovered skill, got %d", count)
+	}
+
 }
 
 func TestOpenInstallScriptRejectsCorruptArchiveBeforeWriting(t *testing.T) {

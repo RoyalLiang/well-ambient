@@ -17,6 +17,7 @@
   import { lockBodyScroll, unlockBodyScroll } from '../lib/modalScrollLock';
   import SolutionPromptConfig from './config/SolutionPromptConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
+  import OpenSkillRegistry from './config/OpenSkillRegistry.svelte';
   import OpenCapabilitiesConfig from './config/OpenCapabilitiesConfig.svelte';
   import {
     AI_GOVERNANCE_SECTION_DEFINITIONS,
@@ -34,6 +35,7 @@
   export let currentUserRole = 'member';
   export let activeSection: AIGovernanceSection = 'skills';
   export let onSectionChange: (section: string) => void = () => {};
+  export let showSectionTabs = true;
 
   let mounted = false;
   let loadedSections = new Set<AIGovernanceSection>();
@@ -892,7 +894,7 @@ activation:
       if (section === 'prompts') loaded = await loadSolutionPublicURL();
       if (section === 'rules') loaded = await loadRepoPolicies();
       if (section === 'context') loaded = await loadContextReadiness();
-      if (section === 'open_capabilities') loaded = true;
+      if (section === 'open_capabilities' || section === 'skill_registry') loaded = true;
       if (loaded) loadedSections = new Set([...loadedSections, section]);
     } finally {
       loadingSections = new Set([...loadingSections].filter((item) => item !== section));
@@ -943,6 +945,7 @@ activation:
 
 <div class="gov-workbench" data-layout-contract="admin-viewport-workbench/v1">
   <!-- Navigation owns module selection; each pane owns its content and actions. -->
+  {#if showSectionTabs}
   <header class="gov-header">
     {#if accessibleSections.length > 0}
       <nav class="gov-nav-tabs" role="tablist" aria-label="AI 治理分区">
@@ -959,7 +962,7 @@ activation:
             on:click={() => switchSection(section.id)}
             on:keydown={(event) => handleSectionTabKeydown(event, index)}
           >
-            <span class="wa-icon tab-icon" class:icon-sparkles={section.id === 'skills'} class:icon-checklist={section.id === 'prompts' || section.id === 'rules'} class:icon-network={section.id === 'open_capabilities'} class:icon-library={section.id === 'context'} aria-hidden="true"></span>
+            <span class="wa-icon tab-icon" class:icon-sparkles={section.id === 'skills'} class:icon-checklist={section.id === 'prompts' || section.id === 'rules'} class:icon-network={section.id === 'open_capabilities'} class:icon-library={section.id === 'context' || section.id === 'skill_registry'} aria-hidden="true"></span>
             {section.label}
             {#if section.id === 'skills'}<span class="tab-count">{capabilityHierarchy.records.length}</span>{/if}
           </button>
@@ -967,6 +970,7 @@ activation:
       </nav>
     {/if}
   </header>
+  {/if}
 
   {#if accessibleSections.length === 0}
     <section class="gov-empty-state gov-no-access" role="status" aria-labelledby="ai-governance-no-access-title">
@@ -1443,6 +1447,12 @@ activation:
     </section>
   {/if}
 
+  {#if resolvedActiveSection === 'skill_registry'}
+    <div id="ai-governance-panel-skill_registry" class="gov-pane" role="tabpanel" tabindex="0" aria-labelledby="ai-governance-tab-skill_registry">
+      <OpenSkillRegistry canWrite={canManageOpenCaps} canObserve={currentUserRole === 'super_admin'} canManageKnowledge={currentUserRole === 'super_admin' && (currentUserPermissions.includes('ai_context:write') || currentUserPermissions.includes('*'))} onOpenCapabilities={() => switchSection('open_capabilities')} />
+    </div>
+  {/if}
+
   <!-- TAB 5: 开放能力与 MCP 集成 (Open Capabilities) -->
   {#if resolvedActiveSection === 'open_capabilities'}
     <section
@@ -1453,6 +1463,7 @@ activation:
     >
       <OpenCapabilitiesConfig
         canWrite={canManageOpenCaps}
+        onOpenRegistry={() => switchSection('skill_registry')}
       />
     </section>
   {/if}
