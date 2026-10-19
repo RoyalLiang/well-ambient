@@ -241,7 +241,7 @@ func TestDailyJiraManualSyncRefreshesAssigneeCommentsAndListMembership(t *testin
 		case r.URL.Path == "/rest/api/2/search":
 			jql := r.URL.Query().Get("jql")
 			if strings.Contains(jql, "updated >=") && strings.Contains(jql, `"NS2"`) {
-				fmt.Fprint(w, `{"total":1,"issues":[{"key":"NS2-2262","fields":{"summary":"Stale Daily Jira item","created":"2026-08-11T08:00:00.000+0800","issuetype":{"name":"Bug"},"assignee":{"name":"external.user","displayName":"外部协作方"},"reporter":{"name":"reporter.user","displayName":"问题报告人"},"status":{"name":"Open"},"project":{"key":"NS2","name":"Nansha"},"fixVersions":[],"versions":[],"updated":"2026-08-19T22:30:00.000+0800"}}]}`)
+				fmt.Fprintf(w, `{"total":1,"issues":[{"key":"NS2-2262","fields":{"summary":"Stale Daily Jira item","created":"2026-08-11T08:00:00.000+0800","issuetype":{"name":"Bug"},"assignee":{"name":"external.user","displayName":"外部协作方"},"reporter":{"name":"reporter.user","displayName":"问题报告人"},"status":{"name":"Open"},"project":{"key":"NS2","name":"Nansha"},"fixVersions":[],"versions":[],"updated":"%s"}}]}`, time.Now().Format("2006-01-02T15:04:05.000-0700"))
 				return
 			}
 			fmt.Fprint(w, `{"total":0,"issues":[]}`)

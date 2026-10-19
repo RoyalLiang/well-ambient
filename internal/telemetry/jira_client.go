@@ -68,7 +68,10 @@ type JiraIssue struct {
 			DisplayName  string `json:"displayName"`
 		} `json:"reporter"`
 		Status struct {
-			Name string `json:"name"`
+			Name           string `json:"name"`
+			StatusCategory struct {
+				Key string `json:"key"`
+			} `json:"statusCategory"`
 		} `json:"status"`
 		Security *struct {
 			ID   string `json:"id"`

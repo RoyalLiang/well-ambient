@@ -23,6 +23,7 @@ import (
 
 const jiraCompletedKeepAliveWindow = 14 * 24 * time.Hour
 const jiraInboundSyncScope = "jira-inbound"
+const jiraCurrentSyncScope = "jira-current"
 const jiraInboundSyncOverlap = 5 * time.Minute
 const jiraInboundSyncInterval = 30 * time.Second
 const jiraPerformanceHistoryPollInterval = 30 * time.Second
@@ -32,6 +33,8 @@ const jiraInboundStaleAfter = 4 * jiraInboundSyncInterval
 // from the much heavier performance-history replay.
 func (s *Server) startJiraSyncWorkers(ctx context.Context) {
 	log.Println("Starting background Jira task and performance-history synchronization workers...")
+	// Recent issue facts must not wait for historical searches, comments or scoring.
+	go runPeriodicJiraWorker(ctx, jiraInboundSyncInterval, true, s.syncCurrentJiraFacts)
 	var lastPerformanceHistorySync time.Time
 	runPerformanceHistoryCycle := func() {
 		performanceConfig := s.config.PerformanceBrain.Normalized()
@@ -313,7 +316,9 @@ func splitJiraIssueKey(issueKey string) (string, bool) {
 	return parts[0], true
 }
 
-func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.JiraIssue) (bool, error) {
+func (s *Server) reconcileJiraIssueFacts(issue telemetry.JiraIssue) (bool, error) {
+	s.jiraFactWriteMu.Lock()
+	defer s.jiraFactWriteMu.Unlock()
 	issue.Key = strings.TrimSpace(issue.Key)
 	if issue.Key == "" {
 		return false, nil
@@ -326,7 +331,7 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 	if issue.Fields.Assignee != nil {
 		s.syncJiraUserToLocal(issue.Fields.Assignee.Name, issue.Fields.Assignee.DisplayName, issue.Fields.Assignee.EmailAddress)
 	}
-	jiraMappedStatus := mapJiraStatus(issue.Fields.Status.Name)
+	jiraMappedStatus := mapJiraIssueStatus(issue)
 	issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
 	createdTime := parseJiraTime(issue.Fields.Created)
 	sourceUpdatedAt := parseOptionalJiraTime(issue.Fields.Updated)
@@ -366,6 +371,9 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 	case loadErr != nil:
 		return false, fmt.Errorf("load Jira issue %s: %w", issue.Key, loadErr)
 	default:
+		if !sourceUpdatedAt.IsZero() && existing.SourceUpdatedAt.After(sourceUpdatedAt) {
+			return false, nil
+		}
 		hasChanges := applyJiraReportFields(&existing, issue)
 		if (existing.Repo == "" || existing.Repo == "-") && repoLabel != "-" {
 			existing.Repo = repoLabel
@@ -440,15 +448,24 @@ func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.Ji
 		}
 	}
 
-	var reconcileErrors []error
-	if _, eventErr := s.appendJiraPerformanceEvents(issue); eventErr != nil {
-		reconcileErrors = append(reconcileErrors, fmt.Errorf("append Jira performance events for %s: %w", issue.Key, eventErr))
-	}
 	s.reconcileJiraIssueVersions(issue)
 	if changed {
 		// Publish committed issue/version facts without waiting for comments.
 		BroadcastTelemetryUpdated(issue.Key)
 	}
+	return changed, nil
+}
+
+func (s *Server) reconcileJiraIssue(jc *telemetry.JiraClient, issue telemetry.JiraIssue) (bool, error) {
+	changed, err := s.reconcileJiraIssueFacts(issue)
+	if err != nil {
+		return changed, err
+	}
+	var reconcileErrors []error
+	if _, eventErr := s.appendJiraPerformanceEvents(issue); eventErr != nil {
+		reconcileErrors = append(reconcileErrors, fmt.Errorf("append Jira performance events for %s: %w", issue.Key, eventErr))
+	}
+	sourceUpdatedAt := parseOptionalJiraTime(issue.Fields.Updated)
 	commentsChanged, commentsErr := s.syncJiraCommentsForIssue(jc, issue.Key, sourceUpdatedAt)
 	if commentsChanged {
 		BroadcastTelemetryUpdated(issue.Key)
@@ -474,7 +491,9 @@ func loadJiraInboundSyncState() (db.JiraInboundSyncState, error) {
 
 func finishJiraInboundCycle(state db.JiraInboundSyncState, startedAt time.Time, issueCount, changedCount int, cycleErrors []error) {
 	now := time.Now()
-	state.Scope = jiraInboundSyncScope
+	if strings.TrimSpace(state.Scope) == "" {
+		state.Scope = jiraInboundSyncScope
+	}
 	state.LastStartedAt = startedAt
 	state.LastIssueCount = issueCount
 	state.LastChangedCount = changedCount
@@ -542,73 +561,83 @@ func (s *Server) syncPerformanceJiraHistory(jc *telemetry.JiraClient) (bool, err
 		}
 		sourceUpdatedAt := parseOptionalJiraTime(issue.Fields.Updated)
 
-		var task db.TaskTelemetry
-		err := db.DB.Where("task_id = ?", issue.Key).First(&task).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			task = db.TaskTelemetry{
-				TaskID: issue.Key, ProjectKey: projectKey, Source: "jira", ExternalKey: issue.Key,
-				PlanningState: deliveryplanning.PlanningReady, Title: issue.Fields.Summary,
-				Repo: repoLabel, Assignee: assigneeName, Branch: "-", LastCommit: "-",
-				Status: mapJiraStatus(issue.Fields.Status.Name), IssueType: mapJiraIssueType(issue.Fields.IssueType.Name),
-				TaskCreatedAt: parseJiraTime(issue.Fields.Created), LastUpdate: now, SourceUpdatedAt: sourceUpdatedAt,
+		factsChanged, factsErr := func() (bool, error) {
+			s.jiraFactWriteMu.Lock()
+			defer s.jiraFactWriteMu.Unlock()
+			var task db.TaskTelemetry
+			err := db.DB.Where("task_id = ?", issue.Key).First(&task).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				task = db.TaskTelemetry{
+					TaskID: issue.Key, ProjectKey: projectKey, Source: "jira", ExternalKey: issue.Key,
+					PlanningState: deliveryplanning.PlanningReady, Title: issue.Fields.Summary,
+					Repo: repoLabel, Assignee: assigneeName, Branch: "-", LastCommit: "-",
+					Status: mapJiraIssueStatus(issue), IssueType: mapJiraIssueType(issue.Fields.IssueType.Name),
+					TaskCreatedAt: parseJiraTime(issue.Fields.Created), LastUpdate: now, SourceUpdatedAt: sourceUpdatedAt,
+				}
+				applyJiraReportFields(&task, issue)
+				applyJiraPerformanceFields(&task, issue)
+				if err := db.DB.Create(&task).Error; err != nil {
+					return false, fmt.Errorf("create historical Jira issue %s: %w", issue.Key, err)
+				}
+				BroadcastTelemetryUpdated(issue.Key)
+				return true, nil
 			}
-			applyJiraReportFields(&task, issue)
-			applyJiraPerformanceFields(&task, issue)
-			if err := db.DB.Create(&task).Error; err != nil {
-				return changed, fmt.Errorf("create historical Jira issue %s: %w", issue.Key, err)
+			if err != nil {
+				return false, fmt.Errorf("load historical Jira issue %s: %w", issue.Key, err)
 			}
-			changed = true
-			BroadcastTelemetryUpdated(issue.Key)
-			continue
-		}
-		if err != nil {
-			return changed, fmt.Errorf("load historical Jira issue %s: %w", issue.Key, err)
-		}
 
-		taskChanged := applyJiraReportFields(&task, issue)
-		if (task.Repo == "" || task.Repo == "-") && repoLabel != "-" {
-			task.Repo = repoLabel
-			taskChanged = true
-		}
-		for current, incoming := range map[*string]string{
-			&task.Title: issue.Fields.Summary, &task.Assignee: assigneeName,
-			&task.ProjectKey: projectKey, &task.Source: "jira", &task.ExternalKey: issue.Key,
-		} {
-			if *current != incoming {
-				*current = incoming
+			if !sourceUpdatedAt.IsZero() && task.SourceUpdatedAt.After(sourceUpdatedAt) {
+				return false, nil
+			}
+			taskChanged := applyJiraReportFields(&task, issue)
+			if (task.Repo == "" || task.Repo == "-") && repoLabel != "-" {
+				task.Repo = repoLabel
 				taskChanged = true
 			}
+			for current, incoming := range map[*string]string{
+				&task.Title: issue.Fields.Summary, &task.Assignee: assigneeName,
+				&task.ProjectKey: projectKey, &task.Source: "jira", &task.ExternalKey: issue.Key,
+			} {
+				if *current != incoming {
+					*current = incoming
+					taskChanged = true
+				}
+			}
+			status := mapJiraIssueStatus(issue)
+			if task.Status != status {
+				task.Status = status
+				taskChanged = true
+			}
+			issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
+			if task.IssueType != issueType {
+				task.IssueType = issueType
+				taskChanged = true
+			}
+			if task.PlanningState == "" {
+				task.PlanningState = deliveryplanning.PlanningReady
+				taskChanged = true
+			}
+			if !sourceUpdatedAt.IsZero() && !task.SourceUpdatedAt.Equal(sourceUpdatedAt) {
+				task.SourceUpdatedAt = sourceUpdatedAt
+				taskChanged = true
+			}
+			if applyJiraPerformanceFields(&task, issue) {
+				taskChanged = true
+			}
+			if !taskChanged {
+				return false, nil
+			}
+			task.LastUpdate = now
+			if err := db.DB.Save(&task).Error; err != nil {
+				return false, fmt.Errorf("save historical Jira issue %s: %w", issue.Key, err)
+			}
+			BroadcastTelemetryUpdated(issue.Key)
+			return true, nil
+		}()
+		if factsErr != nil {
+			return changed, factsErr
 		}
-		status := mapJiraStatus(issue.Fields.Status.Name)
-		if task.Status != status {
-			task.Status = status
-			taskChanged = true
-		}
-		issueType := mapJiraIssueType(issue.Fields.IssueType.Name)
-		if task.IssueType != issueType {
-			task.IssueType = issueType
-			taskChanged = true
-		}
-		if task.PlanningState == "" {
-			task.PlanningState = deliveryplanning.PlanningReady
-			taskChanged = true
-		}
-		if !sourceUpdatedAt.IsZero() && !task.SourceUpdatedAt.Equal(sourceUpdatedAt) {
-			task.SourceUpdatedAt = sourceUpdatedAt
-			taskChanged = true
-		}
-		if applyJiraPerformanceFields(&task, issue) {
-			taskChanged = true
-		}
-		if !taskChanged {
-			continue
-		}
-		task.LastUpdate = now
-		if err := db.DB.Save(&task).Error; err != nil {
-			return changed, fmt.Errorf("save historical Jira issue %s: %w", issue.Key, err)
-		}
-		changed = true
-		BroadcastTelemetryUpdated(issue.Key)
+		changed = changed || factsChanged
 	}
 	return changed, nil
 }
@@ -741,7 +770,7 @@ func applyJiraPerformanceFields(task *db.TaskTelemetry, issue telemetry.JiraIssu
 		task.Severity = priority
 		changed = true
 	}
-	if resolution := parseOptionalJiraTime(issue.Fields.ResolutionDate); !resolution.IsZero() && strings.EqualFold(mapJiraStatus(issue.Fields.Status.Name), "done") {
+	if resolution := parseOptionalJiraTime(issue.Fields.ResolutionDate); !resolution.IsZero() && mapJiraIssueStatus(issue) == "done" {
 		if task.CompletedAt == nil || !task.CompletedAt.Equal(resolution) {
 			task.CompletedAt = &resolution
 			changed = true
@@ -911,17 +940,35 @@ func formatJiraProjectLabel(key, name string) string {
 	return fmt.Sprintf("%s (%s)", name, key)
 }
 
-// mapJiraStatus maps general Jira issue statuses to our 4 Kanban stages
+// Jira category keys are stable across localized/custom workflow status names.
+func mapJiraIssueStatus(issue telemetry.JiraIssue) string {
+	status := mapJiraStatus(issue.Fields.Status.Name)
+	switch strings.ToLower(strings.TrimSpace(issue.Fields.Status.StatusCategory.Key)) {
+	case "done":
+		return "done"
+	case "new":
+		return "backlog"
+	case "indeterminate":
+		if status == "review" {
+			return "review"
+		}
+		return "progress"
+	default:
+		return status
+	}
+}
+
+// mapJiraStatus maps general Jira issue statuses to our 4 Kanban stages.
 func mapJiraStatus(jiraStatus string) string {
 	s := strings.ToLower(strings.TrimSpace(jiraStatus))
 	switch s {
-	case "to do", "backlog", "open", "reopened", "new", "todo":
+	case "to do", "backlog", "open", "reopened", "new", "todo", "待办", "待处理", "未开始", "重新打开":
 		return "backlog"
-	case "in progress", "progress", "active", "doing":
+	case "in progress", "progress", "active", "doing", "进行中", "处理中", "开发中":
 		return "progress"
-	case "in review", "review", "under review", "qa", "testing":
+	case "in review", "review", "under review", "qa", "testing", "待验收", "待评审", "测试中":
 		return "review"
-	case "done", "closed", "resolved", "completed":
+	case "done", "closed", "resolved", "completed", "完成", "已完成", "关闭", "已关闭", "已解决", "验收完成", "已验收":
 		return "done"
 	default:
 		return "backlog"

@@ -36,6 +36,7 @@
     pagination?: Snippet<[boolean]>;
     empty?: Snippet;
     loading?: boolean;
+    showRefreshStatus?: boolean;
     error?: string;
     success?: string;
     disabled?: boolean;
@@ -76,6 +77,7 @@
     pagination,
     empty,
     loading = false,
+    showRefreshStatus = true,
     error = '',
     success = '',
     disabled = false,
@@ -352,7 +354,7 @@
         <button type="button" class="wa-admin-action secondary" disabled={disabled} onclick={onRetry}>重新加载</button>
       {/if}
     </div>
-  {:else if loading && hasRows}
+  {:else if loading && hasRows && showRefreshStatus}
     <div class="list-status loading-status" class:is-overlay={hasRows} role="status" aria-live="polite">
       正在更新，当前结果保留显示。
     </div>

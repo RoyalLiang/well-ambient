@@ -77,6 +77,8 @@ type Server struct {
 	jiraDailyReviewSync func(issueKey string, assignee *string, comment string) error
 	jiraReleaseList     func(ctx context.Context, projectKey string) ([]deliveryplanning.ExternalRelease, error)
 	jiraInboundSyncMu   sync.Mutex
+	jiraCurrentSyncMu   sync.Mutex
+	jiraFactWriteMu     sync.Mutex
 	solutionLLM         func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 	solutions           *solutions.Module
 	solutionCatalog     *solutioncatalog.Module

@@ -2426,8 +2426,8 @@
               {/if}
             </div>
 
-            <button class="schedule-refresh-btn wa-admin-action secondary font-mono" class:is-loading={scheduleLoading} on:click={fetchSchedule}>
-              刷新
+            <button class="schedule-refresh-btn wa-admin-action secondary font-mono" class:is-loading={scheduleLoading} disabled={scheduleLoading} aria-busy={scheduleLoading} on:click={fetchSchedule}>
+              {scheduleLoading ? '刷新中…' : '刷新'}
             </button>
             {#if hasPermission('demands:write')}
               <button class="add-demand-btn schedule-add-demand" on:click={openCreateDemandModal}>
@@ -2445,6 +2445,7 @@
             actions={renderScheduleActions}
             empty={renderScheduleEmpty}
             loading={scheduleLoading}
+            showRefreshStatus={false}
             error={scheduleErrorMsg}
             onRetry={fetchSchedule}
             skeletonRows={7}

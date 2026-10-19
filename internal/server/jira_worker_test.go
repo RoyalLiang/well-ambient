@@ -1059,7 +1059,7 @@ func TestJiraSyncContinuesValidScopeWhenAnotherScopeFails(t *testing.T) {
 				return
 			}
 			if strings.Contains(jql, `project = "DG"`) {
-				fmt.Fprint(w, `{"total":1,"issues":[{"key":"DG-394","fields":{"summary":"Scope isolation","created":"2026-08-20T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhanglulu","displayName":"张路路"},"status":{"name":"Done"},"project":{"key":"DG","name":"DG"},"fixVersions":[],"versions":[],"updated":"2026-08-24T18:35:10.000+0800"}}]}`)
+				fmt.Fprintf(w, `{"total":1,"issues":[{"key":"DG-394","fields":{"summary":"Scope isolation","created":"2026-08-20T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhanglulu","displayName":"张路路"},"status":{"name":"Done"},"project":{"key":"DG","name":"DG"},"fixVersions":[],"versions":[],"updated":"%s"}}]}`, time.Now().Format("2006-01-02T15:04:05.000-0700"))
 				return
 			}
 			fmt.Fprint(w, `{"total":0,"issues":[]}`)
@@ -1122,7 +1122,7 @@ func TestJiraSyncRefreshesOldCompletedIssueAfterPrimaryJQLExcludesIt(t *testing.
 			jql := r.URL.Query().Get("jql")
 			if strings.Contains(jql, `project in ("DL")`) && strings.Contains(jql, "updated >=") {
 				queriedKnownIssue = true
-				fmt.Fprint(w, `{"total":2,"issues":[{"key":"DL-4200","fields":{"summary":"Old completed Jira item","created":"2026-06-01T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhiyuan_liang","displayName":"梁志远"},"status":{"name":"In Progress"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"2026-08-15T22:50:00.000+0800"}},{"key":"DL-9999","fields":{"summary":"Not in local reconciliation set","created":"2026-08-15T08:00:00.000+0800","issuetype":{"name":"Epic"},"assignee":null,"status":{"name":"Done"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"2026-08-15T22:50:00.000+0800"}}]}`)
+				fmt.Fprintf(w, `{"total":2,"issues":[{"key":"DL-4200","fields":{"summary":"Old completed Jira item","created":"2026-06-01T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhiyuan_liang","displayName":"梁志远"},"status":{"name":"In Progress"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"%s"}},{"key":"DL-9999","fields":{"summary":"Not in local reconciliation set","created":"2026-08-15T08:00:00.000+0800","issuetype":{"name":"Epic"},"assignee":null,"status":{"name":"Done"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"%s"}}]}`, time.Now().Format("2006-01-02T15:04:05.000-0700"), time.Now().Format("2006-01-02T15:04:05.000-0700"))
 				return
 			}
 			fmt.Fprint(w, `{"total":0,"issues":[]}`)
@@ -1183,7 +1183,7 @@ func TestJiraSyncCompletionOverridesRecentLocalProjectionAndRemovesDailyJiraCand
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/rest/api/2/search":
-			fmt.Fprint(w, `{"total":1,"issues":[{"key":"DL-4309","fields":{"summary":"Recently touched local projection","created":"2026-08-08T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhiyuan_liang","displayName":"梁志远"},"status":{"name":"Done"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"2026-08-16T21:50:00.000+0800"}}]}`)
+			fmt.Fprintf(w, `{"total":1,"issues":[{"key":"DL-4309","fields":{"summary":"Recently touched local projection","created":"2026-08-08T08:00:00.000+0800","issuetype":{"name":"Task"},"assignee":{"name":"zhiyuan_liang","displayName":"梁志远"},"status":{"name":"Done"},"project":{"key":"DL","name":"Dalian"},"fixVersions":[],"versions":[],"updated":"%s"}}]}`, time.Now().Format("2006-01-02T15:04:05.000-0700"))
 		case strings.HasSuffix(r.URL.Path, "/comment"):
 			fmt.Fprint(w, `{"comments":[]}`)
 		default:
