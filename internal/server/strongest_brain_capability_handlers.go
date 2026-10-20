@@ -190,26 +190,7 @@ func (s *Server) handleListAgentCapabilities(w http.ResponseWriter, r *http.Requ
 		capBindingsMap[bc.CapabilityKey] = bc.Count
 	}
 
-	type CapabilityDTO struct {
-		ID                 uint                                  `json:"id"`
-		CapabilityKey      string                                `json:"capability_key"`
-		Kind               string                                `json:"kind"`
-		Status             string                                `json:"status"`
-		Owner              string                                `json:"owner"`
-		Sensitivity        string                                `json:"sensitivity"`
-		Description        string                                `json:"description"`
-		DiskSizeBytes      int64                                 `json:"disk_size_bytes"`
-		DiskSizeFormatted  string                                `json:"disk_size_formatted"`
-		BindingsCount      int64                                 `json:"bindings_count"`
-		IsArchived         bool                                  `json:"is_archived"`
-		IsTopLevelSkill    bool                                  `json:"is_top_level_skill"`
-		ParentSkillKey     string                                `json:"parent_skill_key,omitempty"`
-		IncludedComponents []agentruntime.IncludedComponentDTO   `json:"included_components,omitempty"`
-		LatestVersion      int                                   `json:"latest_version"`
-		Versions           []db.CapabilityVersion                `json:"versions"`
-		CreatedAt          string                                `json:"created_at"`
-		UpdatedAt          string                                `json:"updated_at"`
-	}
+	type CapabilityDTO = capabilityInventoryItem
 
 	var totalDiskSize int64
 	result := make([]CapabilityDTO, 0, len(caps))
@@ -231,9 +212,9 @@ func (s *Server) handleListAgentCapabilities(w http.ResponseWriter, r *http.Requ
 			parentKey = "code_review"
 		}
 
-		var incComps []agentruntime.IncludedComponentDTO
+		var incComps []inventoryComponent
 		if c.CapabilityKey == "code_review" {
-			incComps = []agentruntime.IncludedComponentDTO{
+			incComps = []inventoryComponent{
 				{
 					Key:         "gitlab.snapshot",
 					Kind:        "plugin",
@@ -273,6 +254,11 @@ func (s *Server) handleListAgentCapabilities(w http.ResponseWriter, r *http.Requ
 		})
 	}
 
+	result, inventoryErr := s.enrichCapabilityInventory(r.Context(), result)
+	if inventoryErr != nil {
+		http.Error(w, "Installation evidence unavailable", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"capabilities":              result,
@@ -301,7 +287,12 @@ func (s *Server) handleGetAgentCapabilityDetail(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(detail)
+	response, err := s.inventoryDetail(r.Context(), detail)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // handleUpdateAgentCapabilityStatus handles PATCH /api/agent-runtime/capabilities/{id}/status
@@ -350,6 +341,12 @@ func (s *Server) handleUninstallAgentCapability(w http.ResponseWriter, r *http.R
 	if id == "" {
 		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
 		return
+	}
+	if detail, err := s.capabilityRegistry.GetCapabilityDetail(r.Context(), id); err == nil {
+		if _, builtin := builtinCapability(detail.Capability.CapabilityKey); builtin {
+			http.Error(w, "系统内置能力由发布管理，不能卸载或覆盖", http.StatusBadRequest)
+			return
+		}
 	}
 
 	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
@@ -465,7 +462,7 @@ func (s *Server) handleRemoteInstallAgentCapability(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ver, err := s.capabilityRegistry.Register(r.Context(), manifest)
+	ver, err := s.installCapability(r.Context(), manifest, "remote_manifest", req.URL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to register capability: %v", err), http.StatusBadRequest)
 		return
@@ -500,6 +497,12 @@ func (s *Server) handleUpgradeAgentCapability(w http.ResponseWriter, r *http.Req
 	if id == "" {
 		http.Error(w, "capability key or ID is required", http.StatusBadRequest)
 		return
+	}
+	if detail, err := s.capabilityRegistry.GetCapabilityDetail(r.Context(), id); err == nil {
+		if _, builtin := builtinCapability(detail.Capability.CapabilityKey); builtin {
+			http.Error(w, "系统内置能力由发布管理，不能卸载或覆盖", http.StatusBadRequest)
+			return
+		}
 	}
 
 	data, err := io.ReadAll(r.Body)
@@ -538,7 +541,7 @@ func (s *Server) handleUpgradeAgentCapability(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ver, err := s.capabilityRegistry.UpgradeCapability(r.Context(), id, manifest)
+	ver, err := s.installCapabilityVersion(r.Context(), manifest, "manifest_upgrade", urlPayload.URL, id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to upgrade capability: %v", err), http.StatusBadRequest)
 		return
@@ -570,7 +573,7 @@ func (s *Server) handleRegisterAgentCapability(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	ver, err := s.capabilityRegistry.Register(r.Context(), manifest)
+	ver, err := s.installCapability(r.Context(), manifest, "manifest_import", "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to register capability: %v", err), http.StatusBadRequest)
 		return

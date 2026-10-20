@@ -24,6 +24,20 @@ const fixtures = (): GovernanceCapabilityRecord[] => [
 const keys = (items: GovernanceCapabilityRecord[]) => items.map((item) => item.capability_key);
 const filters = (search = '', kind = 'all', status = 'all') => ({ search, kind, status });
 
+test('installed scope requires verified server artifacts and excludes builtins, plugins and stale receipts', () => {
+  const items: GovernanceCapabilityRecord[] = [
+    {capability_key:'well-ambient',kind:'skill',status:'active',origin:'system_builtin',install_state:'builtin'},
+    {capability_key:'system.headroom',kind:'plugin',status:'active',origin:'system_builtin',install_state:'builtin'},
+    {capability_key:'installed.skill',kind:'skill',status:'disabled',origin:'installed',install_state:'installed'},
+    {capability_key:'missing.skill',kind:'skill',status:'active',origin:'installed',install_state:'missing'},
+    {capability_key:'registered.skill',kind:'skill',status:'active',origin:'registry_only',install_state:'unverified'},
+    {capability_key:'installed.plugin',kind:'plugin',status:'active',origin:'installed',install_state:'installed'},
+  ];
+  assert.deepEqual(keys(filterGovernanceCapabilities(items,{...filters(),scope:'installed'})),['installed.skill']);
+  assert.deepEqual(keys(filterGovernanceCapabilities(items,{...filters(),scope:'system'})),['well-ambient','system.headroom']);
+  assert.deepEqual(keys(filterGovernanceCapabilities(items,{...filters(),scope:'registry'})),['installed.skill','missing.skill','registered.skill','installed.plugin']);
+});
+
 test('owned components belong to skill summaries and never become independently manageable rows', () => {
   const { records, orphans } = resolveGovernanceCapabilityHierarchy(fixtures());
   assert.deepEqual(keys(records), ['code_review', 'standalone.git']);

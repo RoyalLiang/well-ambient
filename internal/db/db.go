@@ -558,6 +558,7 @@ func coreSchemaModels() []any {
 		&PerformanceWorkItemEvent{},
 		&PerformanceAuditEvent{},
 		&Capability{},
+		&CapabilityInstallation{},
 		&CapabilityVersion{},
 		&CapabilityResource{},
 		&CapabilityDependency{},

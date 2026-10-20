@@ -313,6 +313,7 @@ type JiraVersionSource struct {
 
 // AIConfig holds settings for LLM deconstructor
 type AIConfig struct {
+	HeadroomEnabled        *bool   `yaml:"headroom_enabled,omitempty" json:"headroom_enabled,omitempty"`
 	ReasoningEffort        string  `yaml:"reasoning_effort" json:"reasoning_effort"`
 	Enabled                bool    `yaml:"enabled" json:"enabled"`
 	Provider               string  `yaml:"provider" json:"provider"` // e.g. "openai"

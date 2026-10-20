@@ -114,6 +114,9 @@ func (s *Server) ensureAgentRuntime() {
 		if err := s.ensureOpenSkillRegistration(context.Background()); err != nil {
 			log.Print("Open skill registry metadata unavailable; package publication remains independently governed")
 		}
+		if err := s.ensureHeadroomPlugin(context.Background()); err != nil {
+			log.Print("Headroom system plugin registration unavailable")
+		}
 	}
 	if s.strongestBrain == nil {
 		s.strongestBrain = strongestbrain.NewService(db.DB, s.capabilityRegistry)
@@ -448,6 +451,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/upgrade", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleUpgradeAgentCapability)))
 	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/remote-install", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleRemoteInstallAgentCapability)))
 	s.mux.HandleFunc("POST /api/agent-runtime/capabilities/{id}/activate", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleActivateAgentCapabilityVersion)))
+	s.mux.HandleFunc("POST /api/agent-runtime/system-plugins/headroom/check", s.withPermission("solution_prompt:manage", s.withGlobalSuperAdmin(s.handleCheckHeadroom)))
 	s.mux.HandleFunc("POST /api/agent-runtime/resolve/preview", s.withPermission("ai_context:preview", s.handlePreviewCapabilityResolve))
 	s.mux.HandleFunc("GET /api/agent-runtime/runs", s.withPermission("ai_context:read", s.handleListAgentRuns))
 	s.mux.HandleFunc("GET /api/agent-runtime/runs/{id}/lockfile", s.withPermission("ai_context:read", s.handleGetAgentRunLockfile))

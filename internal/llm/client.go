@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"well-ambient/internal/config"
+	"well-ambient/internal/headroom"
 )
 
 const (
@@ -151,6 +152,9 @@ func (c Client) Stream(ctx context.Context, input Request, onDelta func(string) 
 func (c Client) do(ctx context.Context, input Request, stream bool) (*http.Response, string, error) {
 	if strings.TrimSpace(c.Config.APIToken) == "" || strings.TrimSpace(c.Config.BaseURL) == "" {
 		return nil, "", fmt.Errorf("AI configuration is missing credentials")
+	}
+	if c.Config.UseHeadroom() && headroom.Enabled(ctx) {
+		input.UserPrompt, _ = headroom.Default().Optimize(ctx, input.UserPrompt, c.Config.Model)
 	}
 	protocol := c.Config.Protocol()
 	payload, err := buildPayload(c.Config, input, stream)

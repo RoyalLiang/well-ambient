@@ -4,6 +4,8 @@ export interface GovernanceIncludedComponent {
   name: string;
   description: string;
   tools?: string[];
+  origin?: string;
+  source_label?: string;
 }
 
 export interface GovernanceCapabilityRecord {
@@ -15,12 +17,15 @@ export interface GovernanceCapabilityRecord {
   is_top_level_skill?: boolean;
   parent_skill_key?: string;
   included_components?: GovernanceIncludedComponent[];
+  origin?: string;
+  install_state?: string;
 }
 
 export interface GovernanceCapabilityFilters {
   search: string;
   kind: string;
   status: string;
+  scope?: 'installed' | 'system' | 'registry';
 }
 
 export interface GovernanceCapabilityOrphan {
@@ -77,7 +82,9 @@ export function resolveGovernanceCapabilityHierarchy<T extends GovernanceCapabil
         kind: declared?.kind || child?.kind || '',
         name: declared?.name || componentKey,
         description: declared?.description || child?.description || '',
-        tools: [...(declared?.tools ?? [])]
+        tools: [...(declared?.tools ?? [])],
+        origin: declared?.origin || child?.origin,
+        source_label: declared?.source_label || (child?.origin === 'system_builtin' ? '系统内置' : undefined)
       });
     }
     records.push({ ...item, included_components: [...components.values()] });
@@ -98,6 +105,9 @@ export function filterGovernanceCapabilities<T extends GovernanceCapabilityRecor
 ): T[] {
   const search = filters.search.trim().toLowerCase();
   return records.filter((record) => {
+    if (filters.scope === 'installed' && (record.kind !== 'skill' || record.origin !== 'installed' || record.install_state !== 'installed')) return false;
+    if (filters.scope === 'system' && record.origin !== 'system_builtin') return false;
+    if (filters.scope === 'registry' && record.origin === 'system_builtin') return false;
     if (filters.kind === 'skills_only') {
       if (record.kind !== 'skill' && !record.is_top_level_skill) return false;
     } else if (filters.kind !== 'all' && record.kind !== filters.kind) {

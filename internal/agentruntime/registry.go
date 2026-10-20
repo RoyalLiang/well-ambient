@@ -273,6 +273,7 @@ func (r *Registry) Resolve(ctx context.Context, query ResolveQuery) (*Capability
 	}
 
 	var primaryManifests []*CapabilityManifest
+	var systemContextPlugin *CapabilityManifest
 	manifestMap := make(map[string]*CapabilityManifest)
 
 	for _, ver := range activeVersions {
@@ -282,6 +283,13 @@ func (r *Registry) Resolve(ctx context.Context, query ResolveQuery) (*Capability
 		}
 		if manifestMap[m.ID] == nil {
 			manifestMap[m.ID] = &m
+			if m.ID == SystemContextPluginKey && m.Kind == KindPlugin {
+				var capability db.Capability
+				if r.db.WithContext(ctx).Where("capability_key = ? AND status = ?", m.ID, "active").Take(&capability).Error == nil {
+					systemContextPlugin = &m
+				}
+				continue
+			}
 			if m.MatchIntent(query.Intent, query.Conditions) {
 				primaryManifests = append(primaryManifests, &m)
 			}
@@ -290,6 +298,10 @@ func (r *Registry) Resolve(ctx context.Context, query ResolveQuery) (*Capability
 
 	if len(primaryManifests) == 0 {
 		return nil, fmt.Errorf("no active capability matched intent %q and conditions %v", query.Intent, query.Conditions)
+	}
+
+	if systemContextPlugin != nil {
+		primaryManifests = append(primaryManifests, systemContextPlugin)
 	}
 
 	// 2. DAG Resolution with Cycle Detection & Optional Dependency Support
@@ -337,6 +349,9 @@ func (r *Registry) Resolve(ctx context.Context, query ResolveQuery) (*Capability
 
 	for _, m := range primaryManifests {
 		reason := fmt.Sprintf("matched intent %s", query.Intent)
+		if m.ID == SystemContextPluginKey {
+			reason = "default system context plugin"
+		}
 		if err := resolveDAG(m, false, reason); err != nil {
 			return nil, err
 		}

@@ -249,7 +249,7 @@ test('capability ownership receives a complete registry and the table preserves 
   assert.match(loadRegistry, /api\('\/api\/agent-runtime\/capabilities'\)/);
   assert.doesNotMatch(loadRegistry, /params\.set|searchKeyword|filterKind|filterStatus/);
   assert.match(content, /countIncludedGovernanceComponents\(displayCapabilities\)/);
-  assert.match(content, /完整注册表磁盘占用/);
+  assert.match(content, /完整注册表资源大小/);
   assert.match(content, /table-layout:\s*fixed/);
   assert.match(content, /cap-column-description/);
   assert.match(content, /aria-label=\{`查看 \$\{cap\.capability_key\} 详情与 SKILL\.md`\}/);

@@ -771,6 +771,7 @@ func TestLoginRefreshesAvatarAndDepartmentFromWellOSUserInfo(t *testing.T) {
 
 func setupServerTestDB(t *testing.T) {
 	t.Helper()
+	t.Setenv("WELL_AMBIENT_SKILLS_DIR", t.TempDir())
 	if err := db.InitDB(":memory:"); err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}

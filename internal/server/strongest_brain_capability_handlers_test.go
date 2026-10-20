@@ -41,10 +41,10 @@ func TestStrongestBrainCapabilityHandlers_FullE2EScenario(t *testing.T) {
 
 	// 2. 测试 POST /api/agent-runtime/capabilities 注册新能力
 	newSkillManifest := agentruntime.CapabilityManifest{
-		Schema:  "capability-manifest/v1",
-		ID:      "security.scanner",
-		Kind:    agentruntime.KindPlugin,
-		Version: 1,
+		Schema:      "capability-manifest/v1",
+		ID:          "security.scanner",
+		Kind:        agentruntime.KindPlugin,
+		Version:     1,
 		Permissions: []string{"source.read"},
 		Budgets: agentruntime.BudgetDef{
 			InstructionTokens: 800,
@@ -95,7 +95,7 @@ func TestStrongestBrainCapabilityHandlers_FullE2EScenario(t *testing.T) {
 	if err := json.NewDecoder(wPrev.Body).Decode(&plan); err != nil {
 		t.Fatalf("decode resolve plan failed: %v", err)
 	}
-	if len(plan.Capabilities) != 1 || plan.Capabilities[0].ID != "security.scanner" {
+	if len(plan.Capabilities) != 2 || plan.Capabilities[0].ID != "security.scanner" || plan.Capabilities[1].ID != "system.headroom" {
 		t.Fatalf("expected resolved security.scanner capability, got: %+v", plan.Capabilities)
 	}
 
@@ -527,4 +527,3 @@ func TestCapability_ReferenceCountingAndColdArchive(t *testing.T) {
 		t.Fatalf("expected resource content to be cleared after purge, got %q", res.Content)
 	}
 }
-

@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/headroomlabs-ai/headroom",
+  "package": "headroom-ai",
+  "version": "0.41.0",
+  "license": "Apache-2.0",
+  "linux_amd64_wheel": "headroom_ai-0.41.0-cp310-abi3-manylinux_2_28_x86_64.whl",
+  "sha256": "f4db5e5119a73af3ed952b1c10caff2430831d899eb17d995a27574ae6e6b306",
+  "mode": "agent-lossless"
+}

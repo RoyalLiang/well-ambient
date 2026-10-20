@@ -107,15 +107,43 @@
     disk_size_formatted?: string;
   }
 
+  function installationMethodLabel(method?: string) {
+    return ({manifest_import:'清单导入',remote_manifest:'远程清单安装',manifest_upgrade:'清单升级'} as Record<string,string>)[method || ''] || '仅注册记录';
+  }
+
+  interface InstallationEvidence {
+    location: string;
+    method: string;
+    source: string;
+    evidence_source: string;
+    installed_at: string;
+    artifact_sha256: string;
+  }
+  interface PluginRuntime {
+    version: string; mode: string; default_enabled: boolean; state: string;
+    state_source: string; worker_path: string; calls: number; compressed: number;
+    fallbacks: number; tokens_saved: number; last_reason?: string;
+  }
+  interface InventoryMetadata {
+    origin?: string;
+    install_state?: string;
+    status_source?: string;
+    client_installation?: string;
+    builtin_location?: string;
+    installation?: InstallationEvidence;
+    plugin_runtime?: PluginRuntime;
+  }
   interface IncludedComponent {
     key: string;
     kind: string;
     name: string;
     description: string;
     tools?: string[];
+    origin?: string;
+    source_label?: string;
   }
 
-  interface CapabilityItem {
+  interface CapabilityItem extends InventoryMetadata {
     id: number;
     capability_key: string;
     kind: string;
@@ -136,7 +164,7 @@
     updated_at: string;
   }
 
-  interface CapabilityDetailData {
+  interface CapabilityDetailData extends InventoryMetadata {
     capability: CapabilityItem;
     versions: CapabilityVersionItem[];
     disk_size_bytes: number;
@@ -161,6 +189,13 @@
   // Filter
   let searchKeyword = '';
   let filterKind = 'all';
+  let inventoryScope: 'installed' | 'system' | 'registry' = 'installed';
+  let checkingHeadroom = false;
+  const inventoryOptions = [
+    { value: 'installed', label: '已安装 Skill' },
+    { value: 'system', label: '系统内置' },
+    { value: 'registry', label: '注册记录（含待核验）' }
+  ];
   let filterStatus = 'all';
 
   const kindOptions = [
@@ -196,6 +231,7 @@
   $: displayCapabilities = filterGovernanceCapabilities(capabilityHierarchy.records, {
     search: searchKeyword,
     kind: filterKind,
+    scope: inventoryScope,
     status: filterStatus
   });
   $: displayedComponentCount = countIncludedGovernanceComponents(displayCapabilities);
@@ -396,6 +432,17 @@ activation:
   }
 
   // --- Capability Functions ---
+  async function checkHeadroom() {
+    if (!canManageSkills || checkingHeadroom) return;
+    checkingHeadroom = true;
+    try {
+      const result = await api<{runtime: PluginRuntime}>('/api/agent-runtime/system-plugins/headroom/check', {method: 'POST'});
+      if (capabilityDetail) capabilityDetail = {...capabilityDetail, plugin_runtime: result.runtime};
+      capabilityNotice = result.runtime.state === 'ready' ? 'Headroom 本地无损检查通过，未调用模型服务。' : 'Headroom 当前不可用，已保留原文；请查看详情中的回退原因。';
+    } catch (err) { capabilityError = err instanceof Error ? err.message : '插件检查失败'; }
+    finally { checkingHeadroom = false; }
+  }
+
   async function loadCapabilities(): Promise<boolean> {
     const requestID = ++capabilityRequestID;
     loadingCapabilities = true;
@@ -562,7 +609,7 @@ activation:
       if (deleteMode === 'cold_archive') {
         capabilityNotice = `技能 ${deleteTarget.capability_key} 已成功冷归档，已保留运行审计凭据与重放能力。`;
       } else {
-        capabilityNotice = `技能 ${deleteTarget.capability_key} 已成功卸载并清理物理磁盘占用，已保留安装记录供回溯与恢复。`;
+        capabilityNotice = `技能 ${deleteTarget.capability_key} 已成功卸载并清理注册资源大小，已保留安装记录供回溯与恢复。`;
       }
       if (detailDrawerOpen && selectedCapability?.capability_key === deleteTarget.capability_key) {
         closeDetailDrawer();
@@ -962,7 +1009,7 @@ activation:
           >
             <span class="wa-icon tab-icon" class:icon-sparkles={section.id === 'skills'} class:icon-checklist={section.id === 'prompts' || section.id === 'rules'} class:icon-network={section.id === 'open_capabilities'} class:icon-library={section.id === 'context' || section.id === 'skill_registry'} aria-hidden="true"></span>
             {section.label}
-            {#if section.id === 'skills'}<span class="tab-count">{capabilityHierarchy.records.length}</span>{/if}
+            {#if section.id === 'skills'}<span class="tab-count">{capabilities.filter(c => c.kind === 'skill' && c.origin === 'installed' && c.install_state === 'installed').length}</span>{/if}
           </button>
         {/each}
       </nav>
@@ -1006,7 +1053,7 @@ activation:
       <div class="gov-title-row">
         <div class="gov-title-group">
           <h2>技能治理中心</h2>
-          <p class="gov-subtitle">管理技能版本、内置组件与生命周期。</p>
+          <p class="gov-subtitle">按安装回执查看 Skill，系统内置能力与注册记录分别治理。</p>
         </div>
       {#if resolvedActiveSection === 'skills'}
         <div class="gov-header-actions">
@@ -1028,8 +1075,8 @@ activation:
       </div>
       <div class="gov-metrics-strip" aria-label="当前可治理能力摘要">
         <div class="gov-metric-item">
-          <span class="gov-metric-label">当前可治理能力</span>
-          <div class="gov-metric-val"><strong>{displayCapabilities.length}</strong><span class="gov-metric-sub">/ {capabilityHierarchy.records.length} 项 · {displayCapabilities.filter(c => c.status === 'active').length} 项已启用</span></div>
+          <span class="gov-metric-label">{inventoryScope === 'installed' ? '已核验安装 Skill' : inventoryScope === 'system' ? '系统内置能力' : '注册记录'}</span>
+          <div class="gov-metric-val"><strong>{capabilityError && capabilities.length === 0 ? '—' : displayCapabilities.length}</strong><span class="gov-metric-sub">{capabilityError && capabilities.length === 0 ? '数据暂不可用' : `项 · ${displayCapabilities.filter(c => c.status === 'active').length} 项已启用`}</span></div>
         </div>
         <div class="gov-metric-divider"></div>
         <div class="gov-metric-item">
@@ -1038,7 +1085,7 @@ activation:
         </div>
         <div class="gov-metric-divider"></div>
         <div class="gov-metric-item">
-          <span class="gov-metric-label">完整注册表磁盘占用</span>
+          <span class="gov-metric-label">完整注册表资源大小</span>
           <div class="gov-metric-val"><strong class="highlight-cyan">{totalDiskSizeFormatted}</strong><span class="gov-metric-sub">{totalDiskSizeBytes.toLocaleString()} 字节</span></div>
         </div>
       </div>
@@ -1051,6 +1098,7 @@ activation:
           <span>检测到 {capabilityHierarchy.orphans.length} 项组件归属异常：{capabilityHierarchy.orphans.map(component => `${component.key} → ${component.parentKeys.join('、')}`).join('；')}。所属技能不在注册表中，暂不提供独立生命周期操作。</span>
         </div>
       {/if}
+      <div class="inventory-note">{inventoryScope === 'installed' ? '仅展示服务端安装回执与文件校验一致的 Skill。Codex / Claude 客户端安装状态未上报。' : inventoryScope === 'system' ? '随系统版本提供，不计入用户安装。开放能力组件在 well-ambient 主技能详情中查看。' : '注册记录用于审计；没有安装回执或文件核验不通过时，不视为已安装。'}</div>
       <!-- Filter Bar -->
       <AdminListFilterBar label="技能筛选">
         {#snippet leading()}
@@ -1069,6 +1117,8 @@ activation:
         {/snippet}
         {#snippet controls()}
         <div class="filter-controls">
+          <div class="filter-field"><span class="filter-field-label">查看:</span><div class="filter-select-wrap"><Select id="gov-inventory-scope" ariaLabel="查看范围" value={inventoryScope} options={inventoryOptions} searchable={false} compact shadowless on:change={(e) => { inventoryScope = e.detail as typeof inventoryScope; filterKind = 'all'; }} /></div></div>
+          {#if inventoryScope !== 'installed'}
           <div class="filter-field">
             <span class="filter-field-label">类别:</span>
             <div class="filter-select-wrap">
@@ -1086,6 +1136,7 @@ activation:
               />
             </div>
           </div>
+          {/if}
 
           <div class="filter-field">
             <span class="filter-field-label">状态:</span>
@@ -1114,11 +1165,13 @@ activation:
           <div class="spinner" aria-hidden="true"></div>
           <span>正在检索微内核能力注册表与磁盘统计...</span>
         </div>
+      {:else if capabilityError && capabilities.length === 0}
+        <div class="gov-empty-state" role="status"><h3>当前无法核验安装记录</h3><p>读取失败不代表没有安装。请重试获取服务端回执与文件核验结果。</p></div>
       {:else if displayCapabilities.length === 0}
         <div class="gov-empty-state">
           <div class="empty-icon">📦</div>
-          <h3>未检索到匹配的微内核技能</h3>
-          <p>{canManageSkills ? '当前过滤条件下没有已注册能力，可以导入符合规范的 Capability。' : '当前过滤条件下没有已注册能力。'}</p>
+          <h3>{inventoryScope === 'installed' ? '暂无已核验安装的 Skill' : '没有匹配的能力记录'}</h3>
+          <p>{inventoryScope === 'installed' ? '安装回执与文件校验一致后，Skill 才会显示在此处。内置能力可切换到“系统内置”查看。' : '当前筛选条件下没有匹配记录。'}</p>
           {#if canManageSkills}<button type="button" class="btn btn-primary" on:click={openImportModal}>立即导入技能</button>{/if}
         </div>
       {:else}
@@ -1142,7 +1195,7 @@ activation:
                 <th>状态</th>
                 <th>版本</th>
                 <th>关联运行</th>
-                <th>物理磁盘</th>
+                <th>资源大小</th>
                 <th>责任方 / 描述</th>
                 <th class="cap-actions-heading">生命周期操作</th>
               </tr>
@@ -1155,12 +1208,16 @@ activation:
                     <div class="cap-identity">
                       <div class="cap-title-row">
                         <strong class="cap-key">{cap.capability_key}</strong>
+                        {#if cap.origin === 'system_builtin'}<span class="wa-admin-pill">系统内置</span>{/if}
                         {#if cap.sensitivity === 'restricted'}
                           <span class="badge badge-restricted">安全限制</span>
                         {/if}
                       </div>
 
 
+                      {#if cap.installation}
+                        <div class="cap-install-meta"><span>安装位置 <code title={cap.installation.location}>{cap.installation.location}</code></span><span>{cap.installation.method === 'remote_manifest' ? '远程安装' : '清单导入'} · {cap.install_state === 'installed' ? '文件已核验' : '安装文件待核验'}</span><span>状态来源：{cap.status_source}</span></div>
+                      {:else if cap.origin !== 'system_builtin'}<div class="cap-install-meta">仅有注册记录，尚无已核验安装回执。</div>{/if}
                       <!-- Included Components (Sub-plugins / Providers) -->
                       {#if cap.included_components && cap.included_components.length > 0}
                         <div class="cap-included-block" title="本技能内聚包含的能力切片与插件">
@@ -1240,7 +1297,7 @@ activation:
                         详情
                       </button>
 
-                      {#if canManageSkills}
+                      {#if canManageSkills && cap.origin !== 'system_builtin'}
                         {#if cap.status === 'uninstalled' || cap.status === 'archived'}
                           <button
                             type="button"
@@ -1491,7 +1548,7 @@ activation:
         <!-- Summary Cards -->
         <div class="detail-summary-grid">
           <div class="summary-box">
-            <span class="label">物理磁盘占用</span>
+            <span class="label">注册资源大小</span>
             <strong>{capabilityDetail.disk_size_formatted}</strong>
             <span class="sub">{capabilityDetail.disk_size_bytes.toLocaleString()} bytes</span>
           </div>
@@ -1512,6 +1569,32 @@ activation:
             </span>
           </div>
         </div>
+
+        <section class="installation-evidence" aria-label="安装位置与状态来源">
+          <h3>{capabilityDetail.origin === 'system_builtin' ? '系统内置' : capabilityDetail.install_state === 'installed' ? '服务端安装已核验' : '安装尚未核验'}</h3>
+          <dl>
+            <div><dt>安装位置</dt><dd><code>{capabilityDetail.installation?.location || capabilityDetail.builtin_location || '未找到服务端安装凭据'}</code></dd></div>
+            <div><dt>安装方式</dt><dd>{capabilityDetail.origin === 'system_builtin' ? '随服务镜像提供' : installationMethodLabel(capabilityDetail.installation?.method)}</dd></div>
+            <div><dt>核验来源</dt><dd>{capabilityDetail.installation?.evidence_source || (capabilityDetail.origin === 'system_builtin' ? '服务端内置清单；运行可用性以检查结果为准' : '未上报')}</dd></div>
+            <div><dt>状态来源</dt><dd>{capabilityDetail.status_source || '运行时注册表'}</dd></div>
+            <div><dt>客户端安装</dt><dd>{capabilityDetail.client_installation || '未上报'} · Codex / Claude</dd></div>
+            {#if capabilityDetail.installation}<div><dt>来源 / 时间</dt><dd>{capabilityDetail.installation.source} · {new Date(capabilityDetail.installation.installed_at).toLocaleString()}</dd></div>{/if}
+          </dl>
+          {#if capabilityDetail.install_state === 'missing'}<p role="status">安装文件缺失或校验不一致，已从“已安装 Skill”列表移除。</p>{/if}
+        </section>
+        {#if capabilityDetail.plugin_runtime}
+          {@const runtime = capabilityDetail.plugin_runtime}
+          <section class="installation-evidence" aria-label="Headroom 运行观测">
+            <div class="plugin-runtime-heading"><h3>Headroom {runtime.version}</h3>{#if canManageSkills}<Button variant="secondary" size="small" disabled={checkingHeadroom} on:click={checkHeadroom}>{checkingHeadroom ? '检查中…' : '运行本地检查'}</Button>{/if}</div>
+            <p>Agent 默认启用 · 本地无损压缩 · 遵循 AI 配置与插件启用状态。失败时保留原文。</p>
+            <dl>
+              <div><dt>当前进程</dt><dd>{runtime.state === 'ready' ? '运行正常' : runtime.state === 'degraded' ? '已回退原文' : '尚未运行检查'} · {runtime.mode}</dd></div>
+              <div><dt>统计来源</dt><dd>{runtime.state_source}</dd></div>
+              <div><dt>处理 / 压缩 / 回退</dt><dd>{runtime.calls} / {runtime.compressed} / {runtime.fallbacks} 次</dd></div>
+              <div><dt>节省 Token</dt><dd>{runtime.tokens_saved.toLocaleString()} · 最近结果：{runtime.last_reason || '尚无记录'}</dd></div>
+            </dl>
+          </section>
+        {/if}
 
         <!-- Dual View Tabs -->
         <div class="drawer-view-tabs">
@@ -1541,14 +1624,15 @@ activation:
               <div class="doc-included-box">
                 <div class="doc-inc-header">
                   <span class="inc-icon">📦</span>
-                  <strong>本技能所内聚包含的组件与插件 ({capabilityDetail.included_components.length})</strong>
+                  <strong>所属组件与插件 ({capabilityDetail.included_components.length})</strong>
                 </div>
                 <div class="doc-inc-grid">
                   {#each capabilityDetail.included_components as comp}
                     <div class="doc-inc-card">
                       <div class="doc-inc-card-head">
-                        <span class="inc-badge {comp.kind}">{comp.kind === 'plugin' ? '🧩 插件' : '📚 语料源'}</span>
+                        <span class="inc-badge {comp.kind}">{comp.kind === 'skill' ? '子技能' : comp.kind === 'mcp' ? 'MCP' : comp.kind === 'plugin' ? '插件' : '上下文提供方'}</span>
                         <code>{comp.key}</code>
+                        {#if comp.source_label}<span class="component-source">{comp.source_label}</span>{/if}
                       </div>
                       <p class="doc-inc-desc">{comp.description}</p>
                       {#if comp.tools && comp.tools.length > 0}
@@ -3425,5 +3509,25 @@ activation:
   @media (prefers-reduced-motion: reduce) {
     .gov-drawer, .drawer-backdrop, .gov-modal, .gov-switch-handle { animation: none; transition: none; }
   }
+
+
+  .inventory-note { margin: 16px 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.7; }
+  .cap-install-meta { margin-top: 5px; max-width: 100%; white-space: normal; color: var(--wa-text-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+  .cap-install-meta > span { display: block; }
+  .cap-install-meta code { font-size: inherit; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .installation-evidence { padding: 18px 0; border-bottom: 1px solid var(--wa-border-divider); }
+  .installation-evidence h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .installation-evidence p { margin: 10px 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.7; }
+  .installation-evidence dl { margin: 14px 0 0; display: grid; gap: 10px; font-size: 12px; }
+  .installation-evidence dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+  .installation-evidence dt { color: var(--wa-text-muted); }
+  .installation-evidence dd { margin: 0; overflow-wrap: anywhere; line-height: 1.6; }
+  .installation-evidence code { font-size: 11px; }
+  .plugin-runtime-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .component-source { color: var(--wa-text-muted); font-size: 11px; white-space: nowrap; }
+  .doc-inc-card-head { flex-wrap: wrap; }
+  .doc-inc-card-head .inc-badge { flex: none; white-space: nowrap; }
+  .doc-inc-card-head code { min-width: 120px; flex: 1; overflow-wrap: anywhere; }
+  @media (max-width: 480px) { .doc-inc-grid { grid-template-columns: 1fr; } .installation-evidence dl > div { grid-template-columns: 1fr; gap: 3px; } }
 
 </style>
