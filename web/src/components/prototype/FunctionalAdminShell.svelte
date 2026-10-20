@@ -2,7 +2,6 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { SETTINGS_SECTION_DEFINITIONS } from '../../lib/settings-sections';
   import {
-    AI_GOVERNANCE_SECTION_DEFINITIONS,
     canAccessAIGovernanceSection,
     isAIGovernanceSection
   } from '../../lib/ai-governance-sections';
@@ -78,15 +77,6 @@
 		{ section: 'calculation', group: '度量洞察', label: '计算说明', subtitle: '口径与审计', permissions: ['kpi:read'], roles: ['super_admin'] }
 	];
 
-  const aiGovernanceSubnav: NavSubItem[] = AI_GOVERNANCE_SECTION_DEFINITIONS.map((section) => ({
-    section: section.id,
-    group: 'AI 治理',
-    label: section.label,
-    subtitle: section.subtitle,
-    permissions: section.permissions,
-    roles: section.roles
-  }));
-
   const settingsSubnav: NavSubItem[] = SETTINGS_SECTION_DEFINITIONS.map((section) => ({
     section: section.id,
     group: section.group,
@@ -102,7 +92,7 @@
     { route: 'evidence', label: '证据链', subtitle: '健康与解构', icon: 'network', tone: 'amber' },
     { route: 'tasks', label: '任务跟踪', subtitle: '执行闭环', icon: 'checklist', tone: 'rose', children: taskSubnav },
     { route: 'kpi', label: '度量洞察', subtitle: '绩效事实', icon: 'analytics', tone: 'violet', children: kpiSubnav },
-    { route: 'ai_governance', label: 'AI 治理', subtitle: '技能与标准', icon: 'sparkles', tone: 'violet', children: aiGovernanceSubnav },
+    { route: 'ai_governance', label: 'AI 治理', subtitle: '技能与标准', icon: 'sparkles', tone: 'violet' },
     { route: 'settings', label: '配置中心', subtitle: '规则与用户', icon: 'settings', tone: 'slate', children: settingsSubnav }
   ];
 

@@ -93,7 +93,7 @@ test('AI governance fallback resolves defaults, invalid sections, and forbidden 
   assert.equal(resolveAIGovernanceSection('skills', [], 'member'), null);
 });
 
-test('App and shell share definitions, hydrate permissions safely, and preserve legacy links', () => {
+test('App and shell keep governance tabs, hydrate permissions safely, and preserve legacy links', () => {
   const app = source(appPath);
   const shell = source(shellPath);
 
@@ -107,7 +107,10 @@ test('App and shell share definitions, hydrate permissions safely, and preserve 
   assert.match(app, /AI_GOVERNANCE_SECTION_MAP\[activeAIGovernanceSection\]\.label/);
   assert.match(app, /<AIGovernanceCenter[\s\S]*?\{currentUserRole\}[\s\S]*?onSectionChange=\{handleAIGovernanceNavigate\}/);
 
-  assert.match(shell, /AI_GOVERNANCE_SECTION_DEFINITIONS\.map/);
+  assert.doesNotMatch(app, /showSectionTabs=\{false\}/);
+  const governanceNav = shell.match(/\{ route: 'ai_governance',[^\n]+\}/)?.[0];
+  assert.ok(governanceNav, 'AI governance remains a top-level navigation entry');
+  assert.doesNotMatch(governanceNav, /children:/, 'section selection belongs to the in-page tabs');
   assert.match(shell, /item\.group === 'AI 治理'[\s\S]*?canAccessAIGovernanceSection\(item\.section, currentUserPermissions, currentUserRole\)/);
   assert.match(shell, /activeRoute === 'ai_governance' \? activeAIGovernanceSection/);
 });

@@ -4,6 +4,7 @@
   import Modal from '../shared/Modal.svelte';
   import Select from '../shared/Select.svelte';
   import Switch from '../shared/Switch.svelte';
+  import TextInput from '../shared/TextInput.svelte';
   import { copyToClipboard } from '../../lib/clipboard';
   import { showToast } from '../../lib/toast';
   import { filterSkills, publicationDisabledSkills, type OpenSkillItem, type OpenSkillsObservation } from '../../lib/openSkillRegistry';
@@ -138,20 +139,27 @@
 
 <section class="skill-center" aria-labelledby="skill-center-title">
   <header class="skill-header">
-    <div><p class="eyebrow">统一技能包</p><h2 id="skill-center-title">well-ambient <span class="version">v{bundle?.version || '2.0.0'}</span></h2><p class="description">一个主技能，按需加载业务子技能。安装、发布与实际调用在此查看。</p></div>
+    <div><h2 id="skill-center-title">Skill 中心</h2><p class="description">管理 well-ambient 主技能、业务子技能与调用观测。</p></div>
     <div class="actions"><Button variant="secondary" disabled={loading || refreshing} loading={refreshing} on:click={load}>刷新观测</Button><Button variant="secondary" on:click={onOpenCapabilities}>连接与权限配置</Button></div>
   </header>
   {#if error}<div class="notice error" role="alert"><p>{error}{bundle ? ' 已保留上次读取的技能列表。' : ''}</p><Button variant="secondary" size="small" on:click={load}>重试</Button></div>{/if}
   {#if saveError}<div class="notice error" role="alert">{saveError}</div>{/if}
-  {#if loading}<div class="empty" role="status">正在读取 well-ambient 技能包与调用观测…</div>
+  {#if loading}<div class="skill-panel empty" role="status">正在读取 well-ambient 技能包与调用观测…</div>
   {:else if bundle}
-    <div class="package-bar"><div><span class="wa-admin-pill" class:muted={bundle.enabled === false}>{bundle.enabled === false ? '暂停分发' : '可安装'}</span><span>{published} / {children.length} 个子技能已发布</span><span>{bundle.tools.length} 个对外工具</span></div><div class="actions"><Button variant="secondary" size="small" on:click={() => bundle && showDoc(bundle)}>主技能文档</Button>{#if bundle.enabled !== false}<a class="download" href="/open/v1/skills/well-ambient/archive">下载统一包</a>{/if}<Button variant="primary" disabled={bundle.enabled === false} on:click={install}>安装 well-ambient</Button></div></div>
+    <section class="skill-panel package-panel" aria-label="well-ambient 统一技能包" data-surface-contract="admin-data-list-surface/v1">
+      <div class="package-bar">
+        <div class="package-title"><h3>well-ambient <span class="version">v{bundle.version || '2.0.0'}</span></h3><p>一个主技能，按需加载业务子技能。</p></div>
+        <div class="actions"><Button variant="secondary" size="small" on:click={() => bundle && showDoc(bundle)}>主技能文档</Button>{#if bundle.enabled !== false}<a class="wa-admin-action download" href="/open/v1/skills/well-ambient/archive">下载统一包</a>{/if}<Button variant="primary" disabled={bundle.enabled === false} on:click={install}>安装 well-ambient</Button></div>
+      </div>
+      <div class="package-facts"><span class="wa-admin-pill" class:muted={bundle.enabled === false}>{bundle.enabled === false ? '暂停分发' : '可安装'}</span><span>{published} / {children.length} 个子技能已发布</span><span>{bundle.tools.length} 个对外工具</span></div>
     <p class="migration">原独立技能已归入 <code>well-ambient</code>。重新安装后加载客户端工具列表；安装器将可识别的旧目录移到 skill-backups，保留原有修改。发布开关仅控制技能分发，工具访问仍由阶段与策略控制。</p>
 
     {#if canObserve && observation}<div class="metrics"><div><span>近 24 小时调用</span><strong>{observation.summary.calls}</strong><small>按请求去重，按工具归类</small></div><div><span>已回写成功率</span><strong>{rate(observation.summary.success_rate)}</strong><small>{observation.summary.succeeded} 成功 / {observation.summary.failed} 失败</small></div><div><span>待回写终态</span><strong>{observation.summary.in_progress}</strong><small>不能据此判断仍在运行</small></div><div><span>当前发布策略</span><strong>{observation.policy_version ? `v${observation.policy_version}` : '未配置'}</strong><small>每次调用仍逐项校验授权</small></div></div>{/if}
+    </section>
     {#if observationError && canObserve}<div class="notice error" role="alert">{observationError}{observation ? ` 保留截至 ${date(observation.generated_at)} 的上次观测。` : ''}</div>{/if}
 
-    <div class="section-heading"><div><h3>业务子技能</h3><p>随主技能统一安装，使用时按需读取。</p></div><label class="search"><span class="sr-only">搜索子技能</span><input type="search" bind:value={query} placeholder="搜索用途、子技能或工具" /></label></div>
+    <section class="skill-panel catalog-panel" aria-label="业务子技能" data-surface-contract="admin-data-list-surface/v1">
+    <div class="section-heading catalog-heading"><div><h3>业务子技能</h3><p>随主技能统一安装，使用时按需读取。</p></div><div class="search"><label class="sr-only" for="skill-center-search">搜索子技能</label><TextInput id="skill-center-search" type="search" bind:value={query} placeholder="搜索用途、子技能或工具" /></div></div>
     {#if filtered.length === 0}<div class="empty"><p>没有匹配的子技能。</p><Button variant="secondary" size="small" on:click={() => query = ''}>清除搜索</Button></div>
     {:else}<table class="skills-table"><thead><tr><th scope="col">子技能与用途</th><th scope="col">工具</th><th scope="col">对外发布</th><th scope="col">近 24 小时</th><th scope="col">操作</th></tr></thead><tbody>
       {#each filtered as skill (skill.canonical_name)}{@const stats = metricsByID.get(skill.canonical_name)}
@@ -159,7 +167,8 @@
       {/each}
     </tbody></table>{/if}
 
-    <section class="observations" aria-labelledby="skill-observations-title"><div class="section-heading"><div><h3 id="skill-observations-title">调用观测</h3><p>{observation && canObserve ? `按工具归类，直接调用同样计入 · 最近 24 小时 · 截至 ${date(observation.generated_at)}` : '来自 HTTP 与 MCP 的真实审计记录'}</p></div></div>
+    </section>
+    <section class="skill-panel observations" data-surface-contract="admin-data-list-surface/v1" aria-labelledby="skill-observations-title"><div class="section-heading"><div><h3 id="skill-observations-title">调用观测</h3><p>{observation && canObserve ? `按工具归类，直接调用同样计入 · 最近 24 小时 · 截至 ${date(observation.generated_at)}` : '来自 HTTP 与 MCP 的真实审计记录'}</p></div></div>
       {#if !canObserve}<div class="empty">当前为技能浏览模式。全局超级管理员可查看来源、调用结果与知识刷新状态。</div>
       {:else if observation}
         <div class="phase-line"><span>访问阶段</span><span class="wa-admin-pill" class:muted={!observation.phases.Read}>只读 {observation.phases.Read ? '启用' : '关闭'}</span><span class="wa-admin-pill" class:muted={!observation.phases.Prepare}>预备 {observation.phases.Prepare ? '启用' : '关闭'}</span><span class="wa-admin-pill" class:muted={!observation.phases.Execute}>执行 {observation.phases.Execute ? '启用' : '关闭'}</span></div>
@@ -185,47 +194,136 @@
 </Modal>
 
 <style>
+  /* finesse · component: skill-center · register=product
+   * ownership: package discovery, child publication and observation layout
+   * palette, typography and surfaces: inherited Phase 41 admin contract */
   .skill-center { display: flex; flex-direction: column; min-width: 0; gap: var(--wa-space-4); color: var(--wa-text-main); }
+  h2, h3, h4, p { margin: 0; }
+  h2 { font-size: 18px; font-weight: 700; line-height: 1.5; letter-spacing: -.02em; color: var(--wa-text-strong); }
+  h3 { font-size: 15px; font-weight: 700; line-height: 1.5; color: var(--wa-text-strong); }
+  h4 { font-size: 13.5px; font-weight: 700; line-height: 1.5; }
   .skill-header, .package-bar, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-4); min-width: 0; }
-  .skill-header { align-items: flex-start; } h2, h3, h4, p { margin: 0; }
-  h2 { font-size: 1.5rem; line-height: 1.35; letter-spacing: -.025em; } h3 { font-size: 1rem; line-height: 1.5; } h4 { font-size: .9rem; line-height: 1.5; }
-  .eyebrow, .version, .quiet, .description, .section-heading p, .migration, dt, small { color: var(--wa-text-muted); }
-  .eyebrow { font-size: .75rem; margin-bottom: var(--wa-space-1); } .version { font-size: .75rem; font-weight: 500; white-space: nowrap; letter-spacing: 0; }
-  .description, .section-heading p, .migration, .quiet { font-size: .8125rem; line-height: 1.65; } .description { margin-top: var(--wa-space-2); max-width: 65ch; }
-  .actions { display: flex; align-items: center; gap: var(--wa-space-2); flex-wrap: wrap; }
-  .package-bar { padding-block: var(--wa-space-3); border-block: 1px solid var(--wa-border-divider); }
-  .package-bar > div:first-child { display: flex; gap: var(--wa-space-3); align-items: center; flex-wrap: wrap; font-size: .8125rem; }
-  .download { display: inline-flex; align-items: center; min-height: 36px; padding: var(--wa-space-2); color: var(--wa-text-main); text-underline-offset: 4px; font-size: .8125rem; white-space: nowrap; }
-  code { font-family: var(--wa-font-mono, monospace); font-size: .75rem; overflow-wrap: anywhere; } .search { width: min(320px, 45%); }
-  .search input, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-sm); padding: var(--wa-space-2) var(--wa-space-3); background: var(--wa-surface-panel); color: var(--wa-text-main); font: inherit; }
-  input:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--wa-accent-fill); outline-offset: 3px; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .8125rem; } th { text-align: left; color: var(--wa-text-muted); font-size: .75rem; font-weight: 600; padding: var(--wa-space-2) var(--wa-space-3); border-bottom: 1px solid var(--wa-border-divider); }
-  td { padding: var(--wa-space-3); border-bottom: 1px solid var(--wa-border-divider); vertical-align: top; overflow-wrap: anywhere; } th:first-child, td:first-child { padding-left: 0; } th:last-child, td:last-child { padding-right: 0; }
-  .skills-table th:first-child { width: 37%; } .skills-table th:nth-child(2) { width: 14%; } .skills-table th:nth-child(3) { width: 17%; } .skills-table th:nth-child(4) { width: 18%; }
-  td strong, td code, small { display: block; } .skill-id { margin-top: var(--wa-space-1); color: var(--wa-text-muted); } td p { margin-top: var(--wa-space-2); line-height: 1.6; color: var(--wa-text-muted); }
-  td small { margin-top: var(--wa-space-1); font-size: .6875rem; line-height: 1.55; } .number, .metrics strong { font-variant-numeric: tabular-nums; }
+  .skill-header { align-items: flex-start; }
+  .skill-header > div:first-child, .package-title, .section-heading > div { min-width: 0; }
+  .description { margin-top: var(--wa-space-1); }
+  .description, .section-heading p, .package-title p, .migration, .quiet { color: var(--wa-text-muted); font-size: 13px; line-height: 1.65; }
+  .section-heading p, .package-title p { margin-top: var(--wa-space-1); }
+  .actions { display: flex; align-items: center; gap: var(--wa-space-2); flex-wrap: wrap; flex-shrink: 0; }
+  .skill-panel {
+    min-width: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--wa-admin-list-surface-border);
+    border-top-color: var(--wa-admin-list-surface-border-top);
+    border-radius: var(--wa-admin-list-surface-radius);
+    background: var(--wa-admin-list-surface-background);
+    box-shadow: var(--wa-admin-list-surface-shadow);
+    -webkit-backdrop-filter: var(--wa-admin-list-surface-filter);
+    backdrop-filter: var(--wa-admin-list-surface-filter);
+  }
+  .package-panel, .observations { padding: var(--wa-space-4) var(--wa-space-5); }
+  .package-panel { display: flex; flex-direction: column; gap: var(--wa-space-3); }
+  .package-title h3 { display: flex; align-items: center; gap: var(--wa-space-2); font-size: 16px; }
+  .version { color: var(--wa-text-muted); font-size: 12px; font-weight: 500; white-space: nowrap; letter-spacing: 0; }
+  .package-facts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wa-space-2) var(--wa-space-4); font-size: 12px; color: var(--wa-text-muted); }
+  .download { display: inline-flex; align-items: center; justify-content: center; min-height: var(--wa-control-h); padding: 0 var(--wa-space-3); border-radius: var(--wa-radius-md); font-size: 13px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+  .migration { padding-top: var(--wa-space-3); border-top: 1px solid var(--wa-border-divider); font-size: 12px; }
+  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding-top: var(--wa-space-3); border-top: 1px solid var(--wa-border-divider); }
+  .metrics > div { min-width: 0; padding-inline: var(--wa-space-4); border-left: 1px solid var(--wa-border-divider); }
+  .metrics > div:first-child { padding-left: 0; border-left: 0; }
+  .metrics > div:last-child { padding-right: 0; }
+  .metrics span { font-size: 12px; color: var(--wa-text-muted); }
+  .metrics strong { display: block; margin-top: var(--wa-space-1); font-size: 22px; line-height: 1.4; font-weight: 700; color: var(--wa-text-strong); }
+  .metrics small { margin-top: var(--wa-space-1); font-size: 11px; line-height: 1.5; }
+  .catalog-panel { overflow: hidden; }
+  .catalog-heading { padding: var(--wa-space-4) var(--wa-space-5); }
+  .search { width: min(320px, 45%); }
+  .search :global(.input-group) { margin-bottom: 0; }
+  code { font-family: var(--wa-font-mono, monospace); font-size: 12px; overflow-wrap: anywhere; }
+  textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-sm); padding: var(--wa-space-2) var(--wa-space-3); background: var(--wa-surface-panel); color: var(--wa-text-main); font: inherit; }
+  textarea:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--wa-accent-fill); outline-offset: 3px; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+  th { padding: var(--wa-space-3); text-align: left; color: var(--wa-text-muted); font-size: 12px; font-weight: 600; background: var(--wa-surface-inset); border-block: 1px solid var(--wa-border-divider); }
+  td { padding: var(--wa-space-4) var(--wa-space-3); border-bottom: 1px solid var(--wa-border-divider); vertical-align: top; overflow-wrap: anywhere; }
+  th:first-child, td:first-child { padding-left: var(--wa-space-5); }
+  th:last-child, td:last-child { padding-right: var(--wa-space-5); }
+  tbody tr:last-child td { border-bottom: 0; }
+  .skills-table th:first-child { width: 36%; }
+  .skills-table th:nth-child(2) { width: 14%; }
+  .skills-table th:nth-child(3) { width: 17%; }
+  .skills-table th:nth-child(4) { width: 18%; }
+  td strong, td code, small { display: block; }
+  .skill-id { margin-top: var(--wa-space-1); color: var(--wa-text-muted); }
+  td p { margin-top: var(--wa-space-2); line-height: 1.6; color: var(--wa-text-muted); }
+  small { color: var(--wa-text-muted); }
+  td small { margin-top: var(--wa-space-1); font-size: 11px; line-height: 1.55; }
+  .number, .metrics strong { font-variant-numeric: tabular-nums; }
   .publish-control :global(.switch-label) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  .publish-control { display: flex; align-items: center; gap: var(--wa-space-2); } .unpublished td:first-child strong { color: var(--wa-text-muted); } summary { cursor: pointer; padding-block: var(--wa-space-1); }
+  .publish-control { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wa-space-2); }
+  .unpublished td:first-child strong { color: var(--wa-text-muted); }
+  summary { cursor: pointer; padding-block: var(--wa-space-1); }
   .tool-list { list-style: none; padding: 0; margin: var(--wa-space-2) 0 0; display: grid; gap: var(--wa-space-2); }
-  .notice { padding: var(--wa-space-3);  display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-3); font-size: .8125rem; line-height: 1.65; }
-  .notice.error {  background: var(--wa-danger-soft); } .inline-error { color: var(--wa-danger); font-size: .8125rem; line-height: 1.65; }
-  .empty { padding: var(--wa-space-6) var(--wa-space-2); text-align: center; color: var(--wa-text-muted); font-size: .8125rem; line-height: 1.7; } .empty :global(button) { margin-top: var(--wa-space-2); }
-  .observations { display: flex; flex-direction: column; gap: var(--wa-space-4); padding-top: var(--wa-space-4); border-top: 1px solid var(--wa-border-divider); }
-  .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--wa-space-4); } .metrics > div { min-width: 0; border-left: 1px solid var(--wa-border-divider); padding-left: var(--wa-space-4); } .metrics > div:first-child { border-left: 0; padding-left: 0; }
-  .metrics span { font-size: .75rem; color: var(--wa-text-muted); } .metrics strong { display: block; font-size: 1.55rem; line-height: 1.5; font-weight: 650; } .metrics small { font-size: .6875rem; line-height: 1.5; }
-  .phase-line { display: flex; gap: var(--wa-space-2); align-items: center; flex-wrap: wrap; font-size: .75rem; color: var(--wa-text-muted); } .wa-admin-pill.muted { background: var(--wa-surface-inset); color: var(--wa-text-muted); } .wa-admin-pill.failed { background: var(--wa-danger-soft); color: var(--wa-danger); }
-  .knowledge { border-block: 1px solid var(--wa-border-divider); padding-block: var(--wa-space-4); display: grid; gap: var(--wa-space-3); } .knowledge-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--wa-space-4); margin: 0; font-size: .8125rem; }
-  dt { font-size: .75rem; margin-bottom: var(--wa-space-1); } dd { margin: 0; line-height: 1.6; } .calls-table th:nth-child(1) { width: 22%; } .calls-table th:nth-child(2) { width: 30%; } .calls-table th:nth-child(3) { width: 14%; } .calls-table th:nth-child(4) { width: 11%; }
-  .dialog-content { padding: var(--wa-space-4); box-sizing: border-box; display: grid; gap: var(--wa-space-4); min-width: 0; font-size: .875rem; line-height: 1.7; } .command, .document { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: var(--wa-space-4); border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-sm); background: var(--wa-surface-inset); font-size: .8125rem; line-height: 1.85; font-family: var(--wa-font-mono, monospace); }
-  .detail-observation { border-bottom: 1px solid var(--wa-border-divider); padding-bottom: var(--wa-space-3); } .detail-observation p { margin-top: var(--wa-space-2); } .detail-observation ul { padding-left: var(--wa-space-4); color: var(--wa-text-muted); }
-  textarea { min-height: 120px; font-family: var(--wa-font-mono, monospace); } .mobile-label { display: none; } .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  @media (max-width: 1024px) { .skill-header, .package-bar { flex-wrap: wrap; } .knowledge-values { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .notice { padding: var(--wa-space-3) var(--wa-space-4); border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-md); display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-3); font-size: 13px; line-height: 1.65; }
+  .notice.error { background: var(--wa-danger-soft); }
+  .inline-error { color: var(--wa-danger); font-size: 13px; line-height: 1.65; }
+  .empty { padding: var(--wa-space-6) var(--wa-space-4); text-align: center; color: var(--wa-text-muted); font-size: 13px; line-height: 1.7; }
+  .empty :global(button) { margin-top: var(--wa-space-2); }
+  .observations { display: flex; flex-direction: column; gap: var(--wa-space-4); }
+  .phase-line { display: flex; gap: var(--wa-space-2); align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--wa-text-muted); }
+  .wa-admin-pill.muted { background: var(--wa-surface-inset); color: var(--wa-text-muted); }
+  .wa-admin-pill.failed { background: var(--wa-danger-soft); color: var(--wa-danger); }
+  .knowledge { border-block: 1px solid var(--wa-border-divider); padding-block: var(--wa-space-4); display: grid; gap: var(--wa-space-3); }
+  .knowledge-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--wa-space-4); margin: 0; font-size: 13px; }
+  .knowledge-values > div { min-width: 0; }
+  dt { color: var(--wa-text-muted); font-size: 12px; margin-bottom: var(--wa-space-1); }
+  dd { margin: 0; line-height: 1.6; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .calls-table th:nth-child(1) { width: 22%; }
+  .calls-table th:nth-child(2) { width: 30%; }
+  .calls-table th:nth-child(3) { width: 14%; }
+  .calls-table th:nth-child(4) { width: 11%; }
+  .calls-table th:first-child, .calls-table td:first-child { padding-left: 0; }
+  .calls-table th:last-child, .calls-table td:last-child { padding-right: 0; }
+  .dialog-content { padding: var(--wa-space-5); box-sizing: border-box; display: grid; gap: var(--wa-space-4); min-width: 0; font-size: 14px; line-height: 1.7; }
+  .command, .document { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: var(--wa-space-4); border: 1px solid var(--wa-border-divider); border-radius: var(--wa-radius-sm); background: var(--wa-surface-inset); font-size: 13px; line-height: 1.85; font-family: var(--wa-font-mono, monospace); }
+  .detail-observation { border-bottom: 1px solid var(--wa-border-divider); padding-bottom: var(--wa-space-3); }
+  .detail-observation p { margin-top: var(--wa-space-2); }
+  .detail-observation ul { padding-left: var(--wa-space-4); color: var(--wa-text-muted); }
+  textarea { min-height: 120px; font-family: var(--wa-font-mono, monospace); }
+  .mobile-label { display: none; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  @media (max-width: 1100px) {
+    .package-bar { align-items: flex-start; flex-wrap: wrap; }
+    .knowledge-values { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 760px) {
-    .skill-header, .section-heading, .package-bar { align-items: stretch; flex-direction: column; } .search { width: 100%; } .actions { gap: var(--wa-space-2); }
-    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: var(--wa-space-4); } .metrics > div:nth-child(3) { border-left: 0; padding-left: 0; }
-    .skills-table, .calls-table, tbody, tr, td { display: block; width: auto; } thead { display: none; } tr { padding-block: var(--wa-space-4); border-bottom: 1px solid var(--wa-border-divider); }
+    .skill-header, .section-heading, .package-bar { align-items: stretch; flex-direction: column; }
+    .package-panel, .observations { padding: var(--wa-space-4); }
+    .catalog-heading { padding: var(--wa-space-4); }
+    .search { width: 100%; }
+    .actions { gap: var(--wa-space-2); }
+    .actions :global(button), .actions .download { flex: 1 1 auto; min-height: 44px; }
+    .search :global(input) { min-height: 44px; }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--wa-space-4) 0; }
+    .metrics > div:nth-child(3) { border-left: 0; padding-left: 0; }
+    .skills-table, .calls-table, tbody, tr, td { display: block; width: auto; }
+    thead { display: none; }
+    tr { padding: var(--wa-space-3) var(--wa-space-4); border-bottom: 1px solid var(--wa-border-divider); }
+    tr:last-child { border-bottom: 0; }
     td, th:first-child, td:first-child, td:last-child { border: 0; padding: var(--wa-space-2) 0; }
-    .skills-table td:nth-child(2), .skills-table td:nth-child(3), .skills-table td:nth-child(4) { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: start; gap: var(--wa-space-2); } .mobile-label { display: inline; color: var(--wa-text-muted); font-size: .75rem; } .skills-table td small { grid-column: 2; margin-top: 0; }
-    .calls-table td { padding-block: var(--wa-space-1); } .calls-table td:nth-child(3), .calls-table td:nth-child(4) { display: inline-block; margin-right: var(--wa-space-3); } .dialog-content { font-size: .8125rem; } .knowledge-values { gap: var(--wa-space-3); }
+    .skills-table td:nth-child(2), .skills-table td:nth-child(3), .skills-table td:nth-child(4) { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: start; gap: var(--wa-space-2); }
+    .mobile-label { display: inline; color: var(--wa-text-muted); font-size: 12px; }
+    .skills-table td small { grid-column: 2; margin-top: 0; }
+    .skills-table td:last-child :global(button) { min-height: 44px; width: 100%; }
+    .calls-table tr { padding-inline: 0; }
+    .calls-table td { padding-block: var(--wa-space-1); }
+    .calls-table td:nth-child(3), .calls-table td:nth-child(4) { display: inline-block; margin-right: var(--wa-space-3); }
+    .dialog-content { padding: var(--wa-space-4); font-size: 13px; }
+    .knowledge-values { gap: var(--wa-space-3); }
+    .notice { align-items: flex-start; flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .skill-panel { background: var(--wa-surface-panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
+  @supports not (backdrop-filter: blur(1px)) {
+    .skill-panel { background: var(--wa-surface-panel); }
   }
 </style>

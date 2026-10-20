@@ -35,7 +35,6 @@
   export let currentUserRole = 'member';
   export let activeSection: AIGovernanceSection = 'skills';
   export let onSectionChange: (section: string) => void = () => {};
-  export let showSectionTabs = true;
 
   let mounted = false;
   let loadedSections = new Set<AIGovernanceSection>();
@@ -945,7 +944,6 @@ activation:
 
 <div class="gov-workbench" data-layout-contract="admin-viewport-workbench/v1">
   <!-- Navigation owns module selection; each pane owns its content and actions. -->
-  {#if showSectionTabs}
   <header class="gov-header">
     {#if accessibleSections.length > 0}
       <nav class="gov-nav-tabs" role="tablist" aria-label="AI 治理分区">
@@ -970,7 +968,6 @@ activation:
       </nav>
     {/if}
   </header>
-  {/if}
 
   {#if accessibleSections.length === 0}
     <section class="gov-empty-state gov-no-access" role="status" aria-labelledby="ai-governance-no-access-title">

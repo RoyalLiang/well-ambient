@@ -1148,7 +1148,6 @@
           {currentUserRole}
           activeSection={activeAIGovernanceSection}
           onSectionChange={handleAIGovernanceNavigate}
-          showSectionTabs={false}
         />
       {:else if activeTab === 'settings'}
         {#key activeSettingsSection}
