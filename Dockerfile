@@ -30,15 +30,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     -ldflags="-s -w" -o /out/open-mcp-stdio ./cmd/open-mcp-stdio
 
 FROM registry.cn-hangzhou.aliyuncs.com/rookiehouse/debian:bookworm-slim AS server
-ARG VERSION=dev
-ARG COMMIT=unknown
-ARG BUILD_TIME=unknown
-LABEL org.opencontainers.image.title="Well Ambient server" \
-      org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.revision="${COMMIT}" \
-      org.opencontainers.image.created="${BUILD_TIME}"
 
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update && \
+    apt-get install -y --no-install-recommends python3 python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY capabilities/plugins/headroom/ /opt/well-ambient/plugins/headroom/
 ARG HEADROOM_PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV WELL_AMBIENT_HEADROOM_PYTHON=/opt/well-ambient/headroom/bin/python \
@@ -53,10 +49,18 @@ RUN python3 -m venv /opt/well-ambient/headroom && \
     /opt/well-ambient/headroom/bin/python -I -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" && \
     /opt/well-ambient/headroom/bin/python -I /opt/well-ambient/plugins/headroom/worker.py </dev/null
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+LABEL org.opencontainers.image.title="Well Ambient server" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIME}"
+
+
 COPY --from=server-build /out/well-ambient /usr/local/bin/well-ambient
 COPY --from=server-build /out/open-access-admin /usr/local/bin/open-access-admin
 COPY --from=server-build /out/open-mcp-stdio /usr/local/bin/open-mcp-stdio
-COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --chown=1000:1000 .agents/skills/jira-analysis/ .agents/skills/jira-analysis/
 COPY --chown=1000:1000 .agents/skills/board-decision/ .agents/skills/board-decision/
 COPY --chown=1000:1000 .agents/skills/code-review-reader/ .agents/skills/code-review-reader/

@@ -4,7 +4,7 @@
 
 系统内置能力单独查看。开放 MCP、四个开放子技能与运行时知识提供方归入 `well-ambient` 详情；这种展示归属不增加父技能的工具或权限。注册、下载及启用状态均不能证明 Codex / Claude 客户端安装，客户端状态显示“未上报”。旧注册记录没有回执时保留在“注册记录”范围，不推断为已安装。
 
-Headroom 是随服务镜像提供的系统插件，注册键为 `system.headroom`，不会计入已安装 Skill 数量。镜像固定安装 [headroom-ai 0.41.0](https://pypi.org/project/headroom-ai/0.41.0/)，上游为 [Headroom](https://github.com/headroomlabs-ai/headroom)，许可证 Apache-2.0。构建默认从启用 TLS 校验的清华 PyPI 镜像下载固定版本，可用构建参数 `HEADROOM_PYPI_INDEX` 切换到官方 PyPI；安装前核对根包 wheel 与官方 PyPI 元数据中的 SHA256。版本及根包 Linux wheel 摘要见 `capabilities/plugins/headroom/UPSTREAM.json`；依赖版本见 `requirements.lock`。后者固定版本，不是全部依赖的哈希锁。
+Headroom 是随服务镜像提供的系统插件，注册键为 `system.headroom`，不会计入已安装 Skill 数量。镜像固定安装 [headroom-ai 0.41.0](https://pypi.org/project/headroom-ai/0.41.0/)，上游为 [Headroom](https://github.com/headroomlabs-ai/headroom)，许可证 Apache-2.0。构建使用保留 Debian 签名验证的 HTTPS Debian 镜像，并默认从启用 TLS 校验的清华 PyPI 镜像下载固定版本，可用构建参数 `HEADROOM_PYPI_INDEX` 切换到官方 PyPI；安装前核对根包 wheel 与官方 PyPI 元数据中的 SHA256。版本及根包 Linux wheel 摘要见 `capabilities/plugins/headroom/UPSTREAM.json`；依赖版本见 `requirements.lock`。后者固定版本，不是全部依赖的哈希锁。
 
 AI 启用后，默认在共享 LLM 客户端发送请求前处理用户上下文。它覆盖 Responses、Chat Completions、Messages 及流式调用；系统指令、附件和文件引用保持原样。使用上游 `densify` 的 agent 无损模式，不启用 CCR 删除或 ML 有损压缩。压缩由本地 Python 进程执行，不新增模型服务或业务数据传输目的地；原本配置的模型仍按原有请求接收上下文。
 
