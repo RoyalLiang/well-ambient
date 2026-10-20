@@ -40,12 +40,16 @@ LABEL org.opencontainers.image.title="Well Ambient server" \
 
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY capabilities/plugins/headroom/ /opt/well-ambient/plugins/headroom/
+ARG HEADROOM_PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV WELL_AMBIENT_HEADROOM_PYTHON=/opt/well-ambient/headroom/bin/python \
     WELL_AMBIENT_HEADROOM_WORKER=/opt/well-ambient/plugins/headroom/worker.py \
     TIKTOKEN_CACHE_DIR=/opt/well-ambient/plugins/headroom/token-cache \
     PYTHONDONTWRITEBYTECODE=1
 RUN python3 -m venv /opt/well-ambient/headroom && \
-    /opt/well-ambient/headroom/bin/pip --isolated install --no-cache-dir --index-url https://pypi.org/simple -r /opt/well-ambient/plugins/headroom/requirements.lock && \
+    /opt/well-ambient/headroom/bin/pip --isolated download --no-cache-dir --only-binary=:all: --no-deps --index-url ${HEADROOM_PYPI_INDEX} --dest /tmp/headroom-wheel headroom-ai==0.41.0 && \
+    /opt/well-ambient/headroom/bin/python -I /opt/well-ambient/plugins/headroom/verify_wheel.py /tmp/headroom-wheel && \
+    /opt/well-ambient/headroom/bin/pip --isolated install --no-cache-dir --index-url ${HEADROOM_PYPI_INDEX} --find-links /tmp/headroom-wheel -r /opt/well-ambient/plugins/headroom/requirements.lock && \
+    rm -rf /tmp/headroom-wheel && \
     /opt/well-ambient/headroom/bin/python -I -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" && \
     /opt/well-ambient/headroom/bin/python -I /opt/well-ambient/plugins/headroom/worker.py </dev/null
 

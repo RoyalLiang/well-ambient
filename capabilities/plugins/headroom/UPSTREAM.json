@@ -5,5 +5,13 @@
   "license": "Apache-2.0",
   "linux_amd64_wheel": "headroom_ai-0.41.0-cp310-abi3-manylinux_2_28_x86_64.whl",
   "sha256": "f4db5e5119a73af3ed952b1c10caff2430831d899eb17d995a27574ae6e6b306",
-  "mode": "agent-lossless"
+  "mode": "agent-lossless",
+  "metadata_source": "https://pypi.org/pypi/headroom-ai/0.41.0/json",
+  "wheels": {
+    "headroom_ai-0.41.0-cp310-abi3-macosx_10_12_x86_64.whl": "7e48d3896846558aeb1d84be82469be5be8bb7efbd65601ea0650524460b067f",
+    "headroom_ai-0.41.0-cp310-abi3-macosx_11_0_arm64.whl": "b842d36e161f9f0d1fc4d56de1d870e22a3e4d05c94d2272d9a306b38f406242",
+    "headroom_ai-0.41.0-cp310-abi3-manylinux_2_28_aarch64.whl": "04631aac0082605888594669bf0e983736321307c8c7f5306768e72d606a65ae",
+    "headroom_ai-0.41.0-cp310-abi3-manylinux_2_28_x86_64.whl": "f4db5e5119a73af3ed952b1c10caff2430831d899eb17d995a27574ae6e6b306",
+    "headroom_ai-0.41.0-cp310-abi3-win_amd64.whl": "18b43230c4dbbe9889fdb0863a7943059f4509fdf49ad20b19be394f2725db18"
+  }
 }
