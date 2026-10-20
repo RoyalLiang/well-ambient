@@ -112,6 +112,7 @@
   }
 
   interface InstallationEvidence {
+    version: number;
     location: string;
     method: string;
     source: string;
@@ -1193,7 +1194,7 @@ activation:
                 <th>名称</th>
                 <th>类别</th>
                 <th>状态</th>
-                <th>版本</th>
+                <th>{inventoryScope === 'installed' ? '安装版本' : '注册版本'}</th>
                 <th>关联运行</th>
                 <th>资源大小</th>
                 <th>责任方 / 描述</th>
@@ -1263,7 +1264,7 @@ activation:
 
                   <!-- Version -->
                   <td>
-                    <span class="ver-pill">v{cap.latest_version || 1}</span>
+                    <span class="ver-pill">v{(inventoryScope === 'installed' ? cap.installation?.version : cap.latest_version) || 1}</span>
                   </td>
 
                   <!-- Run Bindings -->
@@ -1574,6 +1575,7 @@ activation:
           <h3>{capabilityDetail.origin === 'system_builtin' ? '系统内置' : capabilityDetail.install_state === 'installed' ? '服务端安装已核验' : '安装尚未核验'}</h3>
           <dl>
             <div><dt>安装位置</dt><dd><code>{capabilityDetail.installation?.location || capabilityDetail.builtin_location || '未找到服务端安装凭据'}</code></dd></div>
+            {#if capabilityDetail.installation}<div><dt>安装版本</dt><dd>v{capabilityDetail.installation.version}</dd></div>{/if}
             <div><dt>安装方式</dt><dd>{capabilityDetail.origin === 'system_builtin' ? '随服务镜像提供' : installationMethodLabel(capabilityDetail.installation?.method)}</dd></div>
             <div><dt>核验来源</dt><dd>{capabilityDetail.installation?.evidence_source || (capabilityDetail.origin === 'system_builtin' ? '服务端内置清单；运行可用性以检查结果为准' : '未上报')}</dd></div>
             <div><dt>状态来源</dt><dd>{capabilityDetail.status_source || '运行时注册表'}</dd></div>

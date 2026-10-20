@@ -2,6 +2,8 @@
 
 “技能治理中心”默认显示已安装 Skill：必须同时存在服务端安装回执、匹配的注册版本摘要，以及通过 SHA256 核验的 SKILL.md 文件。清单导入、远程清单安装和升级会写入这些证据。默认目录为 `/var/lib/well-ambient/skills`，可用 `WELL_AMBIENT_SKILLS_DIR` 指定持久化目录。
 
+已安装列表显示安装回执版本；注册记录显示最新注册版本，避免未安装的新注册版本冒充当前安装版本。
+
 系统内置能力单独查看。开放 MCP、四个开放子技能与运行时知识提供方归入 `well-ambient` 详情；这种展示归属不增加父技能的工具或权限。注册、下载及启用状态均不能证明 Codex / Claude 客户端安装，客户端状态显示“未上报”。旧注册记录没有回执时保留在“注册记录”范围，不推断为已安装。
 
 Headroom 是随服务镜像提供的系统插件，注册键为 `system.headroom`，不会计入已安装 Skill 数量。镜像固定安装 [headroom-ai 0.41.0](https://pypi.org/project/headroom-ai/0.41.0/)，上游为 [Headroom](https://github.com/headroomlabs-ai/headroom)，许可证 Apache-2.0。构建使用保留 Debian 签名验证的 HTTPS Debian 镜像，并默认从启用 TLS 校验的清华 PyPI 镜像下载固定版本，可用构建参数 `HEADROOM_PYPI_INDEX` 切换到官方 PyPI；安装前核对根包 wheel 与官方 PyPI 元数据中的 SHA256。版本及根包 Linux wheel 摘要见 `capabilities/plugins/headroom/UPSTREAM.json`；依赖版本见 `requirements.lock`。后者固定版本，不是全部依赖的哈希锁。
