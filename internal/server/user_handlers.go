@@ -58,8 +58,8 @@ func (s *Server) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var u userdb.User
-	if err := db.DB.Where("username = ?", username).First(&u).Error; err != nil {
+	u, err := userdb.ResolveIdentity(r.Context(), db.DB, username)
+	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
