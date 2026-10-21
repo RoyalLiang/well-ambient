@@ -210,12 +210,18 @@
     return true;
   }
 
+  async function closeWithFocus() {
+    closeDropdown();
+    await tick();
+    const target = searchInput?.isConnected ? searchInput : toggleButton;
+    target?.focus({ preventScroll: true });
+  }
   function handleInputKeydown(event: KeyboardEvent) {
     if (event.isComposing) return;
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && isOpen) {
       event.preventDefault();
-      closeDropdown();
-      searchInput?.blur();
+      event.stopPropagation();
+      void closeWithFocus();
       return;
     }
     if (event.key === 'ArrowDown') {
@@ -247,7 +253,7 @@
 
   function handleLifecycleClose(reason: SelectCloseReason) {
     if (reason === 'escape') {
-      void finishSelection();
+      void closeWithFocus();
       return;
     }
     if (allowCustom) commitPendingCustom();
@@ -255,9 +261,10 @@
   }
 
   function handleDropdownKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && isOpen) {
       event.preventDefault();
-      void finishSelection();
+      event.stopPropagation();
+      void closeWithFocus();
     }
   }
 

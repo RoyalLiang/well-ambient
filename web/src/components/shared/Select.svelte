@@ -35,6 +35,7 @@
   let selectWrapper: HTMLDivElement;
   let dropdownEl: HTMLDivElement;
   let searchInput: HTMLInputElement;
+  let triggerButton: HTMLButtonElement;
   let dropdownPlacement: 'up' | 'down' = 'down';
   let dropdownMaxHeight = 268;
   let dropdownTop = -9999;
@@ -154,23 +155,29 @@
     if (isOpen && selectContainer && focusLeftSelect(selectContainer, event, [dropdownEl])) closeDropdown();
   }
 
+  function restoreControlFocus() {
+    (searchable ? searchInput : triggerButton)?.focus({ preventScroll: true });
+  }
   function handleLifecycleClose(reason: SelectCloseReason) {
     closeDropdown();
-    if (reason === 'escape') searchInput?.blur();
+    if (reason === 'escape') restoreControlFocus();
   }
 
   function handleDropdownKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && isOpen) {
       event.preventDefault();
+      event.stopPropagation();
       closeDropdown();
+      restoreControlFocus();
     }
   }
 
   function handleInputKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && isOpen) {
       event.preventDefault();
+      event.stopPropagation();
       closeDropdown();
-      searchInput?.blur();
+      restoreControlFocus();
       return;
     }
     if (event.key === 'ArrowDown') {
@@ -269,6 +276,7 @@
     {:else}
       <button
         {id}
+        bind:this={triggerButton}
         type="button"
         class="select-trigger"
         class:is-active={isOpen}

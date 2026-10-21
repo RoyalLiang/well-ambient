@@ -20,10 +20,12 @@ func TestKnowledgeSyncBrowserFixture(t *testing.T) {
 		t.Skip("opt-in isolated authenticated UI fixture")
 	}
 	srv, _ := setupAIGovernanceOpenCapabilityServer(t)
+	configureJiraIssueBrowserFixture(t, srv)
 	srv.config.Jira.SyncProjects = []string{"NS2", "WA"}
 	srv.config.GitLab.Repos = []config.RepoMapping{{Name: "terminal", Path: "ops/terminal", ProjectID: "42"}, {Name: "fleet", Path: "ops/fleet", ProjectID: "43"}, {Name: "elsewhere", Path: "other/app", ProjectID: "99"}}
 	srv.setEmailConfig(*srv.config)
 	token := superAdminToken(t, "preview-admin@example.test", "预览管理员", []string{"*"})
+	memberToken := performanceMemberToken(t, "sync-fixture-member@example.test", []string{"config:read"})
 	for i := 0; i < 58; i++ {
 		member := userdb.User{Username: fmt.Sprintf("member-%02d@example.test", i), Email: fmt.Sprintf("member-%02d@example.test", i), Name: fmt.Sprintf("成员 %02d", i)}
 		if err := db.DB.Create(&member).Error; err != nil {
@@ -45,9 +47,14 @@ func TestKnowledgeSyncBrowserFixture(t *testing.T) {
 	dist, _ := filepath.Abs("../../web/dist")
 	files := http.FileServer(http.Dir(dist))
 	tokenJSON, _ := json.Marshal(token)
+	memberJSON, _ := json.Marshal(memberToken)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/__fixture/login" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if r.URL.Query().Get("role") == "member" {
+				fmt.Fprintf(w, `<script>localStorage.setItem('jwt_token',%s);localStorage.setItem('current_user_name','只读成员');localStorage.setItem('current_user_email','sync-fixture-member@example.test');localStorage.setItem('current_user_role','member');localStorage.setItem('current_user_permissions','["config:read"]');location.replace('/?tab=settings&section=jira_issue_sync');</script>`, memberJSON)
+				return
+			}
 			fmt.Fprintf(w, `<script>localStorage.setItem('jwt_token',%s);localStorage.setItem('current_user_name','预览管理员');localStorage.setItem('current_user_email','preview-admin@example.test');localStorage.setItem('current_user_role','super_admin');localStorage.setItem('current_user_permissions','["*"]');location.replace('/?tab=ai_governance&section=skill_registry');</script>`, tokenJSON)
 			return
 		}

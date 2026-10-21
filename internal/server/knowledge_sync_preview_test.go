@@ -23,7 +23,7 @@ func TestKnowledgeBrowserAndJiraIssuePreviewPermissions(t *testing.T) {
 		srv.handler.ServeHTTP(rec, req)
 		return rec
 	}
-	for _, path := range []string{"/api/agent-runtime/knowledge/items", "/api/jira-issue-sync"} {
+	for _, path := range []string{"/api/agent-runtime/knowledge/items", "/api/jira-issue-sync", "/api/jira-issue-sync/workspace"} {
 		if rec := call("GET", path, member, ""); rec.Code != 403 {
 			t.Fatalf("member read escaped global boundary %s: %d", path, rec.Code)
 		}

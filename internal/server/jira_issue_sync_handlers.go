@@ -79,15 +79,15 @@ func (s *Server) handleJiraIssueSync(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func (s *Server) startJiraIssueSyncPreviewWorker(ctx context.Context) {
+func (s *Server) startJiraIssueSyncWorkspaceWorker(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := s.jiraIssueSync().Tick(ctx); err != nil && ctx.Err() == nil {
-			log.Print("Jira Issue preview failed; no remote changes were made")
+		if err := s.jiraIssueWorkspace().TickWorkspace(ctx); err != nil && ctx.Err() == nil {
+			log.Print("Jira Issue scheduled run did not complete; inspect workspace run records")
 		}
 		select {
 		case <-ctx.Done():

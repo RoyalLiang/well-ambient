@@ -17,15 +17,16 @@ export function registerSelectLifecycle(container: HTMLElement, options: SelectL
   function handleKeydown(event: KeyboardEvent) {
     if (!options.isOpen() || event.key !== 'Escape') return;
     event.preventDefault();
+    event.stopPropagation();
     options.close('escape');
   }
 
   window.addEventListener('pointerdown', handlePointerDown, true);
-  window.addEventListener('keydown', handleKeydown);
+  window.addEventListener('keydown', handleKeydown, true);
 
   return () => {
     window.removeEventListener('pointerdown', handlePointerDown, true);
-    window.removeEventListener('keydown', handleKeydown);
+    window.removeEventListener('keydown', handleKeydown, true);
   };
 }
 

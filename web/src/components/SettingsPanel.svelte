@@ -750,7 +750,7 @@
     if (section === 'versions') return `${configVersions.length} 个版本`;
     if (section === 'wellos_auth') return globalConfig.server?.maintenance_mode ? '数据库配置已开启' : '数据库配置已关闭';
     if (section === 'users') return `${users.length} 位成员`;
-    if (section === 'jira_issue_sync') return '本地草稿预览';
+    if (section === 'jira_issue_sync') return '独立连接与多仓映射';
     if (section === 'matrix') return `${permissionMeta.length} 个权限`;
     if (section === 'policies') return `${authorizationPolicies.length} 条策略`;
     if (section === 'audit') return `${auditLogs.length + authorizationAuditLogs.length} 条日志`;
@@ -1394,10 +1394,10 @@
               {/each}
             </ol>
           </nav>
-          <div class="breadcrumb-meta" aria-label="页面状态">
+          {#if activeSection !== 'jira_issue_sync'}<div class="breadcrumb-meta" aria-label="页面状态">
             <span class="wa-admin-pill {ADMIN_TONE_CLASS[settingsInspector.tone || 'neutral']}">{settingsInspector.status}</span>
             <span class="font-mono">{settingsContextDetail}</span>
-          </div>
+          </div>{/if}
         </div>
 
         <div class="settings-content-header" class:single-column={isIntegrationSection || activeSection === 'users' || activeSection === 'jira_issue_sync'}>
@@ -1535,7 +1535,7 @@
               on:updated={handleMaintenanceUpdated}
             />
     {:else if activeSection === 'jira_issue_sync'}
-      <div class="section-card"><JiraIssueSyncConfig canAccess={currentUserRole === 'super_admin'} canWrite={currentUserPermissions.includes('config:write')} onCredentials={() => switchSection('gitlab')} /></div>
+      <div class="section-card"><JiraIssueSyncConfig canAccess={currentUserRole === 'super_admin'} canWrite={currentUserPermissions.includes('config:write')} /></div>
     {:else if activeSection === 'users'}
       <div class="section-card"><MemberRoleDirectory {users} {groups} {currentUserEmail}
         canWrite={currentUserPermissions.includes('users:write')}

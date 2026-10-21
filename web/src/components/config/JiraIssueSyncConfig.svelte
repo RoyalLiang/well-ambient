@@ -1,212 +1,99 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import Button from '../shared/Button.svelte';
-  import Switch from '../shared/Switch.svelte';
-  import Select from '../shared/Select.svelte';
-  export let canWrite = false;
-  export let canAccess = false;
-  export let onCredentials: () => void = () => {};
-  type Settings = { version:number; enabled:boolean; time_of_day:string; jira_project:string; group_path:string; target_project_id:string };
-  type Repo = { name:string; path:string; project_id:string };
-  type Item = { jira_key:string; title:string; description:string; source_status:string; dedupe_key:string };
-  type Preview = { id:number; config_version:number; jira_project:string; target_project_id:string; group_path:string; created_at:string; total:number; items:Item[]; truncated:boolean };
-  let settings:Settings = {version:1,enabled:false,time_of_day:'09:00',jira_project:'',group_path:'',target_project_id:''};
-  let saved = '';
-  let projects:string[] = [];
-  let repos:Repo[] = [];
-  let preview:Preview|null = null;
-  let selected = '';
-  let busy = '';
-  let error = '';
-  let notice = '';
-  let tokenConfigured = false;
-  let alive = true;
-  const groupOf=(repo:Repo)=>repo.path?.replace(/^\/+|\/+$/g,'').split('/').slice(0,-1).join('/') || '';
-  $: groups=[...new Set(repos.map(groupOf).filter(Boolean))].sort();
-  $: targets=repos.filter(repo=>groupOf(repo)===settings.group_path);
-  $: dirty=JSON.stringify(settings)!==saved;
-  $: ready=Boolean(settings.jira_project&&settings.group_path&&settings.target_project_id);
-  $: controlsDisabled = !canWrite || Boolean(busy) || !saved;
-  $: projectOptions = projects.map(value => ({ value, label: value }));
-  $: groupOptions = groups.map(value => ({ value, label: value }));
-  $: targetOptions = targets.map(repo => ({ value: repo.project_id, label: repo.path || repo.name, meta: `ID ${repo.project_id}` }));
-  $: hour = settings.time_of_day.split(':')[0] || '09';
-  $: minute = settings.time_of_day.split(':')[1] || '00';
-  const hours = Array.from({ length: 24 }, (_, index) => ({ value: String(index).padStart(2, '0'), label: String(index).padStart(2, '0') }));
-  const minutes = Array.from({ length: 60 }, (_, index) => ({ value: String(index).padStart(2, '0'), label: String(index).padStart(2, '0') }));
-  function setTime(part: 'hour' | 'minute', value: string) {
-    settings = { ...settings, time_of_day: part === 'hour' ? `${value}:${minute}` : `${hour}:${value}` };
-  }
-  async function request(url:string,options:RequestInit={}) {
-    const res=await fetch(url,options);if(!res.ok)throw new Error(res.status===409?'配置已被其他人修改，请重新加载。':res.status===403?'需要全局超级管理员及对应配置权限。':'请求失败，请检查项目、分组和承载仓库配置后重试。');return res.json();
-  }
-  async function load(){if(!canAccess)return;busy='load';error='';try{const data=await request('/api/jira-issue-sync');if(!alive)return;settings=data.settings;projects=data.projects||[];repos=data.repositories||[];preview=data.latest;tokenConfigured=data.token_configured;saved=JSON.stringify(settings);}catch(e){if(alive)error=(e as Error).message;}finally{if(alive)busy='';}}
-  async function save(){if(!canWrite||busy)return;busy='save';error='';notice='';try{const value=await request('/api/jira-issue-sync',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});if(!alive)return;settings=value;saved=JSON.stringify(value);notice='配置已保存。';}catch(e){if(alive)error=(e as Error).message;}finally{if(alive)busy='';}}
-  async function generate(){if(!canWrite||busy||dirty||!ready)return;busy='preview';error='';notice='';try{const value=await request('/api/jira-issue-sync/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:settings.version})});if(alive){preview=value;selected='';notice='草稿已生成。';}}catch(e){if(alive)error=(e as Error).message;}finally{if(alive)busy='';}}
-  function setGroup(value:string){settings={...settings,group_path:value,target_project_id:''};}
-  function download(){if(!preview)return;const url=URL.createObjectURL(new Blob([JSON.stringify({...preview,mode:'preview_only',remote_verified:false},null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`jira-issue-preview-${preview.id}.json`;a.click();URL.revokeObjectURL(url);}
-  onMount(()=>{void load();});onDestroy(()=>{alive=false;});
+ import { onMount, onDestroy } from 'svelte';
+ import Button from '../shared/Button.svelte';
+ import Switch from '../shared/Switch.svelte';
+ import Select from '../shared/Select.svelte';
+ import MultiSelect from '../shared/MultiSelect.svelte';
+ import TextInput from '../shared/TextInput.svelte';
+ import JiraIssueMappingRow from './JiraIssueMappingRow.svelte';
+ import JiraIssueRunEvidence from './JiraIssueRunEvidence.svelte';
+ import { initialSettings, kindLabel, statusLabel, type Workspace, type WorkspaceSettings, type Mapping, type Run } from '../../lib/jiraIssueWorkspace';
+ export let canWrite=false;
+ export let canAccess=false;
+ let settings:WorkspaceSettings=initialSettings();
+ let workspace:Workspace|null=null;
+ let saved='';
+ let gitlabToken='';
+ let jiraToken='';
+ let error='';
+ let notice='';
+ let busy='';
+ let alive=true;
+ let controller:AbortController;
+ let timer:ReturnType<typeof setTimeout>;
+ let analyzeRepos:string[]=[];
+ let analyzeProjects:string[]=[];
+ let selectedSuggestions:string[]=[];
+ let openRun=0;
+ const base='/api/jira-issue-sync/workspace';
+ const hours=Array.from({length:24},(_,i)=>({value:String(i).padStart(2,'0'),label:String(i).padStart(2,'0')}));
+ const minutes=Array.from({length:60},(_,i)=>({value:String(i).padStart(2,'0'),label:String(i).padStart(2,'0')}));
+ $: dirty=Boolean(saved)&&(JSON.stringify(settings)!==saved||Boolean(gitlabToken||jiraToken));
+ $: disabled=!canWrite||Boolean(busy)||Boolean(workspace?.busy)||!saved;
+ $: repos=workspace?.catalog.repositories||[];
+ $: projects=workspace?.catalog.projects||[];
+ $: projectOptions=projects.map(p=>({value:p.key,label:p.key,meta:p.name}));
+ $: repoOptions=repos.map(r=>({value:String(r.id),label:r.path_with_namespace}));
+ $: latestAnalysis=workspace?.runs.find(r=>r.kind==='analyze'&&r.status==='succeeded');
+ $: running=workspace?.runs.find(r=>r.status==='running');
+ $: hour=settings.time_of_day.split(':')[0]||'09';
+ $: minute=settings.time_of_day.split(':')[1]||'00';
+ async function request(url:string,options:RequestInit={}){const res=await fetch(url,{...options,signal:controller?.signal});const value=await res.json().catch(()=>null);if(!res.ok)throw Error(res.status===403?'需要全局超级管理员及对应配置权限。':value?.error||'请求失败，请稍后重试。');return value;}
+ function poll(){clearTimeout(timer);if(alive&&workspace?.busy)timer=setTimeout(()=>load(true),1800)}
+ async function load(background=false){if(!canAccess)return;if(!background)busy='load';try{const value:Workspace=await request(base);if(!alive)return;workspace=value;if(!saved||(!background&&!dirty)){settings=value.settings;saved=JSON.stringify(settings)}if(!analyzeProjects.length)analyzeProjects=[...new Set(value.settings.mappings.map(m=>m.project))];if(!analyzeProjects.length&&value.catalog.projects.length)analyzeProjects=[value.catalog.projects[0].key];if(!analyzeRepos.length)analyzeRepos=value.catalog.repositories.slice(0,5).map(r=>String(r.id));if(value.busy&&value.runs[0]&&!openRun)openRun=value.runs[0].id;poll()}catch(e){if(alive){error=(e as Error).message;if(background)timer=setTimeout(()=>load(true),5000)}}finally{if(alive&&!background)busy=''}}
+ async function showRun(run:Run,more=false){if(openRun===run.id&&!more){openRun=0;return}try{const detail:Run=await request(`${base}?run_id=${run.id}&offset=${more?run.next_offset:0}`);if(!alive||!workspace)return;workspace={...workspace,runs:workspace.runs.map(r=>r.id===run.id?{...detail,items:more?[...(r.items||[]),...(detail.items||[])]:detail.items}:r)};openRun=run.id}catch(e){if(alive)error=(e as Error).message}}
+ function discard(){if(!workspace)return;settings=structuredClone(workspace.settings);saved=JSON.stringify(settings);gitlabToken='';jiraToken='';error='';notice='已放弃未保存修改。'}
+ async function reload(){if(dirty){error='当前有未保存的修改，请先保存后刷新。';return}error='';await load()}
+ async function save(){busy='save';error='';notice='';try{const value:Workspace=await request(base,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,gitlab_token:gitlabToken,jira_token:jiraToken})});if(!alive)return;workspace=value;settings=value.settings;saved=JSON.stringify(settings);gitlabToken='';jiraToken='';notice='配置已保存。'}catch(e){if(alive)error=(e as Error).message}finally{if(alive)busy=''}}
+ async function start(kind:string){busy=kind;error='';notice='';try{const run:Run=await request(`${base}/${kind}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:settings.version,repo_ids:kind==='analyze'?analyzeRepos:[],projects:analyzeProjects})});if(!alive)return;openRun=run.id;selectedSuggestions=[];await load(true)}catch(e){if(alive)error=(e as Error).message}finally{if(alive)busy=''}}
+ async function stop(){if(!running)return;busy='cancel';try{await request(`${base}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:running.id})});notice='已请求停止，已发出的请求会保留记录。';await load(true)}catch(e){error=(e as Error).message}finally{busy=''}}
+ function changeMapping(index:number,mapping:Mapping){settings={...settings,mappings:settings.mappings.map((m,i)=>i===index?mapping:m)}}
+ function removeMapping(index:number){settings={...settings,mappings:settings.mappings.filter((_,i)=>i!==index)}}
+ function addMapping(){settings={...settings,mappings:[...settings.mappings,{project:projects[0]?.key||'',repo_ids:[],task_keys:[]}]}}
+ function apply(){if(!latestAnalysis||latestAnalysis.config_version!==settings.version)return;const rows=latestAnalysis.proposals?.filter((_,i)=>selectedSuggestions.includes(String(i)))||[];const mappings=[...settings.mappings];for(const row of rows){const mapping={project:row.project,repo_ids:row.repo_ids,task_keys:row.task_keys};if(!mappings.some(m=>JSON.stringify(m)===JSON.stringify(mapping)))mappings.push(mapping)}settings={...settings,mappings};selectedSuggestions=[];notice='建议已加入映射，保存后参与同步。'}
+ onMount(()=>{controller=new AbortController();load()});
+ onDestroy(()=>{alive=false;clearTimeout(timer);controller?.abort()});
 </script>
 
-<section class="sync-config" aria-label="Jira 到 Issue 每日同步预览" aria-busy={Boolean(busy)}>
-  <header class="sync-heading">
-    <div class="heading-copy">
-      <div class="title-line"><h2>同步配置</h2><span class="mode-label">仅生成草稿</span></div>
-      <p>将 Jira 记录生成目标仓库的 Issue 草稿。</p>
-    </div>
-    {#if canAccess}
-      <div class="activation">
-        <Switch id="jira-issue-preview-enabled" label="自动预览" checked={settings.enabled}
-          disabled={controlsDisabled} expandedHitArea
-          on:change={(e) => settings = { ...settings, enabled: e.detail }} />
-        <span class="activation-state">{!saved ? '未加载' : dirty ? '待保存' : settings.enabled ? '已启用' : '未启用'}</span>
-      </div>
-    {/if}
-  </header>
-
-  {#if !canAccess}
-    <p class="feedback" role="status">需要全局超级管理员及配置权限。</p>
-  {:else}
-    <div class="schedule-toolbar">
-      <div class="schedule" role="group" aria-label="自动同步时间">
-        <div class="schedule-copy"><h3>自动同步时间</h3><p>每日定时生成草稿</p></div>
-        <div class="time-control">
-          <div class="time-part"><Select id="jira-issue-hour" ariaLabel="自动同步小时" value={hour} options={hours}
-            compact searchable={false} shadowless disabled={controlsDisabled} on:change={(e) => setTime('hour', e.detail)} /></div>
-          <span class="time-separator" aria-hidden="true">:</span>
-          <div class="time-part"><Select id="jira-issue-minute" ariaLabel="自动同步分钟" value={minute} options={minutes}
-            compact searchable={false} shadowless disabled={controlsDisabled} on:change={(e) => setTime('minute', e.detail)} /></div>
-          <span class="timezone">北京时间</span>
-        </div>
-      </div>
-      <div class="toolbar-actions">
-        <Button variant="ghost" disabled={Boolean(busy)} loading={busy === 'load'} on:click={load}>重新加载</Button>
-        <Button variant="secondary" disabled={controlsDisabled || !dirty || !ready} loading={busy === 'save'} on:click={save}>保存配置</Button>
-        <Button disabled={controlsDisabled || dirty || !ready} loading={busy === 'preview'} on:click={generate}>启动预览</Button>
-      </div>
-      <p class="config-state" role="status">{!saved ? (busy === 'load' ? '正在加载配置…' : '配置未加载') : dirty ? '配置已修改，保存后可启动预览。' : `配置 v${settings.version} · 仅预览，不写入远端 Issue`}</p>
-    </div>
-
-    {#if error}<div class="feedback error" role="alert">{error}</div>{/if}
-    {#if notice}<p class="feedback notice" role="status">{notice}</p>{/if}
-
-    <section class="mapping" aria-labelledby="jira-issue-mapping-title">
-      <div class="section-heading"><h3 id="jira-issue-mapping-title">来源与目标</h3><p>选择 Jira 项目和 Issue 承载仓库。</p></div>
-      <div class="fields">
-        <Select id="jira-issue-project" label="Jira 项目" bind:value={settings.jira_project} options={projectOptions}
-          placeholder="选择 Jira 项目" emptyText="暂无已配置项目" compact shadowless disabled={controlsDisabled} />
-        <Select id="jira-issue-group" label="目标仓库分组" value={settings.group_path} options={groupOptions}
-          placeholder="选择目标分组" emptyText="暂无仓库分组" compact shadowless disabled={controlsDisabled} on:change={(e) => setGroup(e.detail)} />
-        <div class="target-field"><Select id="jira-issue-target" label="Issue 承载仓库" bind:value={settings.target_project_id} options={targetOptions}
-          placeholder={settings.group_path ? '选择分组内的仓库' : '先选择目标分组'} emptyText="该分组暂无仓库" compact shadowless disabled={controlsDisabled || !settings.group_path} /></div>
-      </div>
-      {#if saved && !groups.length}<p class="warning">暂无仓库分组，请在 GitLab 配置中拉取仓库。</p>{/if}
-      <div class="connection">
-        <div class="connection-copy"><strong>GitLab API 凭据</strong><span class="credential-state" class:configured={tokenConfigured}>{tokenConfigured ? '已配置' : '未配置'}</span><p>用于访问 GitLab Issue API。</p></div>
-        <Button variant="secondary" disabled={Boolean(busy) || !canWrite} on:click={onCredentials}>{tokenConfigured ? '管理凭据' : '配置凭据'}</Button>
-      </div>
-    </section>
-
-    <section class="preview" aria-labelledby="jira-issue-preview-title">
-      <div class="preview-heading"><div class="section-heading"><h3 id="jira-issue-preview-title">草稿预览</h3><p>审阅并导出生成的 Issue 内容。</p></div>
-        {#if preview}<Button variant="secondary" on:click={download}>导出 JSON</Button>{/if}
-      </div>
-      {#if preview}
-        <div class="preview-summary"><strong>{preview.total}<span> 条记录</span></strong><span>展示 {preview.items.length} 条{preview.truncated ? ' · 上限 100 条' : ''}</span><span>{preview.jira_project} → {preview.group_path}</span><time datetime={preview.created_at}>{new Date(preview.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</time></div>
-        {#if preview.config_version !== settings.version}<p class="warning" role="status">草稿对应旧配置，请重新生成。</p>{/if}
-        <div class="drafts">
-          {#each preview.items as item}
-            <article>
-              <div class="draft-summary"><code>{item.jira_key}</code><h4>{item.title}</h4><span class="source-status">{item.source_status}</span></div>
-              <Button variant="ghost" on:click={() => selected = selected === item.jira_key ? '' : item.jira_key}>{selected === item.jira_key ? '收起草稿' : '查看草稿'}</Button>
-              {#if selected === item.jira_key}<div class="draft-body"><pre>{item.description}</pre><small>幂等标识 {item.dedupe_key}</small></div>{/if}
-            </article>
-          {:else}<div class="empty"><h4>暂无匹配记录</h4><p>该项目暂无已同步的 Jira 记录。</p></div>{/each}
-        </div>
-      {:else}<div class="empty"><h4>尚未生成草稿</h4><p>保存来源与目标后，启动预览。</p></div>{/if}
-    </section>
-  {/if}
+<section class="sync-config" aria-label="Jira Issue 同步配置" aria-busy={Boolean(busy)}>
+ <header class="sync-heading">
+  <div><h2>每日同步</h2><p>同步 Jira 任务，核对合并与验证证据。</p></div>
+  <div class="heading-actions"><div class="activation"><Switch id="jira-sync-enabled" label="每日自动同步" checked={settings.enabled} expandedHitArea disabled={disabled} on:change={e=>settings={...settings,enabled:e.detail}} /><span>{settings.enabled?'已启用':'未启用'}</span></div><Button disabled={disabled||dirty||!settings.mappings.length} loading={busy==='sync'} on:click={()=>start('sync')}>启动同步</Button></div>
+ </header>
+ {#if !canAccess}<p class="empty">需要全局超级管理员查看独立连接与同步记录。</p>{:else}
+ <div class="schedule-bar">
+  <div class="time-control"><span>自动同步</span><div class="time-part"><Select id="sync-hour" ariaLabel="自动同步小时" value={hour} options={hours} compact searchable={false} shadowless disabled={disabled} on:change={e=>settings={...settings,time_of_day:`${e.detail}:${minute}`}} /></div><span>:</span><div class="time-part"><Select id="sync-minute" ariaLabel="自动同步分钟" value={minute} options={minutes} compact searchable={false} shadowless disabled={disabled} on:change={e=>settings={...settings,time_of_day:`${hour}:${e.detail}`}} /></div><span class="muted">北京时间</span></div>
+  <div class="save-actions"><span class="config-state" role="status">{dirty?'待保存':saved?`配置 v${settings.version}`:'正在加载'}</span>{#if dirty}<Button variant="ghost" disabled={Boolean(busy)||Boolean(workspace?.busy)} on:click={discard}>放弃修改</Button>{/if}<Button variant="ghost" disabled={Boolean(busy)||Boolean(workspace?.busy)||dirty} on:click={reload}>刷新</Button><Button variant="secondary" disabled={disabled||!dirty} loading={busy==='save'} on:click={save}>保存配置</Button></div>
+ </div>
+ {#if error}<div class="feedback error" role="alert">{error}</div>{/if}{#if notice}<p class="feedback" role="status">{notice}</p>{/if}
+ {#if workspace&&!workspace.key_ready}<p class="feedback error">独立凭据加密密钥未配置，请先配置服务端 WELL_JIRA_ISSUE_SYNC_KEY。</p>{/if}
+ <section class="module" aria-labelledby="sync-connection-title">
+  <div class="section-head"><div><h3 id="sync-connection-title">独立连接</h3><p>连接此同步使用的 GitLab 群组与 Jira。</p></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.gitlab_configured||!workspace?.jira_configured} loading={busy==='discover'} on:click={()=>start('discover')}>测试并读取仓库</Button></div>
+  <div class="connection-grid">
+   <TextInput id="sync-group-url" label="GitLab 群组地址" bind:value={settings.group_url} placeholder="https://gitlab.example.com/group" disabled={disabled} />
+   <TextInput id="sync-gitlab-token" label="GitLab Token" type="password" bind:value={gitlabToken} placeholder={workspace?.gitlab_configured?'已配置 · 留空保留':'填写独立 API Token'} disabled={disabled||!workspace?.key_ready} />
+   <TextInput id="sync-jira-url" label="Jira 地址" bind:value={settings.jira_url} placeholder="https://jira.example.com" disabled={disabled} />
+   <TextInput id="sync-jira-token" label="Jira PAT" type="password" bind:value={jiraToken} placeholder={workspace?.jira_configured?'已配置 · 留空保留':'填写独立个人访问令牌'} disabled={disabled||!workspace?.key_ready} />
+  </div>
+  <div class="connection-status"><span>GitLab {workspace?.gitlab_configured?'已配置':'未配置'}</span><span>Jira {workspace?.jira_configured?'已配置':'未配置'}</span>{#if workspace?.catalog.checked_at&&!workspace.catalog.checked_at.startsWith('0001')}<span>{repos.length} 个仓库 · {projects.length} 个项目</span><time datetime={workspace.catalog.checked_at}>读取于 {new Date(workspace.catalog.checked_at).toLocaleString('zh-CN')}</time>{/if}</div>
+ </section>
+ <section class="module" aria-labelledby="sync-mapping-title">
+  <div class="section-head"><div><h3 id="sync-mapping-title">项目映射</h3><p>关联 Jira 项目、任务与多个代码仓库。</p></div><Button variant="secondary" disabled={disabled||!repos.length||!projects.length} on:click={addMapping}>添加映射</Button></div>
+  <div class="mappings">{#each settings.mappings as mapping,index}<JiraIssueMappingRow {mapping} {index} {projects} {repos} disabled={disabled} onChange={m=>changeMapping(index,m)} onRemove={()=>removeMapping(index)} />{:else}<p class="empty">读取独立连接后添加映射，或使用 AI 识别。</p>{/each}</div>
+  <div class="analysis-control"><div class="analysis-select"><MultiSelect id="sync-analysis-projects" label="AI 分析 Jira 项目" values={analyzeProjects} options={projectOptions} appearance="settings" shadowless disabled={disabled} on:change={e=>analyzeProjects=e.detail} /></div><div class="analysis-select"><MultiSelect id="sync-analysis-repos" label="AI 分析仓库" values={analyzeRepos} options={repoOptions} appearance="settings" shadowless disabled={disabled} on:change={e=>analyzeRepos=e.detail} /></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.ai_ready||!analyzeRepos.length||analyzeRepos.length>20||!analyzeProjects.length||analyzeProjects.length>20} loading={busy==='analyze'} on:click={()=>start('analyze')}>分析群组</Button></div>
+  <p class="field-note">每次最多 20 个仓库和最近更新的 100 个未完成任务；读取固定提交源码，生成关联建议。{#if workspace&&!workspace.ai_ready}请先启用 AI 模型连接。{/if}</p>
+  {#if latestAnalysis}<div class="suggestions"><div class="section-head"><h4>AI 建议 <span>{latestAnalysis.proposals?.length||0} 条</span></h4><Button variant="secondary" disabled={disabled||!selectedSuggestions.length||latestAnalysis.config_version!==settings.version} on:click={apply}>采纳选中建议</Button></div>
+   {#if latestAnalysis.config_version!==settings.version}<p class="field-note">建议来自旧配置，请重新分析。</p>{/if}
+   {#each latestAnalysis.proposals||[] as proposal,index}<article class="proposal"><div class="proposal-title"><Switch id={`sync-proposal-${index}`} label={`${proposal.project} · ${proposal.task_keys.join('、')}`} checked={selectedSuggestions.includes(String(index))} disabled={disabled||latestAnalysis.config_version!==settings.version} on:change={e=>selectedSuggestions=e.detail?[...selectedSuggestions,String(index)]:selectedSuggestions.filter(v=>v!==String(index))} /><span>AI 建议</span></div><p>{proposal.reason}</p><div class="proposal-sources">{#each proposal.evidence as source}<code>{repos.find(r=>String(r.id)===source.repo_id)?.path_with_namespace||source.repo_id}/{source.path} @{source.sha.slice(0,8)}</code>{/each}</div></article>{:else}<p class="empty">本次未发现有源码依据的关联。</p>{/each}
+  </div>{/if}
+ </section>
+ <section class="module" aria-labelledby="sync-runs-title"><div class="section-head"><div><h3 id="sync-runs-title">运行与证据</h3><p>查看同步结果和 Jira 关闭依据。</p></div>{#if running&&workspace?.busy}<Button variant="secondary" disabled={!canWrite||Boolean(busy)} loading={busy==='cancel'} on:click={stop}>停止运行</Button>{/if}</div>
+  {#each workspace?.runs||[] as run (run.id)}<article class="run"><div class="run-head"><div><strong>{kindLabel(run.kind)}</strong><span class:success={run.status==='succeeded'} class:failure={run.status==='failed'}>{statusLabel(run.status)}</span><time datetime={run.created_at}>{new Date(run.created_at).toLocaleString('zh-CN')}</time></div>{#if run.items_total>0}<Button variant="ghost" size="small" ariaLabel={`${openRun===run.id?'收起':'展开'}运行 ${run.id}`} on:click={()=>showRun(run)}>{openRun===run.id?'收起':'详情'}</Button>{/if}</div><p class="run-message" role={run.status==='running'?'status':undefined}>{run.message}</p>{#if openRun===run.id}{#each run.items||[] as item (item.jira_key)}<JiraIssueRunEvidence {item} />{/each}{#if run.next_offset>0}<Button variant="ghost" on:click={()=>showRun(run,true)}>更多记录（已显示 {run.items?.length||0}/{run.items_total}）</Button>{/if}{/if}</article>{:else}<p class="empty">尚无运行记录。</p>{/each}
+ </section>
+ {/if}
 </section>
-
 <style>
-  .sync-config { --wa-control-h: 44px; display: grid; gap: 24px; min-width: 0; container-type: inline-size; }
-  .sync-heading, .title-line, .activation, .schedule, .time-control, .toolbar-actions, .connection, .preview-heading { display: flex; align-items: center; gap: 12px; }
-  .sync-heading, .connection, .preview-heading { justify-content: space-between; }
-  .heading-copy, .section-heading, .connection-copy { min-width: 0; }
-  .heading-copy, .section-heading { display: grid; gap: 6px; }
-  .title-line { flex-wrap: wrap; gap: 10px; }
-  h2, h3, h4, p { margin: 0; }
-  h2 { color: var(--wa-text-strong); font-size: 18px; font-weight: 750; line-height: 1.4; }
-  h3 { color: var(--wa-text-strong); font-size: 14px; font-weight: 750; line-height: 1.5; }
-  h4 { color: var(--wa-text-main); font-size: 14px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
-  p, .timezone, .config-state, .activation-state, .preview-summary, .source-status { color: var(--wa-text-muted); font-size: 13px; line-height: 1.6; }
-  .mode-label { color: var(--wa-accent-strong); background: var(--wa-accent-soft); border-radius: var(--wa-radius-sm); padding: 3px 8px; font-size: 11px; font-weight: 650; white-space: nowrap; }
-  .activation { flex-shrink: 0; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-  .activation-state { font-size: 12px; }
-  .schedule-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 24px; padding-block: 20px; border-block: 1px solid var(--wa-border-divider); }
-  .schedule { gap: 24px; flex-wrap: wrap; }
-  .schedule-copy { flex-shrink: 0; }
-  .schedule-copy p { font-size: 12px; }
-  .time-control { gap: 8px; font-variant-numeric: tabular-nums; }
-  .time-part { width: 76px; min-width: 0; }
-  .sync-config .time-part :global(.select-trigger),
-  .sync-config .fields :global(.select-trigger) { min-height: 44px; }
-  .sync-config .fields :global(.select-inline-input),
-  .sync-config .fields :global(.select-inline-input:focus) { min-height: 42px; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
-  .sync-config .activation :global(button.switch-control),
-  .sync-config .activation :global(button.switch-control.checked) { width: 44px !important; height: 44px !important; min-height: 44px; background: transparent !important; box-shadow: none !important; }
-  .sync-config .activation :global(.switch-thumb) { top: 13px; }
-  .time-separator { color: var(--wa-text-muted); font-weight: 750; }
-  .timezone { white-space: nowrap; margin-left: 4px; }
-  .toolbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-  .config-state { grid-column: 1 / -1; font-size: 12px; }
-  .feedback { padding: 12px 16px; border-radius: var(--wa-radius-md); background: var(--wa-surface-inset); }
-  .error { color: var(--wa-danger); background: var(--wa-danger-soft); }
-  .notice { color: var(--wa-accent-strong); background: var(--wa-accent-soft); }
-  .mapping { display: grid; gap: 16px; min-width: 0; }
-  .fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-  .target-field { grid-column: 1 / -1; min-width: 0; }
-  .connection { padding-top: 4px; gap: 16px; }
-  .connection-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
-  .connection strong { font-size: 13px; color: var(--wa-text-main); }
-  .credential-state { display: inline-flex; align-items: center; gap: 6px; color: var(--wa-text-muted); font-size: 12px; }
-  .credential-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--wa-text-muted); }
-  .credential-state.configured::before { background: var(--wa-accent-strong); }
-  .preview { display: grid; gap: 16px; padding-top: 24px; border-top: 1px solid var(--wa-border-divider); min-width: 0; }
-  .preview-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; padding-block: 12px; border-bottom: 1px solid var(--wa-border-divider); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-  .preview-summary strong { color: var(--wa-text-strong); font-size: 18px; font-weight: 750; }
-  .preview-summary strong span { color: var(--wa-text-muted); font-size: 12px; font-weight: 500; }
-  .preview-summary time { margin-left: auto; font-size: 12px; }
-  .warning { color: var(--wa-warning); font-size: 13px; }
-  .drafts article { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding-block: 16px; border-bottom: 1px solid var(--wa-border-divider); }
-  .draft-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 12px; flex: 1; min-width: 0; }
-  .draft-summary code { color: var(--wa-accent-strong); background: var(--wa-accent-soft); padding: 3px 7px; border-radius: var(--wa-radius-sm); font-size: 12px; white-space: nowrap; }
-  .source-status { font-size: 12px; overflow-wrap: anywhere; }
-  .draft-body { flex-basis: 100%; min-width: 0; padding: 16px; background: var(--wa-surface-inset); border-radius: var(--wa-radius-md); }
-  .draft-body pre { margin: 0 0 12px; color: var(--wa-text-main); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; }
-  .draft-body small { font-size: 12px; color: var(--wa-text-muted); overflow-wrap: anywhere; }
-  .empty { display: grid; gap: 6px; padding-block: 24px; text-align: center; }
-  @container (max-width: 1000px) { .schedule-toolbar { grid-template-columns: minmax(0, 1fr); } }
-  @container (max-width: 600px) {
-    .sync-heading { align-items: flex-start; }
-    .activation { max-width: 144px; }
-    .activation-state { flex-basis: 100%; text-align: right; }
-    .schedule { justify-content: space-between; gap: 12px; }
-    .fields { grid-template-columns: minmax(0, 1fr); }
-    .target-field { grid-column: auto; }
-    .connection { align-items: flex-start; }
-    .connection-copy p { flex-basis: 100%; }
-    .draft-summary { grid-template-columns: auto minmax(0, 1fr); }
-    .source-status { grid-column: 2; }
-    .preview-summary time { margin-left: 0; flex-basis: 100%; }
-  }
-  @container (max-width: 360px) {
-    .sync-heading { gap: 8px; }
-    .title-line { gap: 6px; }
-    .activation { max-width: 130px; }
-    .connection { flex-direction: column; align-items: stretch; }
-    .connection > :global(button) { align-self: flex-end; }
-    .draft-summary { flex-basis: 100%; }
-    .drafts article > :global(button) { margin-left: auto; }
-  }
+ .sync-config{container-type:inline-size;--wa-control-h:44px;color:var(--wa-text-main,#293e3a)}h2,h3,h4,p{margin:0}h2{font-size:19px;font-weight:700;letter-spacing:-.03em}h3{font-size:15px;font-weight:700}h4{font-size:14px}.sync-heading{display:flex;justify-content:space-between;align-items:center;gap:20px}.sync-heading p,.section-head p{font-size:13px;color:var(--wa-text-muted,#62736f);line-height:1.6;margin-top:5px}.heading-actions,.activation,.save-actions,.time-control{display:flex;align-items:center;gap:12px}.activation{gap:6px;font-size:12px;color:var(--wa-text-muted,#62736f);white-space:nowrap}.schedule-bar{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:20px 0 24px;flex-wrap:wrap}.time-control{font-size:13px;gap:8px}.time-part{width:86px;flex-shrink:0}.muted,.config-state{font-size:12px;color:var(--wa-text-muted,#62736f)}.save-actions{margin-left:auto}.module{border-top:1px solid var(--wa-line,#e2e9e6);padding:26px 0}.section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}.section-head>div{min-width:0}.connection-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:18px 24px}.connection-status{display:flex;gap:8px 20px;font-size:12px;color:var(--wa-text-muted,#62736f);margin-top:18px;flex-wrap:wrap}.connection-grid :global(.input-group){margin-bottom:0}.feedback{font-size:13px;line-height:1.6;padding:10px 14px;background:var(--wa-surface-subtle,#f0f6f3);border-radius:6px;margin:0 0 16px;overflow-wrap:anywhere}.feedback.error{background:#fff5f3;color:var(--wa-danger,#a53939)}.empty{font-size:13px;color:var(--wa-text-muted,#62736f);padding:16px 0;line-height:1.7}.analysis-control{display:flex;align-items:end;gap:16px;margin-top:24px}.analysis-select{min-width:0;flex:1}.field-note{font-size:12px;color:var(--wa-text-muted,#62736f);line-height:1.7;margin-top:8px}.suggestions{margin-top:28px}.suggestions h4 span{font-size:12px;color:var(--wa-text-muted,#62736f);font-weight:400;margin-left:8px}.proposal{padding:16px 0;border-top:1px solid var(--wa-line,#e2e9e6)}.proposal-title{display:flex;gap:12px;align-items:center;justify-content:space-between}.proposal-title>span{font-size:11px;color:var(--wa-text-muted,#62736f);white-space:nowrap}.proposal>p{font-size:13px;line-height:1.7;margin:8px 0;overflow-wrap:anywhere}.proposal-sources{display:flex;flex-wrap:wrap;gap:6px 16px}.proposal-sources code{font-size:11px;color:var(--wa-text-muted,#62736f);overflow-wrap:anywhere}.run{padding:18px 0;border-top:1px solid var(--wa-line,#e2e9e6)}.run-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.run-head>div{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px;font-size:13px}.run-head span,time{font-size:12px;color:var(--wa-text-muted,#62736f)}.run-head .success{color:var(--wa-success,#147d59)}.run-head .failure{color:var(--wa-danger,#b73f3f)}.run-message{font-size:13px;color:var(--wa-text-muted,#62736f);line-height:1.7;margin-top:8px;overflow-wrap:anywhere}.sync-config :global(.select-inline-input){border:0!important;background:transparent!important;box-shadow:none!important}.sync-config .activation :global(button.switch-control),.sync-config .activation :global(button.switch-control.checked){width:44px!important;height:44px!important;background:transparent!important;border:0!important;box-shadow:none!important}.sync-config .activation :global(.switch-thumb){top:13px!important}
+ @container(max-width:900px){.sync-heading{align-items:flex-start}.heading-actions{flex-wrap:wrap;justify-content:flex-end}.connection-grid{gap:16px}.save-actions{gap:6px}}
+ @container(max-width:600px){.sync-heading{gap:12px;flex-wrap:wrap}.heading-actions{width:100%;justify-content:space-between}.connection-grid{grid-template-columns:minmax(0,1fr)}.schedule-bar{gap:12px}.time-control{width:100%}.save-actions{width:100%;justify-content:flex-end}.section-head{align-items:flex-start;flex-wrap:wrap}.section-head>:global(button){margin-left:auto}.analysis-control{align-items:stretch;flex-direction:column}.analysis-control>:global(button){align-self:flex-end}.run-head time{flex-basis:100%}.time-control>span:last-child{margin-left:auto}}
 </style>

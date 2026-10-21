@@ -79,6 +79,7 @@ type Server struct {
 	jiraInboundSyncMu   sync.Mutex
 	jiraCurrentSyncMu   sync.Mutex
 	jiraFactWriteMu     sync.Mutex
+	jiraIssueAnalyze    func(context.Context, string, string) (string, error)
 	solutionLLM         func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 	solutions           *solutions.Module
 	solutionCatalog     *solutioncatalog.Module
@@ -295,6 +296,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/config/versions/{id}/rollback", s.withPermission("config:write", s.handleRollbackConfigVersion))
 	s.mux.HandleFunc("GET /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
 	s.mux.HandleFunc("POST /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
+	s.mux.HandleFunc("GET /api/jira-issue-sync/workspace", s.withPermission("config:read", s.withGlobalSuperAdmin(s.handleJiraIssueWorkspace)))
+	s.mux.HandleFunc("PUT /api/jira-issue-sync/workspace", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueWorkspace)))
+	s.mux.HandleFunc("POST /api/jira-issue-sync/workspace/{action}", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueWorkspace)))
 	s.mux.HandleFunc("GET /api/jira-issue-sync", s.withPermission("config:read", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
 	s.mux.HandleFunc("PUT /api/jira-issue-sync", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
 	s.mux.HandleFunc("POST /api/jira-issue-sync/preview", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
@@ -626,7 +630,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.startJiraSyncWorkers(workerContext)
 	go s.startSolutionWorker(workerContext)
 	go s.startRuntimeKnowledgeWorker(workerContext)
-	go s.startJiraIssueSyncPreviewWorker(workerContext)
+	go s.startJiraIssueSyncWorkspaceWorker(workerContext)
 	go s.startCodeReviewWorker(workerContext)
 	go s.startDailyJiraProjectionWorker(workerContext)
 	if s.decisionCommands != nil {
