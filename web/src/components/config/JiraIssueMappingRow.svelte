@@ -18,8 +18,8 @@
  function changeTasks(e:Event){onChange({...mapping,task_keys:taskKeys((e.target as HTMLInputElement).value)})}
 </script>
 <div class="mapping-row" aria-label={`项目映射 ${index+1}`}>
- <div class="project"><Select id={`sync-project-${index}`} label="Jira 项目" value={mapping.project} options={projectOptions} {disabled} on:change={e=>onChange({...mapping,project:e.detail,task_keys:[]})} /></div>
- <div class="repositories"><MultiSelect id={`sync-repos-${index}`} label="关联仓库" values={mapping.repo_ids} options={repoOptions} {disabled} appearance="settings" shadowless on:change={e=>onChange({...mapping,repo_ids:e.detail})} /></div>
+ <div class="project"><Select id={`sync-project-${index}`} label="Jira 项目" value={mapping.project} options={projectOptions} disabled={disabled||!projects.length} on:change={e=>onChange({...mapping,project:e.detail,task_keys:[]})} /></div>
+ <div class="repositories"><MultiSelect id={`sync-repos-${index}`} label="关联仓库" values={mapping.repo_ids} options={repoOptions} disabled={disabled||!repos.length} appearance="settings" shadowless overlay summaryMode maxVisibleOptions={100} on:change={e=>onChange({...mapping,repo_ids:e.detail})} /></div>
  <div class="tasks" on:change={changeTasks}><TextInput id={`sync-tasks-${index}`} label="任务编号" value={keys} placeholder="留空同步项目全部任务" {disabled} /></div>
  <Button variant="ghost" ariaLabel={`删除映射 ${index+1}`} {disabled} on:click={onRemove}>删除</Button>
 </div>

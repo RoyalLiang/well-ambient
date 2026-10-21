@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,7 +47,28 @@ func configureJiraIssueBrowserFixture(t *testing.T, s *Server) {
 		}
 		switch p {
 		case "/api/v4/groups/ops/projects":
-			send([]any{repo(42), repo(43)})
+			if total, err := strconv.Atoi(os.Getenv("WELL_JIRA_SYNC_FIXTURE_CATALOG_SIZE")); err == nil && total >= 0 && total <= 5001 {
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				if page < 1 {
+					page = 1
+				}
+				start := (page - 1) * 100
+				end := min(start+100, total)
+				items := []any{}
+				for i := start; i < end; i++ {
+					if i < 2 {
+						items = append(items, repo(42+i))
+					} else {
+						items = append(items, map[string]any{"id": 42 + i, "path_with_namespace": fmt.Sprintf("ops/repository-%04d", i+1), "default_branch": "main", "issues_enabled": true})
+					}
+				}
+				if end < total {
+					w.Header().Set("X-Next-Page", strconv.Itoa(page+1))
+				}
+				send(items)
+			} else {
+				send([]any{repo(42), repo(43)})
+			}
 			return
 		case "/rest/api/2/project":
 			send([]map[string]string{{"key": "NS2", "name": "南沙二期"}, {"key": "WA", "name": "Well Ambient"}})
@@ -166,6 +188,10 @@ func configureJiraIssueBrowserFixture(t *testing.T, s *Server) {
 		view, err = svc.Save(context.Background(), c)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if os.Getenv("WELL_JIRA_SYNC_FIXTURE_CONFIG_ONLY") == "1" {
+			t.Logf("Jira Issue synthetic group=%s/ops Jira=%s", remote.URL, remote.URL)
+			return
 		}
 		run, lease, err := svc.Begin(context.Background(), view.Settings.Version, "discover")
 		if err != nil {

@@ -32,6 +32,7 @@
   export let allowCustom = false;
   export let appearance: 'default' | 'settings' = 'default';
   export let separated = false;
+  export let maxVisibleOptions = 0;
 
   let isOpen = false;
   let searchText = '';
@@ -63,6 +64,7 @@
   $: filteredOptions = normalizedSearch
     ? options.filter((option) => `${option.label} ${option.value} ${option.meta || ''}`.toLowerCase().includes(normalizedSearch))
     : options;
+  $: visibleOptions = maxVisibleOptions > 0 ? filteredOptions.slice(0, maxVisibleOptions) : filteredOptions;
 
   async function openDropdown() {
     if (disabled) return;
@@ -95,7 +97,7 @@
     const spaceAbove = triggerRect.top - viewportPadding;
     if (appearance === 'settings') {
       const optionsHeight = dropdownEl.querySelector('.multi-select-options')?.scrollHeight || 96;
-      const footerHeight = dropdownEl.querySelector('.multi-select-footer')?.getBoundingClientRect().height || 40;
+      const footerHeight = (dropdownEl.querySelector('.multi-select-footer')?.getBoundingClientRect().height || 40) + (dropdownEl.querySelector('.option-limit')?.getBoundingClientRect().height || 0);
       const desired = Math.min(216, optionsHeight) + footerHeight + 2;
       // Prefer the space above a settings field so its following form actions
       // remain clickable. Measure natural options, not last placement's cap.
@@ -379,7 +381,7 @@
           {#if filteredOptions.length === 0}
             <div class="dropdown-empty">{emptyText}</div>
           {:else}
-            {#each filteredOptions as option (option.value)}
+            {#each visibleOptions as option (option.value)}
               <button
                 type="button"
                 class="dropdown-item"
@@ -416,7 +418,8 @@
             </button>
           {/if}
         </div>
-        <div class="multi-select-footer">
+        {#if visibleOptions.length < filteredOptions.length}<p class="option-limit">显示前 {visibleOptions.length} 项，共 {filteredOptions.length} 项；输入名称继续筛选</p>{/if}
+    <div class="multi-select-footer">
           <span aria-live="polite">已选 {values.length} 项</span>
           <div class="multi-select-footer-actions">
             {#if showClear && values.length > 0}
@@ -452,6 +455,7 @@
 </div>
 
 <style>
+  .option-limit { margin:0; padding:7px 12px; font-size:12px; line-height:1.4; color:var(--wa-text-muted); border-top:1px solid var(--wa-border-soft); }
   /* finesse · component: multi-select · register=product
    * states: default · hover · focus-visible · active · disabled · selected · custom
    * tokens: inherited (modern-admin-tokens.css) */

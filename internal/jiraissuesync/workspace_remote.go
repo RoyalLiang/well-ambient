@@ -118,7 +118,7 @@ func glList[T any](ctx context.Context, r *remote, route string, max int) ([]T, 
 	if strings.Contains(route, "?") {
 		separator = "&"
 	}
-	for page := 1; page <= 11; page++ {
+	for page := 1; page <= max/100+1; page++ {
 		var items []T
 		h, err := r.request(ctx, false, "GET", route+separator+"per_page=100&page="+strconv.Itoa(page), nil, &items)
 		if err != nil {
@@ -145,7 +145,7 @@ func (o *operation) discover() error {
 	if err := o.progress("正在读取群组仓库和 Jira 项目"); err != nil {
 		return err
 	}
-	repos, err := glList[Repo](o.ctx, o.remote, "/groups/"+url.PathEscape(o.remote.group)+"/projects?include_subgroups=true&with_shared=false&archived=false", 100)
+	repos, err := glList[Repo](o.ctx, o.remote, "/groups/"+url.PathEscape(o.remote.group)+"/projects?include_subgroups=true&with_shared=false&archived=false", 5000)
 	if err != nil {
 		return err
 	}

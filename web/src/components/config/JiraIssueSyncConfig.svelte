@@ -32,6 +32,16 @@
  $: disabled=!canWrite||Boolean(busy)||Boolean(workspace?.busy)||!saved;
  $: repos=workspace?.catalog.repositories||[];
  $: projects=workspace?.catalog.projects||[];
+  let discoveryAttemptedVersion = 0;
+  $: catalogChecked = Boolean(workspace?.catalog.checked_at && !workspace.catalog.checked_at.startsWith('0001'));
+  $: latestDiscovery = workspace?.runs.find(run => run.kind === 'discover' && run.config_version === settings.version);
+  $: catalogLoading = busy === 'discover' || Boolean(workspace?.busy && latestDiscovery?.status === 'running');
+  $: catalogFailure = latestDiscovery?.status === 'failed' ? latestDiscovery.message : '';
+  $: catalogHint = catalogLoading ? '正在读取 Jira 项目和 GitLab 仓库…'
+    : !workspace?.gitlab_configured || !workspace?.jira_configured ? '保存独立连接后读取项目与仓库。'
+    : !catalogChecked ? (catalogFailure ? `目录读取失败：${catalogFailure}` : '目录尚未读取，请读取项目与仓库。')
+    : !projects.length ? '未发现可访问的 Jira 项目，请检查 Jira 权限。'
+    : !repos.length ? '群组中没有可同步仓库，请检查群组和仓库权限。' : '';
  $: projectOptions=projects.map(p=>({value:p.key,label:p.key,meta:p.name}));
  $: repoOptions=repos.map(r=>({value:String(r.id),label:r.path_with_namespace}));
  $: latestAnalysis=workspace?.runs.find(r=>r.kind==='analyze'&&r.status==='succeeded');
@@ -40,11 +50,37 @@
  $: minute=settings.time_of_day.split(':')[1]||'00';
  async function request(url:string,options:RequestInit={}){const res=await fetch(url,{...options,signal:controller?.signal});const value=await res.json().catch(()=>null);if(!res.ok)throw Error(res.status===403?'需要全局超级管理员及对应配置权限。':value?.error||'请求失败，请稍后重试。');return value;}
  function poll(){clearTimeout(timer);if(alive&&workspace?.busy)timer=setTimeout(()=>load(true),1800)}
- async function load(background=false){if(!canAccess)return;if(!background)busy='load';try{const value:Workspace=await request(base);if(!alive)return;workspace=value;if(!saved||(!background&&!dirty)){settings=value.settings;saved=JSON.stringify(settings)}if(!analyzeProjects.length)analyzeProjects=[...new Set(value.settings.mappings.map(m=>m.project))];if(!analyzeProjects.length&&value.catalog.projects.length)analyzeProjects=[value.catalog.projects[0].key];if(!analyzeRepos.length)analyzeRepos=value.catalog.repositories.slice(0,5).map(r=>String(r.id));if(value.busy&&value.runs[0]&&!openRun)openRun=value.runs[0].id;poll()}catch(e){if(alive){error=(e as Error).message;if(background)timer=setTimeout(()=>load(true),5000)}}finally{if(alive&&!background)busy=''}}
+  async function load(background=false) {
+    if (!canAccess) return;
+    if (!background) busy='load';
+    try {
+      const value:Workspace=await request(base);
+      if (!alive) return;
+      workspace=value;
+      if (!saved || (!background && !dirty)) {settings=value.settings;saved=JSON.stringify(settings)}
+      if (!analyzeProjects.length) analyzeProjects=[...new Set(value.settings.mappings.map(m=>m.project))];
+      if (!analyzeProjects.length && value.catalog.projects.length) analyzeProjects=[value.catalog.projects[0].key];
+      if (!analyzeRepos.length) analyzeRepos=value.catalog.repositories.slice(0,5).map(r=>String(r.id));
+      if (value.busy && value.runs[0] && !openRun) openRun=value.runs[0].id;
+      poll();
+    } catch(e) {
+      if(alive) {error=(e as Error).message;if(background)timer=setTimeout(()=>load(true),5000)}
+    } finally {if(alive && !background)busy=''}
+    if (!background) await discoverMissingCatalog();
+  }
+  async function discoverMissingCatalog() {
+    const version=workspace?.settings.version || 0;
+    const checked=workspace?.catalog.checked_at;
+    if (!alive || !canWrite || !workspace || busy || workspace.busy || dirty || !version
+      || discoveryAttemptedVersion===version || !workspace.gitlab_configured || !workspace.jira_configured
+      || (checked && !checked.startsWith('0001'))) return;
+    discoveryAttemptedVersion=version;
+    await start('discover');
+  }
  async function showRun(run:Run,more=false){if(openRun===run.id&&!more){openRun=0;return}try{const detail:Run=await request(`${base}?run_id=${run.id}&offset=${more?run.next_offset:0}`);if(!alive||!workspace)return;workspace={...workspace,runs:workspace.runs.map(r=>r.id===run.id?{...detail,items:more?[...(r.items||[]),...(detail.items||[])]:detail.items}:r)};openRun=run.id}catch(e){if(alive)error=(e as Error).message}}
  function discard(){if(!workspace)return;settings=structuredClone(workspace.settings);saved=JSON.stringify(settings);gitlabToken='';jiraToken='';error='';notice='已放弃未保存修改。'}
  async function reload(){if(dirty){error='当前有未保存的修改，请先保存后刷新。';return}error='';await load()}
- async function save(){busy='save';error='';notice='';try{const value:Workspace=await request(base,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,gitlab_token:gitlabToken,jira_token:jiraToken})});if(!alive)return;workspace=value;settings=value.settings;saved=JSON.stringify(settings);gitlabToken='';jiraToken='';notice='配置已保存。'}catch(e){if(alive)error=(e as Error).message}finally{if(alive)busy=''}}
+ async function save(){busy='save';error='';notice='';try{const value:Workspace=await request(base,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...settings,gitlab_token:gitlabToken,jira_token:jiraToken})});if(!alive)return;workspace=value;settings=value.settings;saved=JSON.stringify(settings);gitlabToken='';jiraToken='';notice='配置已保存。';if(!value.catalog.checked_at || value.catalog.checked_at.startsWith('0001')){analyzeProjects=[];analyzeRepos=[]}}catch(e){if(alive)error=(e as Error).message}finally{if(alive)busy=''}await discoverMissingCatalog()}
  async function start(kind:string){busy=kind;error='';notice='';try{const run:Run=await request(`${base}/${kind}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:settings.version,repo_ids:kind==='analyze'?analyzeRepos:[],projects:analyzeProjects})});if(!alive)return;openRun=run.id;selectedSuggestions=[];await load(true)}catch(e){if(alive)error=(e as Error).message}finally{if(alive)busy=''}}
  async function stop(){if(!running)return;busy='cancel';try{await request(`${base}/cancel`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:running.id})});notice='已请求停止，已发出的请求会保留记录。';await load(true)}catch(e){error=(e as Error).message}finally{busy=''}}
  function changeMapping(index:number,mapping:Mapping){settings={...settings,mappings:settings.mappings.map((m,i)=>i===index?mapping:m)}}
@@ -68,7 +104,7 @@
  {#if error}<div class="feedback error" role="alert">{error}</div>{/if}{#if notice}<p class="feedback" role="status">{notice}</p>{/if}
  {#if workspace&&!workspace.key_ready}<p class="feedback error">独立凭据加密密钥未配置，请先配置服务端 WELL_JIRA_ISSUE_SYNC_KEY。</p>{/if}
  <section class="module" aria-labelledby="sync-connection-title">
-  <div class="section-head"><div><h3 id="sync-connection-title">独立连接</h3><p>连接此同步使用的 GitLab 群组与 Jira。</p></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.gitlab_configured||!workspace?.jira_configured} loading={busy==='discover'} on:click={()=>start('discover')}>测试并读取仓库</Button></div>
+  <div class="section-head"><div><h3 id="sync-connection-title">独立连接</h3><p>连接此同步使用的 GitLab 群组与 Jira。</p></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.gitlab_configured||!workspace?.jira_configured} loading={catalogLoading} on:click={()=>start('discover')}>{catalogFailure?'重试读取目录':'读取项目与仓库'}</Button></div>
   <div class="connection-grid">
    <TextInput id="sync-group-url" label="GitLab 群组地址" bind:value={settings.group_url} placeholder="https://gitlab.example.com/group" disabled={disabled} />
    <TextInput id="sync-gitlab-token" label="GitLab Token" type="password" bind:value={gitlabToken} placeholder={workspace?.gitlab_configured?'已配置 · 留空保留':'填写独立 API Token'} disabled={disabled||!workspace?.key_ready} />
@@ -76,11 +112,12 @@
    <TextInput id="sync-jira-token" label="Jira PAT" type="password" bind:value={jiraToken} placeholder={workspace?.jira_configured?'已配置 · 留空保留':'填写独立个人访问令牌'} disabled={disabled||!workspace?.key_ready} />
   </div>
   <div class="connection-status"><span>GitLab {workspace?.gitlab_configured?'已配置':'未配置'}</span><span>Jira {workspace?.jira_configured?'已配置':'未配置'}</span>{#if workspace?.catalog.checked_at&&!workspace.catalog.checked_at.startsWith('0001')}<span>{repos.length} 个仓库 · {projects.length} 个项目</span><time datetime={workspace.catalog.checked_at}>读取于 {new Date(workspace.catalog.checked_at).toLocaleString('zh-CN')}</time>{/if}</div>
+    {#if catalogHint}<p class="field-note" role="status">{catalogHint}</p>{/if}
  </section>
  <section class="module" aria-labelledby="sync-mapping-title">
   <div class="section-head"><div><h3 id="sync-mapping-title">项目映射</h3><p>关联 Jira 项目、任务与多个代码仓库。</p></div><Button variant="secondary" disabled={disabled||!repos.length||!projects.length} on:click={addMapping}>添加映射</Button></div>
   <div class="mappings">{#each settings.mappings as mapping,index}<JiraIssueMappingRow {mapping} {index} {projects} {repos} disabled={disabled} onChange={m=>changeMapping(index,m)} onRemove={()=>removeMapping(index)} />{:else}<p class="empty">读取独立连接后添加映射，或使用 AI 识别。</p>{/each}</div>
-  <div class="analysis-control"><div class="analysis-select"><MultiSelect id="sync-analysis-projects" label="AI 分析 Jira 项目" values={analyzeProjects} options={projectOptions} appearance="settings" shadowless disabled={disabled} on:change={e=>analyzeProjects=e.detail} /></div><div class="analysis-select"><MultiSelect id="sync-analysis-repos" label="AI 分析仓库" values={analyzeRepos} options={repoOptions} appearance="settings" shadowless disabled={disabled} on:change={e=>analyzeRepos=e.detail} /></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.ai_ready||!analyzeRepos.length||analyzeRepos.length>20||!analyzeProjects.length||analyzeProjects.length>20} loading={busy==='analyze'} on:click={()=>start('analyze')}>分析群组</Button></div>
+  <div class="analysis-control"><div class="analysis-select"><MultiSelect id="sync-analysis-projects" label="AI 分析 Jira 项目" values={analyzeProjects} options={projectOptions} appearance="settings" shadowless overlay summaryMode maxVisibleOptions={100} disabled={disabled||!projects.length} emptyText="未发现可访问的 Jira 项目" on:change={e=>analyzeProjects=e.detail} /></div><div class="analysis-select"><MultiSelect id="sync-analysis-repos" label="AI 分析仓库" values={analyzeRepos} options={repoOptions} appearance="settings" shadowless overlay summaryMode maxVisibleOptions={100} disabled={disabled||!repos.length} emptyText="未发现可同步仓库" on:change={e=>analyzeRepos=e.detail} /></div><Button variant="secondary" disabled={disabled||dirty||!workspace?.ai_ready||!analyzeRepos.length||analyzeRepos.length>20||!analyzeProjects.length||analyzeProjects.length>20} loading={busy==='analyze'} on:click={()=>start('analyze')}>分析群组</Button></div>
   <p class="field-note">每次最多 20 个仓库和最近更新的 100 个未完成任务；读取固定提交源码，生成关联建议。{#if workspace&&!workspace.ai_ready}请先启用 AI 模型连接。{/if}</p>
   {#if latestAnalysis}<div class="suggestions"><div class="section-head"><h4>AI 建议 <span>{latestAnalysis.proposals?.length||0} 条</span></h4><Button variant="secondary" disabled={disabled||!selectedSuggestions.length||latestAnalysis.config_version!==settings.version} on:click={apply}>采纳选中建议</Button></div>
    {#if latestAnalysis.config_version!==settings.version}<p class="field-note">建议来自旧配置，请重新分析。</p>{/if}
