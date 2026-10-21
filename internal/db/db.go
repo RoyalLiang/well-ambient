@@ -37,10 +37,12 @@ type Options struct {
 
 // WebhookLog stores raw GitLab webhook payloads for auditing
 type WebhookLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Event     string    `json:"event"`
-	Payload   string    `gorm:"type:text" json:"payload"`
-	CreatedAt time.Time `gorm:"index" json:"created_at"`
+	RepositoryKey        string    `gorm:"index;size:255" json:"repository_key"`
+	RepositorySourceJSON string    `gorm:"type:text" json:"repository_source_json"`
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	Event                string    `json:"event"`
+	Payload              string    `gorm:"type:text" json:"payload"`
+	CreatedAt            time.Time `gorm:"index" json:"created_at"`
 }
 
 // TaskTelemetry tracks the parsed git state for tasks
@@ -254,21 +256,23 @@ type RuntimeConfig struct {
 
 // GitCommitLog tracks detailed git activities for tasks (one task to many commits/repos)
 type GitCommitLog struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	TaskID             string    `gorm:"index;column:task_id" json:"task_id"`
-	Repo               string    `json:"repo"`
-	Branch             string    `json:"branch"`
-	CommitID           string    `json:"commit_id"`
-	Message            string    `json:"message"`
-	Author             string    `json:"author"`
-	MrIID              int       `json:"mr_iid"`
-	MrURL              string    `json:"mr_url"`
-	Action             string    `json:"action"` // git_push, mr_open, mr_merge, mr_close, etc.
-	DedupeKey          string    `gorm:"index;size:255;column:dedupe_key" json:"dedupe_key,omitempty"`
-	ContentFingerprint string    `gorm:"index;size:64;column:content_fingerprint" json:"content_fingerprint,omitempty"`
-	DuplicateOfCommit  string    `gorm:"size:160;column:duplicate_of_commit" json:"duplicate_of_commit,omitempty"`
-	TelemetryQuality   string    `gorm:"size:32;column:telemetry_quality" json:"telemetry_quality,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	RepositoryKey        string    `gorm:"index;size:255" json:"repository_key"`
+	RepositorySourceJSON string    `gorm:"type:text" json:"repository_source_json"`
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	TaskID               string    `gorm:"index;column:task_id" json:"task_id"`
+	Repo                 string    `json:"repo"`
+	Branch               string    `json:"branch"`
+	CommitID             string    `json:"commit_id"`
+	Message              string    `json:"message"`
+	Author               string    `json:"author"`
+	MrIID                int       `json:"mr_iid"`
+	MrURL                string    `json:"mr_url"`
+	Action               string    `json:"action"` // git_push, mr_open, mr_merge, mr_close, etc.
+	DedupeKey            string    `gorm:"index;size:255;column:dedupe_key" json:"dedupe_key,omitempty"`
+	ContentFingerprint   string    `gorm:"index;size:64;column:content_fingerprint" json:"content_fingerprint,omitempty"`
+	DuplicateOfCommit    string    `gorm:"size:160;column:duplicate_of_commit" json:"duplicate_of_commit,omitempty"`
+	TelemetryQuality     string    `gorm:"size:32;column:telemetry_quality" json:"telemetry_quality,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // JiraCommentLog tracks discussion updates pulled from Jira issues (comments)

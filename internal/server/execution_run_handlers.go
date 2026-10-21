@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 	"well-ambient/internal/delivery"
 	"well-ambient/internal/readmodel"
+	"well-ambient/internal/telemetry"
 
 	"gorm.io/gorm"
 )
@@ -154,7 +156,8 @@ func (s *Server) handleCreateExecutionRun(w http.ResponseWriter, r *http.Request
 	now := time.Now()
 	topicBranch := buildTopicBranch(preflight.Spec.DemandID, preflight.Spec.Version, runKey)
 	run := db.ExecutionRun{
-		RunKey: runKey, DemandID: preflight.Spec.DemandID, DemandSpecVersionID: preflight.Spec.ID,
+		RepositorySourceJSON: s.config.GitLab.Source(*repo, now).JSON(),
+		RunKey:               runKey, DemandID: preflight.Spec.DemandID, DemandSpecVersionID: preflight.Spec.ID,
 		ReviewContractID: preflight.ReviewContract.ID, Repo: req.ExecutionPreflight.Repo,
 		ProjectRef: projectRef, Provider: "gitlab", BaseBranch: strings.TrimSpace(req.BaseBranch),
 		TopicBranch: topicBranch, Status: delivery.RunPreflightReady,
@@ -191,7 +194,7 @@ func (s *Server) handleStartExecutionRun(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "execution run is not ready to start", http.StatusConflict)
 		return
 	}
-	client, err := newGitLabDeliveryClient(&s.config.GitLab)
+	client, err := s.gitLabClientForExecution(run)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -335,7 +338,7 @@ func (s *Server) handleRefreshExecutionRun(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "execution run has no GitLab branch", http.StatusConflict)
 		return
 	}
-	client, err := newGitLabDeliveryClient(&s.config.GitLab)
+	client, err := s.gitLabClientForExecution(run)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -510,6 +513,14 @@ func markdownList(items []string) string {
 
 func (s *Server) recordExecutionEvidence(run db.ExecutionRun, commit gitLabCommit) error {
 	now := time.Now()
+	var source config.RepositorySource
+	if run.RepositorySourceJSON != "" {
+		if err := json.Unmarshal([]byte(run.RepositorySourceJSON), &source); err != nil || source.RepositoryKey == "" {
+			return errors.New("invalid frozen repository source")
+		}
+	} else if strings.Contains(run.ProjectRef, ":") {
+		return errors.New("frozen repository source is required")
+	}
 	logs := []db.GitCommitLog{
 		{TaskID: run.DemandID, Repo: run.Repo, Branch: run.TopicBranch, Action: "ai_branch", Author: run.ServiceIdentity, CreatedAt: now},
 		{TaskID: run.DemandID, Repo: run.Repo, Branch: run.TopicBranch, CommitID: commit.ID, Message: "approved autonomous delivery", Action: "git_push", Author: run.ServiceIdentity, CreatedAt: now},
@@ -517,7 +528,17 @@ func (s *Server) recordExecutionEvidence(run db.ExecutionRun, commit gitLabCommi
 	}
 	tx := db.DB.Begin()
 	for _, logEntry := range logs {
-		if err := tx.Create(&logEntry).Error; err != nil {
+		logEntry.RepositoryKey, logEntry.RepositorySourceJSON = source.RepositoryKey, run.RepositorySourceJSON
+		if source.InstanceID != "" && source.InstanceID != "default" {
+			logEntry.Repo = source.InstanceID + " / " + source.FullPath
+		}
+		var err error
+		if logEntry.Action == "git_push" {
+			_, err = telemetry.PersistGitPushEvidence(tx, logEntry)
+		} else {
+			err = tx.Create(&logEntry).Error
+		}
+		if err != nil {
 			tx.Rollback()
 			return err
 		}

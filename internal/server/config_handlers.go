@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"well-ambient/internal/config"
@@ -87,6 +88,10 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	newCfg.Server.AttachmentDir = s.config.Server.AttachmentDir
 	newCfg.Server.MaintenanceMode = s.config.Server.MaintenanceMode
 	mergeConfiguredSecrets(&newCfg, *s.config)
+	if err := newCfg.GitLab.ValidateInstances(); err != nil {
+		writeConfigSaveError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Older full-config clients do not send the namespace field.
 	// Clearing it explicitly is supported by the dedicated open-capabilities API.
 	if strings.TrimSpace(newCfg.OpenCapabilities.NamePrefix) == "" {
@@ -172,6 +177,7 @@ func writeConfigSaveError(w http.ResponseWriter, status int, message string) {
 }
 
 type ConnectionTestRequest struct {
+	InstanceID string                       `json:"instance_id,omitempty"`
 	Confluence *config.ConfluenceSyncConfig `json:"confluence,omitempty"`
 	SMTP       *config.SMTPConfig           `json:"smtp,omitempty"`
 	Recipient  string                       `json:"recipient,omitempty"`
@@ -277,25 +283,29 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func testGitLabConnection(cfg *config.GitLabConfig) (bool, string, string) {
-	if cfg.BaseURL == "" {
-		return false, "GitLab URL is required", ""
-	}
-
-	// Normalize URL
-	baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
-
-	client := http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(baseURL)
+	client, err := newGitLabWebhookClient(cfg)
 	if err != nil {
-		return false, "Failed to connect to GitLab URL", err.Error()
+		return false, "请配置有效的 GitLab 地址和该实例的访问令牌", ""
+	}
+	req, err := client.newRequest(http.MethodGet, "/api/v4/user", nil)
+	if err != nil {
+		return false, "GitLab 请求地址无效", ""
+	}
+	resp, err := client.client.Do(req)
+	if err != nil {
+		return false, "无法验证 GitLab 访问令牌", "请求失败"
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-		return false, fmt.Sprintf("GitLab host responded with status code %d", resp.StatusCode), ""
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Sprintf("GitLab 令牌验证失败（HTTP %d）", resp.StatusCode), ""
 	}
-
-	return true, "GitLab URL is reachable.", fmt.Sprintf("HTTP Status: %s", resp.Status)
+	var user struct {
+		ID int `json:"id"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&user) != nil || user.ID <= 0 {
+		return false, "GitLab 身份响应无效", ""
+	}
+	return true, "GitLab 实例与访问令牌验证通过", "HTTP 200"
 }
 
 type FeishuTokenResponse struct {
@@ -422,65 +432,7 @@ func testJiraConnection(cfg *config.JiraConfig) (bool, string, string) {
 
 // handleGetGitLabProjects fetches project list from GitLab API for selection
 func (s *Server) handleGetGitLabProjects(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	baseURL := r.URL.Query().Get("base_url")
-	token := r.URL.Query().Get("api_token")
-	if r.Method == http.MethodPost {
-		var input struct {
-			BaseURL  string `json:"base_url"`
-			APIToken string `json:"api_token"`
-		}
-		if err := decodeOpenJSON(r, &input); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-		baseURL, token = input.BaseURL, input.APIToken
-	}
-	if token == configuredSecretPlaceholder && s.config != nil {
-		if strings.TrimRight(baseURL, "/") != strings.TrimRight(s.config.GitLab.BaseURL, "/") {
-			http.Error(w, "Re-enter API token for a changed GitLab server", http.StatusBadRequest)
-			return
-		}
-		token = s.config.GitLab.APIToken
-	}
-
-	if baseURL == "" || token == "" {
-		http.Error(w, "base_url and api_token are required", http.StatusBadRequest)
-		return
-	}
-
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	apiURL := fmt.Sprintf("%s/api/v4/projects?membership=true&simple=true&per_page=100", baseURL)
-
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Create request failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to contact GitLab server: %v", err), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("GitLab API returned status code %d", resp.StatusCode), http.StatusBadGateway)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		log.Printf("Failed to write response: %v", err)
-	}
+	s.handleGitLabProjectsForInstance(w, r)
 }
 
 func redactConfiguredSecrets(cfg *config.Config) {
@@ -491,6 +443,11 @@ func redactConfiguredSecrets(cfg *config.Config) {
 	cfg.DailyJiraEmail.Confluence.Token = redactConfiguredSecret(cfg.DailyJiraEmail.Confluence.Token)
 	cfg.GitLab.Secret = redactConfiguredSecret(cfg.GitLab.Secret)
 	cfg.GitLab.APIToken = redactConfiguredSecret(cfg.GitLab.APIToken)
+	cfg.GitLab.Connections = append([]config.GitLabConnection(nil), cfg.GitLab.Connections...)
+	for i := range cfg.GitLab.Connections {
+		cfg.GitLab.Connections[i].APIToken = redactConfiguredSecret(cfg.GitLab.Connections[i].APIToken)
+		cfg.GitLab.Connections[i].Secret = redactConfiguredSecret(cfg.GitLab.Connections[i].Secret)
+	}
 	cfg.Feishu.AppSecret = redactConfiguredSecret(cfg.Feishu.AppSecret)
 	cfg.Feishu.Bitable.AppToken = redactConfiguredSecret(cfg.Feishu.Bitable.AppToken)
 	cfg.Jira.APIToken = redactConfiguredSecret(cfg.Jira.APIToken)
@@ -517,8 +474,7 @@ func mergeConfiguredSecrets(next *config.Config, current config.Config) {
 	} else {
 		next.DailyJiraEmail.Confluence.Token = resolveConfiguredSecret(next.DailyJiraEmail.Confluence.Token, current.DailyJiraEmail.Confluence.Token)
 	}
-	next.GitLab.Secret = resolveConfiguredSecret(next.GitLab.Secret, current.GitLab.Secret)
-	next.GitLab.APIToken = resolveConfiguredSecret(next.GitLab.APIToken, current.GitLab.APIToken)
+	mergeGitLabSecrets(&next.GitLab, current.GitLab)
 	next.Feishu.AppSecret = resolveConfiguredSecret(next.Feishu.AppSecret, current.Feishu.AppSecret)
 	next.Feishu.Bitable.AppToken = resolveConfiguredSecret(next.Feishu.Bitable.AppToken, current.Feishu.Bitable.AppToken)
 	next.Jira.APIToken = resolveConfiguredSecret(next.Jira.APIToken, current.Jira.APIToken)
@@ -530,8 +486,8 @@ func mergeConnectionTestSecrets(req *ConnectionTestRequest, current config.Confi
 		return
 	}
 	if req.GitLab != nil {
-		req.GitLab.Secret = resolveConfiguredSecret(req.GitLab.Secret, current.GitLab.Secret)
-		req.GitLab.APIToken = resolveConfiguredSecret(req.GitLab.APIToken, current.GitLab.APIToken)
+		selected, _ := current.GitLab.Connection(req.InstanceID)
+		mergeGitLabSecrets(req.GitLab, selected)
 	}
 	if req.Feishu != nil {
 		req.Feishu.AppSecret = resolveConfiguredSecret(req.Feishu.AppSecret, current.Feishu.AppSecret)
@@ -564,6 +520,7 @@ func resolveConfiguredSecret(value, current string) string {
 }
 
 type GitLabWebhookEnsureRequest struct {
+	InstanceID   string               `json:"instance_id,omitempty"`
 	WebhookURL   string               `json:"webhook_url,omitempty"`
 	Repos        []config.RepoMapping `json:"repos,omitempty"`
 	Projects     []config.RepoMapping `json:"projects,omitempty"`
@@ -610,11 +567,14 @@ func newGitLabWebhookClient(cfg *config.GitLabConfig) (*gitLabWebhookClient, err
 	if strings.TrimSpace(cfg.APIToken) == "" {
 		return nil, fmt.Errorf("gitlab.api_token is required")
 	}
+	if err := config.ValidateGitLabURL(baseURL); err != nil {
+		return nil, err
+	}
 
 	return &gitLabWebhookClient{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(cfg.APIToken),
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }
 
@@ -641,28 +601,40 @@ func (c *gitLabWebhookClient) newRequest(method, path string, payload interface{
 }
 
 func (c *gitLabWebhookClient) listProjectHooks(projectRef string) ([]gitLabProjectHook, error) {
-	path := fmt.Sprintf("/api/v4/projects/%s/hooks?per_page=100", url.PathEscape(projectRef))
-	req, err := c.newRequest(http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
+	var all []gitLabProjectHook
+	for page := 1; page <= 100; page++ {
+		path := fmt.Sprintf("/api/v4/projects/%s/hooks?per_page=100&page=%d", url.PathEscape(projectRef), page)
+		req, err := c.newRequest(http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to contact GitLab API")
-	}
-	defer resp.Body.Close()
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to contact GitLab API")
+		}
+		if resp.StatusCode != http.StatusOK {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("GitLab API returned status %d while listing hooks", resp.StatusCode)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("GitLab API returned status %d while listing hooks", resp.StatusCode)
+		var hooks []gitLabProjectHook
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&hooks)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode GitLab hooks response")
+		}
+		all = append(all, hooks...)
+		next := resp.Header.Get("X-Next-Page")
+		if next == "" && len(hooks) < 100 {
+			return all, nil
+		}
+		if next != "" && next != strconv.Itoa(page+1) {
+			return nil, fmt.Errorf("GitLab hook pagination is inconsistent")
+		}
 	}
-
-	var hooks []gitLabProjectHook
-	if err := json.NewDecoder(resp.Body).Decode(&hooks); err != nil {
-		return nil, fmt.Errorf("failed to decode GitLab hooks response")
-	}
-	return hooks, nil
+	return nil, fmt.Errorf("GitLab hook pagination exceeded its limit")
 }
 
 func (c *gitLabWebhookClient) createProjectHook(projectRef, webhookURL, secret string) (*gitLabProjectHook, error) {
@@ -729,24 +701,38 @@ func (s *Server) handleEnsureGitLabWebhooks(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	webhookURL, err := resolveGitLabWebhookURL(r, reqBody.WebhookURL)
+	instance := reqBody.InstanceID
+	if instance == "" {
+		instance = r.URL.Query().Get("instance_id")
+	}
+	selected, err := s.gitLabForRequest(instance)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhookURL, err := gitLabInstanceWebhookURL(r, reqBody.WebhookURL, selected.ActiveInstanceID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if strings.TrimSpace(s.config.GitLab.Secret) == "" {
+	if strings.TrimSpace(selected.Secret) == "" {
 		http.Error(w, "gitlab.secret_token is required to install webhooks", http.StatusBadRequest)
 		return
 	}
 
-	client, err := newGitLabWebhookClient(&s.config.GitLab)
+	client, err := newGitLabWebhookClient(&selected)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	repos := selectedGitLabWebhookRepos(&s.config.GitLab, reqBody, r.URL.Query())
+	repos := selectedGitLabWebhookRepos(&selected, reqBody, r.URL.Query())
+	repos, err = scopedWebhookRepos(selected, repos)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if len(repos) == 0 {
 		http.Error(w, "No GitLab repositories configured or selected", http.StatusBadRequest)
 		return
@@ -773,7 +759,7 @@ func (s *Server) handleEnsureGitLabWebhooks(w http.ResponseWriter, r *http.Reque
 
 		existing := findGitLabHookByURL(hooks, webhookURL)
 		if existing != nil {
-			hook, err := client.updateProjectHook(projectRef, existing.ID, webhookURL, s.config.GitLab.Secret)
+			hook, err := client.updateProjectHook(projectRef, existing.ID, webhookURL, selected.Secret)
 			if err != nil {
 				result.Status = "error"
 				result.Message = err.Error()
@@ -786,7 +772,7 @@ func (s *Server) handleEnsureGitLabWebhooks(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 
-		hook, err := client.createProjectHook(projectRef, webhookURL, s.config.GitLab.Secret)
+		hook, err := client.createProjectHook(projectRef, webhookURL, selected.Secret)
 		if err != nil {
 			result.Status = "error"
 			result.Message = err.Error()
@@ -811,19 +797,29 @@ func (s *Server) handleGetGitLabWebhookStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	webhookURL, err := resolveGitLabWebhookURL(r, "")
+	selected, err := s.gitLabForRequest(r.URL.Query().Get("instance_id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhookURL, err := gitLabInstanceWebhookURL(r, "", selected.ActiveInstanceID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	client, err := newGitLabWebhookClient(&s.config.GitLab)
+	client, err := newGitLabWebhookClient(&selected)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	repos := selectedGitLabWebhookRepos(&s.config.GitLab, GitLabWebhookEnsureRequest{}, nil)
+	repos := selectedGitLabWebhookRepos(&selected, GitLabWebhookEnsureRequest{}, r.URL.Query())
+	repos, err = scopedWebhookRepos(selected, repos)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if len(repos) == 0 {
 		http.Error(w, "No GitLab repositories configured", http.StatusBadRequest)
 		return
@@ -935,6 +931,9 @@ func gitLabWebhookResultForRepo(repo config.RepoMapping) GitLabWebhookProjectRes
 }
 
 func gitLabProjectRef(repo config.RepoMapping) string {
+	if repo.InstanceID != "" {
+		return repo.RemoteID()
+	}
 	if projectID := strings.TrimSpace(repo.ProjectID); projectID != "" {
 		return projectID
 	}
@@ -992,6 +991,9 @@ func resolveGitLabWebhookURL(r *http.Request, bodyWebhookURL string) (string, er
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("webhook_url must use http or https")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("callback URL cannot contain credentials, query or fragment")
 	}
 	return webhookURL, nil
 }

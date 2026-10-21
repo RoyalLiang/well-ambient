@@ -129,16 +129,17 @@ type StrongestBrainDecisionItem struct {
 }
 
 type StrongestBrainEvidenceDigest struct {
-	TaskID               string   `json:"task_id"`
-	TaskGroupID          string   `json:"task_group_id"`
-	CommitCount          int      `json:"commit_count"`
-	MRCount              int      `json:"mr_count"`
-	LastEvidence         string   `json:"last_evidence"`
-	Signals              []string `json:"signals"`
-	EvidenceRefs         []string `json:"evidence_refs"`
-	MissingLinks         []string `json:"missing_links"`
-	ChainStatus          string   `json:"chain_status"`
-	EvidenceCompleteness int      `json:"evidence_completeness"`
+	RepositorySources    map[string]string `json:"repository_sources"`
+	TaskID               string            `json:"task_id"`
+	TaskGroupID          string            `json:"task_group_id"`
+	CommitCount          int               `json:"commit_count"`
+	MRCount              int               `json:"mr_count"`
+	LastEvidence         string            `json:"last_evidence"`
+	Signals              []string          `json:"signals"`
+	EvidenceRefs         []string          `json:"evidence_refs"`
+	MissingLinks         []string          `json:"missing_links"`
+	ChainStatus          string            `json:"chain_status"`
+	EvidenceCompleteness int               `json:"evidence_completeness"`
 }
 
 type StrongestBrainEvidenceChainResponse struct {
@@ -168,14 +169,16 @@ type StrongestBrainChainTask struct {
 }
 
 type StrongestBrainChainLog struct {
-	ID        uint   `json:"id"`
-	TaskID    string `json:"task_id"`
-	Action    string `json:"action"`
-	Repo      string `json:"repo"`
-	Branch    string `json:"branch"`
-	CommitID  string `json:"commit_id"`
-	MRURL     string `json:"mr_url"`
-	CreatedAt string `json:"created_at"`
+	RepositoryKey        string `json:"repository_key"`
+	RepositorySourceJSON string `json:"repository_source_json"`
+	ID                   uint   `json:"id"`
+	TaskID               string `json:"task_id"`
+	Action               string `json:"action"`
+	Repo                 string `json:"repo"`
+	Branch               string `json:"branch"`
+	CommitID             string `json:"commit_id"`
+	MRURL                string `json:"mr_url"`
+	CreatedAt            string `json:"created_at"`
 }
 
 type StrongestBrainChainSummary struct {
@@ -407,6 +410,7 @@ func (s *Server) handleGetStrongestBrainEvidenceChain(w http.ResponseWriter, r *
 	}
 	for _, log := range logs {
 		response.Evidence = append(response.Evidence, StrongestBrainChainLog{
+			RepositoryKey: log.RepositoryKey, RepositorySourceJSON: log.RepositorySourceJSON,
 			ID:        log.ID,
 			TaskID:    strings.TrimSpace(log.TaskID),
 			Action:    strings.TrimSpace(log.Action),
@@ -1375,6 +1379,14 @@ func strongestBrainExecutionEvidenceRefs(item ExecutionTaskItemDTO) []string {
 }
 
 func strongestBrainLogEvidenceRef(log db.GitCommitLog) string {
+	if log.RepositoryKey != "" {
+		if strings.HasPrefix(log.Action, "mr_") && log.MrIID > 0 {
+			return fmt.Sprintf("mr:%s:%d", log.RepositoryKey, log.MrIID)
+		}
+		if log.CommitID != "" {
+			return "commit:" + log.RepositoryKey + ":" + log.CommitID
+		}
+	}
 	switch {
 	case strings.HasPrefix(log.Action, "mr_") && strings.TrimSpace(log.MrURL) != "":
 		return "mr:" + strings.TrimSpace(log.MrURL)
@@ -1711,7 +1723,15 @@ func buildEvidenceDigest(logs []db.GitCommitLog, profileSets ...map[string]stron
 			item.LastEvidence = formatDateTime(log.CreatedAt)
 		}
 		if len(item.Signals) < 3 {
-			item.Signals = append(item.Signals, firstNonEmpty(log.Action, "git_event")+" / "+firstNonEmpty(log.Branch, log.Repo, "unknown"))
+			item.Signals = append(item.Signals, firstNonEmpty(log.Action, "git_event")+" / "+firstNonEmpty(log.Repo, "来源未知")+" / "+firstNonEmpty(log.Branch, "unknown"))
+		}
+		if log.RepositorySourceJSON != "" && log.RepositoryKey != "" {
+			if item.RepositorySources == nil {
+				item.RepositorySources = map[string]string{}
+			}
+			if _, exists := item.RepositorySources[log.RepositoryKey]; !exists {
+				item.RepositorySources[log.RepositoryKey] = log.RepositorySourceJSON
+			}
 		}
 	}
 	items := make([]StrongestBrainEvidenceDigest, 0, len(byTask))

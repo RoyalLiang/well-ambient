@@ -89,7 +89,11 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 	if (kind == "commit" && !shaPattern.MatchString(ref)) || (kind == "mr" && !safeRef.MatchString(ref)) {
 		return run, errors.New("Commit 需要完整 SHA；MR 需要正整数 IID")
 	}
-	if !s.Config().GitLab.Enabled || s.Config().GitLab.APIToken == "" || !s.Config().AI.Enabled {
+	connection, _, connectionErr := s.Config().GitLab.ForRepository(project)
+	if connectionErr != nil {
+		return run, connectionErr
+	}
+	if !connection.Enabled || connection.APIToken == "" || !s.Config().AI.Enabled {
 		return run, errors.New("请先配置并启用 GitLab 和 AI")
 	}
 	p, err := s.Policy(project)
@@ -118,9 +122,15 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 	if allowed {
 		publishStatus = "waiting_review"
 	}
+	source := s.Config().GitLab.Source(repo, time.Now())
+	identity := source.RepositoryKey
+	if source.LegacyDedupe {
+		identity = project
+	}
 	run = db.CodeReviewRun{
-		Key: digest(project + ":" + kind + ":" + ref + ":" + eventKey), ProjectID: project, Repo: repo.Name,
-		Kind: kind, Ref: ref, Status: "queued", Phase: "等待执行", PolicyJSON: encode(p),
+		Key: digest(identity + ":" + kind + ":" + ref + ":" + eventKey), ProjectID: project, Repo: repo.DisplayName(),
+		RepositorySourceJSON: source.JSON(),
+		Kind:                 kind, Ref: ref, Status: "queued", Phase: "等待执行", PolicyJSON: encode(p),
 		PromptVersion:  fmt.Sprintf("review-skill:%d/v%d@%s", skill.ID, skill.Version, RuntimePromptVersion),
 		SkillVersionID: skill.ID, SkillVersion: skill.Version, SkillScopeType: skill.ScopeType,
 		SkillScopeID: skill.ScopeID, SkillName: skill.Name, SkillHash: digest(skill.SystemPrompt),
@@ -158,6 +168,9 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 		return err
 	}
 	id := strconv.Itoa(p.Project.ID)
+	if instance := s.Config().GitLab.ActiveInstanceID; instance != "" {
+		id = instance + ":" + id
+	}
 	if _, err := s.Repo(id); err != nil {
 		return nil
 	}
@@ -335,9 +348,30 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		}
 		skillPrompt = skill.SystemPrompt
 	}
-	snapshot, err := s.git().Snapshot(ctx, run.ProjectID, run.Kind, run.Ref)
+	git := s.git()
+	if run.RepositorySourceJSON == "" {
+		connection, _, err := git.Config.ForRepository(run.ProjectID)
+		if err != nil || connection.ActiveInstanceID != "" || (git.Config.LegacyDedupeOrigin != "" && strings.TrimRight(connection.BaseURL, "/") != strings.TrimRight(git.Config.LegacyDedupeOrigin, "/")) {
+			return fail(errors.New("历史评审缺少可验证的仓库来源，请重新发起评审"))
+		}
+	}
+	var frozenSource config.RepositorySource
+	if run.RepositorySourceJSON != "" {
+		if err := json.Unmarshal([]byte(run.RepositorySourceJSON), &frozenSource); err != nil {
+			return fail(errors.New("仓库来源快照无效"))
+		}
+		if frozenSource.RepositoryKey != git.Config.Source(repo, time.Now()).RepositoryKey {
+			return fail(errors.New("仓库来源已变更，请重新发起评审"))
+		}
+	}
+	snapshot, err := git.Snapshot(ctx, run.ProjectID, run.Kind, run.Ref)
 	if err != nil {
 		return fail(err)
+	}
+	if run.RepositorySourceJSON != "" {
+		if err := json.Unmarshal([]byte(run.RepositorySourceJSON), &snapshot.RepositorySource); err != nil {
+			return fail(errors.New("仓库来源快照无效"))
+		}
 	}
 	snapshot.Knowledge, err = s.knowledge(ctx, policy, repo, snapshot)
 	if err != nil {
@@ -461,7 +495,7 @@ func (s *Service) List(limit int) ([]db.CodeReviewRun, error) {
 	}
 	runs := []db.CodeReviewRun{}
 	err := s.DB.Select(
-		"id", "project_id", "repo", "author", "kind", "ref", "head_sha", "base_sha", "title", "url",
+		"id", "project_id", "repo", "repository_source_json", "author", "kind", "ref", "head_sha", "base_sha", "title", "url",
 		"status", "phase", "error", "model", "prompt_version", "skill_version_id", "skill_version",
 		"skill_scope_type", "skill_scope_id", "skill_name", "skill_hash", "retry_of_id",
 		"publish_status", "publish_error", "comment_id", "published_at", "created_at", "updated_at",
@@ -525,5 +559,10 @@ func (s *Service) status(run db.CodeReviewRun, status string) error {
 	return s.DB.Model(&db.CodeReviewRun{}).Where("id = ?", run.ID).Update("publish_status", status).Error
 }
 func publicationKey(run db.CodeReviewRun) string {
-	return digest(fmt.Sprintf("%s:%s:%s:%s:%s", run.ProjectID, run.Kind, run.Ref, run.BaseSHA, run.HeadSHA))
+	identity := run.ProjectID
+	var source config.RepositorySource
+	if json.Unmarshal([]byte(run.RepositorySourceJSON), &source) == nil && source.RepositoryKey != "" && !source.LegacyDedupe {
+		identity = source.RepositoryKey
+	}
+	return digest(fmt.Sprintf("%s:%s:%s:%s:%s", identity, run.Kind, run.Ref, run.BaseSHA, run.HeadSHA))
 }

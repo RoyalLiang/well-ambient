@@ -84,6 +84,7 @@ func (c *gitLabDeliveryClient) GetLatestPipeline(ctx context.Context, projectRef
 }
 
 type gitLabDeliveryClient struct {
+	config  config.GitLabConfig
 	baseURL string
 	token   string
 	client  *http.Client
@@ -96,10 +97,17 @@ func newGitLabDeliveryClient(cfg *config.GitLabConfig) (*gitLabDeliveryClient, e
 	if strings.TrimSpace(cfg.APIToken) == "" {
 		return nil, fmt.Errorf("gitlab.api_token is required")
 	}
+	if err := config.ValidateGitLabURL(cfg.BaseURL); err != nil {
+		return nil, err
+	}
+	if cfg.ActiveInstanceID != "" && !cfg.Enabled {
+		return nil, fmt.Errorf("GitLab instance is disabled")
+	}
 	return &gitLabDeliveryClient{
+		config:  *cfg,
 		baseURL: strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		token:   strings.TrimSpace(cfg.APIToken),
-		client:  &http.Client{Timeout: 20 * time.Second},
+		client:  &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}, nil
 }
 
@@ -193,6 +201,15 @@ func (c *gitLabDeliveryClient) CreateDraftMR(ctx context.Context, projectRef, so
 }
 
 func (c *gitLabDeliveryClient) doJSON(ctx context.Context, method, path string, payload interface{}, expected int, target interface{}) error {
+	connection, routedPath, routeErr := c.config.RouteAPIPath(strings.TrimPrefix(path, "/api/v4"))
+	if routeErr != nil {
+		return routeErr
+	}
+	baseURL, token := c.baseURL, c.token
+	if connection.BaseURL != "" {
+		baseURL, token = strings.TrimRight(connection.BaseURL, "/"), connection.APIToken
+	}
+	path = "/api/v4" + routedPath
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -201,11 +218,11 @@ func (c *gitLabDeliveryClient) doJSON(ctx context.Context, method, path string, 
 		}
 		body = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("PRIVATE-TOKEN", c.token)
+	req.Header.Set("PRIVATE-TOKEN", token)
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")

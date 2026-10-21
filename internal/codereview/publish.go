@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"well-ambient/internal/config"
 	"well-ambient/internal/db"
 )
 
@@ -27,7 +28,8 @@ func (s *Service) Publish(ctx context.Context, run db.CodeReviewRun) error {
 	if _, err := s.Repo(run.ProjectID); err != nil {
 		return s.status(run, "blocked")
 	}
-	if !s.Config().GitLab.Enabled || run.Status != "completed" || !shaPattern.MatchString(run.HeadSHA) {
+	connection, _, connectionErr := s.Config().GitLab.ForRepository(run.ProjectID)
+	if connectionErr != nil || !connection.Enabled || run.Status != "completed" || !shaPattern.MatchString(run.HeadSHA) {
 		return s.status(run, "blocked")
 	}
 	allowed, err := s.policyAllows(run)
@@ -38,6 +40,18 @@ func (s *Service) Publish(ctx context.Context, run db.CodeReviewRun) error {
 		return s.status(run, "off")
 	}
 	g := s.git()
+	if run.RepositorySourceJSON == "" {
+		if connection.ActiveInstanceID != "" || (g.Config.LegacyDedupeOrigin != "" && strings.TrimRight(connection.BaseURL, "/") != strings.TrimRight(g.Config.LegacyDedupeOrigin, "/")) {
+			return s.status(run, "blocked")
+		}
+	}
+	if run.RepositorySourceJSON != "" {
+		var frozen config.RepositorySource
+		_, repo, err := g.Config.ForRepository(run.ProjectID)
+		if err != nil || json.Unmarshal([]byte(run.RepositorySourceJSON), &frozen) != nil || frozen.RepositoryKey != g.Config.Source(repo, time.Now()).RepositoryKey {
+			return s.status(run, "blocked")
+		}
+	}
 	if run.Kind == "mr" {
 		m, err := g.mr(ctx, run.ProjectID, run.Ref)
 		if err != nil {

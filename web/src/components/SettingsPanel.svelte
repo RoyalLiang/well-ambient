@@ -4,7 +4,7 @@
   import Button from './shared/Button.svelte';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
   import Modal from './shared/Modal.svelte';
-  import GitLabConfig from './config/GitLabConfig.svelte';
+  import GitLabConfig from './config/GitLabConnections.svelte';
   import MemberRoleDirectory from './config/MemberRoleDirectory.svelte';
   import EmailConfig from './config/EmailConfig.svelte';
   import { defaultSMTP, defaultDailyEmail, type SMTPConfig, type DailyJiraEmailConfig } from '../lib/email-config';

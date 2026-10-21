@@ -251,18 +251,26 @@ type ServerConfig struct {
 
 // GitLabConfig holds connection settings for self-hosted GitLab
 type GitLabConfig struct {
-	Enabled  bool          `yaml:"enabled" json:"enabled"`
-	BaseURL  string        `yaml:"base_url" json:"base_url"`
-	Secret   string        `yaml:"secret_token" json:"secret_token"` // For webhook validation
-	APIToken string        `yaml:"api_token" json:"api_token"`       // For GitLab API requests
-	Repos    []RepoMapping `yaml:"repos" json:"repos"`
+	LegacyDedupeOrigin string             `yaml:"legacy_dedupe_origin,omitempty" json:"legacy_dedupe_origin,omitempty"`
+	Enabled            bool               `yaml:"enabled" json:"enabled"`
+	BaseURL            string             `yaml:"base_url" json:"base_url"`
+	Secret             string             `yaml:"secret_token" json:"secret_token"` // For webhook validation
+	APIToken           string             `yaml:"api_token" json:"api_token"`       // For GitLab API requests
+	Repos              []RepoMapping      `yaml:"repos" json:"repos"`
+	Connections        []GitLabConnection `yaml:"connections,omitempty" json:"connections,omitempty"`
+	ActiveInstanceID   string             `yaml:"-" json:"-"`
 }
 
 // RepoMapping maps GitLab repositories to internal projects or tasks
 type RepoMapping struct {
-	Name      string `yaml:"name" json:"name"`
-	Path      string `yaml:"path" json:"path"`
-	ProjectID string `yaml:"project_id" json:"project_id"`
+	Name            string `yaml:"name" json:"name"`
+	Path            string `yaml:"path" json:"path"`
+	ProjectID       string `yaml:"project_id" json:"project_id"`
+	InstanceID      string `yaml:"instance_id,omitempty" json:"instance_id,omitempty"`
+	RemoteProjectID string `yaml:"remote_project_id,omitempty" json:"remote_project_id,omitempty"`
+	NamespaceName   string `yaml:"namespace_name,omitempty" json:"namespace_name,omitempty"`
+	NamespacePath   string `yaml:"namespace_path,omitempty" json:"namespace_path,omitempty"`
+	WebURL          string `yaml:"web_url,omitempty" json:"web_url,omitempty"`
 }
 
 // FeishuConfig holds credentials for Feishu/Lark Integration

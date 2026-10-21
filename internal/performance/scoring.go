@@ -531,7 +531,7 @@ func calculateSubject(evidence subjectEvidence, settings Settings, windowStart, 
 			duplicateCount++
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(commit.Repo)) + ":" + fingerprint
+		key := gitRepositoryIdentity(commit) + ":" + fingerprint
 		if _, exists := seenFingerprints[key]; exists {
 			duplicateCount++
 		} else {
@@ -988,11 +988,18 @@ func dedupeCommits(commits []db.GitCommitLog) []db.GitCommitLog {
 }
 
 func gitCommitDedupeKey(commit db.GitCommitLog) string {
-	return strings.ToLower(strings.TrimSpace(commit.Repo)) + ":" + strings.ToLower(strings.TrimSpace(commit.CommitID))
+	return gitRepositoryIdentity(commit) + ":" + strings.ToLower(strings.TrimSpace(commit.CommitID))
+}
+
+func gitRepositoryIdentity(commit db.GitCommitLog) string {
+	if commit.RepositoryKey != "" {
+		return commit.RepositoryKey
+	}
+	return strings.ToLower(strings.TrimSpace(commit.Repo))
 }
 
 func gitEvidenceRef(commit db.GitCommitLog) string {
-	return "git:" + strings.TrimSpace(commit.Repo) + ":" + strings.TrimSpace(commit.CommitID)
+	return "git:" + gitRepositoryIdentity(commit) + ":" + strings.TrimSpace(commit.CommitID)
 }
 
 func sourceEventRef(event db.PerformanceWorkItemEvent) string {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/url"
 	"sort"
 	"strings"
@@ -46,7 +47,7 @@ func buildEmailCommitRows(cfg config.Config, commits []db.GitCommitLog) []emailC
 			indices[key] = i
 			rows = append(rows, emailCommitRow{Repository: c.Repo, Branch: branch})
 		}
-		rows[i].Commits = append(rows[i].Commits, emailCommitDetail{ID: c.CommitID, URL: emailCommitURL(cfg, c.Repo, c.CommitID), Author: c.Author, Message: c.Message})
+		rows[i].Commits = append(rows[i].Commits, emailCommitDetail{ID: c.CommitID, URL: frozenCommitURL(cfg, c), Author: c.Author, Message: c.Message})
 		rows[i].Count++
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -91,4 +92,22 @@ func emailCommitURL(cfg config.Config, repo, sha string) string {
 	base.Path = strings.TrimRight(base.Path, "/") + "/" + path + "/-/commit/" + sha
 	base.RawPath, base.RawQuery, base.Fragment = "", "", ""
 	return base.String()
+}
+
+func frozenCommitURL(cfg config.Config, commit db.GitCommitLog) string {
+	if commit.RepositorySourceJSON != "" {
+		var source config.RepositorySource
+		if json.Unmarshal([]byte(commit.RepositorySourceJSON), &source) != nil {
+			return ""
+		}
+		parsed, err := url.Parse(source.WebURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return ""
+		}
+		if strings.ContainsAny(commit.CommitID, "/?#\\") {
+			return ""
+		}
+		return strings.TrimRight(source.WebURL, "/") + "/-/commit/" + commit.CommitID
+	}
+	return emailCommitURL(cfg, commit.Repo, commit.CommitID)
 }

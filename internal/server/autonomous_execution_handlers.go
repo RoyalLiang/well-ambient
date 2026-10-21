@@ -101,7 +101,7 @@ func (s *Server) handleGenerateExecutionChangeSet(w http.ResponseWriter, r *http
 			http.Error(w, "at most 12 source paths can be loaded", http.StatusBadRequest)
 			return
 		}
-		client, err := newGitLabDeliveryClient(&s.config.GitLab)
+		client, err := s.gitLabClientForProject(repo.ProjectID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
@@ -272,15 +272,11 @@ func (s *Server) buildExecutionPreflight(req executionPreflightRequest) executio
 }
 
 func (s *Server) configuredRepo(name string) *config.RepoMapping {
-	for index := range s.config.GitLab.Repos {
-		repo := &s.config.GitLab.Repos[index]
-		if strings.EqualFold(strings.TrimSpace(repo.Name), strings.TrimSpace(name)) ||
-			strings.EqualFold(strings.TrimSpace(repo.Path), strings.TrimSpace(name)) ||
-			strings.EqualFold(strings.TrimSpace(repo.ProjectID), strings.TrimSpace(name)) {
-			return repo
-		}
+	repo, err := s.config.GitLab.Repository(name)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return &repo
 }
 
 func containsStringFold(items []string, candidate string) bool {

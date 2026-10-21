@@ -4,6 +4,7 @@
   import Switch from '../shared/Switch.svelte';
   import Button from '../shared/Button.svelte';
   import Alert from '../shared/Alert.svelte';
+  import GitLabRepositoryList from './GitLabRepositoryList.svelte';
   import { resetSettingsWorkspaceScroll } from '../../lib/settings-ui';
 
   const dispatch = createEventDispatcher();
@@ -13,9 +14,11 @@
     base_url: string;
     secret_token: string;
     api_token?: string;
-    repos: Array<{ name: string; path: string; project_id: string }>;
+    repos: Array<{ name: string; path: string; project_id: string; instance_id?: string; remote_project_id?: string; namespace_name?: string; namespace_path?: string; web_url?: string }>;
   } = { enabled: false, base_url: '', secret_token: '', api_token: '', repos: [] };
 
+  export let instanceID = '';
+  export let rootGroup = '';
   export let saving = false;
   export let saveError = '';
   export let saveSuccess = false;
@@ -64,6 +67,10 @@
   let webhookSyncError = '';
   let webhookResults: WebhookProjectResult[] = [];
   let webhookResultURL = '';
+  let webhookProgress = '';
+  let webhookResultPage = 1;
+  $: visibleWebhookResults = webhookResults.slice((webhookResultPage-1)*25,webhookResultPage*25);
+  $: dispatch('editing',editing || webhookSyncLoading || webhookStatusLoading);
 
   $: webhookReady = !!(baseURL && apiToken && secretToken && repoList.length > 0);
   $: webhookSummary = summarizeWebhookResults(webhookResults);
@@ -130,6 +137,7 @@
   function finishClose() {
     if (resettingAPIToken) { apiToken = config.api_token || ''; resettingAPIToken = false; showAPITokenEditor = !config.api_token; }
     editing = false;
+    testError = ''; testSuccess = ''; testDetails = '';
     dispatch('close');
   }
 
@@ -141,7 +149,7 @@
     loadingProjects = true;
     loadProjectsError = '';
     try {
-      const res = await fetch('/api/gitlab/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base_url: baseURL, api_token: apiToken }) });
+      const res = await fetch('/api/gitlab/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instance_id: instanceID, base_url: baseURL, api_token: apiToken, root_group: rootGroup }) });
       if (res.ok) {
         availableProjects = await res.json();
       } else {
@@ -157,7 +165,7 @@
 
   function addAutoloadedProject(p: any) {
     repoError = '';
-    const newRepoID = String(p.id);
+    const newRepoID = instanceID ? `${instanceID}:${p.id}` : String(p.id);
     if (repoList.some(r => r.project_id === newRepoID)) {
       repoError = `仓库 ${p.name} (ID: ${newRepoID}) 已经存在`;
       return;
@@ -167,7 +175,9 @@
       {
         name: p.name,
         path: p.path_with_namespace || p.path,
-        project_id: newRepoID
+        project_id: newRepoID,
+        ...(instanceID ? {instance_id: instanceID, remote_project_id: String(p.id)} : {}),
+        namespace_name: p.namespace?.name || '', namespace_path: p.namespace?.full_path || '', web_url: p.web_url || ''
       }
     ];
   }
@@ -178,15 +188,12 @@
   onMount(() => {
     // Generate webhook URL based on the current domain
     const host = window.location.origin;
-    webhookURL = `${host}/api/webhook/gitlab`;
+    webhookURL = `${host}/api/webhook/gitlab${instanceID ? `/${instanceID}` : ''}`;
   });
 
   function generateRandomToken() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let token = '';
-    for (let i = 0; i < 24; i++) {
-      token += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const token = Array.from(bytes, value => value.toString(16).padStart(2,'0')).join('');
     secretToken = token;
   }
 
@@ -207,8 +214,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'gitlab',
+          instance_id: instanceID,
           gitlab: {
             base_url: baseURL,
+            api_token: apiToken,
             secret_token: secretToken
           }
         })
@@ -240,7 +249,8 @@
     }
 
     // Check if project_id or path already exists
-    if (repoList.some(r => r.project_id === newRepoID)) {
+    const qualifiedID = instanceID ? `${instanceID}:${newRepoID.trim().replace(`${instanceID}:`, '')}` : newRepoID.trim();
+    if (repoList.some(r => r.project_id === qualifiedID)) {
       repoError = `Project ID: ${newRepoID} 已经存在`;
       return;
     }
@@ -250,7 +260,8 @@
       {
         name: newRepoName,
         path: newRepoPath,
-        project_id: newRepoID
+        project_id: qualifiedID,
+        ...(instanceID ? {instance_id: instanceID, remote_project_id: qualifiedID.slice(instanceID.length+1)} : {})
       }
     ];
 
@@ -327,27 +338,24 @@
     }
 
     try {
-      const params = new URLSearchParams({ webhook_url: webhookURL });
-      const endpoint = mode === 'status'
-        ? `/api/gitlab/webhooks/status?${params.toString()}`
-        : '/api/gitlab/webhooks/ensure';
-      const res = await fetch(endpoint, {
-        method: mode === 'status' ? 'GET' : 'POST',
-        headers: mode === 'status' ? undefined : { 'Content-Type': 'application/json' },
-        body: mode === 'status' ? undefined : JSON.stringify({
-          webhook_url: webhookURL,
-          repos: repoList
-        })
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+      webhookResults = [];
+      webhookResultPage = 1;
+      for (let start=0;start<repoList.length;start+=20) {
+        const batch = repoList.slice(start,start+20);
+        webhookProgress = `已完成 ${start} / ${repoList.length} 个仓库`;
+        const params = new URLSearchParams({webhook_url:webhookURL,instance_id:instanceID});
+        for (const repo of batch) params.append('project_id',repo.project_id);
+        const res = await fetch(mode==='status' ? `/api/gitlab/webhooks/status?${params}` : '/api/gitlab/webhooks/ensure', {
+          method: mode==='status' ? 'GET' : 'POST',
+          headers: mode==='status' ? undefined : {'Content-Type':'application/json'},
+          body: mode==='status' ? undefined : JSON.stringify({instance_id:instanceID,webhook_url:webhookURL,repos:batch})
+        });
+        if(!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+        const data=await res.json();
+        webhookResults=[...webhookResults,...(data.results || [])];
+        webhookResultURL=data.webhook_url || webhookURL;
+        webhookProgress=`已完成 ${Math.min(start+batch.length,repoList.length)} / ${repoList.length} 个仓库`;
       }
-
-      const data = await res.json();
-      webhookResults = data.results || [];
-      webhookResultURL = data.webhook_url || webhookURL;
     } catch (e: any) {
       webhookSyncError = e.message || 'Webhook 自动配置请求失败';
     } finally {
@@ -455,42 +463,14 @@
           <span class="repo-count">{repoList.length} repos</span>
         </div>
 
-        {#if repoList.length === 0}
-          <div class="empty-repos">暂无映射仓库。进入编辑后可手动添加或从 GitLab 拉取项目。</div>
-        {:else}
-          <div class="table-container repo-overview-table">
-            <table class="repo-table">
-              <thead>
-                <tr>
-                  <th>项目名称</th>
-                  <th>GitLab 路径</th>
-                  <th>Project ID</th>
-                  <th>Webhook</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each repoList as repo}
-                  <tr>
-                    <td class="repo-main">
-                      <strong>{repo.name || '-'}</strong>
-                      <span>{repo.path || '-'}</span>
-                    </td>
-                    <td class="font-mono">{repo.path || '-'}</td>
-                    <td class="font-mono tabular">{repo.project_id || '-'}</td>
-                    <td><span class="webhook-status-pill {webhookReady ? 'ok' : 'missing'}">{webhookReady ? '可巡检' : '待配置'}</span></td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        {/if}
+        <GitLabRepositoryList repos={repoList} label="已配置仓库" />
       </section>
 
       <section class="webhook-automation-panel">
         <div class="webhook-auto-header">
           <div>
             <h5>Webhook 自动化</h5>
-            <p>Payload URL、状态巡检与安装更新放在同一个操作区。</p>
+            <p>每批处理 20 个仓库；仅操作当前实例，分别记录 push 与 MR 回调结果。</p>
           </div>
           <div class="webhook-auto-actions">
             <Button variant="secondary" loading={webhookStatusLoading} disabled={!webhookReady || webhookSyncLoading} on:click={() => callWebhookAutomation('status')}>
@@ -518,6 +498,7 @@
           </div>
         {/if}
 
+        {#if webhookProgress}<p class="webhook-progress" role="status">{webhookProgress}</p>{/if}
         {#if webhookSyncError}
           <div class="webhook-auto-error">{webhookSyncError}</div>
         {/if}
@@ -534,7 +515,7 @@
                 </tr>
               </thead>
               <tbody>
-                {#each webhookResults as item}
+                {#each visibleWebhookResults as item}
                   <tr>
                     <td>
                       <span class="repo-name-cell">{item.name || item.path || item.project_id || '-'}</span>
@@ -554,6 +535,9 @@
           </div>
         {/if}
 
+        {#if webhookResults.length > 25}
+          <div class="webhook-auto-actions"><span>结果第 {webhookResultPage} / {Math.ceil(webhookResults.length/25)} 页</span><Button size="small" variant="secondary" disabled={webhookResultPage<=1} on:click={()=>webhookResultPage-=1}>上一页结果</Button><Button size="small" variant="secondary" disabled={webhookResultPage>=Math.ceil(webhookResults.length/25)} on:click={()=>webhookResultPage+=1}>下一页结果</Button></div>
+        {/if}
         {#if !webhookReady}
           <div class="webhook-auto-hint">需要保存 GitLab URL、API Token、Secret Token 与至少 1 个仓库后才能自动安装。</div>
         {/if}
@@ -604,10 +588,10 @@
               <TextInput
                 id="gitlab-api-token"
                 label="GitLab API 访问令牌"
-                placeholder="输入具有 read_api 权限的 Personal Access Token"
+                placeholder="输入当前 GitLab 实例的 Personal Access Token"
                 type="password"
                 bind:value={apiToken}
-                helperText="重新录入后保存生效。用于 GitLab API；SSH Key 仅用于 Git 传输，不能代替 Issue API Token。预览阶段不需要 Issue 写权限。"
+                helperText="仅用于当前实例。读取仓库需要 read_api；安装或更新 Webhook 需要 api 权限和仓库维护权限。SSH Key 不能代替 API Token。"
               />
             {:else}
               <div class="credential-collapsed">
@@ -637,13 +621,14 @@
             </Alert>
           {/if}
 
-          {#if testError && testDetails}
+          {#if testError}
             <Alert type="error" title="连接失败" message={testError}>
               <pre class="details-pre font-mono">{testDetails}</pre>
             </Alert>
           {/if}
 
           <div class="actions">
+            <Button variant="secondary" on:click={finishClose} disabled={saving}>取消</Button>
             <Button variant="secondary" loading={testingConnection} on:click={testConnection}>
               测试连接
             </Button>
@@ -736,41 +721,7 @@
               <span class="repo-count">{repoList.length} repos</span>
             </div>
 
-            {#if repoList.length === 0}
-              <div class="empty-repos">
-                暂未配置映射仓库。在下方填写表单并添加，以使任务看板能自动匹配提交流程。
-              </div>
-            {:else}
-              <div class="table-container">
-                <table class="repo-table">
-                  <thead>
-                    <tr>
-                      <th>项目名称</th>
-                      <th>GitLab 路径</th>
-                      <th>Project ID</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each repoList as repo, index}
-                      <tr>
-                        <td class="repo-main">
-                          <strong>{repo.name}</strong>
-                          <span>{repo.path}</span>
-                        </td>
-                        <td class="font-mono">{repo.path}</td>
-                        <td class="font-mono tabular">{repo.project_id}</td>
-                        <td>
-                          <button class="delete-btn" type="button" on:click={() => removeRepo(index)}>
-                            删除
-                          </button>
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            {/if}
+            <GitLabRepositoryList repos={repoList} label="编辑仓库清单" actionLabel="移除映射" on:action={(event)=>repoList=repoList.filter(repo=>repo.project_id!==event.detail.project_id)} />
 
             <div class="add-repo-form">
               <h6>添加新的仓库映射</h6>
@@ -805,6 +756,7 @@
 
           <div class="actions">
             <Button variant="ghost" on:click={prevStep}>上一步</Button>
+            <Button variant="secondary" on:click={finishClose} disabled={saving}>取消</Button>
             <Button variant="primary" on:click={nextStep}>下一步</Button>
           </div>
         </div>
@@ -1170,7 +1122,8 @@
 
   .webhook-result-table {
     width: 100%;
-    overflow-x: auto;
+    overflow: auto;
+    max-height: 440px;
     margin-top: 12px;
     border: 1px solid rgba(51, 65, 85, 0.34);
     border-radius: 8px;

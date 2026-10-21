@@ -260,8 +260,8 @@ func enforceMRCommitPolicy(cfg *config.Config, payload MergeRequestHookPayload) 
 	}
 	project := ""
 	for _, repo := range cfg.GitLab.Repos {
-		if (payload.Project.ID > 0 && repo.ProjectID == strconv.Itoa(payload.Project.ID)) || (payload.Project.ID == 0 && repo.Name == payload.Project.Name) {
-			project = repo.ProjectID
+		if (payload.Project.ID > 0 && repo.RemoteID() == strconv.Itoa(payload.Project.ID)) || (payload.Project.ID == 0 && cfg.GitLab.ActiveInstanceID == "" && repo.Name == payload.Project.Name) {
+			project = repo.RemoteID()
 			break
 		}
 	}

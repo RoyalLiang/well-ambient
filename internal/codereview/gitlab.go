@@ -32,6 +32,14 @@ func (e *gitLabHTTPError) Error() string {
 }
 
 func (g GitLab) request(ctx context.Context, method, path string, payload any, out any) (http.Header, error) {
+	connection, routedPath, routeErr := g.Config.RouteAPIPath(path)
+	if routeErr != nil {
+		return nil, routeErr
+	}
+	g.Config, path = connection, routedPath
+	if g.Config.ActiveInstanceID != "" && (!g.Config.Enabled || strings.TrimSpace(g.Config.APIToken) == "") {
+		return nil, errors.New("GitLab 实例已停用或未配置令牌")
+	}
 	base, err := url.Parse(strings.TrimRight(g.Config.BaseURL, "/"))
 	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Scheme != "https" && !(base.Scheme == "http" && (base.Hostname() == "127.0.0.1" || base.Hostname() == "localhost"))) {
 		return nil, errors.New("GitLab 地址无效")
@@ -102,19 +110,20 @@ type Knowledge struct {
 	Hash       string    `json:"hash"`
 }
 type Snapshot struct {
-	Author      string      `json:"author"`
-	Head        string      `json:"head"`
-	Base        string      `json:"base"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	URL         string      `json:"url"`
-	Files       []File      `json:"files"`
-	Knowledge   []Knowledge `json:"knowledge"`
-	Complete    bool        `json:"complete"`
-	Gaps        []string    `json:"gaps"`
+	RepositorySource config.RepositorySource `json:"repository_source"`
+	Author           string                  `json:"author"`
+	Head             string                  `json:"head"`
+	Base             string                  `json:"base"`
+	Title            string                  `json:"title"`
+	Description      string                  `json:"description"`
+	URL              string                  `json:"url"`
+	Files            []File                  `json:"files"`
+	Knowledge        []Knowledge             `json:"knowledge"`
+	Complete         bool                    `json:"complete"`
+	Gaps             []string                `json:"gaps"`
 }
 type mr struct {
-	IID         int    `json:"iid"`
+	IID    int `json:"iid"`
 	Author struct {
 		Name     string `json:"name"`
 		Username string `json:"username"`

@@ -18,34 +18,35 @@ func (s *Server) newCodeReviewService() *codereview.Service {
 }
 func codeReviewActionResponse(run db.CodeReviewRun) map[string]any {
 	return map[string]any{
-		"id":               run.ID,
-		"project_id":       run.ProjectID,
-		"repo":             run.Repo,
-		"author":           run.Author,
-		"kind":             run.Kind,
-		"ref":              run.Ref,
-		"head_sha":         run.HeadSHA,
-		"base_sha":         run.BaseSHA,
-		"title":            run.Title,
-		"url":              run.URL,
-		"status":           run.Status,
-		"phase":            run.Phase,
-		"error":            run.Error,
-		"model":            run.Model,
-		"prompt_version":   run.PromptVersion,
-		"skill_version_id": run.SkillVersionID,
-		"skill_version":    run.SkillVersion,
-		"skill_scope_type": run.SkillScopeType,
-		"skill_scope_id":   run.SkillScopeID,
-		"skill_name":       run.SkillName,
-		"skill_hash":       run.SkillHash,
-		"retry_of_id":      run.RetryOfID,
-		"publish_status":   run.PublishStatus,
-		"publish_error":    run.PublishError,
-		"comment_id":       run.CommentID,
-		"published_at":     run.PublishedAt,
-		"created_at":       run.CreatedAt,
-		"updated_at":       run.UpdatedAt,
+		"repository_source_json": run.RepositorySourceJSON,
+		"id":                     run.ID,
+		"project_id":             run.ProjectID,
+		"repo":                   run.Repo,
+		"author":                 run.Author,
+		"kind":                   run.Kind,
+		"ref":                    run.Ref,
+		"head_sha":               run.HeadSHA,
+		"base_sha":               run.BaseSHA,
+		"title":                  run.Title,
+		"url":                    run.URL,
+		"status":                 run.Status,
+		"phase":                  run.Phase,
+		"error":                  run.Error,
+		"model":                  run.Model,
+		"prompt_version":         run.PromptVersion,
+		"skill_version_id":       run.SkillVersionID,
+		"skill_version":          run.SkillVersion,
+		"skill_scope_type":       run.SkillScopeType,
+		"skill_scope_id":         run.SkillScopeID,
+		"skill_name":             run.SkillName,
+		"skill_hash":             run.SkillHash,
+		"retry_of_id":            run.RetryOfID,
+		"publish_status":         run.PublishStatus,
+		"publish_error":          run.PublishError,
+		"comment_id":             run.CommentID,
+		"published_at":           run.PublishedAt,
+		"created_at":             run.CreatedAt,
+		"updated_at":             run.UpdatedAt,
 	}
 }
 func (s *Server) handleCodeReviewRepos(w http.ResponseWriter, r *http.Request) {
@@ -55,16 +56,25 @@ func (s *Server) handleCodeReviewRepos(w http.ResponseWriter, r *http.Request) {
 		Policy    db.CodeReviewPolicy `json:"policy"`
 	}
 	repos := []repoDTO{}
+	var policies []db.CodeReviewPolicy
+	if err := s.codeReview.DB.Find(&policies).Error; err != nil {
+		http.Error(w, "无法读取评审配置", 500)
+		return
+	}
+	byProject := make(map[string]db.CodeReviewPolicy, len(policies))
+	for _, policy := range policies {
+		byProject[policy.ProjectID] = policy
+	}
 	for _, repo := range s.codeReview.Config().GitLab.Repos {
 		if repo.ProjectID == "" {
 			continue
 		}
-		p, err := s.codeReview.Policy(repo.ProjectID)
-		if err != nil {
-			http.Error(w, "无法读取评审配置", 500)
-			return
+		p, exists := byProject[repo.ProjectID]
+		if !exists {
+			p.ProjectID = repo.ProjectID
 		}
-		repos = append(repos, repoDTO{repo.ProjectID, repo.Name, p})
+		p = codereview.SystemCorpusPolicy(p)
+		repos = append(repos, repoDTO{repo.ProjectID, repo.DisplayName(), p})
 	}
 	settings, err := s.codeReview.CommentSettings(r.Context())
 	if err != nil {
@@ -299,13 +309,20 @@ func (s *Server) handleCodeReviewTargets(w http.ResponseWriter, r *http.Request)
 	}
 	// Legacy telemetry identifies repositories by name. Never guess an ambiguous project.
 	for _, other := range s.codeReview.Config().GitLab.Repos {
-		if other.ProjectID != repo.ProjectID && other.Name == repo.Name {
+		if repo.InstanceID == "" && other.InstanceID == "" && other.ProjectID != repo.ProjectID && other.Name == repo.Name {
 			emailJSON(w, 200, map[string]any{"items": []any{}, "notice": "仓库名称存在重复映射，请输入完整 SHA 或 MR 编号"})
 			return
 		}
 	}
 	var logs []db.GitCommitLog
-	if err = db.DB.Where("repo = ? AND action IN ?", repo.Name, []string{"git_push", "mr_open", "mr_update", "mr_reopen", "mr_merge", "mr_close"}).Order("created_at DESC, id DESC").Limit(100).Find(&logs).Error; err != nil {
+	query := db.DB.Where("action IN ?", []string{"git_push", "mr_open", "mr_update", "mr_reopen", "mr_merge", "mr_close"})
+	key := s.codeReview.Config().GitLab.Source(repo, time.Now()).RepositoryKey
+	if repo.InstanceID != "" {
+		query = query.Where("repository_key = ?", key)
+	} else {
+		query = query.Where("repository_key = ? OR ((repository_key IS NULL OR repository_key = '') AND repo = ?)", key, repo.Name)
+	}
+	if err = query.Order("created_at DESC, id DESC").Limit(100).Find(&logs).Error; err != nil {
 		http.Error(w, "读取已采集变更失败", 500)
 		return
 	}

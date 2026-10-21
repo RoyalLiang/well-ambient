@@ -245,6 +245,7 @@ func (s *Server) routes() {
 
 	// GitLab Webhook Entry Point (No Auth)
 	s.mux.HandleFunc("POST /api/webhook/gitlab", s.handleGitLabWebhook)
+	s.mux.HandleFunc("POST /api/webhook/gitlab/{instance}", s.handleGitLabInstanceWebhook)
 
 	// Protected Task and Log Queries
 	s.mux.HandleFunc("GET /api/tasks", s.withAuth(s.withLegacyDeliveryAPI(legacyTasksReadEndpoint, s.handleGetTasks)))

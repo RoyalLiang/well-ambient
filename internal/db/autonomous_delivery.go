@@ -70,6 +70,7 @@ type ReviewContract struct {
 
 // ExecutionRun is the idempotent orchestration root for one spec/repository run.
 type ExecutionRun struct {
+	RepositorySourceJSON  string     `gorm:"type:text" json:"repository_source_json"`
 	ID                    uint       `gorm:"primaryKey" json:"id"`
 	RunKey                string     `gorm:"uniqueIndex;size:96" json:"run_key"`
 	DemandID              string     `gorm:"index;size:160" json:"demand_id"`

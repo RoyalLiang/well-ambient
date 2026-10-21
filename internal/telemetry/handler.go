@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	providerllm "well-ambient/internal/llm"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GitLabUser struct {
@@ -82,7 +84,7 @@ func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret := r.Header.Get("X-Gitlab-Token")
-	if secret != cfg.GitLab.Secret {
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(cfg.GitLab.Secret)) != 1 {
 		http.Error(w, "Unauthorized: invalid GitLab secret token", http.StatusUnauthorized)
 		return
 	}
@@ -93,17 +95,38 @@ func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20+1))
 	if err != nil {
 		http.Error(w, "Internal Server Error: failed to read request body", http.StatusInternalServerError)
 		return
 	}
 	defer r.Body.Close()
+	if len(body) > 8<<20 {
+		http.Error(w, "Webhook payload too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	source, err := webhookRepositorySource(cfg, body)
+	if err != nil {
+		http.Error(w, "Invalid webhook repository source", http.StatusBadRequest)
+		return
+	}
+	if source.InstanceID != "" && source.InstanceID != "default" {
+		copyConfig := *cfg
+		copyConfig.GitLab.Repos = append([]config.RepoMapping(nil), cfg.GitLab.Repos...)
+		for i := range copyConfig.GitLab.Repos {
+			repo := &copyConfig.GitLab.Repos[i]
+			if repo.ProjectID == source.ProjectID {
+				repo.Name, repo.Path, repo.WebURL, repo.NamespacePath = source.Name, source.FullPath, source.WebURL, source.NamespacePath
+			}
+		}
+		cfg = &copyConfig
+	}
 
 	log.Printf("Received GitLab webhook event: %s (size: %d bytes)", event, len(body))
 
 	// 2. Store payload to SQLite database db.WebhookLog
 	webhookLog := db.WebhookLog{
+		RepositoryKey: source.RepositoryKey, RepositorySourceJSON: source.JSON(),
 		Event:     event,
 		Payload:   string(body),
 		CreatedAt: time.Now(),
@@ -144,6 +167,10 @@ func HandleWebhook(cfg *config.Config, w http.ResponseWriter, r *http.Request) {
 // ProcessWebhookEvent parses GitLab push/merge request hooks and saves telemetry.
 // Code-review enqueue is owned by HandleWebhook so Kanban failures cannot drop it.
 func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultErr error) {
+	repoSource, sourceErr := webhookRepositorySource(cfg, body)
+	if sourceErr != nil {
+		return sourceErr
+	}
 	var taskID, branchName, lastCommit, repoName, assigneeName, status, mrTitle string
 	var mrIID int
 	var mrURL string
@@ -163,6 +190,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 			assigneeName = payload.UserName
 		}
 		repoName = payload.Project.Name
+		repoName = sourceRepoLabel(repoSource, repoName)
 		status = "progress"
 
 		taskID = ExtractTaskID(branchName)
@@ -207,6 +235,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 					cTaskID = resolveCanonicalTaskID(cTaskID)
 				}
 				commitLog := db.GitCommitLog{
+					RepositoryKey: repoSource.RepositoryKey, RepositorySourceJSON: repoSource.JSON(),
 					TaskID:    cTaskID,
 					Repo:      repoName,
 					Branch:    branchName,
@@ -217,16 +246,26 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 					CreatedAt: time.Now(),
 				}
 				paths := append(append(append([]string(nil), c.Added...), c.Modified...), c.Removed...)
-				commitLog.DedupeKey = gitCommitDedupeKey(repoName, c.ID, commitLog.Action)
+				identity := repoName
+				if cfg.GitLab.ActiveInstanceID != "" {
+					identity = repoSource.RepositoryKey
+				}
+				commitLog.DedupeKey = gitCommitDedupeKey(identity, c.ID, commitLog.Action)
 				if *cfg.PerformanceBrain.Normalized().GitDedupeEnabled {
-					commitLog.ContentFingerprint = gitCommitContentFingerprint(repoName, cMsg, paths)
+					commitLog.ContentFingerprint = gitCommitContentFingerprint(identity, cMsg, paths)
 				}
 				if commitLog.ContentFingerprint == "" {
 					commitLog.TelemetryQuality = "insufficient_paths"
 				} else {
 					commitLog.TelemetryQuality = "path_message_v1"
 					var duplicate db.GitCommitLog
-					if err := db.DB.Where("repo = ? AND author = ? AND action = ? AND content_fingerprint = ? AND commit_id <> ?", repoName, commitLog.Author, "git_push", commitLog.ContentFingerprint, c.ID).
+					duplicates := db.DB.Where("author = ? AND action = ? AND content_fingerprint = ? AND commit_id <> ?", commitLog.Author, "git_push", commitLog.ContentFingerprint, c.ID)
+					if repoSource.RepositoryKey != "" {
+						duplicates = duplicates.Where("repository_key = ?", repoSource.RepositoryKey)
+					} else {
+						duplicates = duplicates.Where("repo = ?", repoName)
+					}
+					if err := duplicates.
 						Order("created_at ASC, id ASC").First(&duplicate).Error; err == nil {
 						commitLog.DuplicateOfCommit = duplicate.CommitID
 					}
@@ -239,6 +278,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 		if taskID != "" && db.DB != nil {
 			if len(payload.Commits) == 0 {
 				commitLog := db.GitCommitLog{
+					RepositoryKey: repoSource.RepositoryKey, RepositorySourceJSON: repoSource.JSON(),
 					TaskID:    taskID,
 					Repo:      repoName,
 					Branch:    branchName,
@@ -288,6 +328,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 		lastCommit = strings.TrimSpace(payload.ObjectAttributes.LastCommit.Message)
 		mrTitle = payload.ObjectAttributes.Title
 		repoName = payload.Project.Name
+		repoName = sourceRepoLabel(repoSource, repoName)
 		mrIID = payload.ObjectAttributes.IID
 		mrURL = payload.ObjectAttributes.URL
 
@@ -338,6 +379,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 
 		if db.DB != nil {
 			mrLog := db.GitCommitLog{
+				RepositoryKey: repoSource.RepositoryKey, RepositorySourceJSON: repoSource.JSON(),
 				TaskID:    taskID,
 				Repo:      repoName,
 				Branch:    branchName,
@@ -386,7 +428,7 @@ func ProcessWebhookEvent(cfg *config.Config, event string, body []byte) (resultE
 			// Deep code review is queued independently of Jira identity after processing.
 		}
 		if db.DB != nil {
-			reconcileAutonomousExecutionMR(branchName, mrURL, action, state)
+			reconcileAutonomousExecutionMR(branchName, mrURL, action, state, repoSource)
 		}
 	}
 
@@ -552,6 +594,17 @@ func gitCommitDedupeKey(repo, commitID, action string) string {
 	return strings.ToLower(strings.TrimSpace(repo)) + ":" + strings.ToLower(strings.TrimSpace(action)) + ":" + strings.ToLower(strings.TrimSpace(commitID))
 }
 
+// PersistGitPushEvidence shares the webhook idempotency boundary with delivery.
+func PersistGitPushEvidence(conn *gorm.DB, commit db.GitCommitLog) (bool, error) {
+	identity := commit.Repo
+	var source config.RepositorySource
+	if json.Unmarshal([]byte(commit.RepositorySourceJSON), &source) == nil && source.InstanceID != "" && source.InstanceID != "default" {
+		identity = source.RepositoryKey
+	}
+	commit.DedupeKey = gitCommitDedupeKey(identity, commit.CommitID, commit.Action)
+	return persistGitPushCommit(conn, commit)
+}
+
 func gitCommitContentFingerprint(repo, message string, paths []string) string {
 	normalizedPaths := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
@@ -583,22 +636,32 @@ func persistGitPushCommit(conn *gorm.DB, commit db.GitCommitLog) (bool, error) {
 		return true, conn.Create(&commit).Error
 	}
 	var existing db.GitCommitLog
-	err := conn.Where("repo = ? AND commit_id = ? AND action = ?", commit.Repo, commit.CommitID, commit.Action).First(&existing).Error
+	lookup := func() *gorm.DB {
+		query := conn.Where("commit_id = ? AND action = ?", commit.CommitID, commit.Action)
+		if commit.RepositoryKey != "" {
+			return query.Where("repository_key = ? OR ((repository_key IS NULL OR repository_key = '') AND repo = ?)", commit.RepositoryKey, commit.Repo)
+		}
+		return query.Where("repo = ?", commit.Repo)
+	}
+	err := lookup().First(&existing).Error
 	if err == nil {
 		return false, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
 	}
-	if err := conn.Create(&commit).Error; err != nil {
-		// The partial unique index is the final idempotency boundary when two
-		// webhook deliveries race after the initial read.
-		lookupErr := conn.Where("repo = ? AND commit_id = ? AND action = ?", commit.Repo, commit.CommitID, commit.Action).First(&existing).Error
-		if lookupErr == nil {
-			return false, nil
-		}
-		return false, err
+	// A uniqueness race must not abort the enclosing PostgreSQL transaction.
+	result := conn.Clauses(clause.OnConflict{DoNothing: true}).Create(&commit)
+	if result.Error != nil {
+		return false, result.Error
 	}
+	if result.RowsAffected == 0 {
+		if err := lookup().First(&existing).Error; err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
 	return true, nil
 }
 
@@ -639,14 +702,29 @@ func resolveCanonicalTaskID(taskID string) string {
 	return taskID
 }
 
-func reconcileAutonomousExecutionMR(branchName, mrURL, action, state string) {
+func reconcileAutonomousExecutionMR(branchName, mrURL, action, state string, sources ...config.RepositorySource) {
 	var run db.ExecutionRun
 	query := db.DB.Where("topic_branch = ?", strings.TrimSpace(branchName))
 	if strings.TrimSpace(mrURL) != "" {
-		query = db.DB.Where("topic_branch = ? OR mr_url = ?", strings.TrimSpace(branchName), strings.TrimSpace(mrURL))
+		query = db.DB.Where("(topic_branch = ? OR mr_url = ?)", strings.TrimSpace(branchName), strings.TrimSpace(mrURL))
+	}
+	if len(sources) > 0 && sources[0].ProjectID != "" {
+		query = query.Where("project_ref = ?", sources[0].ProjectID)
+	} else {
+		query = query.Where("project_ref NOT LIKE ?", "%:%")
 	}
 	if err := query.First(&run).Error; err != nil {
 		return
+	}
+	if len(sources) > 0 && sources[0].RepositoryKey != "" {
+		if run.RepositorySourceJSON != "" {
+			var frozen config.RepositorySource
+			if json.Unmarshal([]byte(run.RepositorySourceJSON), &frozen) != nil || frozen.RepositoryKey != sources[0].RepositoryKey {
+				return
+			}
+		} else if sources[0].InstanceID != "default" {
+			return
+		}
 	}
 	now := time.Now()
 	if action == "merge" || state == "merged" {

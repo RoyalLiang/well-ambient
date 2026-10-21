@@ -56,20 +56,22 @@ type SearchResponse struct {
 }
 
 type Summary struct {
-	RunID            uint       `json:"run_id"`
-	Repository       string     `json:"repository"`
-	Kind             string     `json:"kind"`
-	Ref              string     `json:"ref"`
-	BaseSHA          string     `json:"base_sha"`
-	HeadSHA          string     `json:"head_sha"`
-	Title            string     `json:"title"`
-	RunStatus        string     `json:"run_status"`
-	ReviewedAt       time.Time  `json:"reviewed_at"`
-	CoverageGaps     []string   `json:"coverage_gaps"`
-	EvidenceComplete bool       `json:"evidence_complete"`
-	FindingsCount    int        `json:"findings_count"`
-	CodeFreshness    string     `json:"code_freshness"`
-	FreshnessChecked *time.Time `json:"freshness_checked_at,omitempty"`
+	ProjectID            string     `json:"project_id,omitempty"`
+	RepositorySourceJSON string     `json:"repository_source_json,omitempty"`
+	RunID                uint       `json:"run_id"`
+	Repository           string     `json:"repository"`
+	Kind                 string     `json:"kind"`
+	Ref                  string     `json:"ref"`
+	BaseSHA              string     `json:"base_sha"`
+	HeadSHA              string     `json:"head_sha"`
+	Title                string     `json:"title"`
+	RunStatus            string     `json:"run_status"`
+	ReviewedAt           time.Time  `json:"reviewed_at"`
+	CoverageGaps         []string   `json:"coverage_gaps"`
+	EvidenceComplete     bool       `json:"evidence_complete"`
+	FindingsCount        int        `json:"findings_count"`
+	CodeFreshness        string     `json:"code_freshness"`
+	FreshnessChecked     *time.Time `json:"freshness_checked_at,omitempty"`
 }
 
 type GetRequest struct {
@@ -215,6 +217,7 @@ func (m *Module) Search(ctx context.Context, policy openaccess.Policy, requestID
 			}
 		}
 		summary, summaryMissing := summarize(run, "", reportRef, m.now().UTC())
+		filterSourceFields(&summary, policy, "review_search")
 		decodeMissing = append(decodeMissing, summaryMissing...)
 		var snapshot struct {
 			Complete bool     `json:"complete"`
@@ -288,6 +291,7 @@ func (m *Module) Get(ctx context.Context, policy openaccess.Policy, requestID st
 		}
 	}
 	summary, summaryMissing := summarize(run, request.CurrentHeadSHA, &report, m.now().UTC())
+	filterSourceFields(&summary, policy, "review_get")
 	if !snapshot.Complete {
 		summary.CoverageGaps = append(summary.CoverageGaps, snapshot.Gaps...)
 	}
@@ -439,9 +443,19 @@ func authorizeReviewRead(policy openaccess.Policy, capability string, fields []s
 	return nil
 }
 
+func filterSourceFields(summary *Summary, policy openaccess.Policy, capability string) {
+	if !policy.AllowsFields(capability, []string{"project_id"}) {
+		summary.ProjectID = ""
+	}
+	if !policy.AllowsFields(capability, []string{"repository_source_json"}) {
+		summary.RepositorySourceJSON = ""
+	}
+}
+
 func summarize(run db.CodeReviewRun, currentHead string, report *codereview.Report, now time.Time) (Summary, []string) {
 	missing := []string{}
 	summary := Summary{
+		ProjectID: run.ProjectID, RepositorySourceJSON: run.RepositorySourceJSON,
 		RunID: run.ID, Repository: run.Repo, Kind: run.Kind, Ref: run.Ref,
 		BaseSHA: run.BaseSHA, HeadSHA: run.HeadSHA, Title: run.Title,
 		RunStatus: normalizedRunStatus(run.Status), ReviewedAt: run.UpdatedAt,

@@ -44,7 +44,11 @@ func reviewItem(row db.CodeReviewRun) (db.RuntimeKnowledgeItem, error) {
 	if err := json.Unmarshal([]byte(row.ReportJSON), &report); err != nil {
 		return db.RuntimeKnowledgeItem{}, err
 	}
-	return item("review", strconv.FormatUint(uint64(row.ID), 10), "repo", row.ProjectID, row.HeadSHA, row.Title, "head_sha="+row.HeadSHA+"; base_sha="+row.BaseSHA+"; review_status="+row.Status+"\n"+report.Summary+"\n"+report.Scenario, "review_observation_at_bound_sha", row.UpdatedAt), nil
+	source := ""
+	if row.RepositorySourceJSON != "" {
+		source = row.RepositorySourceJSON + "\n"
+	}
+	return item("review", strconv.FormatUint(uint64(row.ID), 10), "repo", row.ProjectID, row.HeadSHA, row.Title, "head_sha="+row.HeadSHA+"; base_sha="+row.BaseSHA+"; review_status="+row.Status+"\n"+source+report.Summary+"\n"+report.Scenario, "review_observation_at_bound_sha", row.UpdatedAt), nil
 }
 func capabilityItem(row capabilityRow) db.RuntimeKnowledgeItem {
 	return item("capability", strconv.FormatUint(uint64(row.ID), 10), row.ScopeType, row.ScopeID, strconv.Itoa(row.Version), row.CapabilityKey, row.Description+"\nkind="+row.Kind+"; validation_status="+row.ValidationStatus, "registered_capability_not_runtime_acceptance", row.UpdatedAt)
