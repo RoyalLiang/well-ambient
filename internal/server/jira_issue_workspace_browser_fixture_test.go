@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"well-ambient/internal/db"
 	"well-ambient/internal/jiraissuesync"
 )
 
@@ -188,6 +189,18 @@ func configureJiraIssueBrowserFixture(t *testing.T, s *Server) {
 		view, err = svc.Save(context.Background(), c)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if os.Getenv("WELL_REVIEW_MAPPING_BROWSER_FIXTURE") == "1" {
+			for i, kind := range []string{"mr", "commit", "mr", "commit"} {
+				ref := "7"
+				if kind == "commit" {
+					ref = strings.Repeat(strconv.Itoa(i+1), 40)
+				}
+				run := db.CodeReviewRun{Key: "review-browser-" + strconv.Itoa(i), ProjectID: "42", Repo: "ops/terminal", RepositorySourceJSON: `{"namespace_name":"港口项目","namespace_path":"ops","full_path":"ops/terminal"}`, Kind: kind, Ref: ref, Author: []string{"Fixture Liang", "Fixture Ted"}[i%2], Title: []string{"校验任务映射与证据", "优化仓库分页读取"}[i%2], HeadSHA: strings.Repeat("a", 40), Status: "completed", Phase: "评审完成", PublishStatus: "off", ReportJSON: `{"summary":"隔离数据：评审详情展示验证","findings":[],"assessments":[],"questions":[]}`, CreatedAt: time.Now().Add(-time.Duration(i) * time.Minute)}
+				if err := s.codeReview.DB.Create(&run).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 		if os.Getenv("WELL_JIRA_SYNC_FIXTURE_CONFIG_ONLY") == "1" {
 			t.Logf("Jira Issue synthetic group=%s/ops Jira=%s", remote.URL, remote.URL)

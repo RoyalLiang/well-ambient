@@ -479,27 +479,33 @@
     -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='11' cy='11' r='6.5' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='m16 16 4 4' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / contain no-repeat;
   }
 
-  .select-inline-input {
+  .select-input-shell input.select-inline-input {
     width: 100%;
     min-width: 0;
     height: 100%;
     min-height: calc(var(--wa-control-h, 38px) - 2px);
     padding: 0;
-    border: 0;
-    border-radius: var(--wa-radius-sm, 8px);
-    outline: 0;
-    background: transparent;
+    border: 0 !important;
+    box-shadow: none !important;
+    border-radius: 0;
+    outline: 0 !important;
+    background: transparent !important;
     color: var(--wa-text-strong, #0d1722);
     font: inherit;
     font-size: 13px;
     font-weight: 660;
   }
 
-  .select-inline-input:focus,
-  .select-inline-input:focus-visible {
-    border-color: transparent;
+  .select-input-shell input.select-inline-input:focus,
+  .select-input-shell input.select-inline-input:focus-visible {
+    border: 0 !important;
+    box-shadow: none !important;
     outline: none !important;
     outline-offset: 0;
+  }
+
+  .select-trigger.select-input-shell:has(input.select-inline-input:focus) {
+    box-shadow: none !important;
   }
 
   .select-input-shell:has(.select-inline-input:focus-visible) {

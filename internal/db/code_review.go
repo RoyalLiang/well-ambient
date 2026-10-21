@@ -4,6 +4,8 @@ import "time"
 
 // CodeReviewPolicy is an explicit repository-level contract, independent of MR closure.
 type CodeReviewPolicy struct {
+	ReviewCommits  *bool     `json:"review_commits"`
+	ReviewMRs      *bool     `json:"review_mrs"`
 	ProjectID      string    `gorm:"primaryKey;size:160" json:"project_id"`
 	AutoReview     bool      `json:"auto_review"`
 	SyncCommits    bool      `json:"sync_commits"`

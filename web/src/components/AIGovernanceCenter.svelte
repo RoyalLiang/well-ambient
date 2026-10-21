@@ -328,7 +328,7 @@
     { key: 'rules', label: '规则', width: '28%' }
   ];
   let repoPolicies: ReviewRepoPolicy[] = [];
-  type CommentSettings = Pick<ReviewRepoPolicy, 'sync_commits' | 'sync_mrs'>;
+  type CommentSettings = Pick<ReviewRepoPolicy, 'sync_commits' | 'sync_mrs' | 'review_commits' | 'review_mrs'>;
   type CommentSetting = keyof CommentSettings;
   let commentSettings: CommentSettings | null = null;
   let savingCommentSetting: CommentSetting | null = null;
@@ -847,7 +847,7 @@ activation:
     if (typeof value?.sync_commits !== 'boolean' || typeof value?.sync_mrs !== 'boolean') {
       throw new Error('评论同步设置响应不完整，请重试。');
     }
-    return { sync_commits: value.sync_commits, sync_mrs: value.sync_mrs };
+    return { sync_commits: value.sync_commits, sync_mrs: value.sync_mrs, review_commits:value.review_commits!==false, review_mrs:value.review_mrs!==false };
   }
 
   async function saveCommentSetting(field: CommentSetting, checked: boolean) {
@@ -860,7 +860,7 @@ activation:
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: checked })
       }));
-      commentSettingsNotice = `全局 ${field === 'sync_mrs' ? 'MR' : 'Commit'} 评论${checked ? '已允许' : '已暂停'}。`;
+      commentSettingsNotice = `全局 ${field.endsWith('mrs') ? 'MR' : 'Commit'} ${field.startsWith('review')?'评审':'评论'}${checked ? '已允许' : '已暂停'}。`;
     } catch (err: any) {
       commentSettingsError = err.message || '保存全局评论设置失败';
     } finally {
@@ -881,7 +881,7 @@ activation:
       });
       repoPolicies = repoPolicies.map((repo) => repo.project_id === projectID ? { ...repo, [field]: checked } : repo);
       if (editingPolicy?.project_id === projectID) editingPolicy = { ...editingPolicy, [field]: checked };
-      policyNotice = `仓库 ${field === 'sync_mrs' ? 'MR' : 'Commit'} 评论设置已保存。`;
+      policyNotice = `仓库 ${field.endsWith('mrs') ? 'MR' : 'Commit'} ${field.startsWith('review')?'评审':'评论'}设置已保存。`;
     } catch (err: any) {
       policyError = err.message || '保存仓库评论设置失败';
     } finally {
@@ -1387,7 +1387,13 @@ activation:
       <div class="rules-workbench">
         <header class="rules-context-header">
           <div class="rules-heading"><h2>规则与标准</h2><p>管理仓库工程规则与评审评论。</p></div>
-          <section class="global-comment-settings" aria-label="全局评论设置">
+          <section class="global-comment-settings" aria-label="全局评审设置">
+              <div class="comment-switch-row">
+                <Switch optimistic={false} id="global-review-mrs" label="MR 评审" expandedHitArea checked={commentSettings?.review_mrs ?? false} saving={savingCommentSetting==='review_mrs'} disabled={!canWriteRules||!commentSettings||!!savingCommentSetting||loadingPolicies} on:change={e=>saveCommentSetting('review_mrs',e.detail)} />
+                <Switch optimistic={false} id="global-review-commits" label="Commit 评审" expandedHitArea checked={commentSettings?.review_commits ?? false} saving={savingCommentSetting==='review_commits'} disabled={!canWriteRules||!commentSettings||!!savingCommentSetting||loadingPolicies} on:change={e=>saveCommentSetting('review_commits',e.detail)} />
+              </div><p>分别控制后续评审；都开启时，两类变更都会评审。</p>
+            </section>
+<section class="global-comment-settings" aria-label="全局评论设置">
             <div class="comment-switch-row">
               <Switch optimistic={false} id="global-policy-sync-commits" label="全局 Commit 评论" expandedHitArea
                 checked={commentSettings?.sync_commits ?? false} saving={savingCommentSetting === 'sync_commits'}
@@ -1429,7 +1435,11 @@ activation:
                   <h3>{editingPolicy.repo_name || `仓库 #${editingPolicy.project_id}`}</h3>
                   <p>项目 ID {editingPolicy.project_id}</p>
                 </div>
-                <div class="repo-comment-settings" aria-label="当前仓库评论设置">
+                <div class="repo-comment-settings" aria-label="当前仓库评审设置"><div class="comment-switch-row">
+                 <Switch optimistic={false} id="repo-review-mrs" label="MR 评审" expandedHitArea checked={editingPolicy.review_mrs} saving={savingRepoSetting==='review_mrs'} disabled={!canWriteRules||savingPolicy||!!savingRepoSetting||loadingPolicies} on:change={e=>saveRepoSetting('review_mrs',e.detail)} />
+                 <Switch optimistic={false} id="repo-review-commits" label="Commit 评审" expandedHitArea checked={editingPolicy.review_commits} saving={savingRepoSetting==='review_commits'} disabled={!canWriteRules||savingPolicy||!!savingRepoSetting||loadingPolicies} on:change={e=>saveRepoSetting('review_commits',e.detail)} />
+                </div><p>{commentSettings&&(!commentSettings.review_mrs||!commentSettings.review_commits)?`全局已暂停${!commentSettings.review_mrs&&!commentSettings.review_commits?' MR 与 Commit ':!commentSettings.review_mrs?' MR ':' Commit '}评审。`:'同时受全局评审开关控制。'}</p></div>
+<div class="repo-comment-settings" aria-label="当前仓库评论设置">
                   <div class="comment-switch-row">
                     <Switch optimistic={false} id="policy-sync-commits" label="Commit 评论" expandedHitArea
                       checked={editingPolicy.sync_commits} saving={savingRepoSetting === 'sync_commits'}

@@ -4,12 +4,16 @@
   export let type: 'button' | 'submit' | 'reset' = 'button';
   export let disabled = false;
   export let loading = false;
+  export let ariaExpanded: boolean | undefined = undefined;
+  export let ariaControls: string | undefined = undefined;
   export let ariaLabel: string | undefined = undefined;
 </script>
 
 <button
   {type}
   aria-label={ariaLabel}
+  aria-expanded={ariaExpanded}
+  aria-controls={ariaControls}
   class="btn btn-{variant}"
   class:btn-small={size === 'small'}
   class:loading

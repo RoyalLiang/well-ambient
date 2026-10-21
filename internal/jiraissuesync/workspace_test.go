@@ -304,6 +304,9 @@ func TestWorkspaceMultiRepoEvidenceAndIdempotency(t *testing.T) {
 	if run.Status != "succeeded" || len(run.Proposals) != 1 || f.aiCalls != 1 {
 		t.Fatalf("analysis %+v", run)
 	}
+	if run.GroupURL != f.server.URL+"/ops" || run.JiraURL != f.server.URL || run.AnalysisCatalog == nil || len(run.AnalysisCatalog.Repositories) != 2 || len(run.TaskDetails) == 0 {
+		t.Fatalf("analysis lost immutable source or Jira details: %+v", run)
+	}
 	run = f.run(t, v.Settings.Version, "sync")
 	if run.Status != "succeeded" || !f.closed || f.posts != 1 || f.creates != 2 || f.transitions != 1 {
 		t.Fatalf("sync %+v closed=%v", run, f.closed)

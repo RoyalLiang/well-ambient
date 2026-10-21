@@ -588,8 +588,10 @@ func TestFailedRunManualRetryIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestPushHookDoesNotSplitOpenedMRCommits(t *testing.T) {
+func TestPushHookMROnlyDoesNotSplitOpenedMRCommits(t *testing.T) {
 	f := newFixture(t)
+	commitReview := false
+	f.policy(t, db.CodeReviewPolicy{ReviewCommits: &commitReview})
 	// 模拟 transport 返回该分支对应的 opened MR
 	f.s.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 		headers := make(http.Header)

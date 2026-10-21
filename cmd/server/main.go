@@ -29,7 +29,11 @@ func main() {
 	skipMigrate := flag.Bool("skip-migrate", false, "start without applying database migrations")
 	healthcheckURL := flag.String("healthcheck-url", "", "probe an HTTP readiness URL and exit")
 	maintenanceMode := flag.Bool("maintenance-mode", false, "force enable maintenance mode fallback for WellOS")
+	installReviewSkillOnly := flag.Bool("install-review-skill-only", false, "Install the bundled merge-review skill and exit")
 	flag.Parse()
+	if *installReviewSkillOnly && (*migrateOnly || strings.TrimSpace(*healthcheckURL) != "") {
+		log.Fatal("--install-review-skill-only cannot be combined with --migrate-only or --healthcheck-url")
+	}
 	if *maintenanceMode {
 		_ = os.Setenv("WELL_AMBIENT_MAINTENANCE_MODE", "1")
 		_ = os.Setenv("WELL_AMBIENT_MAINTENANCE_MODE_SOURCE", "cli")
@@ -65,7 +69,7 @@ func main() {
 	}
 	server.SetBuildInfo(version, commit, buildTime)
 	if cfg.Database.RequiresSetup() {
-		if *migrateOnly {
+		if *migrateOnly || *installReviewSkillOnly {
 			log.Fatal("database setup is incomplete; finish the browser setup before running --migrate-only")
 		}
 		setupToken, err := server.ProvisionSetupToken(os.Getenv(server.SetupTokenEnvironment))
@@ -110,23 +114,31 @@ func main() {
 	if *skipMigrate {
 		autoMigrate = false
 	}
+	if *installReviewSkillOnly {
+		autoMigrate = false
+	}
 	cfg.Database.AutoMigrate = &autoMigrate
 	if err := db.Init(db.Options{
-		Driver:                       databaseConfig.Driver,
-		DSN:                          databaseConfig.DSN,
-		AutoMigrate:                  autoMigrate,
-		MaxOpenConnections:           databaseConfig.MaxOpenConnections,
-		MaxIdleConnections:           databaseConfig.MaxIdleConnections,
-		ConnectionMaxLifetimeMinutes: databaseConfig.ConnectionMaxLifetimeMinutes,
-		ConnectionMaxIdleTimeMinutes: databaseConfig.ConnectionMaxIdleTimeMinutes,
+		Driver: databaseConfig.Driver, DSN: databaseConfig.DSN, AutoMigrate: autoMigrate,
+		MaxOpenConnections: databaseConfig.MaxOpenConnections, MaxIdleConnections: databaseConfig.MaxIdleConnections,
+		ConnectionMaxLifetimeMinutes: databaseConfig.ConnectionMaxLifetimeMinutes, ConnectionMaxIdleTimeMinutes: databaseConfig.ConnectionMaxIdleTimeMinutes,
 	}); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+
 	defer func() {
 		if err := db.Close(); err != nil {
 			log.Printf("Failed to close database: %v", err)
 		}
 	}()
+	if *installReviewSkillOnly {
+		installed, err := db.InstallBundledCodeReviewSkill(db.DB)
+		if err != nil {
+			log.Fatalf("Install review skill: %v", err)
+		}
+		log.Printf("Installed merge-review skill id=%d version=%d hash=%s", installed.ID, installed.Version, installed.ContentHash)
+		return
+	}
 	if autoMigrate {
 		if err := server.MigrateReadModels(db.DB); err != nil {
 			log.Fatalf("Failed to migrate read models: %v", err)

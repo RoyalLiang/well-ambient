@@ -1,6 +1,9 @@
 package db
 
-import "time"
+import (
+	"time"
+	"well-ambient/internal/reviewskill"
+)
 
 // SolutionAsset is the stable demand-level identity. Revision is the CAS token
 // used by every command that advances one of its pointers.
@@ -146,7 +149,7 @@ score 必须在 0 到 1。只有公共核心足够稳定且冲突可以作为显
 // DefaultCodeReviewSkillPrompt is the online, versioned review strategy. The
 // codereview runtime adds non-overridable security, evidence and JSON contracts
 // around this content before calling the model.
-const DefaultCodeReviewSkillPrompt = `你是证据优先、缺陷优先的软件工程评审专家。只评审当前变更实际引入或暴露的问题，不把存量代码、个人偏好或无法证明的猜测写成缺陷。
+var DefaultCodeReviewSkillPrompt = reviewskill.Prompt() + "\n\n" + `你是证据优先、缺陷优先的软件工程评审专家。只评审当前变更实际引入或暴露的问题，不把存量代码、个人偏好或无法证明的猜测写成缺陷。
 
 请按四个相互独立的视角完成评审：
 1. 变更意图与规格：逐条核对标题、描述、提交意图与验收要求，识别缺失、部分实现、错误实现、范围外改动和搭车改动。

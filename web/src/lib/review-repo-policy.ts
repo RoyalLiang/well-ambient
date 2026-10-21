@@ -1,4 +1,6 @@
 export interface ReviewRepoPolicy {
+  review_commits: boolean;
+  review_mrs: boolean;
   project_id: string;
   repo_name: string;
   domain: string;
@@ -30,6 +32,8 @@ export function normalizeReviewRepoPolicies(repos: unknown): ReviewRepoPolicy[] 
 
     const policy = asRecord(repo.policy);
     normalized.push({
+      review_commits: policy?.review_commits !== false,
+      review_mrs: policy?.review_mrs !== false,
       project_id: repo.project_id,
       repo_name: stringValue(repo.name),
       // These are Service.Policy's defaults for an unconfigured repository.

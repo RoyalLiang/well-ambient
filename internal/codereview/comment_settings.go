@@ -15,12 +15,22 @@ const globalCommentPolicyProjectID = ""
 const SystemCorpusScope = "system"
 
 type CommentSettings struct {
-	SyncCommits bool `json:"sync_commits"`
-	SyncMRs     bool `json:"sync_mrs"`
+	ReviewCommits bool `json:"review_commits"`
+	ReviewMRs     bool `json:"review_mrs"`
+	SyncCommits   bool `json:"sync_commits"`
+	SyncMRs       bool `json:"sync_mrs"`
 }
 
 func SystemCorpusPolicy(p db.CodeReviewPolicy) db.CodeReviewPolicy {
 	p.AutoReview = true
+	if p.ReviewCommits == nil {
+		value := true
+		p.ReviewCommits = &value
+	}
+	if p.ReviewMRs == nil {
+		value := true
+		p.ReviewMRs = &value
+	}
 	p.Domain = "general"
 	p.Scenario = "general"
 	p.KnowledgeScope = SystemCorpusScope
@@ -33,10 +43,11 @@ func (s *Service) CommentSettings(ctx context.Context) (CommentSettings, error) 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		err = nil
 	}
-	return CommentSettings{SyncCommits: p.SyncCommits, SyncMRs: p.SyncMRs}, err
+	p = SystemCorpusPolicy(p)
+	return CommentSettings{SyncCommits: p.SyncCommits, SyncMRs: p.SyncMRs, ReviewCommits: *p.ReviewCommits, ReviewMRs: *p.ReviewMRs}, err
 }
 
-func (s *Service) PatchCommentSettings(ctx context.Context, commits, mrs *bool) (CommentSettings, error) {
+func (s *Service) PatchCommentSettings(ctx context.Context, commits, mrs *bool, reviews ...*bool) (CommentSettings, error) {
 	unlock := LockPolicy(globalCommentPolicyProjectID)
 	defer unlock()
 	settings, err := s.CommentSettings(ctx)
@@ -49,12 +60,25 @@ func (s *Service) PatchCommentSettings(ctx context.Context, commits, mrs *bool) 
 	if mrs != nil {
 		settings.SyncMRs = *mrs
 	}
+	if len(reviews) > 0 && reviews[0] != nil {
+		settings.ReviewCommits = *reviews[0]
+	}
+	if len(reviews) > 1 && reviews[1] != nil {
+		settings.ReviewMRs = *reviews[1]
+	}
 	p := SystemCorpusPolicy(db.CodeReviewPolicy{
+		ReviewCommits: &settings.ReviewCommits, ReviewMRs: &settings.ReviewMRs,
 		ProjectID: globalCommentPolicyProjectID, SyncCommits: settings.SyncCommits, SyncMRs: settings.SyncMRs,
 	})
 	// Updating only supplied columns also preserves simultaneous partial edits
 	// from another server process; omitted gates must never be overwritten.
 	columns := []string{s.DB.NamingStrategy.ColumnName("", "UpdatedAt")}
+	if len(reviews) > 0 && reviews[0] != nil {
+		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "ReviewCommits"))
+	}
+	if len(reviews) > 1 && reviews[1] != nil {
+		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "ReviewMRs"))
+	}
 	if commits != nil {
 		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "SyncCommits"))
 	}

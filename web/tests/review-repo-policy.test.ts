@@ -20,7 +20,7 @@ test('repository responses expose names and nested persisted policy fields to th
 
   assert.deepEqual(normalizeReviewRepoPolicies(response), [{
     project_id: '1696',
-    repo_name: 'well-ambient',
+    review_commits:true, review_mrs:true, repo_name: 'well-ambient',
     domain: 'fms',
     scenario: 'yardmove',
     knowledge_scope: 'fms:yardmove',
@@ -45,7 +45,7 @@ test('explicit empty policy strings and false publication settings are not repla
     },
   }]), [{
     project_id: '1647',
-    repo_name: '',
+    review_commits:true, review_mrs:true, repo_name: '',
     domain: '',
     scenario: '',
     knowledge_scope: '',
@@ -59,7 +59,7 @@ test('missing policy or name uses the same unset-policy values as the backend', 
   for (const repo of [{ project_id: '1716' }, { project_id: '1716', name: null, policy: null }]) {
     assert.deepEqual(normalizeReviewRepoPolicies([repo]), [{
       project_id: '1716',
-      repo_name: '',
+      review_commits:true, review_mrs:true, repo_name: '',
       domain: 'general',
       scenario: 'general',
       knowledge_scope: '',
@@ -93,7 +93,7 @@ test('malformed responses do not create repositories or enable publication from 
     },
   ]), [{
     project_id: '2047',
-    repo_name: '',
+    review_commits:true, review_mrs:true, repo_name: '',
     domain: 'general',
     scenario: 'general',
     knowledge_scope: '',
@@ -102,3 +102,5 @@ test('malformed responses do not create repositories or enable publication from 
     rules: '',
   }]);
 });
+
+test('MR and commit review defaults preserve legacy policies and explicit independent gates',()=>{const rows=normalizeReviewRepoPolicies([{project_id:'a',policy:{review_mrs:false,review_commits:true}},{project_id:'b',policy:{review_mrs:true,review_commits:false}}]);assert.deepEqual(rows.map(r=>[r.review_mrs,r.review_commits]),[[false,true],[true,false]])});

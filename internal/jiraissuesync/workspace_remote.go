@@ -268,7 +268,22 @@ func (o *operation) analyze(repoIDs []string, selectedProjects []string) error {
 	if len(batch.Issues) > 100 {
 		return errors.New("AI 任务候选超出 100 条")
 	}
+	o.result.GroupURL = o.config.GroupURL
+	o.result.JiraURL = o.config.JiraURL
+	analysisCatalog := Catalog{CheckedAt: o.catalog.CheckedAt, Repositories: []Repo{}, Projects: []Project{}}
+
+	for _, project := range o.catalog.Projects {
+		for _, key := range keys {
+			if project.Key == key {
+				analysisCatalog.Projects = append(analysisCatalog.Projects, project)
+			}
+		}
+	}
+	o.result.AnalysisCatalog = &analysisCatalog
 	tasks := batch.Issues
+	for _, task := range tasks {
+		o.result.TaskDetails = append(o.result.TaskDetails, AnalysisTaskDetail{Key: task.Key, Title: workspaceClip(task.Fields.Summary, 256), Description: workspaceClip(task.Fields.Description, 1000)})
+	}
 	var err error
 
 	allowedTasks := map[string]bool{}
@@ -311,6 +326,7 @@ func (o *operation) analyze(repoIDs []string, selectedProjects []string) error {
 			return errors.New("分析仓库已移出群组或不再可用，请重新读取")
 		}
 		repo = live
+		o.result.AnalysisCatalog.Repositories = append(o.result.AnalysisCatalog.Repositories, repo)
 		var commit struct {
 			ID string `json:"id"`
 		}

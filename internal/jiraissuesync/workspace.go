@@ -68,7 +68,17 @@ type Proposal struct {
 	Reason   string           `json:"reason"`
 	Evidence []SourceEvidence `json:"evidence"`
 }
+type AnalysisTaskDetail struct {
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
 type RunView struct {
+	GroupURL        string               `json:"group_url,omitempty"`
+	JiraURL         string               `json:"jira_url,omitempty"`
+	AnalysisCatalog *Catalog             `json:"analysis_catalog,omitempty"`
+	TaskDetails     []AnalysisTaskDetail `json:"task_details,omitempty"`
 	db.JiraIssueRun
 	Proposals  []Proposal `json:"proposals,omitempty"`
 	Items      []SyncItem `json:"items,omitempty"`

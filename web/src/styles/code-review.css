@@ -75,7 +75,7 @@
 .cr-filter-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(190px, 250px) minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(170px, 240px) minmax(140px,180px) minmax(180px, 1fr) auto;
   align-items: end;
   gap: 10px;
 }
@@ -653,3 +653,5 @@
     animation-duration: 0.001ms !important;
   }
 }
+
+.cr-kind {min-width:0}.cr-repository-name{overflow-wrap:anywhere}

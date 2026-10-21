@@ -103,6 +103,14 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 	if err = ValidatePolicy(p); err != nil {
 		return run, err
 	}
+	global, gateErr := s.CommentSettings(ctx)
+	if gateErr != nil {
+		return run, gateErr
+	}
+	if (kind == "mr" && (!global.ReviewMRs || !*p.ReviewMRs)) || (kind == "commit" && (!global.ReviewCommits || !*p.ReviewCommits)) {
+		return run, fmt.Errorf("当前已暂停 %s 评审", kind)
+	}
+
 	skill, err := s.ActiveReviewSkill(ctx)
 	if err != nil {
 		return run, err
@@ -175,18 +183,29 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 		return nil
 	}
 	var err error
+	policy, err := s.Policy(id)
+	if err != nil {
+		return err
+	}
+	global, err := s.CommentSettings(ctx)
+	if err != nil {
+		return err
+	}
+	reviewMRs := global.ReviewMRs && *policy.ReviewMRs
+	reviewCommits := global.ReviewCommits && *policy.ReviewCommits
 	if event == "Push Hook" {
 		branch := ""
 		if strings.HasPrefix(p.Ref, "refs/heads/") {
 			branch = strings.TrimPrefix(p.Ref, "refs/heads/")
 		}
 		var openMRs []mr
-		if branch != "" {
-			openMRs, _ = s.git().OpenMRsForBranch(ctx, id, branch)
+		if reviewMRs && branch != "" {
+			openMRs, err = s.git().OpenMRsForBranch(ctx, id, branch)
+			if err != nil {
+				return err
+			}
 		}
 		if len(openMRs) > 0 {
-			// 若当前分支已存在处于 opened 状态的 MR，提交归属于该 MR。
-			// 跳过 commit 级别入队，避免将 MR 拆成多条 commit 评审。
 			for _, m := range openMRs {
 				key := m.DiffRefs.Head + ":" + m.UpdatedAt
 				if key == ":" || m.DiffRefs.Head == "" {
@@ -196,14 +215,15 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 					return err
 				}
 			}
-			return nil
 		}
-		for _, c := range p.Commits {
-			if _, err = s.Enqueue(ctx, id, "commit", c.ID, "push:"+c.ID); err != nil {
-				return err
+		if reviewCommits {
+			for _, c := range p.Commits {
+				if _, err = s.Enqueue(ctx, id, "commit", c.ID, "push:"+c.ID); err != nil {
+					return err
+				}
 			}
 		}
-	} else if event == "Merge Request Hook" && p.Attr.State == "opened" {
+	} else if event == "Merge Request Hook" && p.Attr.State == "opened" && reviewMRs {
 		key := p.Attr.Last.ID + ":" + p.Attr.Updated
 		if key == ":" {
 			key = digest(string(body))
@@ -291,6 +311,18 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	currentPolicy, gateErr := s.Policy(run.ProjectID)
+	if gateErr != nil {
+		return true, gateErr
+	}
+	global, gateErr := s.CommentSettings(ctx)
+	if gateErr != nil {
+		return true, gateErr
+	}
+	if (run.Kind == "mr" && (!global.ReviewMRs || !*currentPolicy.ReviewMRs)) || (run.Kind == "commit" && (!global.ReviewCommits || !*currentPolicy.ReviewCommits)) {
+		err := s.DB.Model(&run).Where("status = ?", "queued").Updates(map[string]any{"status": "cancelled", "phase": "该类型评审已暂停", "publish_status": "off"}).Error
+		return true, err
 	}
 	claim := s.DB.Model(&db.CodeReviewRun{}).Where("id = ? AND status = ?", run.ID, "queued").Updates(map[string]any{"status": "running", "phase": "读取代码与知识"})
 	if claim.Error != nil || claim.RowsAffected == 0 {
@@ -486,7 +518,7 @@ func (s *Service) Retry(ctx context.Context, id uint) (db.CodeReviewRun, error) 
 	}
 	return s.Get(id)
 }
-func (s *Service) List(limit int) ([]db.CodeReviewRun, error) {
+func (s *Service) List(limit int, kinds ...string) ([]db.CodeReviewRun, error) {
 	ids := []string{}
 	for _, r := range s.Config().GitLab.Repos {
 		if r.ProjectID != "" {
@@ -494,7 +526,14 @@ func (s *Service) List(limit int) ([]db.CodeReviewRun, error) {
 		}
 	}
 	runs := []db.CodeReviewRun{}
-	err := s.DB.Select(
+	query := s.DB
+	if len(kinds) > 0 && kinds[0] != "" {
+		if kinds[0] != "mr" && kinds[0] != "commit" {
+			return nil, errors.New("评审类型无效")
+		}
+		query = query.Where("kind = ?", kinds[0])
+	}
+	err := query.Select(
 		"id", "project_id", "repo", "repository_source_json", "author", "kind", "ref", "head_sha", "base_sha", "title", "url",
 		"status", "phase", "error", "model", "prompt_version", "skill_version_id", "skill_version",
 		"skill_scope_type", "skill_scope_id", "skill_name", "skill_hash", "retry_of_id",

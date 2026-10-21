@@ -20,8 +20,11 @@ test('code review uses the production list and keeps the detail entry in the pri
   assert.match(center, /empty=\{renderReviewEmpty\}/);
   assert.match(center, /compactTableMinWidth="0px"/);
   assert.match(center, /\{ key: "sync", label: "评论同步", width: "142px", priority: "secondary" \}/);
-  assert.match(center, /class="cr-mobile-sync"/);
-  assert.match(center, /class="cr-review-source"/);
+  assert.match(center, /key: "ref", label: "MR \/ Commit"/);
+  assert.match(center, /id="review-kind-filter"/);
+  assert.match(center, /key: "author", label: "提交人"/);
+  assert.match(center, /key: "repository", label: "仓库"/);
+  assert.match(center, /key: "project", label: "项目"/);
   assert.match(center, /\$\: normalizedFilter = filter\.trim\(\)\.toLowerCase\(\)/);
   assert.match(center, /\$\{r\.head_sha\} \$\{r\.base_sha\}/);
   assert.match(center, /function detailNeedsRefresh\(previous: Run, current: Run\)/);

@@ -17,6 +17,7 @@
   export let currentUserPermissions: string[] = [];
   type Policy = {
     project_id: string;
+    review_commits?:boolean; review_mrs?:boolean;
     sync_commits: boolean;
     sync_mrs: boolean;
     domain: string;
@@ -24,7 +25,7 @@
     knowledge_scope: string;
     rules: string;
   };
-  type Repo = { project_id: string; name: string; policy: Policy };
+  type Repo = { project_id: string; name: string; namespace_name?:string; namespace_path?:string; policy: Policy };
   type CommentSettings = { sync_commits: boolean; sync_mrs: boolean };
   type RepoResponse = {
     repos: Repo[];
@@ -32,6 +33,7 @@
     comment_settings?: unknown;
   };
   type Run = {
+    repository_source_json?:string;
     id: number;
     project_id: string;
     repo: string;
@@ -117,7 +119,11 @@
     resolvers: Array<(value: boolean) => void>;
   };
   const reviewColumns: AdminTableColumn[] = [
-    { key: "change", label: "变更", width: "54%", priority: "essential" },
+    { key: "project", label: "项目", width: "160px", priority: "essential" },
+    { key: "repository", label: "仓库", width: "200px", priority: "essential" },
+    { key: "ref", label: "MR / Commit", width: "140px", priority: "essential" },
+    { key: "author", label: "提交人", width: "120px", priority: "essential" },
+    { key: "change", label: "评审内容", width: "260px", priority: "essential" },
     { key: "status", label: "评审状态", width: "120px", priority: "essential" },
     { key: "sync", label: "评论同步", width: "142px", priority: "secondary" },
     { key: "received", label: "接收时间", width: "136px", priority: "secondary" },
@@ -179,6 +185,7 @@
   let runs: Run[] = [];
   let project = "";
   let filter = "";
+  let kindFilter = "";
   $: normalizedFilter = filter.trim().toLowerCase();
   let policySaving: PolicyField | "" = "";
   let policyFeedback: Record<string, PolicyFeedback> = {};
@@ -242,7 +249,7 @@
       : "";
   $: visibleRuns = runs.filter(
     (r) =>
-      (!project || r.project_id === project) &&
+      (!project || r.project_id === project) && (!kindFilter || r.kind === kindFilter) &&
       (!normalizedFilter ||
         `${r.title} ${r.ref} ${r.repo} ${r.author} ${r.head_sha} ${r.base_sha}`
           .toLowerCase()
@@ -406,7 +413,7 @@
         if (disposed || version !== listRequestVersion) return false;
         applyRepoResponse(data);
       }
-      const data = await api<{ items: Run[] }>("/api/code-reviews");
+      const data = await api<{ items: Run[] }>(`/api/code-reviews${kindFilter?`?kind=${encodeURIComponent(kindFilter)}`:""}`);
       if (disposed || version !== listRequestVersion) return false;
       const previousSelected = selected;
       const nextRuns = data.items;
@@ -673,6 +680,8 @@
       status: statusNames[run.status] || run.status,
       tone: statusTone(run.status),
       cells: {
+        project: parse<{namespace_name?:string;namespace_path?:string}>(run.repository_source_json)?.namespace_name || parse<{namespace_path?:string}>(run.repository_source_json)?.namespace_path || '未归组',
+        repository:run.repo,ref:run.kind==='mr'?`MR !${run.ref}`:`Commit ${run.ref.slice(0,12)}`,author:run.author||'未记录',
         change: run.title || "未获取变更标题",
         status: statusNames[run.status] || run.status,
         sync: syncNames[run.publish_status] || run.publish_status,
@@ -766,7 +775,13 @@
 
 {#snippet renderReviewCell(row: ReviewRow, column: AdminTableColumn, value: AdminCellValue)}
   {@const run = row.source}
-  {#if column.key === "change"}
+  {#if column.key === "project"}
+    {@const source = parse<{namespace_name?:string;namespace_path?:string}>(run.repository_source_json)}
+    <span>{source?.namespace_name || source?.namespace_path || repos.find(r=>r.project_id===run.project_id)?.namespace_name || repos.find(r=>r.project_id===run.project_id)?.namespace_path || '未归组'}</span>
+  {:else if column.key === "repository"}<span class="cr-repository-name" title={run.repo}>{run.repo}</span>
+  {:else if column.key === "ref"}<span title={run.head_sha||run.ref}>{run.kind==='mr'?`MR !${run.ref}`:`Commit ${run.ref.slice(0,12)}`}</span>
+  {:else if column.key === "author"}<span>{run.author || (['queued','running'].includes(run.status)?'待提取':'未记录')}</span>
+  {:else if column.key === "change"}
     <button
       type="button"
       class="cr-review-trigger"
@@ -775,18 +790,8 @@
       aria-label={`查看评审：${run.title || run.ref}`}
       on:click={() => selectRun(run.id)}
     >
-      <span class="cr-review-object">
-        {run.kind === "mr" ? `MR !${run.ref}` : `Commit ${run.ref.slice(0, 8)}`}
-      </span>
       <strong title={run.title}>{run.title || "未获取变更标题"}</strong>
-      <small>
-        <span class="cr-mobile-sync">
-          {syncNames[run.publish_status] || run.publish_status} ·
-        </span>
-        <span class="cr-review-source">
-          {run.repo} · {run.author || (["queued", "running"].includes(run.status) ? "待提取作者" : "未记录作者")}
-        </span>
-      </small>
+
     </button>
   {:else if column.key === "status"}
     <span class="wa-admin-pill {toneClass(statusTone(run.status))}">
@@ -861,7 +866,8 @@
           on:change={(e) => changeProject(e.detail)}
         />
       </div>
-        <label class="cr-search">
+        <div class="cr-kind"><Select id="review-kind-filter" label="评审类型" value={kindFilter} options={[{value:'',label:'全部类型'},{value:'mr',label:'MR 评审'},{value:'commit',label:'Commit 评审'}]} compact shadowless searchable={false} disabled={loading||refreshing} on:change={e=>{kindFilter=e.detail;void refresh(false,"manual")}} /></div>
+            <label class="cr-search">
           <span class="cr-sr">搜索评审记录</span>
           <input
             type="search"
@@ -884,6 +890,7 @@
 
     <AdminDataList
       columns={reviewColumns}
+
       rows={reviewRows}
       caption="代码评审记录"
       cell={renderReviewCell}
@@ -894,11 +901,11 @@
       skeletonRows={6}
       className="cr-review-list"
       scrollRegionId="code-review-list-content"
-      tableMinWidth="720px"
+      tableMinWidth="1300px"
       compactTableMinWidth="0px"
       totalRowCount={reviewRows.length}
       selectedRowId={selected ? String(selected.id) : ""}
-      resetKey={`${project}:${filter}`}
+      resetKey={`${project}:${kindFilter}:${filter}`}
     />
 
     <Modal

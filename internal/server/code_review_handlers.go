@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"log"
 	"net/http"
 	"strconv"
@@ -51,9 +52,11 @@ func codeReviewActionResponse(run db.CodeReviewRun) map[string]any {
 }
 func (s *Server) handleCodeReviewRepos(w http.ResponseWriter, r *http.Request) {
 	type repoDTO struct {
-		ProjectID string              `json:"project_id"`
-		Name      string              `json:"name"`
-		Policy    db.CodeReviewPolicy `json:"policy"`
+		NamespaceName string              `json:"namespace_name"`
+		NamespacePath string              `json:"namespace_path"`
+		ProjectID     string              `json:"project_id"`
+		Name          string              `json:"name"`
+		Policy        db.CodeReviewPolicy `json:"policy"`
 	}
 	repos := []repoDTO{}
 	var policies []db.CodeReviewPolicy
@@ -74,7 +77,7 @@ func (s *Server) handleCodeReviewRepos(w http.ResponseWriter, r *http.Request) {
 			p.ProjectID = repo.ProjectID
 		}
 		p = codereview.SystemCorpusPolicy(p)
-		repos = append(repos, repoDTO{repo.ProjectID, repo.DisplayName(), p})
+		repos = append(repos, repoDTO{ProjectID: repo.ProjectID, Name: repo.DisplayName(), Policy: p, NamespaceName: repo.NamespaceName, NamespacePath: repo.NamespacePath})
 	}
 	settings, err := s.codeReview.CommentSettings(r.Context())
 	if err != nil {
@@ -95,14 +98,16 @@ func (s *Server) handleGetCodeReviewCommentSettings(w http.ResponseWriter, r *ht
 
 func (s *Server) handlePatchCodeReviewCommentSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SyncCommits *bool `json:"sync_commits"`
-		SyncMRs     *bool `json:"sync_mrs"`
+		ReviewCommits *bool `json:"review_commits"`
+		ReviewMRs     *bool `json:"review_mrs"`
+		SyncCommits   *bool `json:"sync_commits"`
+		SyncMRs       *bool `json:"sync_mrs"`
 	}
-	if err := decodeEmailRequest(w, r, &req); err != nil || (req.SyncCommits == nil && req.SyncMRs == nil) {
+	if err := decodeEmailRequest(w, r, &req); err != nil || (req.SyncCommits == nil && req.SyncMRs == nil && req.ReviewCommits == nil && req.ReviewMRs == nil) {
 		http.Error(w, "请提供有效的全局评论开关", http.StatusBadRequest)
 		return
 	}
-	settings, err := s.codeReview.PatchCommentSettings(r.Context(), req.SyncCommits, req.SyncMRs)
+	settings, err := s.codeReview.PatchCommentSettings(r.Context(), req.SyncCommits, req.SyncMRs, req.ReviewCommits, req.ReviewMRs)
 	if err != nil {
 		http.Error(w, "全局评论设置保存失败", http.StatusInternalServerError)
 		return
@@ -112,6 +117,8 @@ func (s *Server) handlePatchCodeReviewCommentSettings(w http.ResponseWriter, r *
 func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProjectID      string  `json:"project_id"`
+		ReviewCommits  *bool   `json:"review_commits"`
+		ReviewMRs      *bool   `json:"review_mrs"`
 		SyncCommits    *bool   `json:"sync_commits"`
 		SyncMRs        *bool   `json:"sync_mrs"`
 		Domain         *string `json:"domain"`
@@ -133,6 +140,12 @@ func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		http.Error(w, "无法读取评审配置", 500)
 		return
+	}
+	if req.ReviewCommits != nil {
+		p.ReviewCommits = req.ReviewCommits
+	}
+	if req.ReviewMRs != nil {
+		p.ReviewMRs = req.ReviewMRs
 	}
 	if req.SyncCommits != nil {
 		p.SyncCommits = *req.SyncCommits
@@ -158,14 +171,39 @@ func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if err := db.DB.WithContext(r.Context()).Save(&p).Error; err != nil {
+	columns := []string{"AutoReview", "Domain", "Scenario", "KnowledgeScope", "UpdatedAt"}
+	if req.ReviewCommits != nil {
+		columns = append(columns, "ReviewCommits")
+	}
+	if req.ReviewMRs != nil {
+		columns = append(columns, "ReviewMRs")
+	}
+	if req.SyncCommits != nil {
+		columns = append(columns, "SyncCommits")
+	}
+	if req.SyncMRs != nil {
+		columns = append(columns, "SyncMRs")
+	}
+	if req.Rules != nil {
+		columns = append(columns, "Rules")
+	}
+	for i, column := range columns {
+		columns[i] = db.DB.NamingStrategy.ColumnName("", column)
+	}
+	p.UpdatedAt = time.Now()
+	if err := db.DB.WithContext(r.Context()).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: db.DB.NamingStrategy.ColumnName("", "ProjectID")}}, DoUpdates: clause.AssignmentColumns(columns)}).Create(&p).Error; err != nil {
 		http.Error(w, "评审配置保存失败", 500)
 		return
 	}
 	emailJSON(w, 200, p)
 }
 func (s *Server) handleListCodeReviews(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.codeReview.List(200)
+	kind := r.URL.Query().Get("kind")
+	if kind != "" && kind != "mr" && kind != "commit" {
+		http.Error(w, "评审类型仅支持 mr 或 commit", 400)
+		return
+	}
+	runs, err := s.codeReview.List(200, kind)
 	if err != nil {
 		http.Error(w, "读取评审列表失败", 500)
 		return

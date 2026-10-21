@@ -1,11 +1,12 @@
 export type Mapping = { project:string; repo_ids:string[]; task_keys:string[] };
 export type WorkspaceSettings = {version:number;enabled:boolean;time_of_day:string;group_url:string;jira_url:string;mappings:Mapping[]};
-export type Repo = {id:number;path_with_namespace:string;default_branch:string};
+export type Repo = {id:number;path_with_namespace:string;default_branch:string;web_url?:string};
 export type Source = {repo_id:string;path:string;sha:string};
 export type Proposal = Mapping & {reason:string;evidence:Source[]};
 export type RepoEvidence = {repo_id:string;repository:string;issue_url?:string;mr_url?:string;sha?:string;pipeline_url?:string;merged:boolean;verified:boolean;message:string;collected_at:string};
 export type SyncItem = {jira_key:string;jira_url:string;repositories:RepoEvidence[];commented:boolean;closed:boolean;message:string};
-export type Run = {id:number;kind:string;status:string;message:string;config_version:number;created_at:string;updated_at:string;proposals?:Proposal[];items?:SyncItem[];items_total:number;next_offset:number};
+export type TaskDetail = {key:string;title:string;description:string};
+export type Run = {group_url?:string;jira_url?:string;analysis_catalog?:Workspace['catalog'];task_details?:TaskDetail[];id:number;kind:string;status:string;message:string;config_version:number;created_at:string;updated_at:string;proposals?:Proposal[];items?:SyncItem[];items_total:number;next_offset:number};
 export type Workspace = {settings:WorkspaceSettings;catalog:{repositories:Repo[];projects:{key:string;name:string}[];checked_at:string};runs:Run[];gitlab_configured:boolean;jira_configured:boolean;key_ready:boolean;ai_ready:boolean;busy:boolean};
 export const initialSettings = ():WorkspaceSettings=>({version:1,enabled:false,time_of_day:'09:00',group_url:'',jira_url:'',mappings:[]});
 export const taskKeys = (text:string)=>[...new Set(text.split(/[\s,，;；]+/).map(s=>s.trim()).filter(Boolean))];
