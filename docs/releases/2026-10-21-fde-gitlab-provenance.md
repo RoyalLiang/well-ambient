@@ -10,7 +10,7 @@ GitLab 设置按实例管理连接、仓库清单与 Push / Merge Request 回调
 
 发布迁移仅新增六个来源字段和两个索引。已有历史记录缺乏证据时保持来源未知，不凭短名补猜 FDE。默认实例旧评审的去重锚点绑定部署前地址，保留已发布、发送中和结果未知的评论幂等边界；切换服务器后使用新来源身份，旧任务不能跨目标执行或发布。
 
-操作边界：本次生产范围为清单中 `project-code` 及全部子分组的 1,106 个仓库；未来新增仓库需要重新拉取并安装。安装读回与真实事件送达分别留证。未自动回填历史仓库代码、未修改 Jira 或远端源代码。
+操作边界：本次生产范围为发布前全量清单中 `project-code` 及全部子分组的仓库（实际数量以安装读回记录为准）；未来新增仓库需要重新拉取并安装。安装读回与真实事件送达分别留证。未自动回填历史仓库代码、未修改 Jira 或远端源代码。
 
 ## English
 
@@ -18,4 +18,4 @@ GitLab settings now separate instance credentials, callback secrets and reposito
 
 Immutable source metadata follows webhook, commit, review and delivery evidence into Strongest Brain summaries and snapshots. Cross-instance IDs and SHAs stay separate. Optional MCP source fields require explicit field publication. Legacy records retain unknown provenance unless supported by evidence.
 
-The migration adds six provenance columns and two indexes. The default instance retains its original deduplication boundary only while its endpoint matches the release anchor. Rebound endpoints cannot reuse or publish historical evidence. The current inventory covers 1,106 FDE repositories; future repositories require another discovery/install run. Hook registration and event-delivery evidence are reported separately.
+The migration adds six provenance columns and two indexes. The default instance retains its original deduplication boundary only while its endpoint matches the release anchor. Rebound endpoints cannot reuse or publish historical evidence. The release inventory covers every repository under project-code and its descendant groups; verified counts live in the operational receipt. Future repositories require another discovery/install run. Hook registration and event-delivery evidence are reported separately.
