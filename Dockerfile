@@ -84,4 +84,7 @@ LABEL org.opencontainers.image.title="Well Ambient web" \
       org.opencontainers.image.created="${BUILD_TIME}"
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=web-build /src/web/dist/ /usr/share/nginx/html/
+# Public assets can retain restrictive modes from source archive extraction.
+RUN find /usr/share/nginx/html -type d -exec chmod 0755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 0644 {} +
 EXPOSE 8080
