@@ -501,6 +501,8 @@ func coreSchemaModels() []any {
 		&RuntimeKnowledgeState{},
 		&RuntimeKnowledgeGeneration{},
 		&RuntimeKnowledgeItem{},
+		&JiraIssueSyncConfig{},
+		&JiraIssueSyncPreview{},
 		&ContextChunk{},
 		&ContextPack{},
 		&ContextPackItem{},

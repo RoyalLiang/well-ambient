@@ -5,9 +5,11 @@ description: 在评审需求、评估方案或分析系统能力与场景边界�
 
 # 获取需求的系统背景
 
-先用 `knowledge_describe` 确认本连接发布的项目、仓库、来源类型与刷新状态。仓库范围使用 GitLab Project ID。没有发布的来源表示当前连接不可访问，不能据此判断系统没有相关能力。
+已知项目或仓库时，直接调用 `knowledge_get_context` 获取背景；仅在范围或来源类型未知时用 `knowledge_describe` 检查本连接的发布范围与刷新状态。仓库范围使用 GitLab Project ID。没有发布的来源表示当前连接不可访问，不能据此判断系统没有相关能力。
 
-用 `knowledge_get_context` 传入需求或待评估的问题、相关 `projects` / `repositories`，以及 `token_budget`。默认预算为 1800；预算只覆盖 `compact` 字段，采用 UTF-8 字节数作为保守 token 上界。来源类型可用 `kinds` 缩小；先围绕当前问题获取背景，缺口明确后再补取。
+用 `knowledge_get_context` 传入需求或待评估的问题、相关 `projects` / `repositories`，以及 `token_budget`。推荐 `format: "dense"`，初次预算可设 1200，按缺口递增；默认预算为 1800。dense 用固定列序证据行减少重复字段，保留来源、作用域和声明边界。预算只覆盖 `compact` 字段，采用 UTF-8 字节数作为保守 token 上界。来源类型可用 `kinds` 缩小；先围绕当前问题获取背景，缺口明确后再补取。
+
+保留返回的 `memory_hash`、`snapshot_id`、证据引用和缺口作为当前会话记忆。后续相同背景请求传入 `known_memory_hash`；服务器仍逐次校验权限和来源，只有内容与时效未变化才返回 `unchanged: true` 并省略重复正文。仅在自己仍持有先前正文时使用该回执；不能从哈希恢复丢失内容，不跨身份、项目或会话传播回执。
 
 需要核对关键结论、场景约束或冲突时，用 `knowledge_get_evidence` 传入返回的 `snapshot_id` 和 `source_ref`。长文档按段索引，证据附 `chunk_index`、`chunk_count`；压缩片段不等于全文。来源变更、归档、撤回或快照过期后，证据会不可用，此时重新获取上下文。
 

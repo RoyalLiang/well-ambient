@@ -293,6 +293,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/config/versions", s.withPermission("config:read", s.handleListConfigVersions))
 	s.mux.HandleFunc("POST /api/config/versions/{id}/rollback", s.withPermission("config:write", s.handleRollbackConfigVersion))
 	s.mux.HandleFunc("GET /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
+	s.mux.HandleFunc("POST /api/gitlab/projects", s.withPermission("config:write", s.handleGetGitLabProjects))
+	s.mux.HandleFunc("GET /api/jira-issue-sync", s.withPermission("config:read", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
+	s.mux.HandleFunc("PUT /api/jira-issue-sync", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
+	s.mux.HandleFunc("POST /api/jira-issue-sync/preview", s.withPermission("config:write", s.withGlobalSuperAdmin(s.handleJiraIssueSync)))
 	s.mux.HandleFunc("POST /api/gitlab/webhooks/ensure", s.withPermission("config:write", s.handleEnsureGitLabWebhooks))
 	s.mux.HandleFunc("GET /api/gitlab/webhooks/status", s.withPermission("config:write", s.handleGetGitLabWebhookStatus))
 
@@ -417,6 +421,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/tasks/import", s.withAuth(s.handleImportTasks))
 	s.mux.HandleFunc("GET /api/context/facts", s.withPermission("ai_context:read", s.handleListContextFacts))
 	s.mux.HandleFunc("GET /api/agent-runtime/knowledge/settings", s.withPermission("ai_context:read", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
+	s.mux.HandleFunc("GET /api/agent-runtime/knowledge/items", s.withPermission("ai_context:read", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeBrowse)))
 	s.mux.HandleFunc("PUT /api/agent-runtime/knowledge/settings", s.withPermission("ai_context:write", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
 	s.mux.HandleFunc("POST /api/agent-runtime/knowledge/refresh", s.withPermission("ai_context:write", s.withGlobalSuperAdmin(s.handleRuntimeKnowledgeSettings)))
 	s.mux.HandleFunc("POST /api/context/facts", s.withPermission("ai_context:write", s.handleSaveContextFact))
@@ -620,6 +625,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.startJiraSyncWorkers(workerContext)
 	go s.startSolutionWorker(workerContext)
 	go s.startRuntimeKnowledgeWorker(workerContext)
+	go s.startJiraIssueSyncPreviewWorker(workerContext)
 	go s.startCodeReviewWorker(workerContext)
 	go s.startDailyJiraProjectionWorker(workerContext)
 	if s.decisionCommands != nil {

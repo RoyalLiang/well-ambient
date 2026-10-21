@@ -3,6 +3,7 @@ export type SettingsSection =
   | 'email'
   | 'feishu'
   | 'jira'
+  | 'jira_issue_sync'
   | 'performance'
   | 'projects'
   | 'versions'
@@ -23,6 +24,7 @@ export interface SettingsSectionDefinition {
 }
 
 export const SETTINGS_SECTION_DEFINITIONS: SettingsSectionDefinition[] = [
+  { id: 'jira_issue_sync', group: '集成设置', label: 'Jira → Issue 同步', summary: '配置每日同步映射并审阅 Issue 草稿；预览版不写远端。', domain: '每日同步预览', permissions: ['config:read'] },
   {
     id: 'gitlab',
     group: '集成设置',

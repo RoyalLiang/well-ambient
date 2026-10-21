@@ -16,6 +16,7 @@
   export let stableHeight = false;
   export let layer: 'default' | 'critical' = 'default';
   export let closeDisabled = false;
+  export let portalScope: 'workspace' | 'viewport' = 'workspace';
 
   let backdropEl: HTMLDivElement;
   let modalContainer: HTMLDivElement;
@@ -91,8 +92,8 @@
   }
 
   function portalToOverlayLayer(node: HTMLElement) {
-    const workspaceStage = node.closest<HTMLElement>('.workspace-stage')
-      || document.querySelector<HTMLElement>('.workspace-stage');
+    const workspaceStage = portalScope === 'viewport' ? null : (node.closest<HTMLElement>('.workspace-stage')
+      || document.querySelector<HTMLElement>('.workspace-stage'));
     const target = workspaceStage || document.body;
 
     workspaceScoped = Boolean(workspaceStage);

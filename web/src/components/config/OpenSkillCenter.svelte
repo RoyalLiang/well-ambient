@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import Button from '../shared/Button.svelte';
+  import RuntimeKnowledgeBrowser from './RuntimeKnowledgeBrowser.svelte';
   import Modal from '../shared/Modal.svelte';
   import Select from '../shared/Select.svelte';
   import Switch from '../shared/Switch.svelte';
@@ -25,6 +26,8 @@
   let query = '';
   let savingSkill = '';
   let knowledgeBusy = false;
+  let showKnowledgeContent = false;
+  async function openKnowledgeContent() { showKnowledgeContent = true; await tick(); document.getElementById('knowledge-title')?.scrollIntoView({block:'start'}); }
   let selected: OpenSkillItem | null = null;
   let dialog: 'install' | 'doc' | null = null;
   let target: SkillInstallTarget = 'codex';
@@ -140,7 +143,7 @@
 <section class="skill-center" aria-labelledby="skill-center-title">
   <header class="skill-header">
     <div><h2 id="skill-center-title">Skill 中心</h2><p class="description">管理 well-ambient 主技能、业务子技能与调用观测。</p></div>
-    <div class="actions"><Button variant="secondary" disabled={loading || refreshing} loading={refreshing} on:click={load}>刷新观测</Button><Button variant="secondary" on:click={onOpenCapabilities}>连接与权限配置</Button></div>
+    <div class="actions"><Button variant="secondary" disabled={loading || refreshing} loading={refreshing} on:click={load}>刷新观测</Button>{#if canObserve}<Button variant="secondary" on:click={openKnowledgeContent}>知识快照内容</Button>{/if}<Button variant="secondary" on:click={onOpenCapabilities}>连接与权限配置</Button></div>
   </header>
   {#if error}<div class="notice error" role="alert"><p>{error}{bundle ? ' 已保留上次读取的技能列表。' : ''}</p><Button variant="secondary" size="small" on:click={load}>重试</Button></div>{/if}
   {#if saveError}<div class="notice error" role="alert">{saveError}</div>{/if}
@@ -172,10 +175,11 @@
       {#if !canObserve}<div class="empty">当前为技能浏览模式。全局超级管理员可查看来源、调用结果与知识刷新状态。</div>
       {:else if observation}
         <div class="phase-line"><span>访问阶段</span><span class="wa-admin-pill" class:muted={!observation.phases.Read}>只读 {observation.phases.Read ? '启用' : '关闭'}</span><span class="wa-admin-pill" class:muted={!observation.phases.Prepare}>预备 {observation.phases.Prepare ? '启用' : '关闭'}</span><span class="wa-admin-pill" class:muted={!observation.phases.Execute}>执行 {observation.phases.Execute ? '启用' : '关闭'}</span></div>
-        <section class="knowledge" aria-labelledby="knowledge-title"><div class="section-heading"><div><h4 id="knowledge-title">运行时知识整理</h4><p>自动整理已同步的资料；不代表上游刚刚完成采集。</p></div>{#if canManageKnowledge}<Button variant="secondary" size="small" disabled={knowledgeBusy} loading={knowledgeBusy} on:click={refreshKnowledge}>立即整理</Button>{/if}</div>
+        <section class="knowledge" aria-labelledby="knowledge-title"><div class="section-heading"><div><h4 id="knowledge-title">运行时知识整理</h4><p>自动整理已同步的资料；不代表上游刚刚完成采集。</p></div><div class="knowledge-actions"><Button variant="secondary" size="small" on:click={() => showKnowledgeContent = !showKnowledgeContent}>{showKnowledgeContent ? '收起知识内容' : '浏览知识内容'}</Button>{#if canManageKnowledge}<Button variant="secondary" size="small" disabled={knowledgeBusy} loading={knowledgeBusy} on:click={refreshKnowledge}>立即整理</Button>{/if}</div></div>
           {#if knowledge}<dl class="knowledge-values"><div><dt>定时任务</dt><dd>{knowledge.enabled ? `每 ${knowledge.interval_minutes / 60} 小时` : '已停用'}</dd></div><div><dt>最近成功检查</dt><dd>{date(knowledge.last_checked_at)}</dd></div><div><dt>下次到期</dt><dd>{knowledge.enabled && nextRefresh ? date(nextRefresh) : '—'}</dd></div><div><dt>当前快照</dt><dd>{knowledge.generation_id ? `#${knowledge.generation_id} · ${observation.knowledge_generation?.item_count ?? '—'} 个证据段` : '尚未生成'}</dd></div></dl>{#if knowledge.last_error}<p class="inline-error" role="status">最近一次整理失败；保留上次成功快照。请检查服务日志与来源完整性。</p>{/if}
           {:else}<p class="quiet">尚无知识调度记录。服务启动后建立快照，也可由有权限的管理员手动整理。</p>{/if}
           {#if observation.gaps.length}<p class="inline-error">部分知识观测不可用：{observation.gaps.join('、')}</p>{/if}
+          {#if showKnowledgeContent}<RuntimeKnowledgeBrowser />{/if}
         </section>
         <div class="section-heading"><div><h4>最近调用</h4><p>最多 {observation.recent_limit} 条；不展示凭证值或请求正文。</p></div></div>
         {#if observation.recent_calls.length === 0}<div class="empty">当前窗口内暂无调用记录。安装或发布技能本身不会生成成功调用。</div>
@@ -271,6 +275,7 @@
   .phase-line { display: flex; gap: var(--wa-space-2); align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--wa-text-muted); }
   .wa-admin-pill.muted { background: var(--wa-surface-inset); color: var(--wa-text-muted); }
   .wa-admin-pill.failed { background: var(--wa-danger-soft); color: var(--wa-danger); }
+  .knowledge-actions { display:flex; flex-wrap:wrap; gap:8px; }
   .knowledge { border-block: 1px solid var(--wa-border-divider); padding-block: var(--wa-space-4); display: grid; gap: var(--wa-space-3); }
   .knowledge-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--wa-space-4); margin: 0; font-size: 13px; }
   .knowledge-values > div { min-width: 0; }

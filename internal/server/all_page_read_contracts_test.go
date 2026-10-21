@@ -28,7 +28,7 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 	for _, match := range routePattern.FindAllStringSubmatch(string(source), -1) {
 		registered[match[1]] = struct{}{}
 	}
-	const expectedGETAPIRoutes = 114
+	const expectedGETAPIRoutes = 116
 	if len(registered) != expectedGETAPIRoutes {
 		t.Fatalf("route discovery found %d GET API routes, want %d", len(registered), expectedGETAPIRoutes)
 	}
@@ -89,6 +89,7 @@ func TestAllReachablePageStatesAreCoveredByReadContracts(t *testing.T) {
 		"settings.email":                  {},
 		"settings.feishu":                 {},
 		"settings.jira":                   {},
+		"settings.jira_issue_sync":        {},
 		"settings.performance":            {},
 		"settings.projects":               {},
 		"settings.versions":               {},
@@ -216,7 +217,7 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 	}
 	expected := map[readmodel.Maturity]int{
 		readmodel.MaturityVerified: 20,
-		readmodel.MaturityBounded:  66,
+		readmodel.MaturityBounded:  68,
 		readmodel.MaturityPending:  28,
 	}
 	for maturity, want := range expected {
@@ -224,8 +225,8 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 			t.Errorf("%s read contracts = %d, want %d", maturity, got, want)
 		}
 	}
-	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 114 {
-		t.Fatalf("maturity inventory totals %d routes, want 114", total)
+	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 116 {
+		t.Fatalf("maturity inventory totals %d routes, want 116", total)
 	}
 }
 

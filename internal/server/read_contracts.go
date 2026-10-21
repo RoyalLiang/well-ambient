@@ -14,6 +14,8 @@ const (
 
 func allPageReadContracts() map[string]readmodel.Contract {
 	return map[string]readmodel.Contract{
+		"/api/agent-runtime/knowledge/items":                   baseRead("runtime-knowledge-items", readmodel.ClassPage, readmodel.StrategyGenerationKeyset, readmodel.MaturityBounded, 20, 50, 0, 2<<20, "snapshot generation plus source revalidation", []string{"ai_governance.skills"}),
+		"/api/jira-issue-sync":                                 detailRead("jira-issue-sync-preview", readmodel.MaturityBounded, 100, "settings.jira_issue_sync"),
 		"/open/v1/jira/schema":                                 aggregateRead("open-jira-schema", readmodel.MaturityBounded, "open.jira", "evidence.health"),
 		"/open/v1/jira/issues/{key}":                           detailRead("open-jira-issue-detail", readmodel.MaturityBounded, 1, "open.jira", "evidence.health"),
 		"/open/v1/operations/{id}":                             detailRead("open-decision-operation", readmodel.MaturityBounded, 1, "open.decision", "evidence.health"),

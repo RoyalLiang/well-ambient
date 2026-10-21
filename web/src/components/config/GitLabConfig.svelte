@@ -119,7 +119,16 @@
     resetSettingsWorkspaceScroll();
   }
 
+  let resettingAPIToken = false;
+  function resetAPICredential() {
+    resettingAPIToken = true;
+    openEditor();
+    apiToken = '';
+    showAPITokenEditor = true;
+  }
+
   function finishClose() {
+    if (resettingAPIToken) { apiToken = config.api_token || ''; resettingAPIToken = false; showAPITokenEditor = !config.api_token; }
     editing = false;
     dispatch('close');
   }
@@ -132,7 +141,7 @@
     loadingProjects = true;
     loadProjectsError = '';
     try {
-      const res = await fetch(`/api/gitlab/projects?base_url=${encodeURIComponent(baseURL)}&api_token=${encodeURIComponent(apiToken)}`);
+      const res = await fetch('/api/gitlab/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base_url: baseURL, api_token: apiToken }) });
       if (res.ok) {
         availableProjects = await res.json();
       } else {
@@ -348,6 +357,7 @@
   }
 
   async function saveConfig(isToggle = false) {
+    if (resettingAPIToken && !apiToken.trim()) { testError = '请录入新的 API Token，或取消本次更换。'; currentStep = 1; return; }
     const updatedGitLab = {
       enabled: enabled,
       base_url: baseURL,
@@ -550,6 +560,7 @@
       </section>
 
       <div class="overview-actions">
+        <Button variant="secondary" on:click={resetAPICredential}>重新设置 API Token</Button>
         <Button variant="secondary" loading={testingConnection} on:click={testConnection}>健康检查</Button>
         <Button variant="primary" on:click={openEditor}>编辑配置</Button>
       </div>
@@ -596,7 +607,7 @@
                 placeholder="输入具有 read_api 权限的 Personal Access Token"
                 type="password"
                 bind:value={apiToken}
-                helperText="用于自动拉取项目和执行 Webhook 自动化。"
+                helperText="重新录入后保存生效。用于 GitLab API；SSH Key 仅用于 Git 传输，不能代替 Issue API Token。预览阶段不需要 Issue 写权限。"
               />
             {:else}
               <div class="credential-collapsed">
@@ -604,7 +615,7 @@
                   <span>GitLab API Token</span>
                   <strong>已配置，默认脱敏</strong>
                 </div>
-                <button type="button" on:click={() => showAPITokenEditor = true}>更换令牌</button>
+                <Button variant="secondary" size="small" on:click={resetAPICredential}>重新录入令牌</Button>
               </div>
             {/if}
           </div>

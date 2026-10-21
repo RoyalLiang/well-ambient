@@ -19,10 +19,11 @@ const directOverlayConsumers = new Map([
   ['DecisionEventCenter.svelte', 1],
   ['DemandKanban.svelte', 5],
   ['ProjectHealthTelemetry.svelte', 1],
-  ['SettingsPanel.svelte', 5]
+  ['SettingsPanel.svelte', 2]
 ]);
 
 const sharedModalConsumers = new Map([
+  ['SettingsPanel.svelte', 3],
   ['TaskKanban.svelte', 2],
   ['DecisionDashboard.svelte', 1],
   ['CodeReviewCenter.svelte', 1],
@@ -59,6 +60,7 @@ test('every overlay close action uses one shared 44px control', () => {
     sharedSurfaceCount += expected;
   }
 
+  // Member details expand inline; assignment, removal and transfer use shared Modal.
   assert.equal(directSurfaceCount + sharedSurfaceCount, 20);
 });
 

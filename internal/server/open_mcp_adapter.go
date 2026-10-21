@@ -149,10 +149,7 @@ func (i openMCPLocalInvoker) Invoke(
 			return result, openaccess.NewError("invalid_query", "invalid knowledge_get_context input")
 		}
 		value, err := i.server.runtimeKnowledge().Context(ctx, call.Policy, request)
-		refs := make([]string, 0, len(value.Evidence))
-		for _, evidence := range value.Evidence {
-			refs = append(refs, evidence.SourceRef)
-		}
+		refs := value.AuditRefs
 		return mcpResult(value, refs), publicMCPError(err)
 	case "knowledge_get_evidence":
 		var request runtimeknowledge.EvidenceRequest

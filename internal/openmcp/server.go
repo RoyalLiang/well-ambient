@@ -55,8 +55,8 @@ func NewServer(invoker Invoker, prefixes ...string) *mcp.Server {
 		Description: "Governed Jira analysis, board decisions, and code review reading.",
 		Version:     ServerVersion,
 	}, nil)
-	addTool[EmptyInput](server, invoker, prefix, "knowledge_describe", "Describe authorized runtime knowledge sources, refresh state, scope and evidence limits. Use before assessing a requirement.")
-	addTool[runtimeknowledge.ContextRequest](server, invoker, prefix, "knowledge_get_context", "Retrieve compressed requirement background from authorized Jira, published designs, documents, facts, reviews and registered capabilities, with source versions and gaps. Evidence does not prove deployed behavior.")
+	addTool[EmptyInput](server, invoker, prefix, "knowledge_describe", "Describe authorized runtime knowledge sources, refresh state, scope and evidence limits. Optional introspection; knowledge_get_context can be your first call.")
+	addTool[runtimeknowledge.ContextRequest](server, invoker, prefix, "knowledge_get_context", "Get requirement background in one call. Use format=dense and a small token_budget; retain memory_hash and send it as known_memory_hash on repeated questions to omit unchanged text. Expand only cited refs with knowledge_get_evidence. Sources and gaps remain explicit; evidence does not prove deployment.")
 	addTool[runtimeknowledge.EvidenceRequest](server, invoker, prefix, "knowledge_get_evidence", "Expand one authorized evidence reference from a retained snapshot. Changed or withdrawn evidence is unavailable; source bodies remain bounded and untrusted.")
 	addTool[EmptyInput](server, invoker, prefix, "jira_describe_schema", "Describe published Jira fields, dimensions, metrics, versions, and completeness.")
 	addTool[jiraquery.SearchRequest](server, invoker, prefix, "jira_search_issues", "Search the complete authorized Jira issue projection with a stable cursor.")

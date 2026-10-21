@@ -2,13 +2,15 @@
   import '../styles/settings-config-workbench.css';
   import { onMount, onDestroy, tick } from 'svelte';
   import Button from './shared/Button.svelte';
-  import Alert from './shared/Alert.svelte';
   import OverlayCloseButton from './shared/OverlayCloseButton.svelte';
+  import Modal from './shared/Modal.svelte';
   import GitLabConfig from './config/GitLabConfig.svelte';
+  import MemberRoleDirectory from './config/MemberRoleDirectory.svelte';
   import EmailConfig from './config/EmailConfig.svelte';
   import { defaultSMTP, defaultDailyEmail, type SMTPConfig, type DailyJiraEmailConfig } from '../lib/email-config';
   import FeishuConfig from './config/FeishuConfig.svelte';
   import JiraConfig from './config/JiraConfig.svelte';
+  import JiraIssueSyncConfig from './config/JiraIssueSyncConfig.svelte';
   import PerformanceConfig from './config/PerformanceConfig.svelte';
   import ProjectConfig from './config/ProjectConfig.svelte';
   import AIConfig from './config/AIConfig.svelte';
@@ -345,6 +347,8 @@
   }
 
   let users: User[] = [];
+  let usersLoading = false;
+  let usersError = '';
   $: userMap = new Map<string, User>(users.map(u => [u.username, u]));
   let groups: Group[] = [];
   let permissionCatalog: PermissionMeta[] = [];
@@ -525,12 +529,14 @@
   let membershipScope: 'global' | 'repo' = 'global';
   let membershipScopeID = '';
   let membershipError = '';
+  let membershipSaving = false;
 
   // Transfer admin state
   let showTransferModal = false;
   let transferTargetUsername = '';
   let transferConfirmName = '';
   let transferError = '';
+  let transferringAdmin = false;
 
   // Create custom group state
   let showCreateGroupModal = false;
@@ -744,6 +750,7 @@
     if (section === 'versions') return `${configVersions.length} 个版本`;
     if (section === 'wellos_auth') return globalConfig.server?.maintenance_mode ? '数据库配置已开启' : '数据库配置已关闭';
     if (section === 'users') return `${users.length} 位成员`;
+    if (section === 'jira_issue_sync') return '本地草稿预览';
     if (section === 'matrix') return `${permissionMeta.length} 个权限`;
     if (section === 'policies') return `${authorizationPolicies.length} 条策略`;
     if (section === 'audit') return `${auditLogs.length + authorizationAuditLogs.length} 条日志`;
@@ -756,7 +763,8 @@
   }
 
   function requiredPermissionLabel(section: SettingsSection) {
-    if (section === 'wellos_auth') return '全局超管';
+    if (section === 'wellos_auth' || section === 'jira_issue_sync') return '全局超管';
+    if (section === 'users') return currentUserPermissions.includes('users:write') ? '成员管理' : '成员只读';
     if (['gitlab', 'email', 'feishu', 'jira', 'performance', 'projects', 'ai', 'versions'].includes(section)) return '配置只读';
     return '成员只读';
   }
@@ -814,13 +822,14 @@
 
   // RBAC Requests
   async function fetchUsers() {
-    if (!currentUserPermissions.includes('users:read')) return;
+    if (!currentUserPermissions.includes('users:read') || usersLoading) return;
+    usersLoading = true; usersError = '';
     try {
       const res = await fetch('/api/users');
-      if (res.ok) users = await res.json();
-    } catch (e) {
-      console.error(e);
-    }
+      if (!res.ok) throw new Error(await responseErrorMessage(res, '成员目录加载失败'));
+      users = await res.json();
+    } catch (e) { usersError = (e as Error).message; }
+    finally { usersLoading = false; }
   }
 
   async function fetchGroups() {
@@ -1097,7 +1106,7 @@
 
   function openAddMembership(username: string) {
     membershipTargetUser = username;
-    membershipSelectedGroup = groups[0]?.name || '';
+    membershipSelectedGroup = '';
     membershipScope = 'global';
     membershipScopeID = '';
     membershipError = '';
@@ -1106,35 +1115,20 @@
   }
 
   async function saveMembership() {
+    if (membershipSaving) return;
     membershipError = '';
-    if (membershipScope === 'repo' && !membershipScopeID) {
-      membershipError = '请填写作用域的具体仓库名/项目ID';
-      return;
-    }
-
+    const scopeID = membershipScope === 'repo' ? membershipScopeID.trim() : '';
+    if (!membershipSelectedGroup || membershipSelectedGroup === 'super_admin') { membershipError = '请选择可分配的用户组'; return; }
+    if (membershipScope === 'repo' && !scopeID) { membershipError = '请填写仓库名或 Project ID'; return; }
+    if ((users.find(user => user.username === membershipTargetUser)?.memberships || []).some(item => item.group_name === membershipSelectedGroup && item.scope === membershipScope && item.scope_id === scopeID)) { membershipError = '该成员已拥有此角色与作用域。'; return; }
+    membershipSaving = true;
     try {
-      const res = await fetch('/api/users/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: membershipTargetUser,
-          group_name: membershipSelectedGroup,
-          scope: membershipScope,
-          scope_id: membershipScopeID,
-          action: 'add'
-        })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        await fetchUsers();
-        showAddMembershipModal = false;
-        showToast('成员分配已保存。', { title: '保存成功' });
-      } else {
-        showToast(data.message || '成员分配保存失败', { type: 'error', title: '保存失败' });
-      }
-    } catch (e: any) {
-      showToast('请求失败: ' + e.message, { type: 'error', title: '保存失败' });
-    }
+      const res = await fetch('/api/users/groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: membershipTargetUser, group_name: membershipSelectedGroup, scope: membershipScope, scope_id: scopeID, action: 'add' }) });
+      if (!res.ok) throw new Error(await responseErrorMessage(res, '成员分配保存失败'));
+      await fetchUsers(); showAddMembershipModal = false;
+      showToast('成员分配已保存。', { title: '保存成功' });
+    } catch (e) { membershipError = (e as Error).message; }
+    finally { membershipSaving = false; }
   }
 
   function membershipScopeLabel(membership: UserMembership) {
@@ -1155,7 +1149,7 @@
   }
 
   async function confirmRemoveMembership() {
-    if (!removeMembershipTarget) return;
+    if (removingMembership || !removeMembershipTarget) return;
     const { username, membership } = removeMembershipTarget;
     removeMembershipError = '';
     removingMembership = true;
@@ -1195,6 +1189,7 @@
   }
 
   async function executeTransfer() {
+    if (transferringAdmin) return;
     transferError = '';
     const targetUser = userMap.get(transferTargetUsername);
     if (!targetUser) return;
@@ -1203,6 +1198,7 @@
       return;
     }
 
+    transferringAdmin = true;
     try {
       const res = await fetch('/api/users/transfer-admin', {
         method: 'POST',
@@ -1218,6 +1214,8 @@
       }
     } catch (e: any) {
       transferError = '网络请求失败: ' + e.message;
+    } finally {
+      transferringAdmin = false;
     }
   }
 
@@ -1402,13 +1400,13 @@
           </div>
         </div>
 
-        <div class="settings-content-header" class:single-column={isIntegrationSection}>
+        <div class="settings-content-header" class:single-column={isIntegrationSection || activeSection === 'users' || activeSection === 'jira_issue_sync'}>
           <div class="settings-title-copy">
-            <span class="settings-kicker">{activeSectionMeta.domain}</span>
+            {#if activeSection !== 'users' && activeSection !== 'jira_issue_sync'}<span class="settings-kicker">{activeSectionMeta.domain}</span>{/if}
             <h1 id="settings-content-title" bind:this={settingsTitleEl} tabindex="-1">{activeSectionMeta.label}</h1>
             <p>{activeSectionMeta.summary}</p>
           </div>
-          {#if !isIntegrationSection}
+          {#if !isIntegrationSection && activeSection !== 'users' && activeSection !== 'jira_issue_sync'}
             <dl class="settings-content-facts">
               {#each settingsInspector.facts.slice(1) as fact}
                 <div>
@@ -1536,77 +1534,14 @@
               canWrite={currentUserRole === 'super_admin' && currentUserPermissions.includes('config:write')}
               on:updated={handleMaintenanceUpdated}
             />
+    {:else if activeSection === 'jira_issue_sync'}
+      <div class="section-card"><JiraIssueSyncConfig canAccess={currentUserRole === 'super_admin'} canWrite={currentUserPermissions.includes('config:write')} onCredentials={() => switchSection('gitlab')} /></div>
     {:else if activeSection === 'users'}
-            <div class="section-card">
-        <div class="card-header">
-          <h2>成员角色与项目隔离 (Scope) 管理</h2>
-          <p>查看并管理注册成员所属的权限组，在此可配置细粒度的 GitLab 仓库作用域隔离（Scope）。</p>
-        </div>
-
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex (bounded member directory needs keyboard scrolling) -->
-        <div class="table-responsive settings-data-scroll users-data-scroll" role="region" aria-label="成员角色目录，可横向或纵向滚动" tabindex="0">
-          <table class="rbac-table">
-            <thead>
-              <tr>
-                <th>成员信息</th>
-                <th>邮箱/账号</th>
-                <th>拥有角色及作用域 (Scope)</th>
-                <th style="text-align: right;">管理操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each users as user}
-                <tr>
-                  <td>
-                    <div class="user-profile-cell">
-                      <div class="user-avatar">
-                        {#if user.avatar}
-                          <img src={user.avatar} alt="avatar" />
-                        {:else}
-                          {user.name ? user.name.charAt(0) : 'U'}
-                        {/if}
-                      </div>
-                      <span class="user-name">{user.name || '未定义'}</span>
-                    </div>
-                  </td>
-                  <td class="font-mono text-sm">{user.username}</td>
-                  <td>
-                    <div class="tags-container">
-                      {#each membershipsForUser(user) as membership}
-                        <div class="membership-badge badge-{membership.group_name}">
-                          <span class="badge-role">{membership.group_display_name}</span>
-                          <span class="badge-scope">
-                            {membership.scope === 'global' ? '全局' : membership.scope_id}
-                          </span>
-                          {#if currentUserPermissions.includes('users:write') && membership.group_name !== 'super_admin'}
-                            <button class="remove-membership-btn" on:click={() => requestRemoveMembership(user.username, membership)} title="移除组身份">&times;</button>
-                          {/if}
-                        </div>
-                      {:else}
-                        <span class="text-muted text-xs font-mono">暂未分配用户组（无管理权限）</span>
-                      {/each}
-                    </div>
-                  </td>
-                  <td style="text-align: right;">
-                    <div class="actions-cell">
-                      {#if currentUserPermissions.includes('users:write')}
-                        <Button size="small" variant="ghost" on:click={() => openAddMembership(user.username)}>
-                          分配组
-                        </Button>
-                      {/if}
-                      {#if currentUserPermissions.includes('users:transfer_super_admin') && user.username !== currentUserEmail}
-                        <Button size="small" variant="danger" on:click={() => openTransferAdmin(user.username)}>
-                          转让超管
-                        </Button>
-                      {/if}
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <div class="section-card"><MemberRoleDirectory {users} {groups} {currentUserEmail}
+        canWrite={currentUserPermissions.includes('users:write')}
+        canTransfer={currentUserPermissions.includes('users:transfer_super_admin')}
+        loading={usersLoading} error={usersError} onRefresh={() => { void fetchUsers(); void fetchGroups(); }}
+        onAssign={openAddMembership} onRemove={requestRemoveMembership} onTransfer={openTransferAdmin} /></div>
     {:else if activeSection === 'matrix'}
       <div class="section-card">
         <div class="card-header flex-header">
@@ -2220,53 +2155,21 @@
 </div>
 
 <!-- Modal 1: Add scoped membership -->
-{#if showAddMembershipModal}
-  <div class="modal-overlay">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>分配权限组与作用域隔离</h3>
-        <OverlayCloseButton label="关闭分配权限组弹窗" on:click={() => showAddMembershipModal = false} />
-      </div>
-      <div class="modal-body">
+<Modal show={showAddMembershipModal} title="分配角色与作用域" portalScope="viewport" closeDisabled={membershipSaving} on:close={() => showAddMembershipModal = false}>
+      <div class="member-role-form">
         {#if membershipError}
-          <div class="error-banner">{membershipError}</div>
+          <div class="member-role-error" role="alert">{membershipError}</div>
         {/if}
 
         <div class="field-item">
           <label for="membership-target-user">目标成员账户</label>
           <input id="membership-target-user" type="text" value={membershipTargetUser} disabled class="input-disabled font-mono" />
         </div>
-        <div class="field-item relative">
-          <label for="membership-selected-group-trigger">分配目标用户组</label>
-          <button 
-            id="membership-selected-group-trigger"
-            type="button" 
-            class="dropdown-trigger-btn font-mono"
-            on:click={() => showGroupDropdown = !showGroupDropdown}
-          >
-            <span>{groups.find(g => g.name === membershipSelectedGroup)?.displayName || membershipSelectedGroup} ({membershipSelectedGroup})</span>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>
-          </button>
-          
-          {#if showGroupDropdown}
-            <button type="button" class="dropdown-backdrop-overlay" aria-label="关闭用户组下拉菜单" on:click={() => showGroupDropdown = false}></button>
-            <div class="dropdown-options-list glass-panel font-mono">
-              {#each groups as g}
-                {#if g.name !== 'super_admin'}
-                  <button 
-                    type="button"
-                    class="dropdown-option-item {membershipSelectedGroup === g.name ? 'selected' : ''}"
-                    on:click={() => {
-                      membershipSelectedGroup = g.name;
-                      showGroupDropdown = false;
-                    }}
-                  >
-                    {g.displayName} ({g.name})
-                  </button>
-                {/if}
-              {/each}
-            </div>
-          {/if}
+        <div class="field-item">
+          <label for="membership-selected-group">分配用户组</label>
+          <select id="membership-selected-group" class="custom-input" bind:value={membershipSelectedGroup} disabled={membershipSaving}><option value="">请选择角色</option>
+            {#each groups.filter(group => group.name !== 'super_admin') as group}<option value={group.name}>{group.displayName}</option>{/each}
+          </select>
         </div>
         <div class="field-item">
           <span class="field-label">分配作用域等级 (Scope)</span>
@@ -2288,97 +2191,40 @@
           </div>
         {/if}
       </div>
-      <div class="modal-footer">
-        <Button variant="ghost" on:click={() => showAddMembershipModal = false}>取消</Button>
-        <Button on:click={saveMembership}>确定保存</Button>
-      </div>
-    </div>
-  </div>
-{/if}
+  <svelte:fragment slot="footer"><div class="member-role-actions"><Button variant="secondary" disabled={membershipSaving} on:click={() => showAddMembershipModal = false}>取消</Button><Button loading={membershipSaving} disabled={!membershipSelectedGroup} on:click={saveMembership}>保存角色分配</Button></div></svelte:fragment>
+</Modal>
 
-{#if showRemoveMembershipModal && removeMembershipTarget}
-  <div class="modal-overlay">
-    <div class="modal-card remove-membership-modal" role="dialog" aria-modal="true" aria-labelledby="remove-membership-title">
-      <div class="modal-header delete-modal-header">
-        <div>
-          <span class="danger-kicker font-mono">Remove membership</span>
-          <h3 id="remove-membership-title">移除成员用户组</h3>
-        </div>
-        <OverlayCloseButton
-          label="关闭移除成员用户组确认弹窗"
-          on:click={closeRemoveMembershipModal}
-          disabled={removingMembership}
-        />
-      </div>
-      <div class="modal-body">
-        <div class="delete-target-card">
-          <div>
-            <span class="group-title-label badge-{removeMembershipTarget.membership.group_name}">
-              {removeMembershipTarget.membership.group_display_name}
-            </span>
-            <p class="font-mono">{removeMembershipTarget.username}</p>
-          </div>
-          <div class="delete-target-stats">
-            <strong class="font-mono">{membershipScopeLabel(removeMembershipTarget.membership)}</strong>
-            <small>scope</small>
-          </div>
-        </div>
-        <p class="delete-confirm-copy">
-          移除后，该成员将不再拥有此用户组在当前作用域下的权限。该操作不会删除成员账号。
-        </p>
-        {#if removeMembershipError}
-          <div class="error-banner">{removeMembershipError}</div>
-        {/if}
-      </div>
-      <div class="modal-footer">
-        <Button variant="ghost" on:click={closeRemoveMembershipModal} disabled={removingMembership}>
-          取消
-        </Button>
-        <Button variant="danger" on:click={confirmRemoveMembership} loading={removingMembership}>
-          确认移除
-        </Button>
-      </div>
+<!-- Member role dialogs share the viewport portal and light form tokens. -->
+<Modal show={showRemoveMembershipModal && Boolean(removeMembershipTarget)} title="移除成员角色" portalScope="viewport" closeDisabled={removingMembership} on:close={closeRemoveMembershipModal}>
+  {#if removeMembershipTarget}
+    <div class="member-role-form">
+      {#if removeMembershipError}<div class="member-role-error" role="alert">{removeMembershipError}</div>{/if}
+      <p class="member-role-warning">移除后，该成员将失去此角色在指定作用域内的权限。其他角色和成员账号会保留。</p>
+      <dl class="member-role-facts">
+        <div><dt>成员账户</dt><dd>{removeMembershipTarget.username}</dd></div>
+        <div><dt>角色</dt><dd>{removeMembershipTarget.membership.group_display_name || removeMembershipTarget.membership.group_name}</dd></div>
+        <div><dt>作用域</dt><dd>{membershipScopeLabel(removeMembershipTarget.membership)}</dd></div>
+      </dl>
     </div>
-  </div>
-{/if}
+  {/if}
+  <svelte:fragment slot="footer"><div class="member-role-actions"><Button variant="secondary" disabled={removingMembership} on:click={closeRemoveMembershipModal}>取消</Button><Button variant="danger" loading={removingMembership} on:click={confirmRemoveMembership}>确认移除角色</Button></div></svelte:fragment>
+</Modal>
 
-<!-- Modal 2: Transfer Super Admin -->
-{#if showTransferModal}
-  <div class="modal-overlay">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3 style="color: #ef4444;">警告：超级管理员控制权转让</h3>
-        <OverlayCloseButton label="关闭超级管理员转让弹窗" on:click={() => showTransferModal = false} />
-      </div>
-      <div class="modal-body">
-        {#if transferError}
-          <div class="error-banner">{transferError}</div>
-        {/if}
-        <Alert type="warning">
-          转让超级管理员是高危操作。转让完成后，您的账号将被降级为「系统管理员组」，原有的超级管理员管理权与审批权将不可撤销地转让给他人。
-        </Alert>
-        <div class="field-item" style="margin-top: 16px;">
-          <label for="transfer-target-username">目标接收者账户</label>
-          <input id="transfer-target-username" type="text" value={transferTargetUsername} disabled class="input-disabled font-mono" />
-        </div>
-        <div class="field-item">
-          <label for="transfer-confirm-name">请输入目标用户的真实姓名以确认安全转让</label>
-          <input 
-            id="transfer-confirm-name"
-            type="text" 
-            bind:value={transferConfirmName} 
-            placeholder="例如: Eddie" 
-            class="custom-input font-mono" 
-          />
-        </div>
-      </div>
-      <div class="modal-footer">
-        <Button variant="ghost" on:click={() => showTransferModal = false}>取消</Button>
-        <Button variant="danger" on:click={executeTransfer}>确认转让</Button>
-      </div>
+<Modal show={showTransferModal} title="转让超级管理员" portalScope="viewport" closeDisabled={transferringAdmin} on:close={() => showTransferModal = false}>
+  <div class="member-role-form">
+    {#if transferError}<div class="member-role-error" role="alert">{transferError}</div>{/if}
+    <p class="member-role-warning">转让完成后，你的账号将降级为系统管理员，超级管理员管理权与审批权将交给接收者。请核对账户及姓名。</p>
+    <div class="field-item">
+      <label for="transfer-target-username">目标接收者账户</label>
+      <input id="transfer-target-username" type="text" value={transferTargetUsername} disabled />
+    </div>
+    <div class="field-item">
+      <label for="transfer-confirm-name">输入接收者真实姓名以确认转让</label>
+      <input id="transfer-confirm-name" type="text" bind:value={transferConfirmName} disabled={transferringAdmin} placeholder="输入接收者姓名" autocomplete="off" />
     </div>
   </div>
-{/if}
+  <svelte:fragment slot="footer"><div class="member-role-actions"><Button variant="secondary" disabled={transferringAdmin} on:click={() => showTransferModal = false}>取消</Button><Button variant="danger" loading={transferringAdmin} on:click={executeTransfer}>确认转让</Button></div></svelte:fragment>
+</Modal>
 
 <!-- Modal 3: Create Custom Group -->
 {#if showCreateGroupModal}
@@ -8862,4 +8708,25 @@
       padding: 14px;
     }
   }
+  /* Member forms also render outside the settings root in viewport portals. */
+  .member-role-form { display:grid; gap:18px; color:var(--wa-text-main); color-scheme:light; }
+  .member-role-form .field-item { margin:0; }
+  .member-role-form label, .member-role-form .field-label { color:var(--wa-text-strong); font-size:13px; font-weight:650; }
+  .member-role-form input:not([type="radio"]), .member-role-form select { width:100%; min-height:40px; padding:9px 12px; border:1px solid var(--wa-border-strong); border-radius:var(--wa-radius-md); background:var(--wa-surface-panel); color:var(--wa-text-main); font:inherit; box-sizing:border-box; }
+  .member-role-form input:disabled { background:var(--wa-surface-inset); color:var(--wa-text-muted); opacity:1; -webkit-text-fill-color:var(--wa-text-muted); }
+  .member-role-form input::placeholder { color:var(--wa-text-muted); opacity:1; }
+  .member-role-form :is(input,select):focus-visible { outline:2px solid var(--wa-accent-strong); outline-offset:2px; }
+  .member-role-form .radio-group { display:flex; flex-wrap:wrap; gap:12px 24px; }
+  .member-role-form .radio-group label { min-height:40px; color:var(--wa-text-main); }
+  .member-role-form .radio-group input { accent-color:var(--wa-accent-strong); }
+  .member-role-form .field-desc { color:var(--wa-text-muted); line-height:1.6; }
+  .member-role-error, .member-role-warning { margin:0; padding:12px 14px; border-radius:var(--wa-radius-md); font-size:13px; line-height:1.6; }
+  .member-role-error { background:var(--wa-danger-soft); color:var(--wa-danger); }
+  .member-role-warning { background:var(--wa-warning-soft); color:var(--wa-warning); }
+  .member-role-actions { display:flex; justify-content:flex-end; align-items:center; gap:8px; flex-wrap:wrap; }
+  .member-role-facts { display:grid; gap:12px; margin:0; }
+  .member-role-facts > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:12px; padding-bottom:12px; border-bottom:1px solid var(--wa-border-divider); }
+  .member-role-facts dt { color:var(--wa-text-muted); font-size:13px; }
+  .member-role-facts dd { margin:0; color:var(--wa-text-main); font-size:13px; overflow-wrap:anywhere; }
+  @media(max-width:760px) { .member-role-actions { flex-direction:column; align-items:stretch; } .member-role-actions :global(.btn) { width:100%; min-height:44px; } .member-role-form input:not([type="radio"]), .member-role-form select, .member-role-form .radio-group label { min-height:44px; } .member-role-form .radio-group { flex-direction:column; gap:4px; } }
 </style>

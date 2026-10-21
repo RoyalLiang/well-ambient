@@ -107,23 +107,11 @@ test('responsive interaction targets and transparency fallback are explicit', ()
   assert.match(modal, /backdrop-filter: none/);
 });
 
-test('policy switches are parent-owned, reversible and fully labelled', () => {
-  assert.match(center, /const previousPolicy = \{ \.\.\.activeRepo\.policy \}/);
-  assert.match(center, /const nextPolicy = \{ \.\.\.previousPolicy, \.\.\.change \}/);
-  assert.match(center, /body: JSON\.stringify\(\{\s*project_id: activeRepo\.project_id,\s*\.\.\.change,/);
-  assert.match(center, /policy: nextPolicy/);
-  assert.match(center, /policy: previousPolicy/);
-  assert.match(center, /Commit 自动同步已\$\{p\.sync_commits \? "开启" : "关闭"\}/);
-  assert.match(center, /MR 自动同步已\$\{p\.sync_mrs \? "开启" : "关闭"\}/);
-  assert.match(center, /class="cr-policy-feedback"/);
-  assert.match(center, /saving=\{policySaving === "sync_commits"\}/);
-  assert.match(center, /saving=\{policySaving === "sync_mrs"\}/);
-  assert.match(center, /expandedHitArea/);
-  assert.match(center, /自动同步评论按仓库独立设置/);
+test('repository switching keeps the review list free of duplicate policy controls', () => {
+  assert.doesNotMatch(center, /<details class="cr-policy"/);
+  assert.doesNotMatch(center, /<details class="cr-rules"/);
+  assert.doesNotMatch(center, /id="code-review-sync-(commits|mrs)"/);
+  const governance = source('src/components/AIGovernanceCenter.svelte');
+  assert.match(governance, /保存评审规则|仓库.*规则|评审规则/);
   assert.match(switchSource, /export let saving = false/);
-  assert.match(switchSource, /export let expandedHitArea = false/);
-  assert.match(switchSource, /class:expanded-hit-area=\{expandedHitArea\}/);
-  assert.match(switchSource, /\.expanded-hit-area \.switch-control \{[\s\S]*?height: 44px/);
-  assert.match(switchSource, /<label class="switch-label" for=\{controlId\}>/);
-  assert.match(switchSource, /disabled=\{disabled \|\| saving\}/);
 });

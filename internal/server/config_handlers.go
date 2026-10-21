@@ -422,14 +422,29 @@ func testJiraConnection(cfg *config.JiraConfig) (bool, string, string) {
 
 // handleGetGitLabProjects fetches project list from GitLab API for selection
 func (s *Server) handleGetGitLabProjects(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	baseURL := r.URL.Query().Get("base_url")
 	token := r.URL.Query().Get("api_token")
+	if r.Method == http.MethodPost {
+		var input struct {
+			BaseURL  string `json:"base_url"`
+			APIToken string `json:"api_token"`
+		}
+		if err := decodeOpenJSON(r, &input); err != nil {
+			http.Error(w, "Invalid request", http.StatusBadRequest)
+			return
+		}
+		baseURL, token = input.BaseURL, input.APIToken
+	}
 	if token == configuredSecretPlaceholder && s.config != nil {
+		if strings.TrimRight(baseURL, "/") != strings.TrimRight(s.config.GitLab.BaseURL, "/") {
+			http.Error(w, "Re-enter API token for a changed GitLab server", http.StatusBadRequest)
+			return
+		}
 		token = s.config.GitLab.APIToken
 	}
 

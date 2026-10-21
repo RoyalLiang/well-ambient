@@ -5,12 +5,49 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"well-ambient/internal/db"
 	"well-ambient/internal/openaccess"
 	"well-ambient/internal/runtimeknowledge"
 )
+
+func (s *Server) handleRuntimeKnowledgeBrowse(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	parse := func(key string) (uint, error) {
+		if q.Get(key) == "" {
+			return 0, nil
+		}
+		v, err := strconv.ParseUint(q.Get(key), 10, 32)
+		return uint(v), err
+	}
+	snapshot, err := parse("snapshot_id")
+	if err != nil {
+		http.Error(w, "Invalid snapshot", http.StatusBadRequest)
+		return
+	}
+	after, err := parse("after")
+	if err != nil {
+		http.Error(w, "Invalid cursor", http.StatusBadRequest)
+		return
+	}
+	value, err := s.runtimeKnowledge().Browse(r.Context(), runtimeknowledge.BrowseRequest{SnapshotID: snapshot, After: after, Kind: q.Get("kind"), ScopeID: q.Get("scope_id"), Query: q.Get("q"), SourceRef: q.Get("source_ref")})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if openaccess.ErrorCode(err) == "invalid_query" {
+			status = http.StatusBadRequest
+		}
+		if openaccess.ErrorCode(err) == "conflict" {
+			status = http.StatusConflict
+		}
+		http.Error(w, http.StatusText(status), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(value)
+}
 
 func (s *Server) startRuntimeKnowledgeWorker(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
@@ -78,10 +115,7 @@ func (s *Server) openKnowledgeContext(r *http.Request, call openCall) (openResul
 		return openResult{}, err
 	}
 	value, err := s.runtimeKnowledge().Context(r.Context(), call.Policy, req)
-	refs := make([]string, 0, len(value.Evidence))
-	for _, e := range value.Evidence {
-		refs = append(refs, e.SourceRef)
-	}
+	refs := value.AuditRefs
 	return openResult{Body: value, TargetRefs: refs}, err
 }
 func (s *Server) openKnowledgeEvidence(r *http.Request, call openCall) (openResult, error) {
