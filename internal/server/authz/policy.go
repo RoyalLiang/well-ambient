@@ -170,7 +170,12 @@ func (e Evaluator) resolveSubject(ctx context.Context, subject Subject) (resolve
 	if subject.UserID != 0 {
 		query = query.Where("id = ?", subject.UserID)
 	} else {
-		query = query.Where("username = ?", strings.TrimSpace(subject.Username))
+		resolved, err := userdb.ResolveIdentity(ctx, e.db, subject.Username)
+		if err != nil {
+			return resolvedSubject{}, err
+		}
+		user = resolved
+		query = query.Where("id = ?", user.ID)
 	}
 	if err := query.First(&user).Error; err != nil {
 		return resolvedSubject{}, err

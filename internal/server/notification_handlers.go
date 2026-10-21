@@ -7,7 +7,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"io"
 	"log"
 	"net"
@@ -1102,8 +1104,8 @@ func (s *Server) handleDegradedLogin(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
-	var dbUser userdb.User
-	if err := db.DB.Where("username = ?", username).First(&dbUser).Error; err != nil {
+	dbUser, identityErr := userdb.ResolveIdentity(r.Context(), db.DB, username)
+	if identityErr != nil {
 		if isMaintenance {
 			writeLoginError(
 				w,
@@ -1468,7 +1470,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var userCount int64
 	db.DB.Model(&userdb.User{}).Count(&userCount)
 
-	err = db.DB.Where("username = ?", req.Username).First(&dbUser).Error
+	dbUser, err = userdb.ResolveIdentity(r.Context(), db.DB, req.Username)
+	if errors.Is(err, gorm.ErrRecordNotFound) && email != req.Username && strings.Contains(email, "@") {
+		dbUser, err = userdb.ResolveIdentity(r.Context(), db.DB, email)
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		writeLoginError(w, http.StatusInternalServerError, "identity_unavailable", "Unable to load the registered account")
+		return
+	}
 	if err != nil {
 		// New User
 		dbUser = userdb.User{
@@ -1480,6 +1489,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := db.DB.Create(&dbUser).Error; err != nil {
 			log.Printf("Error creating user %s: %v", req.Username, err)
+			writeLoginError(w, http.StatusConflict, "identity_conflict", "Unable to register the authenticated account")
+			return
 		}
 
 		// Determine group assignment (first user gets super_admin, others get member)
@@ -1530,7 +1541,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	sessionAvatar := firstNonBlank(dbUser.Avatar, avatar)
 
 	// Generate our own JWT token (valid for 2 hours)
-	ourToken, err := GenerateJWT(req.Username, sessionName, token, sessionAvatar, groupNames, permCodes, dbUser.Department)
+	ourToken, err := GenerateJWT(dbUser.Username, sessionName, token, sessionAvatar, groupNames, permCodes, dbUser.Department)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1547,7 +1558,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"status": "success",
 		"token":  ourToken,
 		"user": map[string]interface{}{
-			"username":    req.Username,
+			"username":    dbUser.Username,
 			"name":        sessionName,
 			"avatar":      sessionAvatar,
 			"role":        role,
