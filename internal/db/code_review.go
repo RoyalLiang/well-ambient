@@ -2,10 +2,14 @@ package db
 
 import "time"
 
+// CodeReviewMRsColumn is fixed by the published review-type migration.
+// GORM otherwise expands ReviewMRs to review_m_rs.
+const CodeReviewMRsColumn = "review_mrs"
+
 // CodeReviewPolicy is an explicit repository-level contract, independent of MR closure.
 type CodeReviewPolicy struct {
 	ReviewCommits  *bool     `json:"review_commits"`
-	ReviewMRs      *bool     `json:"review_mrs"`
+	ReviewMRs      *bool     `gorm:"column:review_mrs" json:"review_mrs"`
 	ProjectID      string    `gorm:"primaryKey;size:160" json:"project_id"`
 	AutoReview     bool      `json:"auto_review"`
 	SyncCommits    bool      `json:"sync_commits"`

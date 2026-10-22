@@ -149,7 +149,7 @@ test('AI governance mutation controls use the authoritative write permissions', 
   assert.match(aiGov, /\{#if canManageSkills\}[\s\S]*?openUpgradeModal/);
   assert.match(aiGov, /canWriteRules = canWriteAIGovernanceRules/);
   assert.match(aiGov, /disabled=\{!canWriteRules \|\| savingPolicy \|\| !!savingRepoSetting/);
-  assert.match(aiGov, /readonly=\{!canWriteRules \|\| savingPolicy \|\| !!savingRepoSetting\}/);
+  assert.match(aiGov, /readonly=\{!canWriteRules \|\| savingPolicy \|\| !!savingRepoSetting \|\| loadingPolicies\}/);
 
   assert.match(aiConfig, /canWriteContext = hasGovernancePermission\('ai_context:write'\)/);
   assert.match(aiConfig, /canPreviewContext = hasGovernancePermission\('ai_context:preview'\)/);

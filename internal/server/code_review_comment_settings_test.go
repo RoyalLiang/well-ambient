@@ -131,3 +131,63 @@ func TestCodeReviewPolicySaveClearsLegacyHiddenScope(t *testing.T) {
 		t.Fatalf("saved policy differs from fixed runtime contract: %+v", stored)
 	}
 }
+
+// Match the published PostgreSQL schema rather than deriving it from the Go
+// model: AutoMigrate would conceal acronym-to-column naming regressions.
+func TestCodeReviewControlsPersistAgainstPublishedSchema(t *testing.T) {
+	srv, token := reviewCommentSettingsServer(t)
+	usePublishedReviewPolicySchema(t)
+	fields := []string{"sync_commits", "sync_mrs", "review_commits", "review_mrs"}
+	for _, enabled := range []bool{false, true} {
+		for _, field := range fields {
+			body := fmt.Sprintf(`{"%s":%t}`, field, enabled)
+			w := reviewRequest(srv, token, "PATCH", "/api/code-reviews/comment-settings", body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("global %s=%t save=%d/%s", field, enabled, w.Code, w.Body.String())
+			}
+			w = reviewRequest(srv, token, "GET", "/api/code-reviews/comment-settings", "")
+			var saved map[string]bool
+			if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil || w.Code != http.StatusOK || saved[field] != enabled {
+				t.Fatalf("global %s=%t persisted=%d/%s err=%v", field, enabled, w.Code, w.Body.String(), err)
+			}
+		}
+	}
+	w := reviewRequest(srv, token, "PUT", "/api/code-reviews/policy", `{"project_id":"10","rules":"keep repository rules"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial repository rules=%d/%s", w.Code, w.Body.String())
+	}
+	for _, enabled := range []bool{true, false} {
+		for _, field := range fields {
+			body := fmt.Sprintf(`{"project_id":"10","%s":%t}`, field, enabled)
+			w = reviewRequest(srv, token, "PUT", "/api/code-reviews/policy", body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("repository %s=%t save=%d/%s", field, enabled, w.Code, w.Body.String())
+			}
+			w = reviewRequest(srv, token, "GET", "/api/code-reviews/repos", "")
+			var saved struct {
+				Repos []struct {
+					Policy map[string]any `json:"policy"`
+				} `json:"repos"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil || w.Code != http.StatusOK || len(saved.Repos) != 1 || saved.Repos[0].Policy[field] != enabled || saved.Repos[0].Policy["rules"] != "keep repository rules" {
+				t.Fatalf("repository %s=%t persisted=%d/%s err=%v", field, enabled, w.Code, w.Body.String(), err)
+			}
+		}
+	}
+}
+
+func usePublishedReviewPolicySchema(t *testing.T) {
+	t.Helper()
+	for _, query := range []string{
+		`DROP TABLE code_review_policies`,
+		`CREATE TABLE code_review_policies (
+		 project_id varchar(160) PRIMARY KEY, auto_review boolean,
+		 sync_commits boolean, sync_m_rs boolean, domain varchar(32),
+		 scenario varchar(64), knowledge_scope varchar(160), rules text,
+		 updated_at datetime, review_commits boolean, review_mrs boolean)`,
+	} {
+		if err := db.DB.Exec(query).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}

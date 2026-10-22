@@ -36,6 +36,7 @@
   export let placeholder = '使用 Markdown 编写内容…';
   export let minHeight = 460;
   export let showToolbar = true;
+  export let showStatusDescription = true;
   export let showDocumentMeta = false;
   export let embedded = false;
   export let fullWidthPreview = false;
@@ -501,11 +502,13 @@
     </article>
   </div>
 
-  {#if showToolbar && mode !== 'preview'}
+  {#if showToolbar && mode !== 'preview' && (showStatusDescription || saving)}
     <footer class="workbench-status" aria-live="polite">
-      <span>{mode === 'live' ? '即时排版 · 当前行显示语法' : 'Markdown'}</span>
-      <span>{lineCount} 行 · {value.length} 字符</span>
-      {#if !readonly}<span>⌘S 保存</span>{/if}
+      {#if showStatusDescription}
+        <span>{mode === 'live' ? '即时排版 · 当前行显示语法' : 'Markdown'}</span>
+        <span>{lineCount} 行 · {value.length} 字符</span>
+        {#if !readonly}<span>⌘S 保存</span>{/if}
+      {:else if saving}<span>保存中…</span>{/if}
     </footer>
   {/if}
 </section>

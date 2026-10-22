@@ -77,7 +77,7 @@ func (s *Service) PatchCommentSettings(ctx context.Context, commits, mrs *bool, 
 		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "ReviewCommits"))
 	}
 	if len(reviews) > 1 && reviews[1] != nil {
-		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "ReviewMRs"))
+		columns = append(columns, db.CodeReviewMRsColumn)
 	}
 	if commits != nil {
 		columns = append(columns, s.DB.NamingStrategy.ColumnName("", "SyncCommits"))

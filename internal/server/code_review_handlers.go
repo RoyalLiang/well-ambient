@@ -188,7 +188,11 @@ func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Reque
 		columns = append(columns, "Rules")
 	}
 	for i, column := range columns {
-		columns[i] = db.DB.NamingStrategy.ColumnName("", column)
+		if column == "ReviewMRs" {
+			columns[i] = db.CodeReviewMRsColumn
+		} else {
+			columns[i] = db.DB.NamingStrategy.ColumnName("", column)
+		}
 	}
 	p.UpdatedAt = time.Now()
 	if err := db.DB.WithContext(r.Context()).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: db.DB.NamingStrategy.ColumnName("", "ProjectID")}}, DoUpdates: clause.AssignmentColumns(columns)}).Create(&p).Error; err != nil {

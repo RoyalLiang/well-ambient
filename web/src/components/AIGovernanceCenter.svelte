@@ -4,7 +4,8 @@
   import DOMPurify from 'dompurify';
   import Select from './shared/Select.svelte';
   import Button from './shared/Button.svelte';
-  import Switch from './shared/Switch.svelte';
+  import ReviewControlMatrix from './config/ReviewControlMatrix.svelte';
+  import { showToast } from '../lib/toast';
   import TextInput from './shared/TextInput.svelte';
   import Textarea from './shared/Textarea.svelte';
   import MarkdownWorkbench from './shared/MarkdownWorkbench.svelte';
@@ -333,15 +334,12 @@
   let commentSettings: CommentSettings | null = null;
   let savingCommentSetting: CommentSetting | null = null;
   let savingRepoSetting: CommentSetting | null = null;
-  let commentSettingsNotice = '';
-  let commentSettingsError = '';
   let policySearch = '';
   let policyDrafts: Record<string, string> = {};
   let loadingPolicies = false;
   let selectedPolicyRepo = '';
   let editingPolicy: ReviewRepoPolicy | null = null;
   let savingPolicy = false;
-  let policyNotice = '';
   let policyError = '';
   $: visibleRepoPolicies = repoPolicies.filter((repo) =>
     `${repo.repo_name} ${repo.project_id}`.toLowerCase().includes(policySearch.trim().toLowerCase())
@@ -837,84 +835,71 @@ activation:
   function selectRepoPolicy(repo: ReviewRepoPolicy) {
     if (savingPolicy || savingRepoSetting) return;
     if (editingPolicy) policyDrafts = { ...policyDrafts, [editingPolicy.project_id]: editingPolicy.rules };
-    policyNotice = '';
-    policyError = '';
     selectedPolicyRepo = repo.project_id;
     editingPolicy = { ...repo, rules: policyDrafts[repo.project_id] ?? repo.rules };
   }
 
   function readCommentSettings(value: any): CommentSettings {
-    if (typeof value?.sync_commits !== 'boolean' || typeof value?.sync_mrs !== 'boolean') {
-      throw new Error('评论同步设置响应不完整，请重试。');
-    }
-    return { sync_commits: value.sync_commits, sync_mrs: value.sync_mrs, review_commits:value.review_commits!==false, review_mrs:value.review_mrs!==false };
+    const fields: CommentSetting[] = ['review_mrs', 'review_commits', 'sync_mrs', 'sync_commits'];
+    if (fields.some((field) => typeof value?.[field] !== 'boolean')) throw new Error('评审与评论设置响应不完整，请重试。');
+    return { review_mrs: value.review_mrs, review_commits: value.review_commits, sync_mrs: value.sync_mrs, sync_commits: value.sync_commits };
+  }
+
+  function settingLabel(field: CommentSetting) {
+    return `${field.endsWith('mrs') ? 'MR' : 'Commit'} ${field.startsWith('review') ? '评审' : '评论'}`;
   }
 
   async function saveCommentSetting(field: CommentSetting, checked: boolean) {
-    if (!canWriteRules || !commentSettings || savingCommentSetting) return;
+    if (!canWriteRules || !commentSettings || savingCommentSetting || loadingPolicies) return;
     savingCommentSetting = field;
-    commentSettingsNotice = '';
-    commentSettingsError = '';
     try {
-      commentSettings = readCommentSettings(await api('/api/code-reviews/comment-settings', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: checked })
+      const confirmed = readCommentSettings(await api('/api/code-reviews/comment-settings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: checked })
       }));
-      commentSettingsNotice = `全局 ${field.endsWith('mrs') ? 'MR' : 'Commit'} ${field.startsWith('review')?'评审':'评论'}${checked ? '已允许' : '已暂停'}。`;
+      if (confirmed[field] !== checked) throw new Error('设置未生效，请重试。');
+      commentSettings = confirmed;
+      showToast(`全局 ${settingLabel(field)}${checked ? '已开启' : '已暂停'}。`, { type: 'success' });
     } catch (err: any) {
-      commentSettingsError = err.message || '保存全局评论设置失败';
-    } finally {
-      savingCommentSetting = null;
-    }
+      showToast(`全局 ${settingLabel(field)}：${err.message || '请重试。'}`, { type: 'error', title: '保存失败' });
+    } finally { savingCommentSetting = null; }
   }
 
   async function saveRepoSetting(field: CommentSetting, checked: boolean) {
-    if (!canWriteRules || !editingPolicy || savingRepoSetting || savingPolicy) return;
+    if (!canWriteRules || !editingPolicy || savingRepoSetting || savingPolicy || loadingPolicies) return;
     const projectID = editingPolicy.project_id;
+    const repoName = editingPolicy.repo_name || `仓库 #${projectID}`;
     savingRepoSetting = field;
-    policyNotice = '';
-    policyError = '';
     try {
-      await api('/api/code-reviews/policy', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_id: projectID, [field]: checked })
-      });
-      repoPolicies = repoPolicies.map((repo) => repo.project_id === projectID ? { ...repo, [field]: checked } : repo);
-      if (editingPolicy?.project_id === projectID) editingPolicy = { ...editingPolicy, [field]: checked };
-      policyNotice = `仓库 ${field.endsWith('mrs') ? 'MR' : 'Commit'} ${field.startsWith('review')?'评审':'评论'}设置已保存。`;
+      const confirmed = readCommentSettings(await api('/api/code-reviews/policy', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: projectID, [field]: checked })
+      }));
+      if (confirmed[field] !== checked) throw new Error('设置未生效，请重试。');
+      repoPolicies = repoPolicies.map((repo) => repo.project_id === projectID ? { ...repo, ...confirmed } : repo);
+      if (editingPolicy?.project_id === projectID) editingPolicy = { ...editingPolicy, ...confirmed };
+      showToast(`${repoName} · ${settingLabel(field)}${checked ? '已开启' : '已暂停'}。`, { type: 'success' });
     } catch (err: any) {
-      policyError = err.message || '保存仓库评论设置失败';
-    } finally {
-      savingRepoSetting = null;
-    }
+      showToast(`${repoName} · ${settingLabel(field)}：${err.message || '请重试。'}`, { type: 'error', title: '保存失败' });
+    } finally { savingRepoSetting = null; }
   }
 
   async function saveRepoPolicy() {
-    if (!canWriteRules || !editingPolicy || savingPolicy || savingRepoSetting) return;
+    if (!canWriteRules || !editingPolicy || savingPolicy || savingRepoSetting || loadingPolicies) return;
     const savedPolicy = { ...editingPolicy };
     savingPolicy = true;
-    policyNotice = '';
-    policyError = '';
     try {
-      await api('/api/code-reviews/policy', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: savedPolicy.project_id,
-          rules: savedPolicy.rules
-        })
+      const confirmed = await api<{ rules: string }>('/api/code-reviews/policy', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: savedPolicy.project_id, rules: savedPolicy.rules })
       });
-      repoPolicies = repoPolicies.map((repo) => repo.project_id === savedPolicy.project_id ? { ...repo, rules: savedPolicy.rules } : repo);
-      policyDrafts = { ...policyDrafts, [savedPolicy.project_id]: savedPolicy.rules };
-      policyNotice = '规则已保存，将用于后续代码评审。';
+      if (confirmed?.rules !== savedPolicy.rules) throw new Error('规则未确认保存，请重试。');
+      repoPolicies = repoPolicies.map((repo) => repo.project_id === savedPolicy.project_id ? { ...repo, rules: confirmed.rules } : repo);
+      policyDrafts = { ...policyDrafts, [savedPolicy.project_id]: confirmed.rules };
+      showToast(`${savedPolicy.repo_name || `仓库 #${savedPolicy.project_id}`} · 规则已保存。`, { type: 'success' });
     } catch (err: any) {
-      policyError = err.message || '更新规则失败';
-    } finally {
-      savingPolicy = false;
-    }
+      showToast(err.message || '请重试。', { type: 'error', title: '规则保存失败' });
+    } finally { savingPolicy = false; }
   }
 
-  // File drag & upload helper for Manifest
   function handleFileUpload(e: Event) {
     const target = e.target as HTMLInputElement;
     if (target.files && target.files[0]) {
@@ -1376,39 +1361,22 @@ activation:
     <section id="ai-governance-panel-rules" class="gov-pane rules-pane" role="tabpanel"
       aria-labelledby="ai-governance-tab-rules" aria-busy={loadingPolicies}>
       {#if !canWriteRules}
-        <div class="gov-notice" role="status">当前为只读模式。保存规则需要 config:write 权限。</div>
+        <div class="gov-notice" role="status">只读模式</div>
       {/if}
       {#if policyError}
         <div class="gov-notice error" role="alert">
           <span>{policyError}</span>
-          {#if !editingPolicy}<Button variant="secondary" size="small" on:click={() => retrySection('rules')}>重试</Button>{/if}
+          <Button variant="secondary" size="small" on:click={() => retrySection('rules')}>重新加载</Button>
         </div>
       {/if}
       <div class="rules-workbench">
         <header class="rules-context-header">
-          <div class="rules-heading"><h2>规则与标准</h2><p>管理仓库工程规则与评审评论。</p></div>
-          <section class="global-comment-settings" aria-label="全局评审设置">
-              <div class="comment-switch-row">
-                <Switch optimistic={false} id="global-review-mrs" label="MR 评审" expandedHitArea checked={commentSettings?.review_mrs ?? false} saving={savingCommentSetting==='review_mrs'} disabled={!canWriteRules||!commentSettings||!!savingCommentSetting||loadingPolicies} on:change={e=>saveCommentSetting('review_mrs',e.detail)} />
-                <Switch optimistic={false} id="global-review-commits" label="Commit 评审" expandedHitArea checked={commentSettings?.review_commits ?? false} saving={savingCommentSetting==='review_commits'} disabled={!canWriteRules||!commentSettings||!!savingCommentSetting||loadingPolicies} on:change={e=>saveCommentSetting('review_commits',e.detail)} />
-              </div><p>分别控制后续评审；都开启时，两类变更都会评审。</p>
-            </section>
-<section class="global-comment-settings" aria-label="全局评论设置">
-            <div class="comment-switch-row">
-              <Switch optimistic={false} id="global-policy-sync-commits" label="全局 Commit 评论" expandedHitArea
-                checked={commentSettings?.sync_commits ?? false} saving={savingCommentSetting === 'sync_commits'}
-                disabled={!canWriteRules || !commentSettings || !!savingCommentSetting || loadingPolicies}
-                on:change={(event) => saveCommentSetting('sync_commits', event.detail)} />
-              <Switch optimistic={false} id="global-policy-sync-mrs" label="全局 MR 评论" expandedHitArea
-                checked={commentSettings?.sync_mrs ?? false} saving={savingCommentSetting === 'sync_mrs'}
-                disabled={!canWriteRules || !commentSettings || !!savingCommentSetting || loadingPolicies}
-                on:change={(event) => saveCommentSetting('sync_mrs', event.detail)} />
-            </div>
-            <p>全局允许后，按各仓库设置发布。</p>
-            {#if commentSettingsError}<p class="policy-feedback is-error" role="alert">{commentSettingsError}</p>
-            {:else if commentSettingsNotice}<p class="policy-feedback" role="status">{commentSettingsNotice}</p>{/if}
-          </section>
-        </header>
+            <div class="rules-heading"><h2>规则与标准</h2></div>
+            <ReviewControlMatrix title="全局" idPrefix="global-review-controls"
+              values={commentSettings} saving={savingCommentSetting} loading={loadingPolicies}
+              disabled={!canWriteRules || !commentSettings || !!savingCommentSetting || loadingPolicies}
+              onChange={saveCommentSetting} />
+          </header>
         <div class="rules-workbench-body">
           <aside class="wa-admin-card rules-repo-list" aria-label="规则所属仓库">
               <AdminListFilterBar label="仓库规则列表筛选" className="rules-repo-filter">
@@ -1431,51 +1399,32 @@ activation:
             <section class="wa-admin-card rules-editor-pane" aria-label="仓库规则编辑">
             {#if editingPolicy}
               <header class="policy-editor-header">
-                <div class="policy-editor-title">
-                  <h3>{editingPolicy.repo_name || `仓库 #${editingPolicy.project_id}`}</h3>
-                  <p>项目 ID {editingPolicy.project_id}</p>
-                </div>
-                <div class="repo-comment-settings" aria-label="当前仓库评审设置"><div class="comment-switch-row">
-                 <Switch optimistic={false} id="repo-review-mrs" label="MR 评审" expandedHitArea checked={editingPolicy.review_mrs} saving={savingRepoSetting==='review_mrs'} disabled={!canWriteRules||savingPolicy||!!savingRepoSetting||loadingPolicies} on:change={e=>saveRepoSetting('review_mrs',e.detail)} />
-                 <Switch optimistic={false} id="repo-review-commits" label="Commit 评审" expandedHitArea checked={editingPolicy.review_commits} saving={savingRepoSetting==='review_commits'} disabled={!canWriteRules||savingPolicy||!!savingRepoSetting||loadingPolicies} on:change={e=>saveRepoSetting('review_commits',e.detail)} />
-                </div><p>{commentSettings&&(!commentSettings.review_mrs||!commentSettings.review_commits)?`全局已暂停${!commentSettings.review_mrs&&!commentSettings.review_commits?' MR 与 Commit ':!commentSettings.review_mrs?' MR ':' Commit '}评审。`:'同时受全局评审开关控制。'}</p></div>
-<div class="repo-comment-settings" aria-label="当前仓库评论设置">
-                  <div class="comment-switch-row">
-                    <Switch optimistic={false} id="policy-sync-commits" label="Commit 评论" expandedHitArea
-                      checked={editingPolicy.sync_commits} saving={savingRepoSetting === 'sync_commits'}
-                      disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies}
-                      on:change={(event) => saveRepoSetting('sync_commits', event.detail)} />
-                    <Switch optimistic={false} id="policy-sync-mrs" label="MR 评论" expandedHitArea
-                      checked={editingPolicy.sync_mrs} saving={savingRepoSetting === 'sync_mrs'}
-                      disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies}
-                      on:change={(event) => saveRepoSetting('sync_mrs', event.detail)} />
-                  </div>
-                  {#if commentSettings && (!commentSettings.sync_commits || !commentSettings.sync_mrs)}
-                    <p class="policy-gate-note">全局已暂停{!commentSettings.sync_commits && !commentSettings.sync_mrs ? ' Commit 与 MR ' : !commentSettings.sync_commits ? ' Commit ' : ' MR '}评论发布。</p>
-                  {/if}
-                </div>
-              </header>
-              <div class="policy-document-heading">
-                <div><h4>自定义工程规则</h4><p>{policyRulesDirty ? '有未保存的修改' : '保存后用于后续代码评审'}</p></div>
-                <Button variant="primary" size="small" loading={savingPolicy}
-                  disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || !policyRulesDirty || editingPolicy.rules.length > 8000}
-                  on:click={saveRepoPolicy}>保存规则</Button>
+              <div class="policy-editor-title">
+                <h3>{editingPolicy.repo_name || `仓库 #${editingPolicy.project_id}`}</h3>
+                <p>ID {editingPolicy.project_id}</p>
               </div>
-              {#if policyNotice}<p class="policy-feedback" role="status">{policyNotice}</p>{/if}
-              {#if editingPolicy.rules.length > 8000}<p class="policy-feedback is-error" role="alert">规则内容超过 8000 字符，请精简后保存。</p>{/if}
+              <ReviewControlMatrix title="当前仓库" idPrefix="repo-review-controls"
+                values={editingPolicy} globalValues={commentSettings} saving={savingRepoSetting} loading={loadingPolicies}
+                disabled={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies}
+                onChange={saveRepoSetting} />
+            </header>
+              <div class="policy-document-heading">
+              <div class="policy-document-title"><h4>工程规则</h4>{#if policyRulesDirty}<span class="policy-draft-state" role="status">未保存</span>{/if}</div>
+              <Button variant="primary" size="small" disabled={!canWriteRules || !policyRulesDirty || savingPolicy || !!savingRepoSetting || loadingPolicies || editingPolicy.rules.length > 8000} loading={savingPolicy} on:click={saveRepoPolicy}>保存规则</Button>
+            </div>
+            {#if editingPolicy.rules.length > 8000}<p class="policy-feedback is-error" role="alert">规则内容超过 8000 字符，请精简后保存。</p>{/if}
               <div class="policy-primary-editor">
                 {#key editingPolicy.project_id}
-                  <MarkdownWorkbench bind:value={editingPolicy.rules} mode="live" availableModes={['live']}
+                  <MarkdownWorkbench bind:value={editingPolicy.rules} showStatusDescription={false} mode="live" availableModes={['live']}
                     label="自定义工程规则" description="编辑即排版，支持 Markdown" embedded minHeight={360}
-                    readonly={!canWriteRules || savingPolicy || !!savingRepoSetting} saving={savingPolicy}
-                    placeholder={'编写本仓库的工程规则，例如：\n\n## 评审重点\n- 核对接口约定与异常处理\n- 补充关键业务场景的验证依据'}
-                    on:save={() => { if (policyRulesDirty && editingPolicy && editingPolicy.rules.length <= 8000) void saveRepoPolicy(); }} />
+                    readonly={!canWriteRules || savingPolicy || !!savingRepoSetting || loadingPolicies} saving={savingPolicy}
+                    placeholder="输入仓库工程规则"
+                    on:save={() => { if (!loadingPolicies && policyRulesDirty && editingPolicy && editingPolicy.rules.length <= 8000) void saveRepoPolicy(); }} />
                 {/key}
               </div>
             {:else}
               <div class="rules-empty-editor" role="status">
-                <h3>{loadingPolicies ? '正在加载仓库规则…' : '选择一个仓库'}</h3>
-                <p>{loadingPolicies ? '规则加载完成后即可查看。' : '选择仓库以查看和编辑工程规则。'}</p>
+                <h3>{loadingPolicies ? '正在加载仓库规则…' : '选择仓库'}</h3>
               </div>
             {/if}
           </section>
@@ -2579,12 +2528,12 @@ activation:
   .rules-workbench { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--wa-space-3); }
   .rules-context-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-6); padding: var(--wa-space-3) var(--wa-space-4); }
   .rules-heading { min-width: 0; }
+  .rules-context-header :global(.review-control-matrix),
+  .policy-editor-header :global(.review-control-matrix) { flex-shrink: 0; margin-left: auto; }
+  .policy-document-title { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .policy-draft-state { font-size: 12px; color: var(--wa-accent-strong); }
+  .policy-feedback.is-error { color: var(--wa-danger); }
   .rules-context-header h2 { margin: 0; color: var(--wa-text-strong); font-size: 16px; line-height: 1.4; font-weight: 700; }
-  .rules-context-header p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
-  .global-comment-settings { min-width: 0; }
-  .comment-switch-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wa-space-2) var(--wa-space-5); }
-  .comment-switch-row :global(.switch-label) { font-size: 12px; white-space: nowrap; }
-  .comment-switch-row :global(.switch-container) { gap: var(--wa-space-2); }
   .rules-workbench-body { flex: 1 1 0; display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: var(--wa-space-3); align-items: stretch; }
   .rules-repo-list, .rules-editor-pane { min-width: 0; min-height: 0; height: 100%; box-sizing: border-box; overflow: hidden; }
   .rules-repo-list { display: flex; flex-direction: column; padding: 0; }
@@ -2607,30 +2556,23 @@ activation:
   .repo-rule-state.is-draft { color: var(--wa-accent-strong); }
   .rules-editor-pane { display: flex; flex-direction: column; padding: var(--wa-space-4) var(--wa-space-5); }
   .policy-editor-header { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--wa-space-3); padding-bottom: var(--wa-space-4); border-bottom: 1px solid var(--wa-border-divider); }
-  .policy-editor-title { flex: 1 1 160px; min-width: 0; }
+  .policy-editor-title { flex: 1 1 180px; min-width: 0; }
   .policy-editor-header h3 { margin: 0; font-size: 16px; line-height: 1.4; overflow-wrap: anywhere; color: var(--wa-text-strong); }
   .policy-editor-header p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
-  .repo-comment-settings { min-width: 0; }
-  .policy-gate-note { text-align: right; }
   .policy-document-heading { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: var(--wa-space-3); margin: var(--wa-space-4) 0 var(--wa-space-3); }
   .policy-document-heading h4 { margin: 0; color: var(--wa-text-main); font-size: 13px; font-weight: 650; }
-  .policy-document-heading p { margin: var(--wa-space-1) 0 0; color: var(--wa-text-muted); font-size: 12px; line-height: 1.5; }
   .policy-document-heading :global(.btn) { flex-shrink: 0; min-width: 90px; }
   .policy-primary-editor { flex: 1 1 0; min-width: 0; min-height: 0; }
   .policy-primary-editor :global(.markdown-workbench) { height: 100%; }
   .policy-feedback { flex: 0 0 auto; margin: 0 0 var(--wa-space-3); color: var(--wa-accent-strong); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-  .rules-context-header .policy-feedback { color: var(--wa-accent-strong); }
-  .policy-feedback.is-error, .rules-context-header .policy-feedback.is-error { color: var(--wa-danger, #b42318); }
   .rules-empty { color: var(--wa-text-muted); font-size: 13px; line-height: 1.6; }
   .rules-empty-editor { flex: 1; display: grid; align-content: center; min-height: 0; text-align: center; padding: var(--wa-space-5); }
   .rules-empty-editor h3 { margin: 0; color: var(--wa-text-strong); font-size: 15px; }
-  .rules-empty-editor p { margin: var(--wa-space-2) 0 0; color: var(--wa-text-muted); font-size: 13px; line-height: 1.6; }
 
   @media (min-width: 761px) and (max-width: 1100px) {
     .rules-workbench-body { grid-template-columns: minmax(230px, 32%) minmax(0, 1fr); }
     .rules-context-header { align-items: flex-start; gap: var(--wa-space-3); }
     .rules-editor-pane { padding: var(--wa-space-4); }
-    .comment-switch-row { gap: var(--wa-space-1) var(--wa-space-3); }
   }
   @media (max-width: 760px) {
     .gov-pane.rules-pane { overflow-y: auto; }
@@ -2641,7 +2583,6 @@ activation:
     .rules-editor-pane { height: auto; min-height: 600px; padding: var(--wa-space-4); }
     .policy-editor-header { align-items: flex-start; }
     .policy-editor-title { flex-basis: 100%; }
-    .policy-gate-note { text-align: left; }
     .policy-primary-editor { flex: 0 0 auto; height: 420px; }
   }
 
