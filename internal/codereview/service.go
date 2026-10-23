@@ -23,6 +23,10 @@ type Service struct {
 	Config   func() *config.Config
 	HTTP     *http.Client
 	Generate func(context.Context, string, string) (string, error)
+
+	// Package-local intervals let lifetime tests exercise the real monitor.
+	reviewPollInterval      time.Duration
+	reviewHeartbeatInterval time.Duration
 }
 
 var policyLocks sync.Map
@@ -327,24 +331,12 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if claim.Error != nil || claim.RowsAffected == 0 {
 		return false, claim.Error
 	}
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+	// Model generation inherits the caller's lifetime. User cancellation and
+	// service shutdown still stop it; a local fixed deadline must not kill it.
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				var current db.CodeReviewRun
-				if s.DB.WithContext(ctx).Select("status").First(&current, run.ID).Error == nil && current.Status == "cancelled" {
-					cancel()
-					return
-				}
-			}
-		}
-	}()
+	go s.monitorReviewRun(ctx, cancel, run.ID)
+
 	fail := func(e error) (bool, error) {
 		var current db.CodeReviewRun
 		if s.DB.Select("status").First(&current, run.ID).Error == nil && current.Status == "cancelled" {

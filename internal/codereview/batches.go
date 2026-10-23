@@ -86,6 +86,9 @@ func (s *Service) reviewSnapshot(ctx context.Context, ai config.AIConfig, prompt
 		}
 		raw, err := s.generateObserved(ctx, ai, batchPrompt, input, &snapshot.InputOptimization)
 		if err != nil {
+			if ctx.Err() != nil {
+				return Report{}, fmt.Errorf("第 %d/%d 批 AI 初审中断：%w", i+1, len(batches), ctx.Err())
+			}
 			return Report{}, fmt.Errorf("第 %d/%d 批 AI 初审失败，请检查模型服务后重试", i+1, len(batches))
 		}
 		draft, err := parseReport(raw, batch)
@@ -94,6 +97,9 @@ func (s *Service) reviewSnapshot(ctx context.Context, ai config.AIConfig, prompt
 		}
 		raw, err = s.generateObserved(ctx, ai, batchPrompt+"\n本轮是独立复核。先从代码重新判断，再核对初审。主动寻找反证，删除不成立或已经被其他代码保护的问题；不能把初审当作证据。输出相同 JSON 结构。", input+"\n<untrusted_draft>"+encode(draft)+"</untrusted_draft>", &snapshot.InputOptimization)
 		if err != nil {
+			if ctx.Err() != nil {
+				return Report{}, fmt.Errorf("第 %d/%d 批 AI 复核中断：%w", i+1, len(batches), ctx.Err())
+			}
 			return Report{}, fmt.Errorf("第 %d/%d 批 AI 复核失败，请重新评审", i+1, len(batches))
 		}
 		report, err := parseReport(raw, batch)
