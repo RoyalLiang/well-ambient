@@ -84,6 +84,13 @@ deploy/generated
 !.agents/skills/code-review-reader/references/error-handling.md
 !.agents/skills/code-review-reader/references/report-applicability.md
 !.agents/skills/code-review-reader/references/tool-contracts.md
+!.agents/skills/merge-review
+.agents/skills/merge-review/*
+!.agents/skills/merge-review/SKILL.md
+!.agents/skills/merge-review/references
+.agents/skills/merge-review/references/*
+!.agents/skills/merge-review/references/review_framework.md
+!.agents/skills/merge-review/references/report_templates.md
 
 !.agents/skills/runtime-knowledge
 .agents/skills/runtime-knowledge/*

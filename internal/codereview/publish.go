@@ -239,11 +239,14 @@ func (g GitLab) findComment(ctx context.Context, path, marker string) (int, bool
 func commentBody(run db.CodeReviewRun, r Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Code Review · %s\n\n代码版本：`%s`\n\n%s\n\n%s\n", r.Scenario, run.HeadSHA, r.Summary, r.Validation)
+	if r.ReviewMethod != nil {
+		fmt.Fprintf(&b, "\n评审方法：%s · 启用版本 %d · 内容摘要 `%s`\n", r.ReviewMethod.Name, r.ReviewMethod.Version, r.ReviewMethod.Hash)
+	}
 	if len(r.Findings) == 0 {
 		b.WriteString("\n在本次已读取范围内未发现具备源码证据的问题；不等同于安全或合并批准。\n")
 	}
 	for _, f := range r.Findings {
-		fmt.Fprintf(&b, "\n#### [%s] %s\n`%s:%d` · %s\n\n- 影响：%s\n- 建议：%s\n- 验证方法：%s\n", f.Severity, f.Title, f.File, f.Line, f.Dimension, f.Impact, f.Suggestion, f.Verification)
+		fmt.Fprintf(&b, "\n#### [%s] %s\n`%s:%d` · %s\n\n- 影响：%s\n- 建议：%s\n- 验证方法：%s\n", findingPriority(f), f.Title, f.File, f.Line, f.Dimension, f.Impact, f.Suggestion, f.Verification)
 		if len(f.KnowledgeIDs) > 0 {
 			fmt.Fprintf(&b, "- 系统知识引用：%v\n", f.KnowledgeIDs)
 		}
@@ -260,4 +263,11 @@ func commentBody(run db.CodeReviewRun, r Report) string {
 	b.WriteString("\n此评论由 well-ambient 自动评审生成，不会关闭或合并 MR。")
 	// Prevent untrusted model/source text from issuing broad GitLab mentions.
 	return strings.ReplaceAll(b.String(), "@", "＠")
+}
+
+func findingPriority(f Finding) string {
+	if f.Priority != "" {
+		return f.Priority
+	}
+	return f.Severity
 }

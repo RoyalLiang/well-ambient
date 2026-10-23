@@ -45,6 +45,7 @@ func allPageReadContracts() map[string]readmodel.Contract {
 		"/api/code-reviews":                                    detailRead("code-review-runs", readmodel.MaturityBounded, 200, "tasks.review"),
 		"/api/code-reviews/repos":                              directoryRead("code-review-repositories", readmodel.MaturityBounded, "tasks.review", "ai_governance.rules"),
 		"/api/code-reviews/comment-settings":                   singletonRead("code-review-comment-settings", readmodel.MaturityBounded, "tasks.review"),
+		"/api/code-reviews/{id}/export":                        detailRead("code-review-export", readmodel.MaturityBounded, 1, "tasks.review"),
 		"/api/code-reviews/{id}":                               detailRead("code-review-detail", readmodel.MaturityBounded, 1, "tasks.review"),
 		"/api/daily-jira-email/candidate-owners":               detailRead("daily-jira-email-candidate-owners", readmodel.MaturityBounded, 1000, "settings.email"),
 		"/api/daily-jira-email/runs":                           detailRead("daily-jira-email-runs", readmodel.MaturityBounded, 14, "settings.email"),

@@ -232,6 +232,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/code-reviews", s.withPermission("dashboard:read", s.handleListCodeReviews))
 	s.mux.HandleFunc("POST /api/code-reviews", s.withPermission("config:write", s.handleCreateCodeReview))
 	s.mux.HandleFunc("GET /api/code-reviews/{id}", s.withPermission("dashboard:read", s.withPermission("ai_context:preview", s.handleGetCodeReview)))
+	s.mux.HandleFunc("GET /api/code-reviews/{id}/export", s.withPermission("dashboard:read", s.withPermission("ai_context:preview", s.handleExportCodeReview)))
 	s.mux.HandleFunc("POST /api/code-reviews/{id}/cancel", s.withPermission("config:write", s.handleCancelCodeReview))
 	s.mux.HandleFunc("POST /api/code-reviews/{id}/retry", s.withPermission("config:write", s.handleRetryCodeReview))
 	s.mux.HandleFunc("POST /api/code-reviews/{id}/sync", s.withPermission("config:write", s.handleSyncCodeReview))

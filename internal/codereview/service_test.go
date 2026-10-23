@@ -456,8 +456,8 @@ func TestValidationRejectsFabricatedEvidence(t *testing.T) {
 		t.Fatal("fabricated finding accepted")
 	}
 	r.Assessments = r.Assessments[:2]
-	if _, err = parseReport(encode(r), s); err == nil {
-		t.Fatal("incomplete dimensions accepted")
+	if _, err = parseReport(encode(r), s); err != nil {
+		t.Fatal("optional assessment prose must not fail a valid report")
 	}
 }
 func TestHookAutomaticReviewAndDeduplication(t *testing.T) {

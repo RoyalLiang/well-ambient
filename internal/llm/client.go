@@ -24,11 +24,12 @@ const (
 )
 
 type Request struct {
-	SystemPrompt    string
-	UserPrompt      string
-	FileIDs         []string
-	Files           []FileInput
-	MaxOutputTokens int
+	SystemPrompt        string
+	UserPrompt          string
+	FileIDs             []string
+	Files               []FileInput
+	MaxOutputTokens     int
+	OnInputOptimization func(reason string, inputBytes, outputBytes int)
 }
 
 // FileInput is an opaque provider input. Callers supply bytes and transport
@@ -153,8 +154,16 @@ func (c Client) do(ctx context.Context, input Request, stream bool) (*http.Respo
 	if strings.TrimSpace(c.Config.APIToken) == "" || strings.TrimSpace(c.Config.BaseURL) == "" {
 		return nil, "", fmt.Errorf("AI configuration is missing credentials")
 	}
-	if c.Config.UseHeadroom() && headroom.Enabled(ctx) {
-		input.UserPrompt, _ = headroom.Default().Optimize(ctx, input.UserPrompt, c.Config.Model)
+	before := len(input.UserPrompt)
+	reason := "disabled"
+	if c.Config.UseHeadroom() {
+		reason = "capability_inactive"
+		if headroom.Enabled(ctx) {
+			input.UserPrompt, reason = headroom.Default().Optimize(ctx, input.UserPrompt, c.Config.Model)
+		}
+	}
+	if input.OnInputOptimization != nil {
+		input.OnInputOptimization(reason, before, len(input.UserPrompt))
 	}
 	protocol := c.Config.Protocol()
 	payload, err := buildPayload(c.Config, input, stream)

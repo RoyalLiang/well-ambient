@@ -16,7 +16,6 @@ import (
 	"time"
 	"well-ambient/internal/config"
 	"well-ambient/internal/db"
-	"well-ambient/internal/llm"
 )
 
 type Service struct {
@@ -115,6 +114,10 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 	if err != nil {
 		return run, err
 	}
+	method, err := s.freezeReviewMethod(ctx)
+	if err != nil {
+		return run, err
+	}
 	if eventKey == "" {
 		b := make([]byte, 16)
 		if _, err = rand.Read(b); err != nil {
@@ -138,7 +141,7 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 	run = db.CodeReviewRun{
 		Key: digest(identity + ":" + kind + ":" + ref + ":" + eventKey), ProjectID: project, Repo: repo.DisplayName(),
 		RepositorySourceJSON: source.JSON(),
-		Kind:                 kind, Ref: ref, Status: "queued", Phase: "等待执行", PolicyJSON: encode(p),
+		Kind:                 kind, Ref: ref, Status: "queued", Phase: "等待执行", PolicyJSON: encode(frozenReviewPolicy{CodeReviewPolicy: p, Method: method}),
 		PromptVersion:  fmt.Sprintf("review-skill:%d/v%d@%s", skill.ID, skill.Version, RuntimePromptVersion),
 		SkillVersionID: skill.ID, SkillVersion: skill.Version, SkillScopeType: skill.ScopeType,
 		SkillScopeID: skill.ScopeID, SkillName: skill.Name, SkillHash: digest(skill.SystemPrompt),
@@ -233,11 +236,7 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 	return err
 }
 func (s *Service) generate(ctx context.Context, ai config.AIConfig, system, user string) (string, error) {
-	if s.Generate != nil {
-		return s.Generate(ctx, system, user)
-	}
-	c := llm.Client{Config: ai}
-	return c.Generate(ctx, llm.Request{SystemPrompt: system, UserPrompt: user, MaxOutputTokens: 10000})
+	return s.generateObserved(ctx, ai, system, user, nil)
 }
 
 type SkillValidationResult struct {
@@ -358,15 +357,26 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return fail(err)
 	}
-	var policy db.CodeReviewPolicy
-	if err = json.Unmarshal([]byte(run.PolicyJSON), &policy); err != nil {
+	var frozen frozenReviewPolicy
+	if err = json.Unmarshal([]byte(run.PolicyJSON), &frozen); err != nil {
 		return fail(err)
 	}
-	policy = SystemCorpusPolicy(policy)
+	policy := SystemCorpusPolicy(frozen.CodeReviewPolicy)
+	frozen.CodeReviewPolicy = policy
+	if frozen.Method == nil {
+		frozen.Method, err = s.freezeReviewMethod(ctx)
+		if err != nil {
+			return fail(err)
+		}
+	}
+	if err := s.reviewMethodEnabled(ctx, frozen.Method); err != nil {
+		return fail(err)
+	}
 	// A queued run has not produced evidence yet. Freeze its actual effective
 	// policy now; completed historical reports retain their original snapshot.
-	run.PolicyJSON = encode(policy)
-	if err = s.DB.Model(&run).Update("policy_json", run.PolicyJSON).Error; err != nil {
+	run.PolicyJSON = encode(frozen)
+	run.PromptVersion = fmt.Sprintf("review-skill:%d/v%d@%s", run.SkillVersionID, run.SkillVersion, RuntimePromptVersion)
+	if err = s.DB.Model(&run).Updates(map[string]any{"policy_json": run.PolicyJSON, "prompt_version": run.PromptVersion}).Error; err != nil {
 		return fail(err)
 	}
 	skillPrompt := db.DefaultCodeReviewSkillPrompt
@@ -379,6 +389,9 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 			return fail(errors.New("冻结的线上代码评审技能内容校验失败"))
 		}
 		skillPrompt = skill.SystemPrompt
+	}
+	if frozen.Method != nil {
+		skillPrompt = frozen.Method.Instructions + "\n<online_policy>\n" + skillPrompt + "\n</online_policy>"
 	}
 	git := s.git()
 	if run.RepositorySourceJSON == "" {
@@ -405,6 +418,10 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 			return fail(errors.New("仓库来源快照无效"))
 		}
 	}
+	if frozen.Method != nil {
+		snapshot.ReviewMethod = &frozen.Method.ReviewMethod
+	}
+	snapshot.EvidenceContract = &EvidenceContract{Version: RuntimePromptVersion, PromptHash: digest(ReviewPrompt(skillPrompt, policy)), Rules: append([]string{}, DefaultReviewRules...)}
 	snapshot.Knowledge, err = s.knowledge(ctx, policy, repo, snapshot)
 	if err != nil {
 		return fail(errors.New("系统知识库读取失败"))
@@ -434,27 +451,16 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 		return fail(err)
 	}
 	prompt := ReviewPrompt(skillPrompt, policy)
-	input := encode(snapshot)
-	raw, err := s.generate(ctx, reviewAI, prompt, input)
-	if err != nil {
-		return fail(errors.New("AI 初审失败，请检查模型服务后重试"))
+	report, err := s.reviewSnapshot(ctx, reviewAI, prompt, &snapshot)
+	// Persist per-call optimization evidence even when a provider call fails.
+	if saveErr := s.DB.Model(&run).Update("snapshot_json", encode(snapshot)).Error; saveErr != nil {
+		return fail(saveErr)
 	}
-	draft, err := parseReport(raw, snapshot)
-	if err != nil {
-		return fail(err)
-	}
-	if err = s.DB.Model(&run).Update("phase", "独立复核与证据校验").Error; err != nil {
-		return fail(err)
-	}
-	raw, err = s.generate(ctx, reviewAI, prompt+"\n本轮是独立复核。先从代码重新判断，再核对初审。主动寻找反证，删除不成立或已经被其他代码保护的问题；不能把初审当作证据。保留全部维度分析，输出相同 JSON 结构。", input+"\n<untrusted_draft>"+encode(draft)+"</untrusted_draft>")
-	if err != nil {
-		return fail(errors.New("AI 复核失败，请重新评审"))
-	}
-	report, err := parseReport(raw, snapshot)
 	if err != nil {
 		return fail(err)
 	}
 	report.Scenario = Scenarios[policy.Scenario]
+	report.ReviewMethod = snapshot.ReviewMethod
 	report.Questions = append(report.Questions, snapshot.Gaps...)
 	status := "completed"
 	if !snapshot.Complete || !report.EvidenceComplete {
@@ -519,28 +525,19 @@ func (s *Service) Retry(ctx context.Context, id uint) (db.CodeReviewRun, error) 
 	return s.Get(id)
 }
 func (s *Service) List(limit int, kinds ...string) ([]db.CodeReviewRun, error) {
-	ids := []string{}
-	for _, r := range s.Config().GitLab.Repos {
-		if r.ProjectID != "" {
-			ids = append(ids, r.ProjectID)
-		}
+	kind := ""
+	if len(kinds) > 0 {
+		kind = kinds[0]
 	}
-	runs := []db.CodeReviewRun{}
-	query := s.DB
-	if len(kinds) > 0 && kinds[0] != "" {
-		if kinds[0] != "mr" && kinds[0] != "commit" {
-			return nil, errors.New("评审类型无效")
-		}
-		query = query.Where("kind = ?", kinds[0])
-	}
-	err := query.Select(
-		"id", "project_id", "repo", "repository_source_json", "author", "kind", "ref", "head_sha", "base_sha", "title", "url",
-		"status", "phase", "error", "model", "prompt_version", "skill_version_id", "skill_version",
-		"skill_scope_type", "skill_scope_id", "skill_name", "skill_hash", "retry_of_id",
-		"publish_status", "publish_error", "comment_id", "published_at", "created_at", "updated_at",
-	).Where("project_id IN ?", ids).Order("created_at DESC, id DESC").Limit(limit).Find(&runs).Error
-	return runs, err
+	page, err := s.Search(context.Background(), RunFilter{Kind: kind, Limit: limit})
+	return page.Items, err
 }
+
+func (s *Service) ListForRepo(limit int, project string) ([]db.CodeReviewRun, error) {
+	result, err := s.Search(context.Background(), RunFilter{Project: project, Limit: limit})
+	return result.Items, err
+}
+
 func (s *Service) Get(id uint) (db.CodeReviewRun, error) {
 	var run db.CodeReviewRun
 	err := s.DB.First(&run, id).Error

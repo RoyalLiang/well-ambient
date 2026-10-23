@@ -215,6 +215,9 @@ func TestCodeReviewBrowserFixture(t *testing.T) {
 		t.Skip("opt-in browser fixture")
 	}
 	srv, token, _ := reviewFixtureServer(t)
+	if err := BootstrapVersionedConfig(srv.config); err != nil {
+		t.Fatal(err)
+	}
 	fact := db.ContextFact{ID: 1, Scope: "project", ScopeID: "FMS", Status: "active", Version: 3, Summary: "任务完成必须具备匹配的车辆反馈证据", Content: "测试知识：任务与车辆身份匹配后才确认完成。没有反馈不代表成功。重复反馈不得重复释放资源。", Source: "fixture", ContentHash: "fixture-fms-rule"}
 	if err := db.DB.Create(&fact).Error; err != nil {
 		t.Fatal(err)
@@ -273,6 +276,7 @@ func TestCodeReviewBrowserFixture(t *testing.T) {
 	root, _ := filepath.Abs("../../web/dist")
 	mux := http.NewServeMux()
 	mux.Handle("/api/", srv.handler)
+	mux.Handle("/open/", srv.handler)
 	mux.Handle("/", http.FileServer(http.Dir(root)))
 	mux.HandleFunc("GET /__fixture/login", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -280,7 +284,7 @@ func TestCodeReviewBrowserFixture(t *testing.T) {
 	})
 	group := userdb.UserGroup{Name: "review-fixture-reader"}
 	db.DB.Create(&group)
-	for _, code := range []string{"dashboard:read", "ai_context:preview"} {
+	for _, code := range []string{"dashboard:read", "ai_context:preview", "ai_context:read"} {
 		var permission userdb.Permission
 		db.DB.Where("code = ?", code).First(&permission)
 		db.DB.Create(&userdb.GroupPermission{UserGroupID: group.ID, PermissionID: permission.ID})

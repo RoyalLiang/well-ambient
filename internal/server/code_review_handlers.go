@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 	"well-ambient/internal/codereview"
 	"well-ambient/internal/config"
@@ -202,17 +204,35 @@ func (s *Server) handleSaveCodeReviewPolicy(w http.ResponseWriter, r *http.Reque
 	emailJSON(w, 200, p)
 }
 func (s *Server) handleListCodeReviews(w http.ResponseWriter, r *http.Request) {
-	kind := r.URL.Query().Get("kind")
-	if kind != "" && kind != "mr" && kind != "commit" {
-		http.Error(w, "评审类型仅支持 mr 或 commit", 400)
+	project := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if project != "" {
+		if _, err := s.codeReview.Repo(project); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	limit, offset := 50, 0
+	for name, dest := range map[string]*int{"limit": &limit, "offset": &offset} {
+		if value := r.URL.Query().Get(name); value != "" {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 || (name == "limit" && (n == 0 || n > 200)) {
+				http.Error(w, "分页参数无效", 400)
+				return
+			}
+			*dest = n
+		}
+	}
+	kind, query := r.URL.Query().Get("kind"), r.URL.Query().Get("q")
+	if (kind != "" && kind != "mr" && kind != "commit") || len([]rune(query)) > 200 {
+		http.Error(w, "类型或搜索参数无效", 400)
 		return
 	}
-	runs, err := s.codeReview.List(200, kind)
+	page, err := s.codeReview.Search(r.Context(), codereview.RunFilter{Project: project, Kind: kind, Query: query, Limit: limit, Offset: offset})
 	if err != nil {
 		http.Error(w, "读取评审列表失败", 500)
 		return
 	}
-	emailJSON(w, 200, map[string]any{"items": runs})
+	emailJSON(w, 200, page)
 }
 func (s *Server) handleCreateCodeReview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -237,8 +257,42 @@ func (s *Server) handleGetCodeReview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "评审不存在或仓库未配置", 404)
 		return
 	}
-	emailJSON(w, 200, run)
+	response := struct {
+		db.CodeReviewRun
+		Document *codereview.ReviewDocument `json:"document,omitempty"`
+	}{CodeReviewRun: run}
+	if document, err := codereview.BuildDocument(run); err == nil {
+		response.Document = &document
+	}
+	emailJSON(w, 200, response)
 }
+func (s *Server) handleExportCodeReview(w http.ResponseWriter, r *http.Request) {
+	run, err := s.reviewFromRequest(r)
+	if err != nil {
+		http.Error(w, "评审不存在或仓库未配置", 404)
+		return
+	}
+	if run.Status != "completed" && run.Status != "partial" {
+		http.Error(w, "评审尚未生成结果，请在评审完成后导出", http.StatusConflict)
+		return
+	}
+	var report codereview.Report
+	if json.Unmarshal([]byte(run.ReportJSON), &report) != nil || strings.TrimSpace(report.Summary) == "" {
+		http.Error(w, "评审结果无法解析，请核对原始记录", http.StatusConflict)
+		return
+	}
+	document, err := codereview.BuildDocument(run)
+	if err != nil {
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+document.Filename+`"`)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write([]byte(document.Markdown))
+}
+
 func (s *Server) reviewFromRequest(r *http.Request) (db.CodeReviewRun, error) {
 	id, err := strconv.ParseUint(r.PathValue("id"), 10, 32)
 	if err != nil {

@@ -110,17 +110,20 @@ type Knowledge struct {
 	Hash       string    `json:"hash"`
 }
 type Snapshot struct {
-	RepositorySource config.RepositorySource `json:"repository_source"`
-	Author           string                  `json:"author"`
-	Head             string                  `json:"head"`
-	Base             string                  `json:"base"`
-	Title            string                  `json:"title"`
-	Description      string                  `json:"description"`
-	URL              string                  `json:"url"`
-	Files            []File                  `json:"files"`
-	Knowledge        []Knowledge             `json:"knowledge"`
-	Complete         bool                    `json:"complete"`
-	Gaps             []string                `json:"gaps"`
+	RepositorySource  config.RepositorySource `json:"repository_source"`
+	Author            string                  `json:"author"`
+	Head              string                  `json:"head"`
+	Base              string                  `json:"base"`
+	Title             string                  `json:"title"`
+	Description       string                  `json:"description"`
+	URL               string                  `json:"url"`
+	Files             []File                  `json:"files"`
+	Knowledge         []Knowledge             `json:"knowledge"`
+	Complete          bool                    `json:"complete"`
+	Gaps              []string                `json:"gaps"`
+	InputOptimization []InputOptimization     `json:"input_optimization,omitempty"`
+	EvidenceContract  *EvidenceContract       `json:"evidence_contract,omitempty"`
+	ReviewMethod      *ReviewMethod           `json:"review_method,omitempty"`
 }
 type mr struct {
 	IID    int `json:"iid"`
@@ -206,14 +209,30 @@ func (g GitLab) Snapshot(ctx context.Context, project, kind, ref string) (Snapsh
 		return s, errors.New("代码版本不完整，无法冻结评审")
 	}
 	bytesUsed := 0
+	legacyDiffs := false
 	for page := 1; page <= 20; page++ {
 		var files []File
 		headers, err := g.request(ctx, http.MethodGet, path+"?per_page=100&page="+strconv.Itoa(page), nil, &files)
+		var unavailable *gitLabHTTPError
+		if kind == "mr" && page == 1 && errors.As(err, &unavailable) && (unavailable.StatusCode == http.StatusNotFound || unavailable.StatusCode == http.StatusMethodNotAllowed) {
+			var legacy struct {
+				Changes  []File `json:"changes"`
+				Overflow bool   `json:"overflow"`
+			}
+			_, err = g.request(ctx, http.MethodGet, projectPath(project)+"/merge_requests/"+ref+"/changes?access_raw_diffs=true", nil, &legacy)
+			files = legacy.Changes
+			headers = make(http.Header)
+			legacyDiffs = true
+			if legacy.Overflow {
+				s.Complete = false
+				s.Gaps = append(s.Gaps, "旧版 GitLab 返回的 MR diff 被截断，不能视为完整评审")
+			}
+		}
 		if err != nil {
 			return s, err
 		}
 		for _, f := range files {
-			if len(s.Files) >= 24 || bytesUsed+len(f.Diff) > 160000 {
+			if len(s.Files) >= 200 || bytesUsed+len(f.Diff) > 4<<20 {
 				s.Complete = false
 				s.Gaps = append(s.Gaps, "变更超出本次文件或上下文预算；部分文件未评审")
 				break
@@ -238,7 +257,7 @@ func (g GitLab) Snapshot(ctx context.Context, project, kind, ref string) (Snapsh
 					}
 				}
 			}
-			if bytesUsed+len(f.Source)+len(f.Before)+len(f.Diff) > 160000 {
+			if bytesUsed+len(f.Source)+len(f.Before)+len(f.Diff) > 4<<20 {
 				f.Source = ""
 				f.Before = ""
 				s.Complete = false
@@ -247,7 +266,10 @@ func (g GitLab) Snapshot(ctx context.Context, project, kind, ref string) (Snapsh
 			bytesUsed += len(f.Source) + len(f.Before) + len(f.Diff)
 			s.Files = append(s.Files, f)
 		}
-		if len(s.Files) >= 24 || bytesUsed >= 160000 {
+		if legacyDiffs {
+			break
+		}
+		if len(s.Files) >= 200 || bytesUsed >= 4<<20 {
 			if headers.Get("X-Next-Page") != "" {
 				s.Complete = false
 				s.Gaps = append(s.Gaps, "预算限制：后续 diff 分页未评审")

@@ -25,8 +25,6 @@ test('code review uses the production list and keeps the detail entry in the pri
   assert.match(center, /key: "author", label: "提交人"/);
   assert.match(center, /key: "repository", label: "仓库"/);
   assert.match(center, /key: "project", label: "项目"/);
-  assert.match(center, /\$\: normalizedFilter = filter\.trim\(\)\.toLowerCase\(\)/);
-  assert.match(center, /\$\{r\.head_sha\} \$\{r\.base_sha\}/);
   assert.match(center, /function detailNeedsRefresh\(previous: Run, current: Run\)/);
   assert.match(center, /type RefreshMode = "initial" \| "manual" \| "poll"/);
   assert.match(center, /const visibleRefresh = mode !== "poll"/);
@@ -58,7 +56,7 @@ test('review detail reuses the decision-style modal and renders one markdown doc
   assert.match(center, /\["ArrowLeft", "ArrowRight", "Home", "End"\]/);
   assert.match(center, /role="tabpanel"[\s\S]*?aria-labelledby=\{canReadEvidence \? `code-review-tab-\$\{pane\}` : undefined\}/);
   assert.match(center, /paneLabels:\s*Record<ReviewPane, string>/);
-  assert.match(center, /## 事实依据/);
+  assert.match(center, /selected\?\.document\?\.sections\[pane\]/);
   assert.doesNotMatch(center, /detailScroller/);
   assert.doesNotMatch(center, /cr-reading-footer/);
   assert.doesNotMatch(styles, /max-width:\s*880px/);
@@ -85,7 +83,7 @@ test('detail loading, action feedback and scroll ownership stay inside the modal
   assert.match(center, /action === "retry"[\s\S]*?已重新加入评审队列/);
   assert.match(center, /\$\: canManualSync = Boolean\(/);
   assert.match(center, /selectedSyncEnabled/);
-  assert.doesNotMatch(center, /\["completed", "partial"\]\.includes\(selected\.status\)/);
+  assert.match(center, /disabled=\{[^}]*!\["completed", "partial"\]\.includes\(selected\.status\)/);
   assert.match(center, /\{#if canManualSync\}/);
   assert.match(center, /target="_blank"[\s\S]*?rel="noopener noreferrer"[\s\S]*?GitLab ↗/);
   assert.match(modal, /export function scrollToTop\(behavior: ScrollBehavior = 'auto'\)/);

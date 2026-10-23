@@ -34,6 +34,7 @@
   };
   type Run = {
     repository_source_json?:string;
+ document?: {filename: string; sections: Record<ReviewPane, string>};
     id: number;
     project_id: string;
     repo: string;
@@ -67,6 +68,7 @@
   type Finding = {
     dimension: string;
     severity: string;
+    priority?: string;
     title: string;
     file: string;
     line: number;
@@ -77,6 +79,7 @@
     knowledge_ids: number[];
   };
   type Report = {
+    review_method?: { name: string; capability_key: string; version_id: number; version: number; hash: string };
     summary: string;
     scenario: string;
     validation: string;
@@ -185,8 +188,22 @@
   let runs: Run[] = [];
   let project = "";
   let filter = "";
-  let kindFilter = "";
-  $: normalizedFilter = filter.trim().toLowerCase();
+  let searchQuery = "";
+ let kind = "";
+ let offset = 0;
+ const pageSize = 50;
+ let total = 0;
+ let hasMore = false;
+ let exporting = false;
+ let exportError = "";
+ let exportURL = "";
+ let exportedID = 0;
+ $: activeSearch = Boolean(project || kind || searchQuery);
+ function searchKey() { return JSON.stringify([project, kind, searchQuery, offset]); }
+ function applySearch() { searchQuery = filter.trim(); offset = 0; listRequestVersion++; void refresh(false, "manual"); }
+ function changeKind(value: string) { kind = value; applySearch(); }
+ function resetSearch() { project = ""; kind = ""; filter = ""; closeDetail(); applySearch(); }
+ function changePage(next: number) { offset = next; listRequestVersion++; void refresh(false, "manual"); }
   let policySaving: PolicyField | "" = "";
   let policyFeedback: Record<string, PolicyFeedback> = {};
   let actionKind: ReviewAction | "" = "";
@@ -247,14 +264,7 @@
           ? `全局 ${selected.kind === "mr" ? "MR" : "Commit"} 评论已暂停`
           : ""
       : "";
-  $: visibleRuns = runs.filter(
-    (r) =>
-      (!project || r.project_id === project) && (!kindFilter || r.kind === kindFilter) &&
-      (!normalizedFilter ||
-        `${r.title} ${r.ref} ${r.repo} ${r.author} ${r.head_sha} ${r.base_sha}`
-          .toLowerCase()
-          .includes(normalizedFilter)),
-  );
+  $: visibleRuns = runs;
   $: reviewRows = visibleRuns.map(toReviewRow);
   $: report = parse<Report>(selected?.report_json);
   $: snapshot = parse<Snapshot>(selected?.snapshot_json);
@@ -393,6 +403,8 @@
       });
     }
     pollBusy = true;
+    const requestedProject = project;
+ const requestedSearch = searchKey();
     const version = ++listRequestVersion;
     const visibleRefresh = mode !== "poll";
     const anchor = mode === "initial" ? null : captureListAnchor();
@@ -413,9 +425,16 @@
         if (disposed || version !== listRequestVersion) return false;
         applyRepoResponse(data);
       }
-      const data = await api<{ items: Run[] }>(`/api/code-reviews${kindFilter?`?kind=${encodeURIComponent(kindFilter)}`:""}`);
-      if (disposed || version !== listRequestVersion) return false;
-      const previousSelected = selected;
+      const params = new URLSearchParams({limit: String(pageSize), offset: String(offset)});
+ if (project) params.set("project_id", project);
+ if (kind) params.set("kind", kind);
+ if (searchQuery) params.set("q", searchQuery);
+ const data = await api<{items: Run[]; total: number; has_more: boolean}>(`/api/code-reviews?${params}`);
+ if (disposed || version !== listRequestVersion || requestedSearch !== searchKey()) return false;
+ total = data.total;
+ hasMore = data.has_more;
+ if (offset > 0 && data.items.length === 0 && total > 0) { offset = Math.floor((total - 1) / pageSize) * pageSize; void refresh(false, "manual"); return false; }
+ const previousSelected = selected;
       const nextRuns = data.items;
       if (runListChanged(runs, nextRuns)) {
         runs = nextRuns;
@@ -452,7 +471,7 @@
       }
       return true;
     } catch (e) {
-      if (visibleRefresh) listError = (e as Error).message;
+      if (visibleRefresh && requestedSearch === searchKey() && version === listRequestVersion && !disposed) listError = (e as Error).message;
       return false;
     } finally {
       if (visibleRefresh) {
@@ -612,7 +631,7 @@
         detailError = "";
         actionNotice =
           action === "retry"
-            ? "已重新加入评审队列；原失败记录保留为历史。"
+                ? "已重新加入评审队列，完成后更新本条记录。"
             : action === "cancel"
             ? "已取消评审；不会发布评论。"
             : "评论同步状态已更新。";
@@ -690,34 +709,27 @@
       source: run,
     };
   }
-  function markdownContent(report: Report | null, snapshot: Snapshot | null, pane: ReviewPane, reviewedPolicy: Policy | null, selected: Run | null, defaultRules: string[]) {
-    if (pane === "facts" && selected) {
-      const sourceURL = markdownURL(selected.url);
-      return [
-        "## 事实依据",
-        `- **评审对象**：${selected.kind === "mr" ? `MR !${plainText(selected.ref)}` : `Commit ${plainText(selected.ref.slice(0, 12))}`}`,
-        `- **仓库**：${plainText(selected.repo)}（Project ${plainText(selected.project_id)}）`,
-        `- **提交人 / MR 作者**：${plainText(selected.author || "未记录")}`,
-        `- **接收时间**：${plainText(formatReceived(selected.created_at))}`,
-        selected.base_sha ? `- **基线版本**：\`${plainText(selected.base_sha.slice(0, 12))}\`` : "",
-        selected.head_sha ? `- **目标版本**：\`${plainText(selected.head_sha.slice(0, 12))}\`` : "",
-        sourceURL ? "" : "- **原始变更**：未记录可用链接",
-        report?.scenario ? `- **评审场景**：${plainText(report.scenario)}` : "",
-        selected.skill_version_id
-          ? `- **在线技能**：${plainText(selected.skill_name || "代码评审技能")} v${selected.skill_version}（${plainText(selected.prompt_version)}）`
-          : `- **在线技能**：兼容运行时（${plainText(selected.prompt_version || "legacy")}）`,
-        report?.validation ? "## 覆盖与限制\n\n范围：已读取的变更文件；未执行测试、构建或跨服务验证。" : "",
-        ...(snapshot?.gaps?.length ? ["## 待补证据", ...snapshot.gaps.map(g => `- ${plainText(g)}`)] : []),
-      ].filter(Boolean).join("\n\n");
-    }
-    if (pane === "code") return ["## 代码依据", ...(report?.findings || []).filter(f => f.evidence).map(f => `### ${plainText(f.file)}:${f.line}\n\n${codeBlock(f.evidence)}`), ...(snapshot?.files || []).map(f => `### ${plainText(f.new_path)}\n\n${codeBlock(f.diff || "未返回文本差异。", "diff")}`)].join("\n\n");
-    if (pane === "knowledge") return ["## 知识依据", ...(snapshot?.knowledge.length ? snapshot.knowledge.map(k => `### #${k.id} ${plainText(k.summary)}\n\n版本 ${k.version} · ${plainText(k.scope)} · ${plainText(k.source)}\n\n${k.content}`) : ["本次评审未引用知识库内容。"])].join("\n\n");
-    if (pane === "rules") return ["## 通用评审规则", ...defaultRules.map(rule => `- ${plainText(rule)}`), "## 本次补充规则", reviewedPolicy?.rules || "本次未设置补充规则。"].join("\n\n");
-    if (!report) return "";
-    return ["## 评审结论", report.summary, ...(report.findings.length ? ["## 问题与建议", ...report.findings.map(f => `### ${plainText(({high:"高风险",medium:"中风险",low:"建议"} as Record<string,string>)[f.severity] || f.severity)} · ${plainText(f.title)}\n\n${plainText(dimensions[f.dimension] || f.dimension)} · ${plainText(f.file)}:${f.line}\n\n**影响**\n\n${f.impact}\n\n**修改建议**\n\n${f.suggestion}\n\n**验证建议**\n\n${f.verification}`)] : [selected?.status === "partial" ? "当前可评审范围内未发现明确问题。" : "未发现需要修改的明确问题。"]), ...(report.assessments.length ? ["## 工程质量", ...report.assessments.map(a => `### ${plainText(dimensions[a.dimension] || a.dimension)}\n\n${a.analysis}`)] : []), ...(report.questions.length ? ["## 待确认事项", ...report.questions.map(q => `- ${plainText(q)}`)] : [])].join("\n\n");
-  }
-  $: reviewMarkdown = markdownContent(report, snapshot, pane, reviewedPolicy, selected, defaultRules);
-  async function changePane(nextPane: ReviewPane) {
+  $: reviewMarkdown = selected?.document?.sections[pane] || "评审文档尚不可用；请刷新详情或核对结果记录。";
+ async function exportMarkdown() {
+  if (!selected || !canReadEvidence || !report || !["completed", "partial"].includes(selected.status) || exporting) return;
+  const origin = selected.id;
+  exporting = true; exportError = "";
+  try {
+   const response = await fetch(`/api/code-reviews/${origin}/export`);
+   if (!response.ok) throw new Error((await response.text()).trim() || "导出失败，请重试。");
+   const blob = await response.blob();
+   if (disposed || selected?.id !== origin) return;
+   if (exportURL) URL.revokeObjectURL(exportURL);
+   const url = URL.createObjectURL(blob);
+   exportURL = url; exportedID = origin;
+   const link = document.createElement("a");
+   link.href = url; link.download = `code-review-${origin}.md`;
+   document.body.appendChild(link); link.click(); link.remove();
+   if (selected?.id !== origin) { URL.revokeObjectURL(url); exportURL = ""; }
+  } catch (error) { if (selected?.id === origin) exportError = (error as Error).message; }
+  finally { exporting = false; }
+ }
+   async function changePane(nextPane: ReviewPane) {
     pane = nextPane;
     await tick();
     detailModal?.scrollToTop();
@@ -725,9 +737,7 @@
   async function handlePaneKeydown(event: KeyboardEvent, currentPane: ReviewPane) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const available = reviewPanes.filter(
-      (item) => !((item === "code" || item === "knowledge") && !snapshot),
-    );
+    const available = selected?.document ? reviewPanes : ["review" as ReviewPane];
     const currentIndex = Math.max(0, available.indexOf(currentPane));
     let nextIndex = currentIndex;
     if (event.key === "Home") nextIndex = 0;
@@ -749,14 +759,19 @@
     detailError = "";
     actionError = "";
     actionNotice = "";
+    exportError = "";
+    if (exportURL) URL.revokeObjectURL(exportURL);
+    exportURL = "";
     pane = "review";
   }
   function changeProject(value: string) {
     project = value;
+ offset = 0; listRequestVersion++;
     closeDetail();
     policyError = "";
     pageNotice = "";
     policyFeedback = {};
+    void refresh(false, "manual");
   }
   onMount(() => {
     void refresh(true, "initial");
@@ -767,6 +782,7 @@
     }, 4000);
     return () => {
       disposed = true;
+      if (exportURL) URL.revokeObjectURL(exportURL);
       requestVersion++;
       window.clearInterval(timer);
     };
@@ -813,14 +829,14 @@
     <strong>
       {repos.length === 0
         ? "先接入一个代码仓库"
-        : filter
+        : activeSearch
           ? "没有匹配的评审"
           : "等待第一份评审"}
     </strong>
     <span>
       {repos.length === 0
         ? "在配置中心添加 GitLab 仓库与 Project ID。"
-        : filter
+        : activeSearch
           ? "调整搜索词或仓库筛选后重试。"
           : "收到新的 Commit / MR 事件后，评审会自动出现在这里。"}
     </span>
@@ -839,7 +855,7 @@
     {#snippet leading()}
       <div class="cr-list-summary">
         <strong>评审记录</strong>
-        <small>{loading ? "正在读取" : `${visibleRuns.length} 条`}</small>
+        <small>{loading ? "正在读取" : `共 ${total} 条`}</small>
         <span class="cr-sr" role="status" aria-live="polite">
           {refreshing ? "正在刷新评审记录，当前结果保留显示。" : ""}
         </span>
@@ -866,15 +882,20 @@
           on:change={(e) => changeProject(e.detail)}
         />
       </div>
-        <div class="cr-kind"><Select id="review-kind-filter" label="评审类型" value={kindFilter} options={[{value:'',label:'全部类型'},{value:'mr',label:'MR 评审'},{value:'commit',label:'Commit 评审'}]} compact shadowless searchable={false} disabled={loading||refreshing} on:change={e=>{kindFilter=e.detail;void refresh(false,"manual")}} /></div>
-            <label class="cr-search">
+        <div class="cr-kind">
+ <Select id="review-kind-filter" label="评审类型" value={kind} options={[{value:"",label:"全部类型"},{value:"mr",label:"MR"},{value:"commit",label:"Commit"}]} compact shadowless on:change={(e) => changeKind(e.detail)} />
+ </div>
+ <label class="cr-search">
           <span class="cr-sr">搜索评审记录</span>
           <input
             type="search"
             bind:value={filter}
-            placeholder="搜索标题、仓库、作者或 SHA"
+            placeholder="搜索 !42、Commit SHA、标题或作者"
+            maxlength={200}
+            on:keydown={(event) => { if (event.key === "Enter") applySearch(); }}
           />
         </label>
+        <button type="button" class="wa-admin-action secondary" on:click={applySearch}>搜索</button>
         <button
           type="button"
           class="wa-admin-action secondary cr-refresh-button"
@@ -887,6 +908,15 @@
       </div>
     {/snippet}
   </AdminListFilterBar>
+ <div class="cr-result-navigation" aria-label="评审搜索结果分页">
+ <span role="status" aria-live="polite">{total ? `第 ${offset + 1}–${offset + runs.length} 条，共 ${total} 条` : "0 条评审"}</span>
+ {#if activeSearch}<button class="wa-admin-action secondary" on:click={resetSearch}>重置筛选</button>{/if}
+ {#if offset > 0 || hasMore}
+ <button class="wa-admin-action secondary" disabled={offset === 0 || refreshing} on:click={() => changePage(Math.max(0,offset-pageSize))}>上一页</button>
+ <button class="wa-admin-action secondary" disabled={!hasMore || refreshing} on:click={() => changePage(offset+pageSize)}>下一页</button>
+ {/if}
+ </div>
+
 
     <AdminDataList
       columns={reviewColumns}
@@ -905,7 +935,7 @@
       compactTableMinWidth="0px"
       totalRowCount={reviewRows.length}
       selectedRowId={selected ? String(selected.id) : ""}
-      resetKey={`${project}:${kindFilter}:${filter}`}
+      resetKey={`${project}:${kind}:${filter}`}
     />
 
     <Modal
@@ -943,8 +973,16 @@
                 {statusNames[selected.status] || selected.status}
               </span>
             </div>
+            <button
+              type="button"
+              class="wa-admin-action secondary cr-export"
+              disabled={exporting || detailLoading || !canReadEvidence || !report || !["completed", "partial"].includes(selected.status)}
+              aria-busy={exporting}
+              title={!canReadEvidence ? "需要 AI 上下文预览权限" : !report ? "生成评审结果后可下载" : "下载本次保存的评审报告"}
+              on:click={exportMarkdown}
+            >{exporting ? "导出中…" : "导出 Markdown"}</button>
             {#if canReadEvidence}
-              <nav class="cr-evidence-links" aria-label="评审内容与依据">
+          <nav class="cr-evidence-links" aria-label="评审内容与依据">
                 <div class="cr-pane-tabs" role="tablist" aria-label="评审详情视图">
                   {#each reviewPanes as item}
                     <button
@@ -955,7 +993,7 @@
                       aria-selected={pane === item}
                       tabindex={pane === item ? 0 : -1}
                       aria-controls="code-review-detail-panel"
-                      disabled={(item === "code" || item === "knowledge") && !snapshot}
+                      disabled={!selected.document}
                       on:click={() => changePane(item)}
                       on:keydown={(event) => handlePaneKeydown(event, item)}
                     >
@@ -979,6 +1017,8 @@
             {/if}
           </div>
 
+          {#if exportURL && exportedID === selected.id}<p class="cr-export-feedback" role="status">Markdown 报告已准备好。<a href={exportURL} download={`code-review-${exportedID}.md`}>再次下载</a></p>{/if}
+          {#if exportError}<div class="cr-message cr-error" role="alert">{exportError}<button type="button" class="wa-admin-action secondary" on:click={exportMarkdown}>重试导出</button></div>{/if}
           <div
             id="code-review-detail-panel"
             class="cr-reading-panel"

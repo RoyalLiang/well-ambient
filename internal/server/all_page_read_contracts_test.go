@@ -28,7 +28,7 @@ func TestEveryGETAPIRouteDeclaresABoundedReadContract(t *testing.T) {
 	for _, match := range routePattern.FindAllStringSubmatch(string(source), -1) {
 		registered[match[1]] = struct{}{}
 	}
-	const expectedGETAPIRoutes = 117
+	const expectedGETAPIRoutes = 118
 	if len(registered) != expectedGETAPIRoutes {
 		t.Fatalf("route discovery found %d GET API routes, want %d", len(registered), expectedGETAPIRoutes)
 	}
@@ -217,7 +217,7 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 	}
 	expected := map[readmodel.Maturity]int{
 		readmodel.MaturityVerified: 20,
-		readmodel.MaturityBounded:  69,
+		readmodel.MaturityBounded:  70,
 		readmodel.MaturityPending:  28,
 	}
 	for maturity, want := range expected {
@@ -225,8 +225,8 @@ func TestReadContractMaturityCountsMatchInventory(t *testing.T) {
 			t.Errorf("%s read contracts = %d, want %d", maturity, got, want)
 		}
 	}
-	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 117 {
-		t.Fatalf("maturity inventory totals %d routes, want 117", total)
+	if total := counts[readmodel.MaturityVerified] + counts[readmodel.MaturityBounded] + counts[readmodel.MaturityPending]; total != 118 {
+		t.Fatalf("maturity inventory totals %d routes, want 118", total)
 	}
 }
 

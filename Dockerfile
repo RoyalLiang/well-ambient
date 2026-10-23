@@ -19,6 +19,8 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
+COPY review_skill_assets.go ./
+COPY .agents/skills/merge-review/ ./.agents/skills/merge-review/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
@@ -64,6 +66,7 @@ COPY --from=server-build /out/open-mcp-stdio /usr/local/bin/open-mcp-stdio
 COPY --chown=1000:1000 .agents/skills/jira-analysis/ .agents/skills/jira-analysis/
 COPY --chown=1000:1000 .agents/skills/board-decision/ .agents/skills/board-decision/
 COPY --chown=1000:1000 .agents/skills/code-review-reader/ .agents/skills/code-review-reader/
+COPY --chown=1000:1000 .agents/skills/merge-review/ .agents/skills/merge-review/
 COPY --chown=1000:1000 .agents/skills/runtime-knowledge/ .agents/skills/runtime-knowledge/
 COPY --chown=1000:1000 .agents/skills/well-ambient/ .agents/skills/well-ambient/
 COPY --chown=1000:1000 capabilities/open/ capabilities/open/
