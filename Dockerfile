@@ -50,6 +50,9 @@ RUN python3 -m venv /opt/well-ambient/headroom && \
     rm -rf /tmp/headroom-wheel && \
     /opt/well-ambient/headroom/bin/python -I -c "import tiktoken; tiktoken.get_encoding('o200k_base'); tiktoken.get_encoding('cl100k_base')" && \
     /opt/well-ambient/headroom/bin/python -I /opt/well-ambient/plugins/headroom/worker.py </dev/null
+# The application runs as UID 1000. Copied sources and tokenizer caches may
+# be private to the builder; all plugin code and dependencies must be readable.
+RUN chmod -R a+rX /opt/well-ambient/headroom /opt/well-ambient/plugins/headroom
 
 ARG VERSION=dev
 ARG COMMIT=unknown
