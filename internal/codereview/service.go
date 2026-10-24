@@ -81,6 +81,10 @@ func (s *Service) ReviewSkillByID(ctx context.Context, id uint) (db.SolutionProm
 	return skill, err
 }
 func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey string) (db.CodeReviewRun, error) {
+	return s.enqueue(ctx, project, kind, ref, eventKey, nil)
+}
+
+func (s *Service) enqueue(ctx context.Context, project, kind, ref, eventKey string, expected *mrCodeVersion) (db.CodeReviewRun, error) {
 	var run db.CodeReviewRun
 	repo, err := s.Repo(project)
 	if err != nil {
@@ -151,6 +155,10 @@ func (s *Service) Enqueue(ctx context.Context, project, kind, ref, eventKey stri
 		SkillScopeID: skill.ScopeID, SkillName: skill.Name, SkillHash: digest(skill.SystemPrompt),
 		Model: s.Config().AI.Model, PublishStatus: publishStatus,
 	}
+	if expected != nil {
+		run.HeadSHA = expected.Head
+		run.BaseSHA = expected.Base
+	}
 	res := s.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
 	if res.Error != nil {
 		return run, res.Error
@@ -214,11 +222,15 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 		}
 		if len(openMRs) > 0 {
 			for _, m := range openMRs {
-				key := m.DiffRefs.Head + ":" + m.UpdatedAt
-				if key == ":" || m.DiffRefs.Head == "" {
-					key = fmt.Sprintf("mr:%d:%s", m.IID, p.After)
+				version := mrVersion(m)
+				if version.Head == "" || version.Base == "" {
+					current, fetchErr := s.git().mr(ctx, id, strconv.Itoa(m.IID))
+					if fetchErr != nil {
+						return fetchErr
+					}
+					version = mrVersion(current)
 				}
-				if _, err = s.Enqueue(ctx, id, "mr", strconv.Itoa(m.IID), key); err != nil {
+				if _, err = s.enqueueMRVersion(ctx, id, strconv.Itoa(m.IID), version); err != nil {
 					return err
 				}
 			}
@@ -231,11 +243,11 @@ func (s *Service) Hook(ctx context.Context, event string, body []byte) error {
 			}
 		}
 	} else if event == "Merge Request Hook" && p.Attr.State == "opened" && reviewMRs {
-		key := p.Attr.Last.ID + ":" + p.Attr.Updated
-		if key == ":" {
-			key = digest(string(body))
+		current, fetchErr := s.git().mr(ctx, id, strconv.Itoa(p.Attr.IID))
+		if fetchErr != nil {
+			return fetchErr
 		}
-		_, err = s.Enqueue(ctx, id, "mr", strconv.Itoa(p.Attr.IID), key)
+		_, err = s.enqueueMRVersion(ctx, id, strconv.Itoa(p.Attr.IID), mrVersion(current))
 	}
 	return err
 }
@@ -404,6 +416,13 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	snapshot, err := git.Snapshot(ctx, run.ProjectID, run.Kind, run.Ref)
 	if err != nil {
 		return fail(err)
+	}
+	if versionBoundMR(run) && (snapshot.Head != run.HeadSHA || snapshot.Base != run.BaseSHA) {
+		if _, err = s.enqueueMRVersion(ctx, run.ProjectID, run.Ref, mrCodeVersion{Head: snapshot.Head, Base: snapshot.Base}); err != nil {
+			return fail(err)
+		}
+		err = s.DB.Model(&db.CodeReviewRun{}).Where("id = ? AND status = ?", run.ID, "running").Updates(map[string]any{"status": "cancelled", "phase": skippedMRVersionPhase, "publish_status": "off", "error": ""}).Error
+		return true, err
 	}
 	if run.RepositorySourceJSON != "" {
 		if err := json.Unmarshal([]byte(run.RepositorySourceJSON), &snapshot.RepositorySource); err != nil {

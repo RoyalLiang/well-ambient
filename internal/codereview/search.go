@@ -49,6 +49,21 @@ func (s *Service) Search(ctx context.Context, f RunFilter) (RunPage, error) {
 		ids = []string{f.Project}
 	}
 	query := s.DB.WithContext(ctx).Model(&db.CodeReviewRun{}).Where("project_id IN ?", ids)
+	// Keep history addressable by ID, while pagination shows the latest report
+	// for each frozen repository and MR code version.
+	if f.Kind != "commit" {
+		hidden, err := s.duplicateMRRunIDs(ctx, ids)
+		if err != nil {
+			return page, err
+		}
+		for start := 0; start < len(hidden); start += 400 {
+			end := start + 400
+			if end > len(hidden) {
+				end = len(hidden)
+			}
+			query = query.Where("id NOT IN ?", hidden[start:end])
+		}
+	}
 	if f.Kind != "" {
 		query = query.Where("kind = ?", f.Kind)
 	}

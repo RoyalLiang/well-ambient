@@ -110,6 +110,7 @@ type Knowledge struct {
 	Hash       string    `json:"hash"`
 }
 type Snapshot struct {
+	SourceBranch      string                  `json:"source_branch,omitempty"`
 	RepositorySource  config.RepositorySource `json:"repository_source"`
 	Author            string                  `json:"author"`
 	Head              string                  `json:"head"`
@@ -126,8 +127,9 @@ type Snapshot struct {
 	ReviewMethod      *ReviewMethod           `json:"review_method,omitempty"`
 }
 type mr struct {
-	IID    int `json:"iid"`
-	Author struct {
+	SourceBranch string `json:"source_branch"`
+	IID          int    `json:"iid"`
+	Author       struct {
 		Name     string `json:"name"`
 		Username string `json:"username"`
 	} `json:"author"`
@@ -172,6 +174,7 @@ func (g GitLab) Snapshot(ctx context.Context, project, kind, ref string) (Snapsh
 		if s.Author == "" {
 			s.Author = m.Author.Username
 		}
+		s.SourceBranch = m.SourceBranch
 		s.Title = m.Title
 		s.Description = m.Description
 		s.URL = m.URL

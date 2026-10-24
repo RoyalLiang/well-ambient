@@ -14,6 +14,7 @@
   import MarkdownWorkbench from "./shared/MarkdownWorkbench.svelte";
   import Select from "./shared/Select.svelte";
   import "../styles/code-review.css";
+  import { attachmentFilename } from "../lib/code-review-download";
   export let currentUserPermissions: string[] = [];
   type Policy = {
     project_id: string;
@@ -198,6 +199,7 @@
  let exportError = "";
  let exportURL = "";
  let exportedID = 0;
+  let exportFilename = "";
  $: activeSearch = Boolean(project || kind || searchQuery);
  function searchKey() { return JSON.stringify([project, kind, searchQuery, offset]); }
  function applySearch() { searchQuery = filter.trim(); offset = 0; listRequestVersion++; void refresh(false, "manual"); }
@@ -718,12 +720,13 @@
    const response = await fetch(`/api/code-reviews/${origin}/export`);
    if (!response.ok) throw new Error((await response.text()).trim() || "导出失败，请重试。");
    const blob = await response.blob();
+      const filename = attachmentFilename(response.headers.get("Content-Disposition"), selected?.document?.filename || "review.md");
    if (disposed || selected?.id !== origin) return;
    if (exportURL) URL.revokeObjectURL(exportURL);
    const url = URL.createObjectURL(blob);
-   exportURL = url; exportedID = origin;
+   exportURL = url; exportedID = origin; exportFilename = filename;
    const link = document.createElement("a");
-   link.href = url; link.download = `code-review-${origin}.md`;
+   link.href = url; link.download = filename;
    document.body.appendChild(link); link.click(); link.remove();
    if (selected?.id !== origin) { URL.revokeObjectURL(url); exportURL = ""; }
   } catch (error) { if (selected?.id === origin) exportError = (error as Error).message; }
@@ -978,9 +981,10 @@
               class="wa-admin-action secondary cr-export"
               disabled={exporting || detailLoading || !canReadEvidence || !report || !["completed", "partial"].includes(selected.status)}
               aria-busy={exporting}
+                  aria-label={exporting ? "正在导出 Markdown" : "下载 Markdown 报告"}
               title={!canReadEvidence ? "需要 AI 上下文预览权限" : !report ? "生成评审结果后可下载" : "下载本次保存的评审报告"}
               on:click={exportMarkdown}
-            >{exporting ? "导出中…" : "导出 Markdown"}</button>
+            ><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" /></svg></button>
             {#if canReadEvidence}
           <nav class="cr-evidence-links" aria-label="评审内容与依据">
                 <div class="cr-pane-tabs" role="tablist" aria-label="评审详情视图">
@@ -1017,7 +1021,8 @@
             {/if}
           </div>
 
-          {#if exportURL && exportedID === selected.id}<p class="cr-export-feedback" role="status">Markdown 报告已准备好。<a href={exportURL} download={`code-review-${exportedID}.md`}>再次下载</a></p>{/if}
+          {#if exporting}<p class="cr-export-feedback" role="status">正在准备 Markdown 报告…</p>{/if}
+            {#if exportURL && exportedID === selected.id}<p class="cr-export-feedback" role="status">Markdown 报告已准备好。<a href={exportURL} download={exportFilename} aria-label="再次下载 Markdown 报告" title={exportFilename}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4" /></svg></a></p>{/if}
           {#if exportError}<div class="cr-message cr-error" role="alert">{exportError}<button type="button" class="wa-admin-action secondary" on:click={exportMarkdown}>重试导出</button></div>{/if}
           <div
             id="code-review-detail-panel"

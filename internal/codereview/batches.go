@@ -117,7 +117,7 @@ func (s *Service) reviewSnapshot(ctx context.Context, ai config.AIConfig, prompt
 		combined.Validation = report.Validation
 	}
 	combined.Summary = strings.Join(summaries, "\n\n")
-	priority := map[string]int{"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+	priority := map[string]int{"P0": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5}
 	sort.SliceStable(combined.Findings, func(i, j int) bool {
 		return priority[combined.Findings[i].Priority] < priority[combined.Findings[j].Priority]
 	})

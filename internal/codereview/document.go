@@ -3,8 +3,14 @@ package codereview
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
+	"path"
+	"regexp"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"well-ambient/internal/db"
 )
@@ -59,7 +65,7 @@ var dimensionNames = map[string]string{"business": "业务与需求", "robustnes
 
 // BuildDocument only uses evidence frozen with this run, never current settings.
 func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
-	doc := ReviewDocument{Filename: fmt.Sprintf("code-review-%d.md", run.ID), Sections: map[string]string{}}
+	doc := ReviewDocument{Filename: reviewFilename(run), Sections: map[string]string{}}
 	var report Report
 	reportOK := json.Unmarshal([]byte(run.ReportJSON), &report) == nil && strings.TrimSpace(report.Summary) != ""
 	hasResult := (run.Status == "completed" || run.Status == "partial") && reportOK
@@ -73,14 +79,12 @@ func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
 	var policy frozenReviewPolicy
 	policyOK := json.Unmarshal([]byte(run.PolicyJSON), &policy) == nil && strings.TrimSpace(run.PolicyJSON) != "null"
 	var review strings.Builder
-	review.WriteString("## 评审结论\n\n")
+	review.WriteString("**评审结论：" + documentConclusion(run, report, snapshot, snapshotOK, hasResult) + "**\n\n")
 	if hasResult {
-		review.WriteString(mdText(report.Summary) + "\n\n")
-	} else {
-		review.WriteString("当前记录没有可用的评审结论；以下仅展示已保存的证据，不能据此判断是否存在问题。\n\n")
+		fmt.Fprintf(&review, "本次记录 %d 项问题与建议。评审状态与源码覆盖范围见事实依据；验证情况见下文。\n\n", len(report.Findings))
 	}
-	if hasResult && run.Status == "partial" {
-		review.WriteString("**部分结果：证据或覆盖不完整，不能据此认定可以合并。**\n\n")
+	if hasResult && (run.Status == "partial" || !report.EvidenceComplete || !snapshotOK || !snapshot.Complete) {
+		review.WriteString("**覆盖限制：证据或覆盖不足，结果仅适用于已读取范围。**\n\n")
 	}
 	var details strings.Builder
 	validation := report.Validation
@@ -99,33 +103,32 @@ func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
 	} else {
 		details.WriteString("### 变更声明核对\n\n未保存逐条声明核对，不能确认 MR 描述或提交承诺均已实现。\n\n")
 	}
-	for _, group := range []struct {
-		title      string
-		priorities []string
-	}{{"阻塞问题（P0 / P1）", []string{"P0", "P1"}}, {"改进建议（P2）", []string{"P2"}}, {"细节建议（P3）", []string{"P3"}}} {
-		count := 0
-		for i, f := range report.Findings {
-			priority := f.Priority
-			if priority != "P0" && priority != "P1" && priority != "P2" && priority != "P3" {
-				priority = map[string]string{"critical": "P0", "high": "P1", "medium": "P2", "low": "P3", "P0": "P0", "P1": "P1", "P2": "P2", "P3": "P3"}[f.Severity]
-			}
-			if priority == "" {
-				priority = "P2"
-			}
-			matched := false
-			for _, p := range group.priorities {
-				if priority == p {
-					matched = true
+	if len(report.Findings) > 0 {
+		review.WriteString("## 问题列表\n\n<table class=\"cr-findings-overview\"><thead><tr><th scope=\"col\">等级</th><th scope=\"col\">问题</th><th scope=\"col\">来源</th></tr></thead><tbody>")
+		for _, priority := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+			for _, f := range report.Findings {
+				if documentPriority(f) != priority {
+					continue
 				}
+				location := htmlText(fmt.Sprintf("%s:%d", f.File, f.Line))
+				if target := findingSourceURL(run, snapshot, f); target != "" {
+					location = "<a href=\"" + html.EscapeString(target) + "\" target=\"_blank\" rel=\"noopener noreferrer\">" + location + "</a>"
+				}
+				fmt.Fprintf(&review, "<tr><td><strong>%s</strong></td><td>%s</td><td>%s</td></tr>", priority, htmlText(f.Title), location)
 			}
-			if !matched {
+		}
+		review.WriteString("</tbody></table>\n\n## 问题详情\n\n")
+	}
+	for _, priority := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		for _, f := range report.Findings {
+			if documentPriority(f) != priority {
 				continue
 			}
-			count++
-			if count == 1 {
-				fmt.Fprintf(&review, "\n### %s\n\n", group.title)
+			location := mdText(fmt.Sprintf("%s:%d", f.File, f.Line))
+			if target := findingSourceURL(run, snapshot, f); target != "" {
+				location = "[" + location + "](<" + target + ">)"
 			}
-			fmt.Fprintf(&review, "#### F%d · %s · %s\n\n%s:%d\n\n**触发与影响**：%s\n\n**修改建议**：%s\n\n**验证建议（未执行）**：%s\n\n", i+1, mdText(priority), mdText(f.Title), mdText(f.File), f.Line, mdText(f.Impact), mdText(f.Suggestion), mdText(f.Verification))
+			fmt.Fprintf(&review, "### [%s] %s\n\n%s\n\n**触发与影响**：%s\n\n**修改建议**：%s\n\n**验证建议（未执行）**：%s\n\n", priority, mdText(f.Title), location, mdText(f.Impact), mdText(f.Suggestion), mdText(f.Verification))
 		}
 	}
 	if hasResult && len(report.Findings) == 0 {
@@ -184,17 +187,23 @@ func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
 			fmt.Fprintf(&facts, "- 调用 %d：%s；输入 %d 字节 → %d 字节。\n", i+1, mdText(state), observation.InputBytes, observation.OutputBytes)
 		}
 	}
+	if hasResult {
+		facts.WriteString("### 原始评审摘要\n\n")
+		for _, paragraph := range strings.Split(report.Summary, "\n\n") {
+			facts.WriteString(mdText(paragraph) + "\n\n")
+		}
+	}
 	doc.Sections["facts"] = facts.String()
 
 	var code strings.Builder
 	code.WriteString("## 代码依据\n\n### 问题定位与逐字证据\n\n")
-	for i, f := range report.Findings {
-		fmt.Fprintf(&code, "#### F%d · %s:%d\n\n%s\n\n", i+1, mdText(f.File), f.Line, mdCode(f.Evidence, ""))
+	for _, f := range report.Findings {
+		fmt.Fprintf(&code, "### [%s] %s\n\n`%s:%d`\n\n%s\n\n", documentPriority(f), mdText(f.Title), mdText(f.File), f.Line, mdCode(f.Evidence, ""))
 	}
 	if len(report.Findings) == 0 {
 		code.WriteString("未保存问题级源码引用。\n\n")
 	}
-	code.WriteString("### 文件覆盖与差异\n\n已读取文件与差异不代表已验证外部调用链。每个问题的 F 编号与正文一致。\n\n")
+	code.WriteString("### 文件覆盖与差异\n\n已读取文件与差异不代表已验证外部调用链。问题标题与正文对应。\n\n")
 	if len(snapshot.Files) == 0 {
 		code.WriteString("未保存文件差异；代码依据不完整。\n")
 	}
@@ -219,10 +228,10 @@ func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
 	}
 	for _, k := range snapshot.Knowledge {
 		refs := []string{}
-		for i, f := range report.Findings {
+		for _, f := range report.Findings {
 			for _, id := range f.KnowledgeIDs {
 				if id == k.ID {
-					refs = append(refs, fmt.Sprintf("F%d", i+1))
+					refs = append(refs, fmt.Sprintf("[%s] %s", documentPriority(f), mdText(f.Title)))
 					break
 				}
 			}
@@ -263,10 +272,128 @@ func BuildDocument(run db.CodeReviewRun) (ReviewDocument, error) {
 		rules.WriteString("历史策略快照缺失。")
 	}
 	doc.Sections["rules"] = rules.String()
-	parts := []string{"# 代码评审报告 · " + mdText(run.Title), fmt.Sprintf("记录 #%d · %s\n\n以下为保存的评审结果和证据快照，导出不会重新执行评审。", run.ID, mdText(object))}
+	parts := []string{}
 	for _, section := range []string{"review", "facts", "code", "knowledge", "rules"} {
 		parts = append(parts, doc.Sections[section])
 	}
 	doc.Markdown = strings.Join(parts, "\n\n") + "\n"
 	return doc, nil
+}
+
+func documentPriority(f Finding) string {
+	for _, p := range []string{"P0", "P1", "P2", "P3", "P4", "P5"} {
+		if f.Priority == p {
+			return p
+		}
+	}
+	if p := map[string]string{"critical": "P0", "high": "P1", "medium": "P2", "low": "P3", "P0": "P0", "P1": "P1", "P2": "P2", "P3": "P3", "P4": "P4", "P5": "P5"}[f.Severity]; p != "" {
+		return p
+	}
+	return "P2"
+}
+
+func documentConclusion(run db.CodeReviewRun, report Report, snapshot Snapshot, snapshotOK, hasResult bool) string {
+	if !hasResult {
+		return "当前记录没有可用的评审结论，不能据此判断是否可以合并。"
+	}
+	for _, f := range report.Findings {
+		if p := documentPriority(f); p == "P0" || p == "P1" {
+			return "存在阻塞问题，建议修复后再合并。"
+		}
+	}
+	if run.Status == "partial" || !report.EvidenceComplete || !snapshotOK || !snapshot.Complete {
+		return "证据或覆盖不足，暂不能确认可以合并。"
+	}
+	return "已读取范围内未发现阻塞问题。"
+}
+
+var unsafeFilename = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f\x7f]+`)
+
+func filenamePart(s, fallback string) string {
+	s = unsafeFilename.ReplaceAllString(strings.TrimSpace(s), "-")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.Trim(s, " ._-")
+	if s == "" {
+		s = fallback
+	}
+	// Bound each component in bytes without cutting UTF-8 characters.
+	for len(s) > 72 {
+		_, n := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-n]
+	}
+	return s
+}
+
+func reviewFilename(run db.CodeReviewRun) string {
+	var snapshot Snapshot
+	_ = json.Unmarshal([]byte(run.SnapshotJSON), &snapshot)
+	repo := strings.TrimSpace(snapshot.RepositorySource.FullPath)
+	if repo == "" {
+		repo = strings.TrimSpace(run.Repo)
+	}
+	repo = path.Base(strings.TrimRight(strings.ReplaceAll(repo, "\\", "/"), "/"))
+	if repo == "." {
+		repo = ""
+	}
+	branch := snapshot.SourceBranch
+	ref := "mr" + run.Ref
+	if run.Kind != "mr" {
+		ref = "commit-" + run.Ref
+		if len(ref) > 19 {
+			ref = ref[:19]
+		}
+	}
+	date := "未记录日期"
+	if !run.CreatedAt.IsZero() {
+		date = run.CreatedAt.In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02")
+	}
+	return filenamePart(repo, "未知仓库") + "_" + filenamePart(branch, "未记录分支") + "_" + filenamePart(ref, "未记录版本") + "_" + date + ".md"
+}
+
+func htmlText(s string) string {
+	return html.EscapeString(strings.ReplaceAll(strings.ReplaceAll(s, "\r", " "), "\n", " "))
+}
+
+// Source links resolve against the frozen repository and code version.
+func findingSourceURL(run db.CodeReviewRun, snapshot Snapshot, f Finding) string {
+	source := snapshot.RepositorySource
+	if source.WebURL == "" {
+		_ = json.Unmarshal([]byte(run.RepositorySourceJSON), &source)
+	}
+	root := source.WebURL
+	if root == "" {
+		raw := snapshot.URL
+		if raw == "" {
+			raw = run.URL
+		}
+		for _, marker := range []string{"/-/merge_requests/", "/-/commit/", "/merge_requests/", "/commit/"} {
+			if prefix, _, ok := strings.Cut(raw, marker); ok {
+				root = prefix
+				break
+			}
+		}
+	}
+	head := snapshot.Head
+	if head == "" {
+		head = run.HeadSHA
+	}
+	u, err := url.Parse(root)
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") || !shaPattern.MatchString(head) || f.Line < 1 || f.File == "" || strings.HasPrefix(f.File, "/") {
+		return ""
+	}
+	for _, part := range strings.Split(f.File, "/") {
+		if part == ".." || part == "." || part == "" {
+			return ""
+		}
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + "/-/blob/" + head + "/" + f.File
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = fmt.Sprintf("L%d", f.Line)
+	return u.String()
 }

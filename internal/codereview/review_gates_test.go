@@ -28,8 +28,12 @@ func TestIndependentReviewGatesOnPushAndMR(t *testing.T) {
 			head := strings.Repeat("a", 40)
 			f.s.HTTP = &http.Client{Transport: transport(func(r *http.Request) (*http.Response, error) {
 				body := `[]`
-				if strings.Contains(r.URL.Path, "merge_requests") {
-					body = `[{"iid":42,"updated_at":"stamp","diff_refs":{"head_sha":"` + head + `"}}]`
+				version := `{"iid":42,"updated_at":"stamp","diff_refs":{"head_sha":"` + head + `","base_sha":"` + base + `"}}`
+				if strings.HasSuffix(r.URL.Path, "/merge_requests") {
+					body = "[" + version + "]"
+				}
+				if strings.HasSuffix(r.URL.Path, "/merge_requests/42") {
+					body = version
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})}

@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"log"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -281,13 +282,13 @@ func (s *Server) handleExportCodeReview(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "评审结果无法解析，请核对原始记录", http.StatusConflict)
 		return
 	}
-	document, err := codereview.BuildDocument(run)
+	document, err := s.codeReview.ExportDocument(r.Context(), run)
 	if err != nil {
 		http.Error(w, err.Error(), 409)
 		return
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+document.Filename+`"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": document.Filename}))
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write([]byte(document.Markdown))

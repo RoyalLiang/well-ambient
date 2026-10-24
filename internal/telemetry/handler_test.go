@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -262,8 +263,18 @@ func TestHandleWebhookPersistsReviewBeforeKanbanFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	kanban.KanbanFilePath = t.TempDir() // A directory forces the unrelated Kanban write to fail.
+	git := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/projects/10/merge_requests/7" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"iid":7,"state":"opened","diff_refs":{"head_sha":%q,"base_sha":%q}}`, reviewWebhookHead, strings.Repeat("b", 40))
+	}))
+	defer git.Close()
 	cfg := &config.Config{}
 	cfg.GitLab = config.GitLabConfig{
+		BaseURL:  git.URL,
 		Enabled:  true,
 		APIToken: "fixture",
 		Secret:   "secret",

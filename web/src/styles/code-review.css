@@ -659,7 +659,7 @@
 .cr-result-navigation { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; min-height:44px; color:var(--wa-text-muted); font-size:12px; }
 .cr-result-navigation > span { margin-right:auto; }
 .cr-kind { min-width:0; }
-.cr-export { margin-left:auto; white-space:nowrap; }
+.cr-export { margin-left:auto; width:44px; height:44px; flex:0 0 44px; display:inline-flex; align-items:center; justify-content:center; padding:10px; white-space:nowrap; }
 @media (max-width:1200px) {
  .cr-filter-controls { grid-template-columns:minmax(0,1fr) 140px auto auto; }
  .cr-search { grid-column:1 / -1; grid-row:2; }
@@ -675,3 +675,16 @@
 .cr-export-feedback { margin:0; padding:10px 24px; font-size:12px; color:var(--wa-text-muted); }
 .cr-export-feedback a { margin-left:8px; color:var(--wa-accent-main, var(--wa-text-main)); text-underline-offset:3px; }
 .cr-repository-name { overflow-wrap:anywhere; }
+
+.cr-export-feedback a { display:inline-flex; vertical-align:middle; min-width:44px; min-height:44px; align-items:center; justify-content:center; }
+
+/* The issue index uses its content width; explanations follow below it. */
+.cr-reading .markdown-body table.cr-findings-overview {
+ width:auto;
+ min-width:0;
+ max-width:100%;
+ table-layout:auto;
+}
+.cr-reading .cr-findings-overview :is(th,td) { padding:8px 12px; overflow-wrap:anywhere; }
+.cr-reading .cr-findings-overview :is(th,td):first-child { white-space:nowrap; }
+.cr-reading .cr-findings-overview a { overflow-wrap:anywhere; }

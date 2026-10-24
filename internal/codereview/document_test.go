@@ -16,7 +16,7 @@ func TestHistoricalDocumentUsesFrozenRulesAndQualifiesKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"运行时规则快照未保存", "frozen-only", "问题引用：F1", "检索到的背景资料", "P2", "验证建议（未执行）"} {
+	for _, s := range []string{"运行时规则快照未保存", "frozen-only", "问题引用：[P2] 错误被忽略", "检索到的背景资料", "P2", "验证建议（未执行）"} {
 		if !strings.Contains(doc.Markdown, s) {
 			t.Errorf("missing %s", s)
 		}
@@ -81,7 +81,7 @@ func TestDocumentPreservesLegacyPriority(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, expected := range []string{"### " + tc.group, "#### F1 · " + tc.severity + " ·"} {
+			for _, expected := range []string{"[" + tc.severity + "]"} {
 				if !strings.Contains(doc.Sections["review"], expected) {
 					t.Fatalf("legacy priority %s changed: %s", tc.severity, doc.Sections["review"])
 				}

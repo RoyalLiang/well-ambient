@@ -102,7 +102,7 @@ func TestCodeReviewMarkdownExportMatchesDetailAndPermissions(t *testing.T) {
 	if detail.Code != 200 || export.Code != 200 || export.Body.String() != payload.Document.Markdown {
 		t.Fatalf("detail and export differ: %d/%d", detail.Code, export.Code)
 	}
-	if export.Header().Get("Content-Type") != "text/markdown; charset=utf-8" || !strings.Contains(export.Header().Get("Content-Disposition"), fmt.Sprintf("code-review-%d.md", run.ID)) || export.Header().Get("Cache-Control") != "private, no-store" {
+	if export.Header().Get("Content-Type") != "text/markdown; charset=utf-8" || !strings.Contains(export.Header().Get("Content-Disposition"), url.PathEscape(payload.Document.Filename)) || export.Header().Get("Cache-Control") != "private, no-store" {
 		t.Fatal("incorrect download headers")
 	}
 	for _, section := range []string{"review", "facts", "code", "knowledge", "rules"} {
@@ -110,7 +110,7 @@ func TestCodeReviewMarkdownExportMatchesDetailAndPermissions(t *testing.T) {
 			t.Fatalf("missing section %s", section)
 		}
 	}
-	if !strings.Contains(export.Body.String(), "部分结果") || !strings.Contains(export.Body.String(), "未读取外部服务") {
+	if !strings.Contains(export.Body.String(), "证据或覆盖不足") || !strings.Contains(export.Body.String(), "未读取外部服务") {
 		t.Fatal("export hid partial coverage")
 	}
 	reader := seedPolicyTestUser(t, "export-reader", "member", "global", "")
